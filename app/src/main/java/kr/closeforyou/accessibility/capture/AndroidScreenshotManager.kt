@@ -205,6 +205,6 @@ internal class AndroidScreenshotManager(
     companion object {
         private const val MAX_SOURCE_PIXELS = 8_000_000L // <=32 MB at RGBA8888; reject before copy.
         private const val MAX_ROI_PIXELS = 2_000_000L // <=8 MB software input.
-        private val budget = CaptureBudget(SystemClock::uptimeMillis)
+        private val budget = CaptureBudget(SystemClock::elapsedRealtime)
     }
 }

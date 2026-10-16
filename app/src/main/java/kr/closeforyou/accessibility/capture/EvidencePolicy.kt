@@ -1,15 +1,14 @@
 package kr.closeforyou.accessibility.capture
 
 import kr.closeforyou.core.model.*
-import java.text.Normalizer
-import java.util.Locale
+import kr.closeforyou.accessibility.PrivacyPolicy
 
 /** Codes only. Neither diagnostics nor exceptions contain OCR text. */
 enum class EvidenceIssue {
     NONE, NOT_REQUESTED, TREE_SUFFICIENT, SERVICE_DISABLED, CAPABILITY_MISSING,
     REGION_UNCERTAIN, STALE_SCREEN, PRIVACY_BLOCKED, BUSY, RATE_LIMITED, BUDGET_EXHAUSTED,
     CAPTURE_FAILED, CAPTURE_TIMEOUT, SECURE_WINDOW, INVALID_WINDOW, INVALID_DISPLAY,
-    MEMORY_LIMIT, EMPTY_CAPTURE, OCR_FAILED, OCR_TIMEOUT, PRIVACY_UNCERTAIN,
+    MEMORY_LIMIT, EMPTY_CAPTURE, OCR_FAILED, OCR_TIMEOUT, PRIVACY_UNCERTAIN, DECISION_SUMMARY_ONLY,
 }
 
 internal class EvidenceFailure(val issue: EvidenceIssue) : RuntimeException(issue.name)
@@ -72,28 +71,14 @@ internal enum class PrivacyReview { TEXT_CHECK_PASSED, SENSITIVE, UNCERTAIN }
 
 /** F0-B is an independent, conservative text filter; it is not proof of an image's privacy. */
 internal object OcrPrivacyReview {
-    private val context = Regex(
-        "비밀\\s*번호|암호|인증\\s*(번호|코드)|보안\\s*(코드|키패드)|계좌|카드|금융|은행|송금|이체|잔액|청구|결제|구매|구독|" +
-            "로그\\s*인|본인\\s*인증|주민|개인\\s*정보|동의|성명|이름|고객|회원|사용자|생년월일|전화|연락처|주소|" +
-            "수령인|진료|건강\\s*정보|password|passcode|otp|verification|account|credit|payment|" +
-            "purchase|subscription|sign\\s*in|log\\s*in|login|consent|permission|medical|patient|address|recipient|birth",
-    )
-    private val longNumber = Regex("(?:\\d[ \\-·.]*){10,}")
-    private val uncontextualizedCode = Regex("(?<!\\d)\\d{6,8}(?!\\d)")
-    private val unsupported = Regex("[^\\p{IsHangul}\\p{IsLatin}\\p{N}\\p{P}\\p{Z}\\p{S}\\s]")
-
     fun review(lines: List<OcrLine>, region: ScreenBounds): PrivacyReview {
         if (lines.isEmpty() || lines.size > 200 || lines.sumOf { it.text.length } > 16_384) return PrivacyReview.UNCERTAIN
         if (lines.any { !PopupRegionResolver.contains(region, it.bounds) || it.text.isBlank() ||
                 (it.confidence != null && (!it.confidence.isFinite() || it.confidence < 0.5f)) }) return PrivacyReview.UNCERTAIN
-        val text = Normalizer.normalize(lines.joinToString("\n") { it.text }, Normalizer.Form.NFKC)
-            .lowercase(Locale.ROOT)
-        if (context.containsMatchIn(text) || context.containsMatchIn(text.replace(Regex("\\s+"), "")) ||
-            '@' in text || longNumber.containsMatchIn(text)) {
-            return PrivacyReview.SENSITIVE
-        }
-        if (uncontextualizedCode.containsMatchIn(text) || unsupported.containsMatchIn(text) ||
-            text.count { it.isLetter() } < 2) return PrivacyReview.UNCERTAIN
+        // Separate post-image inspection: F0-A passing does not bypass any of these checks.
+        val text = lines.joinToString("\n") { it.text }
+        if (PrivacyPolicy.hasSensitiveText(text)) return PrivacyReview.SENSITIVE
+        if (PrivacyPolicy.hasUncertainText(text) || text.count { it.isLetter() } < 2) return PrivacyReview.UNCERTAIN
         return PrivacyReview.TEXT_CHECK_PASSED
     }
 }
@@ -101,18 +86,17 @@ internal object OcrPrivacyReview {
 /** Process-wide, no identities/content retained. One image/native OCR task at a time. */
 internal class CaptureBudget(private val now: () -> Long) {
     private val recent = ArrayDeque<Long>()
-    private var total = 0
     private var busy = false
     private var last = Long.MIN_VALUE
     private var blockedUntil = 0L
 
     @Synchronized fun denial(): EvidenceIssue? {
         val time = now()
-        while (recent.isNotEmpty() && time - recent.first() >= 60_000) recent.removeFirst()
+        while (recent.isNotEmpty() && time - recent.first() >= WINDOW_MILLIS) recent.removeFirst()
         return when {
             busy -> EvidenceIssue.BUSY
-            total >= 30 -> EvidenceIssue.BUDGET_EXHAUSTED
-            time < blockedUntil || (last != Long.MIN_VALUE && time - last < 2_000) || recent.size >= 6 -> EvidenceIssue.RATE_LIMITED
+            recent.size >= 30 -> EvidenceIssue.BUDGET_EXHAUSTED
+            time < blockedUntil || (last != Long.MIN_VALUE && time - last < 2_000) || recent.count { time - it < 60_000 } >= 6 -> EvidenceIssue.RATE_LIMITED
             else -> null
         }
     }
@@ -120,7 +104,6 @@ internal class CaptureBudget(private val now: () -> Long) {
     @Synchronized fun acquire(): AutoCloseable {
         denial()?.let { throw EvidenceFailure(it) }
         busy = true
-        total++
         last = now()
         recent.addLast(last)
         var released = false
@@ -128,4 +111,9 @@ internal class CaptureBudget(private val now: () -> Long) {
     }
 
     @Synchronized fun rateLimited() { blockedUntil = now() + 6_000 }
+
+    private companion object {
+        // Rolling elapsed-time window: sustained use recovers without restarting the service.
+        const val WINDOW_MILLIS = 10 * 60_000L
+    }
 }

@@ -18,15 +18,43 @@ internal object PrivacyPolicy {
         "com.kbstar.kbbank", "com.shinhan.sbanking", "com.wooribank.smart.npib",
         "com.nh.smartbanking", "com.hanabank.ebk.channel.android.hananbank", "viva.republica.toss",
     )
-    // These keywords block analysis, not just action. Localisation/image-only screens can evade this.
-    private val sensitiveWords = listOf(
-        "비밀번호", "암호", "주민등록", "주민번호", "계좌", "카드번호", "카드 번호", "보안키패드",
-        "보안 키패드", "결제", "구매", "구독", "본인인증", "본인 인증", "로그인", "권한 허용",
-        "접근 허용", "개인정보", "개인 정보", "동의", "삭제", "건강정보", "진료", "인증번호",
-        "password", "passcode", "sign in", "log in", "login", "payment", "purchase", "subscribe",
-        "subscription", "credit card", "bank account", "permission", "consent", "delete account",
-        "social security", "verification code", "medical record",
+    // Actual private/credential/financial context takes priority over decision summaries.
+    // Generic decision verbs are handled separately; they never authorize an action.
+    private val sensitiveContext = Regex(
+        "비밀번호|암호|인증(번호|코드)|보안(코드|키패드)|주민|계좌|카드|금융|은행|송금|이체|잔액|청구|" +
+            "로그인|본인인증|성명|이름|고객|회원|사용자|생년월일|전화|연락처|주소|수령인|진료|건강정보|" +
+            "password|passcode|otp|verification|account|credit|signin|login|socialsecurity|" +
+            "medical|patient|address|recipient|birth",
     )
+    private val longNumber = Regex("(?:\\d[\\s\\-·.]*){10,}")
+    private val possibleCode = Regex("(?<!\\d)\\d{6,8}(?!\\d)")
+    private val unsupported = Regex("[^\\p{IsHangul}\\p{IsLatin}\\p{N}\\p{P}\\p{Z}\\p{S}\\s]")
+    private val genericDataConsent = Regex("개인정보(수집(및이용)?|처리|이용)?에?동의")
+    private val decisions = listOf(
+        Regex("결제|payment|pay(?![a-z])") to "결제 선택 필요",
+        Regex("구매|purchase|buy(?![a-z])") to "구매 선택 필요",
+        Regex("구독|subscribe|subscription") to "구독 선택 필요",
+        Regex("동의|consent|agree") to "동의 선택 필요",
+        Regex("권한|접근허용|permission") to "권한 허용 선택 필요",
+        Regex("삭제|delete") to "삭제 선택 필요",
+    )
+
+    private fun normalized(value: CharSequence): String =
+        Normalizer.normalize(value, Normalizer.Form.NFKC).lowercase(Locale.ROOT)
+
+    private fun compact(value: CharSequence): String = normalized(value).replace(Regex("\\s+"), "")
+
+    /** Fixed vocabulary only. No captured string, identifier, amount or button handle is returned. */
+    fun decisionSummaries(value: CharSequence): List<String> {
+        val text = compact(value)
+        return decisions.filter { it.first.containsMatchIn(text) }.map { it.second }
+    }
+
+    fun hasUncertainText(value: CharSequence?): Boolean {
+        if (value.isNullOrEmpty()) return false
+        val text = normalized(value)
+        return possibleCode.containsMatchIn(text) || unsupported.containsMatchIn(text)
+    }
 
     fun packageBlock(
         packageName: String,
@@ -60,7 +88,11 @@ internal object PrivacyPolicy {
 
     fun hasSensitiveText(value: CharSequence?): Boolean {
         if (value.isNullOrEmpty()) return false
-        val normalised = Normalizer.normalize(value, Normalizer.Form.NFKC).lowercase(Locale.ROOT)
-        return sensitiveWords.any(normalised::contains)
+        val text = normalized(value)
+        val condensed = compact(value)
+        // Permit the generic data-consent label only; surrounding private fields still block.
+        val privateContext = genericDataConsent.replace(condensed, "")
+        return sensitiveContext.containsMatchIn(condensed) || '@' in text || longNumber.containsMatchIn(text) ||
+            "개인정보" in privateContext || "personaldata" in condensed || "personalinformation" in condensed
     }
 }

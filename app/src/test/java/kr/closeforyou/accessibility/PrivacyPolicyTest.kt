@@ -45,8 +45,28 @@ class PrivacyPolicyTest {
         assertTrue(PrivacyPolicy.hasSensitiveText("Enter PASSWORD"))
         assertTrue(PrivacyPolicy.hasSensitiveText("ＰＡＳＳＷＯＲＤ"))
         assertTrue(PrivacyPolicy.hasSensitiveText("테스트 비밀번호 입력"))
-        assertTrue(PrivacyPolicy.hasSensitiveText("권한 허용을 선택하세요"))
+        assertFalse(PrivacyPolicy.hasSensitiveText("권한 허용을 선택하세요"))
         assertFalse(PrivacyPolicy.hasSensitiveText("시험용 일반 점검 공지"))
         assertFalse(PrivacyPolicy.hasSensitiveText(null))
     }
+
+    @Test fun `generic decision requests are evidence instead of a privacy block`() {
+        for (text in listOf("결제하시겠습니까?", "구매 확인", "구독을 시작할까요?", "약관에 동의하세요",
+            "개인정보 수집 및 이용에 동의", "권한 허용 안내", "삭제하시겠습니까?", "PAYMENT consent")) {
+            assertFalse(PrivacyPolicy.hasSensitiveText(text))
+            assertFalse(PrivacyPolicy.hasUncertainText(text))
+            assertTrue(PrivacyPolicy.decisionSummaries(text).isNotEmpty())
+        }
+    }
+
+    @Test fun `private content wins even when a decision is requested`() {
+        for (text in listOf("결제 동의 비밀번호", "구매 카드번호 0000-1111-2222-3333", "구독 계좌 입력",
+            "동의 인증번호 654321", "동의 이름 합성", "결제 sample@example.test", "금융 입력",
+            "보안 코드", "비 밀 번 호", "구매 0000111122223333", "개인정보 공개", "로그인")) {
+            assertTrue(PrivacyPolicy.hasSensitiveText(text))
+        }
+        assertTrue(PrivacyPolicy.hasUncertainText("확인 654321"))
+        assertTrue(PrivacyPolicy.hasUncertainText("확인 ６５４３２１"))
+    }
+
 }

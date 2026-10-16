@@ -49,11 +49,59 @@ class EvidencePolicyTest {
         assertNull(budget.denial())
     }
 
-    @Test fun captureBudgetHasAFiniteProcessSessionAllowance() {
+    @Test fun rollingThirtyCaptureLimitRejectsThenRecoversWithoutRestart() {
         var now = 0L
         val budget = CaptureBudget { now }
-        repeat(30) { budget.acquire().close(); now += 60_000 }
+        repeat(30) { budget.acquire().close(); now += 10_000 }
         assertEquals(EvidenceIssue.BUDGET_EXHAUSTED, budget.denial())
+        assertEquals(EvidenceIssue.BUDGET_EXHAUSTED,
+            assertThrows(EvidenceFailure::class.java) { budget.acquire() }.issue)
+        now = 599_999
+        assertEquals(EvidenceIssue.BUDGET_EXHAUSTED, budget.denial())
+        now = 600_000
+        assertNull(budget.denial())
+        budget.acquire().close()
+        assertEquals(EvidenceIssue.BUDGET_EXHAUSTED, budget.denial())
+        now = 610_000
+        assertNull(budget.denial())
+    }
+
+    @Test fun sustainedUseCanExceedThirtyLifetimeCaptures() {
+        var now = 0L
+        val budget = CaptureBudget { now }
+        repeat(100) {
+            assertNull(budget.denial())
+            budget.acquire().close()
+            now += 20_000
+        }
+    }
+
+    @Test fun recoveryNeverReleasesAnOutstandingNativeLease() {
+        var now = 0L
+        val budget = CaptureBudget { now }
+        val lease = budget.acquire()
+        now = 1_200_000
+        assertEquals(EvidenceIssue.BUSY, budget.denial())
+        assertThrows(EvidenceFailure::class.java) { budget.acquire() }
+        lease.close()
+        assertNull(budget.denial())
+    }
+
+    @Test fun rollingWindowRecoveryStillHonorsMinimumIntervalAndSystemBackoff() {
+        var now = 0L
+        val budget = CaptureBudget { now }
+        repeat(30) { budget.acquire().close(); now += 10_000 }
+        now = 650_000 // six old slots have expired
+        budget.acquire().close()
+        now += 1_999
+        assertEquals(EvidenceIssue.RATE_LIMITED, budget.denial())
+        now++
+        assertNull(budget.denial())
+        budget.rateLimited()
+        now += 5_999
+        assertEquals(EvidenceIssue.RATE_LIMITED, budget.denial())
+        now++
+        assertNull(budget.denial())
     }
 
     @Test fun privacyReviewTreatsNumbersAndUnreviewableContentConservatively() {

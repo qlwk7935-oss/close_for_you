@@ -125,7 +125,7 @@ class CloseForYouAccessibilityService : AccessibilityService() {
                         when (val evidence = pipeline.analyze(result.snapshot)) {
                             is EvidenceOutcome.Ready -> if (isCurrent(result.snapshot.token)) {
                                 AccessibilityRuntime.recordEvidenceIssue(evidence.issue)
-                                AccessibilityRuntime.publish(result.snapshot,
+                                AccessibilityRuntime.publish(evidence.snapshot,
                                     PopupDetection(result.snapshot.token, signals.toPersistentSet(), requiresUserReview = true),
                                     evidence.analysis)
                             }

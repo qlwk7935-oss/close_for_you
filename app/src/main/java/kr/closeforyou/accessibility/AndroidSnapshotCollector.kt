@@ -144,7 +144,7 @@ internal class AndroidSnapshotCollector {
         PrivacyPolicy.fieldBlock(node.isPassword, node.isEditable, node.inputType)?.let { throw GuardFailure(it) }
         fun check(value: CharSequence?) {
             if ((value?.length ?: 0) > MAX_NODE_TEXT_CHARACTERS) throw GuardFailure(PrivacyBlockReason.TRUNCATED_TREE)
-            if (PrivacyPolicy.hasSensitiveText(value)) throw GuardFailure(PrivacyBlockReason.SENSITIVE_CONTENT)
+            if (PrivacyPolicy.hasSensitiveText(value) || PrivacyPolicy.hasUncertainText(value)) throw GuardFailure(PrivacyBlockReason.SENSITIVE_CONTENT)
         }
         check(node.text)
         check(node.contentDescription)

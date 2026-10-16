@@ -1,6 +1,6 @@
 # A 담당 개발 상태 — 1차 기반과 2차 캡처/OCR
 
-기준일: 2026-10-16. Android 코어와 최초 공통 계약을 제안하는 단계입니다. **실기기·에뮬레이터·TalkBack 시험은 미실시**이며 제조사별 호환성·팝업 감지 성능·사용성 개선을 주장하지 않습니다. 원문 설계와 검증 계획은 보존하고 최신 팀 결정을 적용합니다.
+기준일: 2026-10-17. Android 코어와 최초 공통 계약을 제안하는 단계입니다. **실기기·에뮬레이터·TalkBack 시험은 미실시**이며 제조사별 호환성·팝업 감지 성능·사용성 개선을 주장하지 않습니다. 원문 설계와 검증 계획은 보존하고 최신 팀 결정을 적용합니다.
 
 A 2차는 PR #1 병합 후 최신 `main`(`f52be56`)에서 만든 `feature/core-capture-ocr`입니다. [캡처/OCR 구현·자원 수명·시험 절차](CAPTURE_OCR.md)가 현재 캡처 경로의 상세 기준입니다. 기존 공통 계약은 유지하고 캡처는 별도 동의·앱별 허락 기본 꺼짐으로 연결했습니다.
 
@@ -48,12 +48,20 @@ A 2차는 PR #1 병합 후 최신 `main`(`f52be56`)에서 만든 `feature/core-c
 |---|---|
 | 환경 | JDK 17.0.20.1, Gradle 8.11.1, Android SDK 35 / Build Tools 35.0.0 |
 | 필수 명령 | `./gradlew --no-daemon :app:assembleDebug :app:testDebugUnitTest :app:lintDebug` |
-| 최종 결과 | **BUILD SUCCESSFUL in 57s**. 필수 명령 실제 실행, JVM 시험 43개 통과(실패/오류/건너뜀 0), Lint `No issues found` (오류/경고 0) |
+| 최초 2차 결과 | **BUILD SUCCESSFUL in 57s**. 필수 명령 실제 실행, JVM 시험 43개 통과(실패/오류/건너뜀 0), Lint `No issues found` (오류/경고 0) |
 | 계측 APK | `:app:assembleDebugAndroidTest` 추가 실행 성공. 합성 OCR/수명 3개 및 명시적 opt-in 서비스 캡처 1개의 계측 테스트 소스·APK 컴파일 확인, 실제 실행 0개 |
 | 기기 상태 | 연결된 Android 기기 없음, 실행 가능한 emulator/KVM 없음. 실제 캡처·모델 추론·TalkBack 시험 미실시 |
 | 외부 계약 | B/C/D 공통 모델·메서드·enum 시그니처 변경 없음. `PopupContracts.kt`는 설명 주석만 갱신 |
 
 2차 신규 JVM 시험 23개와 기존 20개를 함께 실행했습니다. APK 안의 한국어 `Kore_ctc` 모델/native OCR 라이브러리 포함, 병합 매니페스트의 인터넷/마이크/일반 오버레이 권한 없음, 버전별 메타데이터의 캡처 능력 활성화·제스처 비활성화도 확인했습니다. 캡처/글자의 파일 저장·원문 로그·외부 행동 호출이 자체 production 소스에 없음을 정적으로 점검했습니다. 초기 Lint 경고 2건은 SDK 35 callback IntDef에서 누락된 secure-window 코드를 별도 API 34+ 분기로 처리하고 Bitmap KTX 접근을 적용하여 해소했습니다. 최초 전체 빌드의 ML Kit native 라이브러리 디버그 심볼 미제거 안내는 라이브러리를 그대로 패키징한다는 뜻이며, 빌드 실패는 없었습니다.
+
+## PR #2 검토 수정 기록 (2026-10-17)
+
+- CaptureBudget: 프로세스 누적 30회 제한 제거, 절전 시간을 포함하는 단조 시계의 최근 10분 30회 이동창으로 회복. 최소 간격/분당 제한/동시 실행/동의·앱별 허용 유지. 30개 시작 시각만 저장하며 원문 없음.
+- F0-A/F0-B: 실제 민감 징후를 먼저 보호하고 일반 결정 단어는 전체 차단 대신 고정 요약으로 최소화. 공개 snapshot의 원본 노드와 행동 정보를 제거. B의 USER_DECISION 분류·위험 결정 금지 책임과 C/D 연동 요구는 [TEAM_INTEGRATION.md](TEAM_INTEGRATION.md)에 명시.
+- 공통 모델/인터페이스 시그니처와 B/C/D 구현은 변경하지 않음. A 내부 결과에 공개용 snapshot을 명시하고 상태 코드 DECISION_SUMMARY_ONLY만 추가.
+- 검증: JDK 17에서 `./gradlew --no-daemon :app:assembleDebug :app:testDebugUnitTest :app:lintDebug` 실행, **BUILD SUCCESSFUL in 58s**. JVM 시험 53개 통과(실패/오류/건너뜀 0), Lint `No issues found`(오류/경고 0). 이전 43개에서 회복/장시간 사용·민감/일반 결정·공개 데이터 최소화 관련 10개 시험을 추가하고 기존 시험을 갱신. 자체 접근성 production 소스에 로그/파일 쓰기/클릭 API 호출 추가 없음, `git diff --check` 통과.
+- 실기기 검증: 미실시. 합성 결제/동의 안내와 개인정보 혼합 화면, 절전/장시간 사용 회복을 포함한 후속 절차는 [CAPTURE_OCR.md](CAPTURE_OCR.md). 실제 캡처·OCR 정확도·TalkBack·native 작업 종료 보장은 여전히 미검증.
 
 ## Android API·권한
 
@@ -74,7 +82,7 @@ A 2차는 PR #1 병합 후 최신 `main`(`f52be56`)에서 만든 `feature/core-c
 
 현재 보호는 주요 민감 앱의 고정 차단 목록과 허용 앱 목록, 입력 속성, 한국어·영어 텍스트 징후에 기반합니다. 모든 금융·건강·메신저 앱, 이미지로만 된 개인정보, 다른 언어의 보호 화면·보안 키패드를 완전히 식별하지 못합니다. 동일 창의 새 컨테이너를 덮개 후보로 보는 휴리스틱은 일반 UI 변경도 오탐할 수 있습니다. 보호 통과·후보 발견은 비민감 화면이나 실제 팝업임을 보증하지 않습니다.
 
-노드 처리 한도는 이벤트 debounce 180ms, 후보 TTL 5초, 창 32개, 두 번의 노드 순회 합산 최대 2,400 방문, 깊이 60, 노드별 텍스트 4,096자, 복사할 전체 텍스트 32,768자, 동기 수집 시간 예산 100ms입니다. 2차 캡처/OCR 한도는 캡처 1초·OCR 3초, 동시 1개, 2초 간격·분당 6회·프로세스당 30회, 소스 800만/ROI 200만 픽셀입니다. **모두 실측 전 임시값**입니다. 노드 보호 실패는 전체 차단하고, 캡처/OCR 실패는 최신 보호를 재검사하여 안전한 트리만 남기거나 전체 차단합니다. 노드 읽기는 Main 스레드에서 동기 수행하고 OCR 추론은 ML Kit의 비동기 Task로 실행하므로 지연·탐색 영향은 실기기에서 측정해야 합니다.
+노드 처리 한도는 이벤트 debounce 180ms, 후보 TTL 5초, 창 32개, 두 번의 노드 순회 합산 최대 2,400 방문, 깊이 60, 노드별 텍스트 4,096자, 복사할 전체 텍스트 32,768자, 동기 수집 시간 예산 100ms입니다. 2차 캡처/OCR 한도는 캡처 1초·OCR 3초, 동시 1개, 2초 간격·분당 6회·최근 10분당 30회(시간 경과 시 회복), 소스 800만/ROI 200만 픽셀입니다. **모두 실측 전 임시값**입니다. 노드 보호 실패는 전체 차단하고, 캡처/OCR 실패는 최신 보호를 재검사하여 안전한 트리만 남기거나 전체 차단합니다. 노드 읽기는 Main 스레드에서 동기 수행하고 OCR 추론은 ML Kit의 비동기 Task로 실행하므로 지연·탐색 영향은 실기기에서 측정해야 합니다.
 
 API 지원 범위 참고: [AccessibilityService](https://developer.android.com/reference/android/accessibilityservice/AccessibilityService), [AccessibilityServiceInfo](https://developer.android.com/reference/android/accessibilityservice/AccessibilityServiceInfo), [SpeechRecognizer](https://developer.android.com/reference/android/speech/SpeechRecognizer). API 존재는 기기별 실행 성공을 보장하지 않습니다.
 

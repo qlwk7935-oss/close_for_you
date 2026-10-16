@@ -104,7 +104,7 @@ class CaptureOcrPipelineTest {
 
     @Test fun f0bSensitiveImagesExposeNoAnalysisAndReleasePixels() = runTest {
         for (text in listOf("비밀번호 입력", "인증번호 654321", "계좌 123-456-789012", "카드 1234 5678 9012 3456",
-            "결제 화면", "금융 정보 안내", "은행 잔액 안내", "로그인 안내", "사용자 sample@example.test", "연락처 010-0000-0000")) {
+            "결제 비밀번호", "구매 카드번호", "구독 인증번호 654321", "동의 이름 합성", "금융 정보 안내", "은행 잔액 안내", "로그인 안내", "사용자 sample@example.test", "연락처 010-0000-0000")) {
             val shots = Shots()
             val result = CaptureOcrPipeline(shots, OcrPort { listOf(OcrLine(text, box)) }, { true }, { null })
                 .analyze(imagePopup())
@@ -238,4 +238,90 @@ class CaptureOcrPipelineTest {
             assertNull(PopupRegionResolver.resolve(base.copy(windows = base.windows.toPersistentList().add(top)), true))
         }
     }
+
+    @Test fun treeDecisionUsesOnlyFixedSummaryAndNeverCapturesOrExposesTargets() = runTest {
+        val original = imagePopup()
+        for (label in listOf("결제 10,000원 안내", "구매하시겠습니까?", "구독 시작", "개인정보 수집 및 이용에 동의")) {
+            val snapshot = original.copy(nodes = original.nodes.toPersistentList().add(original.nodes.first().copy(
+                text = label, contentDescription = "합성 부가 설명", viewId = "synthetic:id/buy",
+                clickable = true, actions = kotlinx.collections.immutable.persistentSetOf(NodeAction.CLICK),
+            )))
+            val shots = Shots()
+            val result = CaptureOcrPipeline(shots, OcrPort { error("No OCR") }, { true }, { null })
+                .analyze(snapshot) as EvidenceOutcome.Ready
+            assertEquals(EvidenceIssue.DECISION_SUMMARY_ONLY, result.issue)
+            assertEquals(0, shots.calls)
+            assertTrue(result.snapshot.nodes.isEmpty())
+            assertEquals(snapshot.token, result.snapshot.token)
+            assertFalse(snapshot.nodes.isEmpty())
+            assertTrue(result.analysis.texts.all { it.text.endsWith("선택 필요") && it.source == TextSource.ACCESSIBILITY_TREE })
+            assertTrue(result.analysis.texts.none { it.text == label || it.text == "합성 부가 설명" })
+            assertEquals(PopupClassification.UNKNOWN, result.analysis.classification)
+            assertTrue(result.analysis.closeCandidates.isEmpty())
+            assertTrue(AnalysisLimit.INCOMPLETE_EVIDENCE in result.analysis.limitations)
+        }
+    }
+
+    @Test fun ocrDecisionIsReviewedThenOnlyFixedSignalsAndProvenanceArePublished() = runTest {
+        for ((text, summary) in listOf("결제하시겠습니까? 10,000원" to "결제 선택 필요",
+            "약관에 동의하세요" to "동의 선택 필요", "구매 안내" to "구매 선택 필요", "구독 시작" to "구독 선택 필요")) {
+            val shots = Shots()
+            val result = CaptureOcrPipeline(shots, OcrPort { listOf(OcrLine(text, box)) }, { true }, { null })
+                .analyze(imagePopup()) as EvidenceOutcome.Ready
+            assertEquals(EvidenceIssue.DECISION_SUMMARY_ONLY, result.issue)
+            assertEquals(1, shots.calls)
+            assertTrue(shots.frame!!.closed)
+            assertTrue(result.snapshot.nodes.isEmpty())
+            assertEquals(listOf(summary), result.analysis.texts.map { it.text })
+            assertEquals(TextSource.OCR, result.analysis.texts.single().source)
+            assertEquals(box, result.analysis.texts.single().bounds)
+            assertEquals(PopupClassification.UNKNOWN, result.analysis.classification)
+            assertTrue(result.analysis.closeCandidates.isEmpty())
+        }
+    }
+
+    @Test fun decisionWordsCannotBypassPrivateTreeOrUncertainOcrProtection() = runTest {
+        val original = imagePopup()
+        val privateTree = original.copy(nodes = original.nodes.toPersistentList().add(original.nodes.first().copy(
+            text = "결제 동의 카드번호 0000-1111-2222-3333")))
+        val shots = Shots()
+        val blocked = CaptureOcrPipeline(shots, OcrPort { error("No OCR") }, { true }, { null }).analyze(privateTree)
+        assertTrue(blocked is EvidenceOutcome.Blocked)
+        assertEquals(0, shots.calls)
+        for (line in listOf(OcrLine("결제 654321", box), OcrLine("동의 안내", box, 0.1f))) {
+            val uncertain = CaptureOcrPipeline(Shots(), OcrPort { listOf(line) }, { true }, { null })
+                .analyze(original) as EvidenceOutcome.Ready
+            assertEquals(EvidenceIssue.PRIVACY_UNCERTAIN, uncertain.issue)
+            assertTrue(uncertain.analysis.texts.none { it.source == TextSource.OCR })
+            assertTrue(uncertain.analysis.texts.none { it.text.endsWith("선택 필요") })
+        }
+    }
+
+    @Test fun decisionSummaryStillRequiresF0aConsentAndCurrentScreen() = runTest {
+        val original = imagePopup()
+        val snapshot = original.copy(nodes = persistentListOf(original.nodes.first().copy(text = "결제 안내")))
+        val shots = Shots()
+        for (reason in listOf(PrivacyBlockReason.NO_CONSENT, PrivacyBlockReason.APP_NOT_ALLOWED,
+            PrivacyBlockReason.PAUSED, PrivacyBlockReason.PASSWORD, PrivacyBlockReason.EDITABLE_FIELD)) {
+            val result = CaptureOcrPipeline(shots, OcrPort { error("No OCR") }, { true }, { reason })
+                .analyze(snapshot) as EvidenceOutcome.Blocked
+            assertEquals(reason, result.reason)
+        }
+        val stale = async { CaptureOcrPipeline(shots, OcrPort { error("No OCR") }, { false }, { null }).analyze(snapshot) }
+        runCurrent()
+        assertTrue(stale.isCancelled)
+        assertEquals(0, shots.calls)
+    }
+
+
+    @Test fun f0bChecksAllLinesBeforeExposingAnyDecisionSummary() = runTest {
+        val shots = Shots()
+        val lines = listOf("결제 동의 안내", "0000", "1111", "2222", "3333").mapIndexed { index, text ->
+            OcrLine(text, ScreenBounds(100, 500 + index * 65, 900, 560 + index * 65))
+        }
+        val result = CaptureOcrPipeline(shots, OcrPort { lines }, { true }, { null }).analyze(imagePopup())
+        assertTrue(result is EvidenceOutcome.Blocked)
+        assertTrue(shots.frame!!.closed)
+    }
+
 }

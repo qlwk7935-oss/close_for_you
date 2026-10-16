@@ -7,6 +7,7 @@ import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withTimeout
+import kr.closeforyou.accessibility.PrivacyPolicy
 import kr.closeforyou.core.contract.CaptureCapability
 import kr.closeforyou.core.model.*
 
@@ -19,7 +20,7 @@ internal interface ScreenshotPort : CaptureCapability {
 internal fun interface OcrPort { suspend fun recognize(frame: CaptureFrame): List<OcrLine> }
 
 internal sealed interface EvidenceOutcome {
-    data class Ready(val analysis: PopupAnalysis, val issue: EvidenceIssue) : EvidenceOutcome
+    data class Ready(val analysis: PopupAnalysis, val issue: EvidenceIssue, val snapshot: PopupSnapshot) : EvidenceOutcome
     data class Blocked(val reason: PrivacyBlockReason, val issue: EvidenceIssue) : EvidenceOutcome
 }
 
@@ -35,9 +36,16 @@ internal class CaptureOcrPipeline(
         checkCurrent(snapshot)
         preflight(snapshot)?.let { return EvidenceOutcome.Blocked(it, EvidenceIssue.PRIVACY_BLOCKED) }
         val tree = treeTexts(snapshot)
+        val treeContent = tree.joinToString("\n") { it.text }
+        if (PrivacyPolicy.hasSensitiveText(treeContent) || PrivacyPolicy.hasUncertainText(treeContent)) {
+            return EvidenceOutcome.Blocked(PrivacyBlockReason.SENSITIVE_CONTENT, EvidenceIssue.PRIVACY_BLOCKED)
+        }
+        checkCurrent(snapshot)
+        // Known decision text requires only a fixed, non-executable summary, never a new capture.
+        DecisionEvidence.summarize(snapshot, tree)?.let { return it }
         fun partial(issue: EvidenceIssue) = EvidenceOutcome.Ready(
             PopupAnalysis(snapshot.token, texts = tree.toPersistentList(),
-                limitations = persistentSetOf(AnalysisLimit.INCOMPLETE_EVIDENCE, AnalysisLimit.IMAGE_MODEL_NOT_IMPLEMENTED)), issue,
+                limitations = persistentSetOf(AnalysisLimit.INCOMPLETE_EVIDENCE, AnalysisLimit.IMAGE_MODEL_NOT_IMPLEMENTED)), issue, snapshot,
         )
         screenshots.denial(snapshot.token)?.let { return partial(it) }
         val region = PopupRegionResolver.resolve(snapshot, screenshots.isolatedWindowCapture)
@@ -70,8 +78,9 @@ internal class CaptureOcrPipeline(
                 .distinctBy { Triple(it.source, it.text.trim(), it.bounds) }
                 .sortedWith(compareBy<ExtractedText> { it.bounds.top }.thenBy { it.bounds.left }.thenBy { it.source.ordinal })
             checkCurrent(snapshot)
+            DecisionEvidence.summarize(snapshot, combined)?.let { return it }
             return EvidenceOutcome.Ready(PopupAnalysis(snapshot.token, texts = combined.toPersistentList(),
-                limitations = persistentSetOf(AnalysisLimit.INCOMPLETE_EVIDENCE, AnalysisLimit.IMAGE_MODEL_NOT_IMPLEMENTED)), EvidenceIssue.NONE)
+                limitations = persistentSetOf(AnalysisLimit.INCOMPLETE_EVIDENCE, AnalysisLimit.IMAGE_MODEL_NOT_IMPLEMENTED)), EvidenceIssue.NONE, snapshot)
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (failure: EvidenceFailure) {
