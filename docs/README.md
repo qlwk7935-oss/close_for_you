@@ -10,6 +10,7 @@
 | [검증 실험 계획.md](검증%20실험%20계획.md) | 저장소에 있던 검증 계획 원문, 수정 없이 보존 |
 | [TEAM_INTEGRATION.md](TEAM_INTEGRATION.md) | 패키지 소유권, 최초 공통 계약, B·C·D 연동 방법과 Mock |
 | [DEVELOPMENT_STATUS.md](DEVELOPMENT_STATUS.md) | 구현·빌드·실기기 검증 상태, 담당자별 TODO와 시험 항목 |
+| [CAPTURE_OCR.md](CAPTURE_OCR.md) | A 2차 캡처·영역·한국어 OCR·F0-A/F0-B·자원 수명과 합성 데이터 기기 시험 |
 
 ## 최신 결정 우선순위
 

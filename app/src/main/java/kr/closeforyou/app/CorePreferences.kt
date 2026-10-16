@@ -12,6 +12,8 @@ data class CoreSettings(
     val consentGranted: Boolean = false,
     val paused: Boolean = true,
     val allowedPackages: Set<String> = emptySet(),
+    val captureConsentGranted: Boolean = false,
+    val captureAllowedPackages: Set<String> = emptySet(),
 ) {
     val collectionEnabled: Boolean get() = consentGranted && !paused
 }
@@ -39,7 +41,10 @@ class CorePreferences private constructor(context: Context) {
         preferences.edit {
             putBoolean(KEY_CONSENT, granted)
             // Revocation also clears app permissions and requires a new deliberate start.
-            if (!granted) putBoolean(KEY_PAUSED, true).remove(KEY_ALLOWED)
+            if (!granted) {
+                putBoolean(KEY_PAUSED, true).remove(KEY_ALLOWED)
+                putBoolean(KEY_CAPTURE_CONSENT, false).remove(KEY_CAPTURE_ALLOWED)
+            }
         }
         mutableState.value = readSettings()
     }
@@ -58,7 +63,28 @@ class CorePreferences private constructor(context: Context) {
     }
 
     fun removeAllowedPackage(packageName: String) {
-        preferences.edit { putStringSet(KEY_ALLOWED, currentSettings().allowedPackages - packageName) }
+        preferences.edit {
+            putStringSet(KEY_ALLOWED, currentSettings().allowedPackages - packageName)
+            putStringSet(KEY_CAPTURE_ALLOWED, currentSettings().captureAllowedPackages - packageName)
+        }
+        mutableState.value = readSettings()
+    }
+
+    fun updateCaptureConsent(granted: Boolean) {
+        preferences.edit {
+            putBoolean(KEY_CAPTURE_CONSENT, granted && currentSettings().consentGranted)
+            if (!granted) remove(KEY_CAPTURE_ALLOWED)
+        }
+        mutableState.value = readSettings()
+    }
+
+    fun setCaptureAllowed(packageName: String, allowed: Boolean) {
+        val settings = currentSettings()
+        if (allowed && (!settings.consentGranted || !settings.captureConsentGranted || packageName !in settings.allowedPackages)) return
+        preferences.edit {
+            putStringSet(KEY_CAPTURE_ALLOWED, if (allowed) settings.captureAllowedPackages + packageName
+                else settings.captureAllowedPackages - packageName)
+        }
         mutableState.value = readSettings()
     }
 
@@ -66,12 +92,16 @@ class CorePreferences private constructor(context: Context) {
         consentGranted = preferences.getBoolean(KEY_CONSENT, false),
         paused = preferences.getBoolean(KEY_PAUSED, true),
         allowedPackages = preferences.getStringSet(KEY_ALLOWED, emptySet()).orEmpty().toSet(),
+        captureConsentGranted = preferences.getBoolean(KEY_CAPTURE_CONSENT, false),
+        captureAllowedPackages = preferences.getStringSet(KEY_CAPTURE_ALLOWED, emptySet()).orEmpty().toSet(),
     )
 
     companion object {
         private const val KEY_CONSENT = "disclosure_consent_v1"
         private const val KEY_PAUSED = "collection_paused"
         private const val KEY_ALLOWED = "allowed_packages"
+        private const val KEY_CAPTURE_CONSENT = "capture_disclosure_consent_v1"
+        private const val KEY_CAPTURE_ALLOWED = "capture_allowed_packages"
         private val PACKAGE_NAME = Regex("[A-Za-z][A-Za-z0-9_]*(\\.[A-Za-z][A-Za-z0-9_]*)+")
         @Volatile private var instance: CorePreferences? = null
 

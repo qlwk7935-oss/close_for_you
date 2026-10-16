@@ -10,6 +10,11 @@ import kotlinx.collections.immutable.toPersistentSet
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.collect
 import kr.closeforyou.app.CorePreferences
+import kr.closeforyou.accessibility.capture.AndroidScreenshotManager
+import kr.closeforyou.accessibility.capture.CaptureOcrPipeline
+import kr.closeforyou.accessibility.capture.KoreanMlKitOcr
+import kr.closeforyou.accessibility.capture.EvidenceOutcome
+import kr.closeforyou.accessibility.capture.EvidenceIssue
 import kr.closeforyou.core.model.*
 
 /** A owns nodes, privacy preflight and candidate detection; no external action is performed. */
@@ -19,6 +24,8 @@ class CloseForYouAccessibilityService : AccessibilityService() {
     private val collector = AndroidSnapshotCollector()
     private val detector = PopupCandidateDetector()
     private var pendingCapture: Job? = null
+    private var evidenceJob: Job? = null
+    private lateinit var pipeline: CaptureOcrPipeline
     private var expiry: Job? = null
     private var settingsObserver: Job? = null
     private var touching = false
@@ -40,6 +47,9 @@ class CloseForYouAccessibilityService : AccessibilityService() {
         inputMethodPackages = (getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager)
             .inputMethodList.mapTo(mutableSetOf()) { it.packageName }
         AccessibilityRuntime.connect()
+        val screenshots = AndroidScreenshotManager(this, preferences, ::isCurrent) { connected && !touching }
+        AccessibilityRuntime.attachCaptureCapability(screenshots)
+        pipeline = CaptureOcrPipeline(screenshots, KoreanMlKitOcr(), ::isCurrent, ::verifyScreen)
         invalidate(clearBaseline = true)
         settingsObserver = serviceScope.launch {
             preferences.state.collect {
@@ -104,13 +114,57 @@ class CloseForYouAccessibilityService : AccessibilityService() {
                 if (!freshness.isCurrent(epoch) || touching) return
                 val signals = detector.detect(result.frame)
                 if (signals.isEmpty()) return
-                AccessibilityRuntime.publish(result.snapshot,
-                    PopupDetection(result.snapshot.token, signals.toPersistentSet(), requiresUserReview = true))
+                AccessibilityRuntime.begin(result.snapshot.token)
                 // Replace the transient event with Invalidated even if a collector stalled.
                 expiry = serviceScope.launch {
                     delay(SNAPSHOT_TTL_MILLIS)
                     if (freshness.isCurrent(epoch)) invalidate(clearBaseline = false)
                 }
+                evidenceJob = serviceScope.launch {
+                    try {
+                        when (val evidence = pipeline.analyze(result.snapshot)) {
+                            is EvidenceOutcome.Ready -> if (isCurrent(result.snapshot.token)) {
+                                AccessibilityRuntime.recordEvidenceIssue(evidence.issue)
+                                AccessibilityRuntime.publish(result.snapshot,
+                                    PopupDetection(result.snapshot.token, signals.toPersistentSet(), requiresUserReview = true),
+                                    evidence.analysis)
+                            }
+                            is EvidenceOutcome.Blocked -> if (isCurrent(result.snapshot.token)) {
+                                AccessibilityRuntime.recordEvidenceIssue(evidence.issue)
+                                AccessibilityRuntime.block(evidence.reason, epoch)
+                            }
+                        }
+                    } catch (cancelled: CancellationException) {
+                        throw cancelled
+                    } catch (_: Exception) {
+                        if (isCurrent(result.snapshot.token)) {
+                            AccessibilityRuntime.recordEvidenceIssue(EvidenceIssue.PRIVACY_UNCERTAIN)
+                            AccessibilityRuntime.block(PrivacyBlockReason.UNREADABLE_TREE, epoch)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private fun isCurrent(token: SnapshotToken): Boolean = connected && !touching &&
+        freshness.isCurrent(token.screenVersion) && AccessibilityRuntime.currentToken() == token
+
+    /** F0-A again before/after capture and after async OCR, using fresh framework nodes. */
+    private fun verifyScreen(snapshot: PopupSnapshot): PrivacyBlockReason? {
+        if (!isCurrent(snapshot.token)) return PrivacyBlockReason.UNREADABLE_TREE
+        val s = preferences.currentSettings()
+        val isolation = s.captureConsentGranted && snapshot.token.packageName in s.captureAllowedPackages
+        return when (val fresh = collector.capture(this, snapshot.token.captureEpoch, snapshot.trigger,
+            ::packageBlock, requireCaptureIsolation = isolation)) {
+            is CollectionResult.Blocked -> fresh.reason
+            is CollectionResult.Ready -> {
+                val a = snapshot.token
+                val b = fresh.snapshot.token
+                if (a.packageName != b.packageName || a.windowId != b.windowId ||
+                    a.structureDigest != b.structureDigest || a.contentDigest != b.contentDigest ||
+                    snapshot.screenBounds != fresh.snapshot.screenBounds ||
+                    snapshot.windows.toSet() != fresh.snapshot.windows.toSet()) PrivacyBlockReason.UNREADABLE_TREE else null
             }
         }
     }
@@ -123,6 +177,8 @@ class CloseForYouAccessibilityService : AccessibilityService() {
     private fun invalidate(clearBaseline: Boolean): Long {
         pendingCapture?.cancel()
         pendingCapture = null
+        evidenceJob?.cancel()
+        evidenceJob = null
         expiry?.cancel()
         expiry = null
         if (clearBaseline) detector.clear()

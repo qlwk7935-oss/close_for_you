@@ -3,6 +3,8 @@ package kr.closeforyou.accessibility
 import android.accessibilityservice.AccessibilityService
 import android.graphics.Rect
 import android.os.SystemClock
+import android.view.Display
+import android.view.WindowManager
 import android.view.accessibility.AccessibilityNodeInfo
 import android.view.accessibility.AccessibilityWindowInfo
 import kotlinx.collections.immutable.toPersistentList
@@ -30,6 +32,7 @@ internal class AndroidSnapshotCollector {
         epoch: Long,
         trigger: PopupTrigger,
         packageGate: (String) -> PrivacyBlockReason?,
+        requireCaptureIsolation: Boolean = false,
     ): CollectionResult {
         val roots = mutableListOf<AccessibilityNodeInfo>()
         val androidWindows = mutableListOf<AccessibilityWindowInfo>()
@@ -41,6 +44,9 @@ internal class AndroidSnapshotCollector {
                 ?: return CollectionResult.Blocked(PrivacyBlockReason.UNREADABLE_TREE)
             packageGate(packageName)?.let { return CollectionResult.Blocked(it) }
             androidWindows += service.windows
+            if (requireCaptureIsolation && androidWindows.any { it.displayId != Display.DEFAULT_DISPLAY }) {
+                return CollectionResult.Blocked(PrivacyBlockReason.SYSTEM_WINDOW)
+            }
             if (androidWindows.isEmpty() || androidWindows.size > MAX_WINDOWS) {
                 return CollectionResult.Blocked(PrivacyBlockReason.UNREADABLE_TREE)
             }
@@ -62,7 +68,7 @@ internal class AndroidSnapshotCollector {
                 roots += other
                 val otherPackage = other.packageName?.toString()
                     ?: return CollectionResult.Blocked(PrivacyBlockReason.UNREADABLE_TREE)
-                if (otherPackage != packageName && (window.isActive || window.isFocused)) {
+                if (otherPackage != packageName && (requireCaptureIsolation || window.isActive || window.isFocused)) {
                     return CollectionResult.Blocked(PrivacyBlockReason.SYSTEM_WINDOW)
                 }
             }
@@ -108,7 +114,7 @@ internal class AndroidSnapshotCollector {
                         !node.paneTitle.isNullOrEmpty(),
                 )
             }
-            val screen = service.resources.displayMetrics.let { ScreenBounds(0, 0, it.widthPixels, it.heightPixels) }
+            val screen = service.getSystemService(WindowManager::class.java).maximumWindowMetrics.bounds.toScreenBounds()
             val structureDigest = structure.digest().hex()
             val token = SnapshotToken(epoch, root.windowId, packageName, UUID.randomUUID().toString(),
                 structureDigest, content.digest().hex(), epoch)
