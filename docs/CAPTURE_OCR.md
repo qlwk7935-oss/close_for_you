@@ -92,13 +92,13 @@ F0-B는 F0-A와 독립된 **텍스트 기반 보호 휴리스틱**입니다. 비
 | OCR 오류·시간 초과 | 가상 시간 timeout·최신 보호 재검사 | native Task 종료/메모리 수명, 미실시 |
 | 한도·메모리 | 단일 슬롯·빈도·10분 이동창 한도/자동 회복 | Bitmap lease 계측, 버퍼 치수/포맷·회전·실제 피크, 미실시 |
 
-이 환경은 연결된 Android 기기와 실행 가능한 에뮬레이터/KVM이 없어 기기 시험을 실행하지 않았습니다. 계측 소스/APK가 존재하거나 컴파일된 것을 실제 OCR/capture 성공으로 표시하지 않습니다.
+이 환경은 연결된 Android 기기와 실행 가능한 에뮬레이터/KVM이 없어 기기 시험을 실행하지 않았습니다. 계측 소스/APK가 존재하거나 컴파일된 것을 실제 OCR/capture 성공으로 표시하지 않습니다. 독립 합성 호스트의 Kotlin 런타임 패키징 수정과 Windows 설치·실행 명령은 [ANDROID_TEST_RUNTIME.md](ANDROID_TEST_RUNTIME.md)를 먼저 확인합니다.
 
 ## 합성 데이터 기기 검증 절차
 
 실 계정·연락처·메신저·사진이 없는 초기화한 시험 기기/에뮬레이터에서만 합니다. API 30 또는 33과 API 34 또는 35를 구분해 기록합니다.
 
-1. `./gradlew --no-daemon :app:assembleDebug :app:testDebugUnitTest :app:lintDebug :app:assembleDebugAndroidTest` 실행 후 main APK와 `app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk` 설치.
+1. `./gradlew --no-daemon :app:assembleDebug :app:testDebugUnitTest :app:lintDebug :app:assembleDebugAndroidTest` 실행 후 본 앱, `app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk`, `capture-test-host/build/outputs/apk/debug/capture-test-host-debug.apk` 세 APK를 `adb install -r -t`로 각각 설치. assembleDebugAndroidTest는 독립 호스트도 빌드하지만 installDebugAndroidTest는 호스트를 설치하지 않습니다.
 2. 캡처 서비스 시험 전, 번들 모델/좌표/Bitmap lease 계측만 실행:
 
    ```bash
@@ -111,10 +111,10 @@ F0-B는 F0-A와 독립된 **텍스트 기반 보호 휴리스틱**입니다. 비
    adb shell am instrument -w -e class kr.closeforyou.accessibility.capture.ServiceCaptureOptInTest -e captureOcrService true kr.closeforyou.test/androidx.test.runner.AndroidJUnitRunner
    ```
 
-4. 수동 관찰은 앱에서 `kr.closeforyou.test`를 분석 허용하고, 캡처 설명 별도 동의와 해당 앱의 이미지 글자 읽기 허용을 켜고 분석을 시작합니다. 다음 test-APK-only Activity를 열면 합성 한국어 이미지 Dialog가 나타납니다.
+4. 수동 관찰은 앱에서 `kr.closeforyou.capturetest`를 분석 허용하고, 캡처 설명 별도 동의와 해당 앱의 이미지 글자 읽기 허용을 켜고 분석을 시작합니다. 다음 debug/testOnly 독립 호스트 Activity를 열면 합성 한국어 이미지 Dialog가 나타납니다.
 
    ```bash
-   adb shell am start -n kr.closeforyou.test/kr.closeforyou.capturetest.SyntheticPopupActivity
+   adb shell am start -W -n kr.closeforyou.capturetest/kr.closeforyou.capturetest.SyntheticPopupActivity
    ```
 
 5. `Candidate` → `AccessibilityRuntime.extract`의 OCR source/화면 좌표를 디버거에서 확인합니다. 원문 로그/스크린샷 파일을 만들지 않습니다. 자동 캡처 횟수는 최근 완료 개수·코드로만 관찰합니다. APK 실행 권한·설정·제조사별 차이를 기록합니다.

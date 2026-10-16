@@ -52,3 +52,9 @@ dependencies {
     androidTestImplementation("androidx.test.ext:junit:1.2.1")
     androidTestImplementation("androidx.test:runner:1.6.2")
 }
+
+// The external synthetic host must be a standalone APK, never an app dependency.
+// Building instrumentation fixtures also builds the separately installable debug host.
+tasks.matching { it.name == "assembleDebugAndroidTest" }.configureEach {
+    dependsOn(":capture-test-host:assembleDebug")
+}

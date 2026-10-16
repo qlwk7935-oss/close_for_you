@@ -38,3 +38,6 @@ Android SDK 경로는 로컬 `local.properties`의 `sdk.dir` 또는 `ANDROID_HOM
 ## 병렬 개발
 
 단일 `app` 모듈 안에서 패키지 소유권을 나누며, 공통 계약은 `core/model`과 `core/contract`에 둡니다. A 2차 `feature/core-capture-ocr`, B `feature/decision`, C `feature/ui-voice`, D `feature/database-qa`에서 개발하고 Pull Request로 검토합니다. `main`에 직접 기능을 병합하지 않습니다. 최초 계약과 Mock 사용 예시는 [연동 문서](docs/TEAM_INTEGRATION.md)를 참고하세요.
+
+
+합성 팝업 시험 화면은 별도 debug/testOnly `:capture-test-host` 앱입니다. 본 앱과 계측 APK에 포함되지 않으며 별도 설치가 필요합니다. Kotlin 독립 프로세스 런타임 수정, 새 실행 패키지 `kr.closeforyou.capturetest`, Windows 명령은 [Android 테스트 런타임 안내](docs/ANDROID_TEST_RUNTIME.md)를 따르세요. 기존 kr.closeforyou.test/SyntheticPopupActivity 실행 명령은 사용하지 않습니다.

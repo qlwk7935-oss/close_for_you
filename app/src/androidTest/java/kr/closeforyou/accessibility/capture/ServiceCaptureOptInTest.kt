@@ -1,7 +1,5 @@
 package kr.closeforyou.accessibility.capture
 
-import android.content.ComponentName
-import android.content.Intent
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import kotlinx.coroutines.CoroutineStart
@@ -28,9 +26,9 @@ class ServiceCaptureOptInTest {
         val prefs = CorePreferences.get(instrumentation.targetContext)
         assumeTrue(!prefs.currentSettings().consentGranted && prefs.currentSettings().allowedPackages.isEmpty())
         // Required for coexistence with a separately enabled AccessibilityService.
-        instrumentation.getUiAutomation(android.app.UiAutomation.FLAG_DONT_SUPPRESS_ACCESSIBILITY_SERVICES)
+        val automation = instrumentation.getUiAutomation(android.app.UiAutomation.FLAG_DONT_SUPPRESS_ACCESSIBILITY_SERVICES)
         withTimeout(10_000) { AccessibilityRuntime.status.first { it.connected } }
-        val host = instrumentation.context.packageName
+        val host = SyntheticHost.PACKAGE_NAME
         try {
             prefs.updateConsent(true)
             assertTrue(prefs.addAllowedPackage(host))
@@ -46,10 +44,7 @@ class ServiceCaptureOptInTest {
                     AccessibilityRuntime.extract(event.snapshot)
                 }
             }
-            instrumentation.context.startActivity(Intent().apply {
-                component = ComponentName(host, "kr.closeforyou.capturetest.SyntheticPopupActivity")
-                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            })
+            automation.launchSyntheticHost()
             val analysis = result.await()
             assertTrue(analysis.texts.any { it.source == TextSource.OCR && it.text.contains("점검") })
         } finally {
