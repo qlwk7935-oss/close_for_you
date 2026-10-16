@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- API 30 base. Keep events/capabilities in sync with xml-v31/. -->
+<accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
+    android:accessibilityEventTypes="typeWindowStateChanged|typeWindowsChanged|typeWindowContentChanged|typeViewScrolled|typeViewClicked|typeViewLongClicked|typeViewTextChanged|typeTouchInteractionStart|typeTouchInteractionEnd|typeTouchExplorationGestureStart|typeTouchExplorationGestureEnd|typeViewAccessibilityFocused|typeViewAccessibilityFocusCleared|typeViewFocused|typeViewTextSelectionChanged"
+    android:accessibilityFeedbackType="feedbackGeneric"
+    android:accessibilityFlags="flagReportViewIds|flagRetrieveInteractiveWindows"
+    android:canPerformGestures="false"
+    android:canRetrieveWindowContent="true"
+    android:canTakeScreenshot="false"
+    android:description="@string/accessibility_service_description"
+    android:notificationTimeout="0"
+    android:settingsActivity="kr.closeforyou.app.MainActivity" />

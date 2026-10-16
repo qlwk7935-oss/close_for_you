@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">닫아줄게</string>
+    <string name="accessibility_service_description">시각장애인 TalkBack 사용자의 팝업 접근을 돕습니다. 동의하고 개별 허용한 앱의 창 변경과 접근성 노드만 분석합니다. 현재 개발판은 팝업 후보 수집만 지원하며 다른 앱을 자동으로 누르지 않습니다. 앱에서 언제든 분석을 일시정지하거나 동의를 철회할 수 있습니다.</string>
+</resources>
