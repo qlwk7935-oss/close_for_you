@@ -46,6 +46,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import kr.closeforyou.accessibility.AccessibilityRuntime
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -62,6 +63,7 @@ class MainActivity : ComponentActivity() {
 @Composable
 private fun CoreSetupScreen(context: Context, preferences: CorePreferences) {
     val settings by preferences.state.collectAsStateWithLifecycle()
+    val coreStatus by AccessibilityRuntime.status.collectAsStateWithLifecycle()
     var serviceEnabled by remember { mutableStateOf(isServiceEnabled(context)) }
     var packageInput by rememberSaveable { mutableStateOf("") }
     var message by rememberSaveable { mutableStateOf<String?>(null) }
@@ -92,7 +94,7 @@ private fun CoreSetupScreen(context: Context, preferences: CorePreferences) {
                 "접근성 서비스를 켜고 아래 수집에 동의하면, 개별 허용한 앱에서 창 변경과 접근성 노드의 글자, 버튼 라벨, 클릭 가능 여부, 화면상 위치를 임시로 읽습니다. 팝업 후보와 민감 화면 차단을 확인하는 데 사용합니다.",
             )
             Text(
-                "화면 원문은 일반 로그에 기록하지 않으며 서버로 전송하거나 영구 저장하지 않습니다. 이 개발판은 화면 캡처를 하지 않습니다. 비밀번호와 민감 화면은 분석을 중단하지만 모든 민감 화면을 알아낸다고 보장할 수 없습니다.",
+                "화면 원문과 이미지는 일반 로그에 기록하지 않으며 서버로 전송하거나 영구 저장하지 않습니다. 이미지 글자 읽기는 아래에서 별도로 동의한 앱에서만 실행합니다. 비밀번호와 민감 화면은 분석을 중단하지만 모든 민감 화면을 알아낸다고 보장할 수 없습니다.",
             )
             Text("언제든 일시정지하거나 동의를 철회할 수 있습니다. 서비스 활성화만으로 앱 분석을 허용하지 않습니다.")
             Row(
@@ -143,9 +145,31 @@ private fun CoreSetupScreen(context: Context, preferences: CorePreferences) {
                 },
             ) { Text("이 앱 분석 허용") }
             if (settings.allowedPackages.isEmpty()) Text("허용한 앱이 없습니다.")
+            Text("이미지 팝업의 한국어 글자 읽기", style = MaterialTheme.typography.titleLarge,
+                modifier = Modifier.semantics { heading() })
+            Text("별도 동의 후 아래 앱별로 켤 수 있습니다. 영역을 확인할 수 있는 팝업에서 필요한 경우에만 화면을 캡처해 기기 안에서 글자를 읽습니다. Android 11~13은 전체 화면을 잠시 캡처하므로 팝업 밖 개인정보가 메모리에 포함될 수 있습니다. 팝업 영역으로 자른 뒤 나머지는 폐기하며 이미지나 글자를 저장·전송하지 않습니다.")
+            Text("보안 화면, 불명확한 영역, 민감 징후, 읽기 실패에서는 이미지 분석을 보류합니다. 화면 변경이나 조작 시 이전 결과를 취소합니다. 한국어 인식 정확도와 실제 캡처는 실기기 미검증입니다.")
+            Row(
+                modifier = Modifier.fillMaxWidth().toggleable(
+                    value = settings.captureConsentGranted, role = Role.Checkbox,
+                    enabled = settings.consentGranted, onValueChange = preferences::updateCaptureConsent,
+                ).padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Checkbox(checked = settings.captureConsentGranted, onCheckedChange = null, enabled = settings.consentGranted)
+                Text("위 설명을 확인하고 허용 앱의 임시 화면 캡처와 기기 내 한국어 글자 분석에 동의합니다.")
+            }
             settings.allowedPackages.sorted().forEach { allowedPackage ->
                 Column {
                     Text(allowedPackage)
+                    Row(modifier = Modifier.fillMaxWidth().toggleable(
+                        value = allowedPackage in settings.captureAllowedPackages,
+                        role = Role.Checkbox, enabled = settings.captureConsentGranted,
+                        onValueChange = { preferences.setCaptureAllowed(allowedPackage, it) },
+                    ).padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Checkbox(checked = allowedPackage in settings.captureAllowedPackages,
+                            onCheckedChange = null, enabled = settings.captureConsentGranted)
+                        Text("$allowedPackage 이미지 팝업 글자 읽기 허용")
+                    }
                     OutlinedButton(onClick = { preferences.removeAllowedPackage(allowedPackage) }) {
                         Text("$allowedPackage 허용 취소")
                     }
@@ -165,6 +189,7 @@ private fun CoreSetupScreen(context: Context, preferences: CorePreferences) {
                 enabled = !settings.paused || (settings.consentGranted && settings.allowedPackages.isNotEmpty() && serviceEnabled),
                 onClick = { preferences.setPaused(!settings.paused) },
             ) { Text(if (settings.paused) "허용 앱 분석 시작" else "화면 분석 일시정지") }
+            Text("최근 완료된 분석에서 읽은 이미지 글자 영역: ${coreStatus.lastCompletedOcrTextCount}개. 0개이면 이미지 글자가 없거나 분석하지 못한 상태일 수 있습니다.")
             message?.let {
                 Text(it, modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite })
             }

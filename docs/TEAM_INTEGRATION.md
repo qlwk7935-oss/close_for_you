@@ -8,7 +8,7 @@
 
 | 담당 | 브랜치 | 패키지 | 책임 |
 |---|---|---|---|
-| A 우진 | `feature/core` | `accessibility`, `app` | 서비스·노드 소유권, 보호, 후보 감지, 토큰, 최초 설정 UI·전체 조립 |
+| A 우진 | 1차 `feature/core` 병합, 2차 `feature/core-capture-ocr` | `accessibility`, `app` | 서비스·노드/캡처 소유권, 보호, OCR, 후보 감지, 토큰, 동의 설정·전체 조립 |
 | 공동 계약/A 제안 | PR로 합의 | `core/model`, `core/contract` | Android 객체가 없는 모델과 포트 |
 | B 준영 | `feature/decision` | `decision` | 분류·안전 판단·대상 후보, A 행동 게이트를 통한 실행 요청 |
 | C 재호 | `feature/ui-voice` | `ui/voice` | TalkBack 안내·사용자 선택·누르고 말하기 명령, 추후 설정 UI |
@@ -41,8 +41,8 @@
 | 담당 | 포트 | 연동 방식 |
 |---|---|---|
 | A → 전원 | `SnapshotSource` | `events: Flow<PopupEvent>` 수집, `currentToken()`으로 현재 유효성 확인 |
-| A | `EvidenceExtractor` | 노드 근거 우선, OCR은 후속 구현. 노드·비트맵을 경계 밖으로 전달하지 않음 |
-| A | `CaptureCapability` | 현재 캡처는 `NOT_IMPLEMENTED`; 가용성 선언이 캡처 허가는 아님 |
+| A | `EvidenceExtractor` | 2차 `AccessibilityRuntime.extract`: 완료한 tree/OCR 근거만 제공. 노드·비트맵을 경계 밖으로 전달하지 않음 |
+| A | `CaptureCapability` | 2차 Runtime에서 최신 토큰·별도 허락·서비스 능력·예산 확인. 가용성이 캡처나 자동 실행의 허가는 아님 |
 | B | `PopupClassifier` | 분석 결과에서 표시 분류만 반환. 클릭·제스처·포커스 변경 금지 |
 | B | `ActionPolicy` | 현재 토큰·사용자 선택·일치 규칙·사용자 조작·안내 가용성을 확인해 결정 |
 | A 게이트 / B 요청 | `ActionExecutor` | 현재 화면을 다시 읽어 1회 실행할 미래 경계. 현재 Mock은 아무 행동도 하지 않음 |
@@ -57,6 +57,18 @@
 실제 A 포트는 `accessibility/AccessibilityRuntime`입니다. `SnapshotSource`로 주입해 `events`를 구독합니다. `status`는 연결 여부·세대·후보 수·차단 코드만 제공하고 화면 원문은 포함하지 않습니다. 서비스는 시작·설정 변경·앱/화면/스크롤/포커스/사용자 조작·해제 때 토큰을 무효화합니다. 현재 후보 TTL은 5초이고 스트림은 replay 0, 버퍼 1입니다. 느린 소비자는 중간 이벤트를 놓칠 수 있으므로 `currentToken()` 확인과 실제 실행 전 재검사가 필요합니다.
 
 비동기 소비자는 `collectLatest`로 이전 작업을 취소하고, `Blocked`/`Invalidated`를 받으면 진행 중 분석·안내·미실행 요청을 취소하고 참조를 놓습니다. 구독 해제·예외·설정 철회·앱 전환에서도 같은 원칙을 지킵니다. `currentToken()` 일치는 추가 검사일 뿐입니다. **토큰 비교만으로 실제 화면 재검사·보호 검사·사용자 허락을 대체하지 않습니다.**
+
+## A 2차 캡처/OCR 연동
+
+공통 데이터 모델·인터페이스·enum의 시그니처는 유지했습니다. 실제 Runtime을 `SnapshotSource`, `EvidenceExtractor`, `CaptureCapability`로 주입합니다. `IntegrationExample.collectBDecisionsExample`의 `source`와 `extractor`에 모두 `AccessibilityRuntime`을 전달할 수 있습니다. Mock은 계속 시험 전용입니다.
+
+캡처는 기존 동의와 별도인 캡처 설명 동의·앱별 허용, 신뢰 가능한 팝업 영역과 OCR 필요성이 있어야 합니다. F0-A를 다시 확인하고 F0-B를 마치기 전 외부 Candidate를 발행하지 않습니다. 민감 징후는 Blocked, 읽기 실패/빈 OCR/불명 영역은 최신 F0-A를 통과한 트리 근거만 제공합니다. `INCOMPLETE_EVIDENCE`를 자동 허가로 승격하지 않습니다.
+
+완료 분석 DTO 하나를 후보 시작부터 5초 TTL 안에서만 임시 보유하고 `extract`는 이를 반환합니다. OCR 후 TTL을 새로 연장하지 않으므로 B가 사용할 남은 시간은 5초보다 짧을 수 있습니다. 무효화/차단/서비스 해제 시 참조를 즉시 놓습니다. 캡처/Task 취소와 메모리 수명·지원 제한은 [캡처/OCR 문서](CAPTURE_OCR.md)를 따릅니다. `status.lastEvidenceIssue`는 고정 오류 코드이며 원문이나 이미지를 로그로 요청하지 않습니다.
+
+OCR 출처는 `OCR`, 점수는 현재 `null`입니다. 같은 출처·위치·내용 중복만 정리하며 tree/OCR이 일치해도 두 출처를 보존합니다. OCR 본문만으로 광고·안전한 버튼·자동 허가를 판단하지 않습니다. F0-A/F0-B 통과는 개인정보 부재의 증명이 아닙니다.
+
+`SnapshotToken.contentDigest`는 기존대로 **접근성 트리 본문**의 세션 지문이며 이미지 픽셀/OCR 본문 지문이 아닙니다. B·D는 이미지 공지의 날짜·금액·본문 동일성을 이 값만으로 판단하거나 반복 규칙을 재사용하면 안 됩니다. D의 실제 `PopupFingerprintProvider` 구현에는 `EvidenceExtractor`를 주입해 현재 F0-B 완료 분석을 읽고, OCR 포함 중요 본문을 기기 내부 키로 별도 결박해야 합니다. 현재 OCR을 얻거나 재검증하지 못하면 이미지 팝업의 반복 자동화를 금지합니다. 이 PR은 그 저장·자동화 엔진을 구현하지 않습니다.
 
 ## B: 분류·안전 판단
 
@@ -136,3 +148,16 @@ check(repository.findExact(rule.key, nowEpochMillis = 2_000L) == null)
 ## PR 전 확인
 
 담당 브랜치에서 `./gradlew :app:assembleDebug :app:testDebugUnitTest :app:lintDebug`를 실행하고 변경·검증·한계와 공통 계약 변경 여부를 PR에 기록합니다. 빌드 실패를 해결한 뒤 리뷰를 요청합니다. 실기기에서 확인하지 않은 기능은 미검증으로 적고 단위 시험 결과와 구분합니다. `main`에는 직접 병합하지 않습니다.
+
+
+## PR #2 검토 수정: 중요한 결정의 최소 근거
+
+공통 DTO/포트 시그니처는 유지합니다. 일반 결제·구매·구독·동의·권한·삭제 요청은 해당 단어만으로 F0-A 전체 차단하지 않습니다. 비밀번호/입력란/계좌·카드/인증번호/개인 필드 등은 계속 보호하며, F0-A는 캡처 전 트리, F0-B는 캡처 후 OCR 전체에 각각 적용합니다. 어느 한 검사의 통과가 다른 검사를 대체하지 않습니다.
+
+보호를 통과한 중요한 결정 문구는 원문 대신 고정 요약(예: `결제 선택 필요`)만 `PopupAnalysis.texts`로 전달합니다. `source`/좌표는 원래 근거, confidence=null이고 문구는 정확한 전사가 아닙니다. 분석은 UNKNOWN/INCOMPLETE_EVIDENCE, closeCandidates는 비어 있습니다. 공개 Candidate의 snapshot.nodes도 빈 목록입니다. 토큰·창 좌표는 유지하므로 기존 `extract(candidate.snapshot)` 호출과 무효화 처리는 같습니다. 트리에서 이미 알 수 있는 결정은 캡처하지 않으며, 이미지에서 발견한 결정은 F0-B가 완료되어야 요약합니다. A 상태 코드 `DECISION_SUMMARY_ONLY`가 추가됐으며 공통 모델 enum은 변경하지 않았습니다.
+
+- B: 고정 결정 근거를 USER_DECISION으로 분류할 엔진은 B가 구현합니다. UNKNOWN을 안전으로 해석하지 않으며 결제·구매·동의·권한·구독·삭제 자동 실행 금지는 기억 규칙/음성 요청과 무관하게 유지합니다. 요약에는 실행 가능한 노드가 없습니다.
+- C: `EvidenceExtractor`의 고정 요약으로 부분 안내를 구성합니다. 원문 전체·가격·버튼 의미를 읽었다고 표현하지 않습니다. 실제 음성 UI는 여전히 C의 TODO입니다.
+- D: 요약은 원문/동일 팝업 지문이 아니며 반복 자동화 규칙으로 승격하지 않습니다. 기존의 OCR 포함 중요 본문 결박·현재 화면 재검사 요구를 유지합니다.
+
+캡처 예산은 프로세스 누적 상한에서 **최근 10분 30회, 시간 경과 시 자동 회복**으로 변경했습니다. 최소 2초·최근 1분 6회·동시 1개·동의/앱 허용 검사는 유지합니다. 상세 예제와 검증 절차는 [CAPTURE_OCR.md](CAPTURE_OCR.md)를 따릅니다.

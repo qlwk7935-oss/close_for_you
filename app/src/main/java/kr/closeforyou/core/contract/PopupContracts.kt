@@ -22,7 +22,7 @@ interface EvidenceExtractor {
     suspend fun extract(snapshot: PopupSnapshot): PopupAnalysis
 }
 
-/** A: capture/OCR remain explicit, denied capabilities until F0-B is implemented and verified. */
+/** A: availability is checked per token, consent, app and service capability; never authorizes an action. */
 enum class CaptureAvailability { NOT_IMPLEMENTED, PRIVACY_BLOCKED, UNSUPPORTED_API, AVAILABLE }
 interface CaptureCapability {
     fun availability(token: SnapshotToken): CaptureAvailability
