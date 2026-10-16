@@ -52,6 +52,7 @@ internal class AndroidScreenshotManager(
     private val current: (SnapshotToken) -> Boolean,
     private val connected: () -> Boolean,
 ) : ScreenshotPort {
+    override val isolatedWindowCapture: Boolean get() = Build.VERSION.SDK_INT >= 34
     override fun availability(token: SnapshotToken): CaptureAvailability =
         if (denial(token) == null) CaptureAvailability.AVAILABLE else CaptureAvailability.PRIVACY_BLOCKED
 
@@ -73,7 +74,7 @@ internal class AndroidScreenshotManager(
 
     override suspend fun capture(snapshot: PopupSnapshot, region: CaptureRegion): CaptureFrame {
         denial(snapshot.token)?.let { throw EvidenceFailure(it) }
-        if (PopupRegionResolver.resolve(snapshot) != region) throw EvidenceFailure(EvidenceIssue.REGION_UNCERTAIN)
+        if (PopupRegionResolver.resolve(snapshot, isolatedWindowCapture) != region) throw EvidenceFailure(EvidenceIssue.REGION_UNCERTAIN)
         val requestedSource = if (Build.VERSION.SDK_INT >= 34) region.window.bounds else snapshot.screenBounds
         if (PopupRegionResolver.area(requestedSource) > MAX_SOURCE_PIXELS ||
             PopupRegionResolver.area(region.bounds) > MAX_ROI_PIXELS) throw EvidenceFailure(EvidenceIssue.MEMORY_LIMIT)

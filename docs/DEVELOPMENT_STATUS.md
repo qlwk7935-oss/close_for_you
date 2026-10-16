@@ -48,12 +48,12 @@ A 2차는 PR #1 병합 후 최신 `main`(`f52be56`)에서 만든 `feature/core-c
 |---|---|
 | 환경 | JDK 17.0.20.1, Gradle 8.11.1, Android SDK 35 / Build Tools 35.0.0 |
 | 필수 명령 | `./gradlew --no-daemon :app:assembleDebug :app:testDebugUnitTest :app:lintDebug` |
-| 최종 결과 | **BUILD SUCCESSFUL in 56s**. 필수 명령 실제 실행, JVM 시험 42개 통과(실패/오류/건너뜀 0), Lint `No issues found` (오류/경고 0) |
+| 최종 결과 | **BUILD SUCCESSFUL in 57s**. 필수 명령 실제 실행, JVM 시험 43개 통과(실패/오류/건너뜀 0), Lint `No issues found` (오류/경고 0) |
 | 계측 APK | `:app:assembleDebugAndroidTest` 추가 실행 성공. 합성 OCR/수명 3개 및 명시적 opt-in 서비스 캡처 1개의 계측 테스트 소스·APK 컴파일 확인, 실제 실행 0개 |
 | 기기 상태 | 연결된 Android 기기 없음, 실행 가능한 emulator/KVM 없음. 실제 캡처·모델 추론·TalkBack 시험 미실시 |
 | 외부 계약 | B/C/D 공통 모델·메서드·enum 시그니처 변경 없음. `PopupContracts.kt`는 설명 주석만 갱신 |
 
-2차 신규 JVM 시험 22개와 기존 20개를 함께 실행했습니다. APK 안의 한국어 `Kore_ctc` 모델/native OCR 라이브러리 포함, 병합 매니페스트의 인터넷/마이크/일반 오버레이 권한 없음, 버전별 메타데이터의 캡처 능력 활성화·제스처 비활성화도 확인했습니다. 캡처/글자의 파일 저장·원문 로그·외부 행동 호출이 자체 production 소스에 없음을 정적으로 점검했습니다. 초기 Lint 경고 2건은 SDK 35 callback IntDef에서 누락된 secure-window 코드를 별도 API 34+ 분기로 처리하고 Bitmap KTX 접근을 적용하여 해소했습니다. 최초 전체 빌드의 ML Kit native 라이브러리 디버그 심볼 미제거 안내는 라이브러리를 그대로 패키징한다는 뜻이며, 빌드 실패는 없었습니다.
+2차 신규 JVM 시험 23개와 기존 20개를 함께 실행했습니다. APK 안의 한국어 `Kore_ctc` 모델/native OCR 라이브러리 포함, 병합 매니페스트의 인터넷/마이크/일반 오버레이 권한 없음, 버전별 메타데이터의 캡처 능력 활성화·제스처 비활성화도 확인했습니다. 캡처/글자의 파일 저장·원문 로그·외부 행동 호출이 자체 production 소스에 없음을 정적으로 점검했습니다. 초기 Lint 경고 2건은 SDK 35 callback IntDef에서 누락된 secure-window 코드를 별도 API 34+ 분기로 처리하고 Bitmap KTX 접근을 적용하여 해소했습니다. 최초 전체 빌드의 ML Kit native 라이브러리 디버그 심볼 미제거 안내는 라이브러리를 그대로 패키징한다는 뜻이며, 빌드 실패는 없었습니다.
 
 ## Android API·권한
 

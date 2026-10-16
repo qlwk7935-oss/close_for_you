@@ -19,7 +19,7 @@ internal data class CaptureRegion(val window: WindowSnapshot, val bounds: Screen
 /** Only bounded application windows or explicit dialog nodes establish an OCR region.
  * A generic newly added container/full-screen transition is deliberately insufficient. */
 internal object PopupRegionResolver {
-    fun resolve(snapshot: PopupSnapshot): CaptureRegion? {
+    fun resolve(snapshot: PopupSnapshot, isolatedWindowCapture: Boolean = false): CaptureRegion? {
         if (snapshot.completeness != SnapshotCompleteness.COMPLETE) return null
         val window = snapshot.windows.singleOrNull { it.id == snapshot.token.windowId } ?: return null
         if (window.type != WindowType.APPLICATION || !window.active) return null
@@ -31,7 +31,9 @@ internal object PopupRegionResolver {
         }
         if (!contains(snapshot.screenBounds, bounds) || !contains(window.bounds, bounds)) return null
         if (snapshot.windows.any {
-            it.id != window.id && it.layer >= window.layer && intersects(it.bounds, bounds)
+            val excludedByWindowApi = isolatedWindowCapture && it.type == WindowType.ACCESSIBILITY_OVERLAY &&
+                !it.active && !it.focused
+            it.id != window.id && it.layer >= window.layer && intersects(it.bounds, bounds) && !excludedByWindowApi
         }) return null
         return CaptureRegion(window, bounds)
     }

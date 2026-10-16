@@ -12,6 +12,7 @@ import kr.closeforyou.core.model.*
 
 internal interface CaptureFrame : AutoCloseable { val bounds: ScreenBounds }
 internal interface ScreenshotPort : CaptureCapability {
+    val isolatedWindowCapture: Boolean get() = false
     fun denial(token: SnapshotToken): EvidenceIssue?
     suspend fun capture(snapshot: PopupSnapshot, region: CaptureRegion): CaptureFrame
 }
@@ -39,7 +40,8 @@ internal class CaptureOcrPipeline(
                 limitations = persistentSetOf(AnalysisLimit.INCOMPLETE_EVIDENCE, AnalysisLimit.IMAGE_MODEL_NOT_IMPLEMENTED)), issue,
         )
         screenshots.denial(snapshot.token)?.let { return partial(it) }
-        val region = PopupRegionResolver.resolve(snapshot) ?: return partial(EvidenceIssue.REGION_UNCERTAIN)
+        val region = PopupRegionResolver.resolve(snapshot, screenshots.isolatedWindowCapture)
+            ?: return partial(EvidenceIssue.REGION_UNCERTAIN)
         if (!PopupRegionResolver.needsOcr(snapshot, region)) return partial(EvidenceIssue.TREE_SUFFICIENT)
         var frame: CaptureFrame? = null
         try {

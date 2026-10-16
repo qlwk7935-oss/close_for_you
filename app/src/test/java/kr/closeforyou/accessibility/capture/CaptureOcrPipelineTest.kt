@@ -30,6 +30,7 @@ class CaptureOcrPipelineTest {
         override fun close() { closed = true }
     }
     private class Shots : ScreenshotPort {
+        override var isolatedWindowCapture = false
         var issue: EvidenceIssue? = null
         var calls = 0
         var frame: Frame? = null
@@ -220,5 +221,21 @@ class CaptureOcrPipelineTest {
         }, 50).analyze(imagePopup())
         assertTrue(result is EvidenceOutcome.Blocked)
         assertTrue(shots.frame!!.closed)
+    }
+
+    @Test fun onlyWindowCaptureMayExcludeInactiveAccessibilityOverlayPixels() = runTest {
+        val base = imagePopup()
+        val overlay = WindowSnapshot(20, WindowType.ACCESSIBILITY_OVERLAY, base.screenBounds, false, false, 10)
+        val snapshot = base.copy(windows = base.windows.toPersistentList().add(overlay))
+        for (windowCapture in listOf(false, true)) {
+            val shots = Shots().also { it.isolatedWindowCapture = windowCapture }
+            val result = CaptureOcrPipeline(shots, OcrPort { listOf(OcrLine("점검 공지", box)) }, { true }, { null })
+                .analyze(snapshot) as EvidenceOutcome.Ready
+            assertEquals(if (windowCapture) 1 else 0, shots.calls)
+            assertEquals(if (windowCapture) EvidenceIssue.NONE else EvidenceIssue.REGION_UNCERTAIN, result.issue)
+        }
+        for (top in listOf(overlay.copy(active = true), overlay.copy(focused = true), overlay.copy(type = WindowType.SYSTEM))) {
+            assertNull(PopupRegionResolver.resolve(base.copy(windows = base.windows.toPersistentList().add(top)), true))
+        }
     }
 }
