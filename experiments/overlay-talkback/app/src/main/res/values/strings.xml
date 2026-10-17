@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">오버레이 실험</string>
+
+    <!-- 접근성 서비스 -->
+    <string name="service_label">팝업 오버레이 실험</string>
+    <string name="service_description">TalkBack과 오버레이 안내 방식을 시험하는 실험용 서비스입니다. 화면 내용은 읽지 않습니다.</string>
+
+    <!-- 오버레이 -->
+    <string name="overlay_pane_title">팝업 안내</string>
+    <string name="overlay_summary">테스트 팝업 안내. 쇼핑 앱 쿠폰 광고가 떴어요. 닫을까요?</string>
+    <string name="choice_close">닫기</string>
+    <string name="choice_always_close">앞으로 항상 닫기</string>
+    <string name="choice_keep">그대로 두기</string>
+
+    <!-- 실험 설정 화면 -->
+    <string name="main_title">오버레이 + TalkBack 실험</string>
+    <string name="service_status_on">실험 서비스: 켜짐</string>
+    <string name="service_status_off">실험 서비스: 꺼짐. 접근성 설정에서 켜 주세요.</string>
+    <string name="open_accessibility_settings">접근성 설정 열기</string>
+    <string name="section_announce_mode">안내 방식</string>
+    <string name="mode_none">(기준) 아무 안내 없음</string>
+    <string name="mode_pane_title">(a) 창 제목 – paneTitle</string>
+    <string name="mode_live_region">(b) 라이브 영역 – liveRegion</string>
+    <string name="mode_tts">(c) 자체 음성 – TextToSpeech</string>
+    <string name="section_tts_delay">자체 음성 시작 지연</string>
+    <string name="delay_ms">%1$d밀리초</string>
+    <string name="section_popup_delay">팝업 띄우기까지 기다리는 시간</string>
+    <string name="delay_sec">%1$d초</string>
+    <string name="show_popup_later">테스트 팝업 예약하기</string>
+    <string name="popup_scheduled">%1$d초 뒤에 테스트 팝업이 떠요. 다른 앱으로 이동해도 돼요.</string>
+    <string name="popup_need_service">먼저 실험 서비스를 켜 주세요.</string>
+    <string name="section_log">최근 기록</string>
+    <string name="log_empty">아직 기록이 없어요.</string>
+    <string name="log_shown">%1$s · 팝업 표시 · %2$s</string>
+    <string name="log_choice">%1$s · 선택: %2$s</string>
+</resources>
