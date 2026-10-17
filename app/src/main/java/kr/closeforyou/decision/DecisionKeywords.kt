@@ -20,15 +20,15 @@ internal object DecisionKeywords {
     private val decisionButtonOnlyKo = listOf("체험")
     private val decisionButtonOnlyEn = Regex("\\btrial\\b", RegexOption.IGNORE_CASE)
 
-    // Design 3-1 grades K (취소·거절·나중에·오늘 하루 보지 않기), P (설치·자세히·받기·열기) and
-    // O (확인·OK): a button labelled like this is not a close or skip target, whatever its role says.
+    // Design 3-1 grades K (취소·거절·나중에·오늘 하루 보지 않기·7일간 닫기), P (설치·자세히·받기·열기)
+    // and O (확인·OK): a button labelled like this is not a close or skip target, whatever its role says.
     private val riskyButtonKo = listOf(
-        "취소", "거절", "나중에", "보지 않기", "그만 보기",
+        "취소", "거절", "나중에", "보지 않기", "다시 보지", "그만", "오늘", "하루", "일간",
         "설치", "자세히", "받기", "열기", "바로가기", "이동", "다운로드",
         "확인", "알겠",
     )
     private val riskyButtonEn = Regex(
-        "\\b(cancel|decline|later|install|open|more|get|download|ok|okay|confirm|continue|got it)\\b",
+        "\\b(cancel|decline|later|install|open|more|get|download|ok|okay|confirm|continue|got it|today|don't show|do not show)\\b",
         RegexOption.IGNORE_CASE,
     )
 

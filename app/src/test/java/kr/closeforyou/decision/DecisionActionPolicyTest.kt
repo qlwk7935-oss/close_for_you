@@ -74,7 +74,7 @@ class DecisionActionPolicyTest {
     }
 
     @Test fun fakeCloseButtonsAreNotPressed() = runBlocking {
-        for (label in listOf("설치", "자세히 보기", "오늘 하루 보지 않기", "확인", "취소", "나중에", "OK", "Install", "Learn more")) {
+        for (label in listOf("설치", "자세히 보기", "오늘 하루 보지 않기", "오늘 하루 닫기", "7일간 보지 않기", "확인", "취소", "나중에", "OK", "Install", "Learn more")) {
             val fake = withCandidate(ad) { it.copy(label = label) }
             assertDenied(decide(fake, choice = choose(fake)), UNVERIFIED_TARGET)
         }
