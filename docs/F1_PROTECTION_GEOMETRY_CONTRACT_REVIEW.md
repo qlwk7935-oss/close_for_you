@@ -1,6 +1,30 @@
 # PR #7: 보호 검사와 geometry 완전성 계약 검토
 
-결론: **현재 운영 차단을 유지합니다.** 이번 변경은 문서뿐입니다. 새로운 부분 수집 경로, 진단 패치, 모델/게이트/시간 제한/14개 시험 변경은 없습니다. 아래 타입과 게이트는 합의를 위한 설계안이며 구현된 API가 아닙니다.
+결론: **현재 운영 차단을 유지합니다.** `b8d8aab`의 문서 검토 이후, 승인된 **1단계: A 내부 증거 표현과 순수 Kotlin DTO 변환 게이트**만 구현했습니다. Android 수집기에는 연결하지 않았으며 기존 Ready/Blocked 생성, 두 pass·예산·진단·F1/14개 계측은 변경하지 않았습니다. 아래 0절은 이번 구현이고, 이후 절의 collector 연결·수명 관리·지문 동등성·부분 F1 관측은 여전히 후속 설계입니다.
+
+## 0. 1단계 구현 — 운영과 연결하지 않은 구조 검증
+
+신규 파일은 `accessibility/CollectedTreeEvidence.kt`, `accessibility/CollectionProjection.kt`와 대응 JVM 테스트 두 개입니다. 기존 `core/model`·`core/contract`, B/C/D, 운영 service/Runtime/collector, PR #10 행동 게이트를 변경하지 않았습니다.
+
+| 내부 표현 | 구현 및 거부 조건 |
+|---|---|
+| 보호 완료 | 관측 전체·각 대상/배경 root·각 노드의 `ProtectionCompletion`. 기본 UNKNOWN이며 전부 COMPLETED_WITHOUT_BLOCK이어야 함. 숨김 여부는 예외가 아님 |
+| 순회 완료 | 관측 전체·각 root의 `TreeCompletion`, 개별 `NodeReadCompletion`. UNKNOWN/실패/누락 자식/시간·개수·깊이 한도/취소는 거부 |
+| geometry 완료 | `CollectedRect` 원래 네 성분에서 계산. 역전 X/Y/양축, 누락 rect 또는 Int extent overflow는 불완전. 가시성으로 바꾸지 않음 |
+| 원래 기록 | immutable 전체 노드, 원래 path/부모/형제 순서/childCount, 본문·설명·ID·class·actions·pane/가시성/scroll·outline 지문 보존. malformed 부모의 자식도 삭제하지 않음 |
+| 보호 root 범위 | 선언된 전체 보호 창 집합과 기록된 root 집합이 정확히 일치하고 target 하나가 원래 token 창과 같아야 함. 누락/중복/추가 root 거부 |
+| topology | 각 root의 원래 preorder와 childCount에 따른 모든 자식, parent/path/ordinal을 확인. 자식 삭제·재정렬·고아·중복·부적절 childCount 거부 |
+| DTO 투영 | 위 전체 조건과 metadata/창 관계 검사를 통과한 경우에만 모든 target 노드로 PopupSnapshot과 DetectionFrame 생성. 하나라도 실패하면 고정 `ProjectionRejection`만 반환, 두 DTO 모두 없음 |
+
+geometry COMPLETE는 **기록된 노드 경계가 V1 DTO로 표현 가능**하다는 뜻입니다. V1과 같이 순서가 맞는 0 크기/음수 위치의 노드 성분은 그대로 보존하며, 이를 화면 안의 버튼이나 팝업으로 인정하지 않습니다. 창/논리 frame은 별도로 zero-origin·양수 크기·정확한 포함 관계를 검사합니다. margin/tolerance/clamp/좌표 이동은 없습니다. 정상 Dialog와 malformed 노드가 섞인 경우도 전체 거부합니다. 배경 root의 불완전 geometry도 이번 보수적 게이트에서는 거부합니다. 이는 기존 collector의 background 처리와 동등하다고 주장하지 않습니다.
+
+**신뢰 경계:** 이 순수 변환기는 공급된 완료 표시·root 범위·token·지문이 실제 Android 화면에서 정직하게 수집됐는지 입증할 수 없습니다. 보호 검사를 실행하거나 누락된 실제 창/노드를 발견하는 reader가 아닙니다. 합성 fixture가 채운 완료 값은 합성 시험의 입력일 뿐입니다. 향후 A 소유 reader가 모든 숨김/배경 노드와 password/editable/inputType 및 모든 기존 텍스트 필드의 F0 검사를 실제로 완료해야 합니다. 필드/getter/자식 실패·민감/불확실 결과를 완료로 채우면 안 됩니다. F0-B·동의·앱별 허용·세션/TTL·화면 변경·가림·ROI·버퍼 대응의 실제 검증도 이 gate 밖이며 아직 연결되지 않았습니다.
+
+결과 `ProjectionOutcome.Complete`는 기존 `CollectionResult.Ready`가 아니며 Candidate/보호 허가/실행 허가가 아닙니다. detector/pipeline/B/C/D/행동 API를 호출하지 않습니다. 모델과 gate의 호출 지점은 신규 JVM 시험뿐입니다. 원래 지문과 token은 바꾸거나 새로 만들지 않고 전달하지만 **지문을 재계산·인증하지 않으며 V1 byte 동등성도 검증하지 않았습니다**. malformed 기록은 기존 V1 지문과 호환된다고 주장하지 않고 외부로 전달하지 않습니다.
+
+민감 raw 성분·본문·노드 경로·지문은 A 내부 RAM 값이며 새 모델/metadata/완료 wrapper의 `toString()`은 모두 고정 redacted입니다. 거부는 enum만 포함하고 입력을 예외 메시지로 만들지 않습니다. 로그/DB/파일/IPC 출력 코드는 없습니다. 추출한 기존 DTO(특히 DetectionFrame/WindowSnapshot)의 기존 문자열 표현까지 안전하게 바꾼 것은 아니므로 DTO를 로깅해서는 안 됩니다. 실제 Android 취소/무효화/짧은 수명·참조 폐기 owner는 다음 연결 단계의 필수 조건이지 이번 모델이 자동 보장하는 기능이 아닙니다.
+
+JVM 회귀는 역전 축·가시/비가시·보호/geometry 독립성, 전체 거부·원래 기록 보존, 보호/순회/노드 실패·한도, root/topology 누락, 창 관계 거부 및 문자열 비노출을 검사합니다. **합성 통과는 Android 수집 성공이나 기존 collector와의 완전한 동등성 입증이 아닙니다.** Scroll의 MALFORMED_NODE_BOUNDS, 별도 WINDOW_OUTSIDE_FRAME, TIME_LIMIT/TARGET_MISSING 및 원래14개 UNOBSERVED는 여전히 미해결입니다. 이 커밋 설치만으로 baseline 복구를 기대하지 않습니다.
 
 ## 1. 이번 실제 API 37 결과가 확인한 것
 
@@ -33,7 +57,7 @@
 
 ## 3. A 내부 분리 설계안 — 공개 계약 변경 없이 가능한 범위
 
-다음은 **미구현 설계**입니다. 운영 사용 이득 없이 처리량/상태만 늘리지 않도록, 합의·회귀 전에 collector에 연결하지 않았습니다.
+다음은 **후속 연결을 포함한 설계안**입니다. 0절의 순수 모델/변환만 구현했으며, 수집 pass/수명/지문 재계산 및 F1 연결은 미구현입니다. 합의·회귀 전에 collector에 연결하지 않았습니다.
 
 ```text
 PrivateObservation  // A만 소유. PopupSnapshot/PopupAnalysis/ActionRequest 타입이 아님
@@ -73,18 +97,18 @@ COMPLETED_WITHOUT_BLOCK은 검사들이 완료됐다는 뜻이며 개인정보 �
 
 이 분리는 정보를 잃지 않고 거부 이유를 표현하는 설계입니다. **geometry가 여전히 불완전한 Scroll 화면을 팝업 탐지/정상 baseline으로 지원 완료하는 해법은 아닙니다.** 새 관측 상태를 기존 baseline의 성공으로 해석하지 않습니다.
 
-## 4. 팀 합의 항목 — 이번에는 적용하지 않음
+## 4. 후속 연결·팀 합의 항목 — 공통 계약 변경 없음
 
 | 항목 | 구체적인 합의 내용/담당 영향 |
 |---|---|
-| A 내부 중간 표현 | NodeRecord/Unusable 원시 경계/coverage/짧은 수명·폐기, V1 adapter의 필수 조건. public V1을 유지하면 BCD 코드 변경 없이 내부에만 둘 수 있음 |
+| A 내부 중간 표현 | 승인된 1단계 순수 표현/변환만 구현. 실제 reader/짧은 수명·폐기/두 pass와의 결합, V1 지문 byte 동등성은 후속 검증. public V1을 유지하며 BCD 코드를 변경하지 않음 |
 | 비공개 F1 coverage | 부분 geometry를 항상 불확실로 끝내고 Candidate로 발행하지 않는 상태 모델. 현재 DetectionFrame/Assessment에는 이를 표현하는 필드/사유가 없으므로 A 내부 변경과 회귀 필요 |
 | C의 고정 불확실 상태 | 필요하다면 기존 PARTIAL_INFORMATION/token 없음 경로를 재사용할 수 있는지 C와 합의. 원문/부분 snapshot을 보내거나 음성 UI를 A가 대신 구현하지 않음 |
 | D 진단/지문 | 보호 차단과 geometry 미확인을 구분할 고정 코드가 필요하면 SafeDiagnostics enum 변경을 D와 합의. private 지문은 저장/규칙 조회하지 않음. 기존 RuleKey 호환성을 임의로 변경하지 않음 |
 | B의 입력 계약 | 현재 incomplete observation은 아예 전달하지 않는 안을 우선함. 향후 별도 read-only 타입이 필요해도 Candidate/CloseCandidate와 혼용 금지 및 미확인 시 deny를 B와 합의. NodeSnapshot.bounds를 nullable로 바꾸는 단독 변경은 금지 |
 | QA 관측/완전성 | protection-complete/geometry-incomplete의 별도 관측 지표가 필요하면 A/D가 버전·실패 의미 합의. 원래 14개 시험을 이 상태로 통과시키지 않음. 기존 COMPLETE/정답 정의 변경은 이 작업의 승인 범위가 아님 |
 
-공통 모델/계약 변경 없이 가능한 비공개 분리와, 공개 상태/지문/수집 완전성 의미를 바꾸는 합의 사항을 구별합니다. 이 문서의 예시 이름을 새 enum/API가 이미 추가됐다는 뜻으로 사용하지 않습니다.
+공통 모델/계약 변경 없이 가능한 비공개 분리와, 공개 상태/지문/수집 완전성 의미를 바꾸는 합의 사항을 구별합니다. 0절 이외의 예시 타입/경로는 구현 완료를 뜻하지 않습니다.
 
 ## 5. 구현 전 필요한 회귀와 허용 기준
 
@@ -99,7 +123,7 @@ COMPLETED_WITHOUT_BLOCK은 검사들이 완료됐다는 뜻이며 개인정보 �
 | incomplete IR에 사용자 명령/기억 규칙 적용 | Candidate/B 후보·캡처/OCR·실행 호출 횟수0. 단순 NO_POPUP으로 승격하지 않음 |
 | 취소/터치/설정 철회/연결 해제/만료 | private 원문/원시 경계·모든 파생 참조 폐기, stale 결과 발행 없음 |
 
-합성 JVM에서 순서·보존·게이트를 확인한 뒤 실제 Android API35/37의 원격 노드·가상 자식·민감 필드(합성)·창 전환·한도/취소 회귀가 필요합니다. 현재 실측은 native clipping 현상과 안전 거부를 확인했지만, 위 새 중간 표현/adapter/게이트는 구현·시험하지 않았습니다.
+1단계 합성 JVM과 별도로 실제 Android API35/37의 원격 노드·가상 자식·민감 필드(합성)·창 전환·한도/취소 회귀가 필요합니다. 현재 실측은 native clipping 현상과 안전 거부를 확인했지만, 새 모델을 연결한 Android reader/adapter와 V1 지문 동등성·수명/시점 검증은 구현·시험하지 않았습니다.
 
 ## 6. 별개 창 geometry: 같은 시도와 같은 시점은 다름
 
@@ -119,7 +143,7 @@ UiAutomation/host 샘플은 다른 연결·시점입니다. MINIMAL 시작 시�
 
 ## 8. 현재 실행·미검증 범위
 
-사용자의 독립 비교 OK와 14개 회귀 실패를 모두 사실로 보존합니다. 개발 환경에 연결 Android 기기는 없고 이번에는 문서만 변경하므로 새 기기 결과나 추가 운영 개선을 주장하지 않습니다. 같은 바이너리를 반복 실행하면 해결될 것이라는 재시험을 요구하지 않습니다.
+사용자의 독립 비교 OK와 14개 회귀 실패를 모두 사실로 보존합니다. 1단계는 운영과 연결하지 않은 순수 Kotlin 코드이며 새 Android 계측을 실행하지 않았습니다. 새 기기 결과나 추가 운영 개선을 주장하지 않습니다. 같은 운영 경로를 반복 실행하면 해결될 것이라는 재시험을 요구하지 않습니다.
 
 필요할 때 기존 결과를 최소 재현할 Windows 명령(프로젝트 터미널, 빌드/3개 APK 설치 절차는 F1_BASELINE_ISOLATION.md):
 
