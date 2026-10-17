@@ -146,7 +146,7 @@ class CloseForYouAccessibilityService : AccessibilityService() {
         when (val result = collector.capture(this, epoch, trigger, ::packageBlock, trace = trace)) {
             is CollectionResult.Blocked -> {
                 detector.clear()
-                DetectionObservationHook.blocked(result.targetPackage, result.windowId, result.reason)
+                DetectionObservationHook.blocked(result.targetPackage, result.windowId, result.reason, result.diagnostic)
                 AccessibilityRuntime.block(result.reason, epoch)
             }
             is CollectionResult.Ready -> {

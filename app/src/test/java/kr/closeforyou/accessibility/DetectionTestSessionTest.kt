@@ -91,4 +91,19 @@ class DetectionTestSessionTest {
             assertNull(session.report(1))
         } finally { DetectionObservationHook.policyChanged() }
     }
+    @Test fun `each failure preserves its own phase field scope and reason tuple`() {
+        val session = DetectionTestSession({ 0L }, { true })
+        val target = CollectionProtectionDiagnostic(CollectionPhase.PROTECTION_PASS, CaptureDetail.TREE_PROTECTION,
+            CollectionTree.TARGET, CollectionField.INPUT_TYPE, CollectionFinding.NON_ZERO_INPUT_TYPE)
+        val background = target.copy(tree = CollectionTree.SAME_APP_BACKGROUND, field = CollectionField.TEXT,
+            finding = CollectionFinding.SENSITIVE_TEXT)
+        session.blocked(host, 1, PrivacyBlockReason.EDITABLE_FIELD, target)
+        session.blocked(host, 1, PrivacyBlockReason.SENSITIVE_CONTENT, background)
+        session.blocked(host, 2, PrivacyBlockReason.PASSWORD, target)
+        assertEquals(setOf("EDITABLE_FIELD:${target.encoded()}", "SENSITIVE_CONTENT:${background.encoded()}"),
+            session.report(1)?.blockDiagnostics)
+        assertEquals("BLOCKED", session.report(1)?.actual)
+        session.reset()
+        assertTrue(requireNotNull(session.report(1)).blockDiagnostics.isEmpty())
+    }
 }

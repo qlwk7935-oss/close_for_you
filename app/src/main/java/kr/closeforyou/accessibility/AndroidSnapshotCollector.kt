@@ -16,7 +16,8 @@ import java.util.UUID
 
 internal sealed interface CollectionResult {
     data class Ready(val snapshot: PopupSnapshot, val frame: DetectionFrame) : CollectionResult
-    data class Blocked(val reason: PrivacyBlockReason, val targetPackage: String? = null, val windowId: Int = -1) : CollectionResult
+    data class Blocked(val reason: PrivacyBlockReason, val targetPackage: String? = null, val windowId: Int = -1,
+        val diagnostic: CollectionProtectionDiagnostic? = null) : CollectionResult
 }
 
 /**
@@ -41,10 +42,24 @@ internal class AndroidSnapshotCollector {
         val androidWindows = mutableListOf<AccessibilityWindowInfo>()
         var targetPackage: String? = null
         var targetId = -1
-        fun blocked(reason: PrivacyBlockReason, detail: CaptureDetail, related: WindowType? = null): CollectionResult {
+        var phase = CollectionPhase.ROOT
+        var tree = CollectionTree.NONE
+        var frameStatus = ScreenFrameStatus.UNAVAILABLE
+        fun blocked(reason: PrivacyBlockReason, detail: CaptureDetail, related: WindowType? = null,
+            failure: CollectionGuardFailure? = null): CollectionResult {
             trace.detail(detail, related)
             trace.block(reason)
-            return CollectionResult.Blocked(reason, targetPackage, targetId)
+            val finding = failure?.finding ?: when {
+                detail == CaptureDetail.COLLECTION_FAILED -> CollectionFinding.FRAMEWORK_FAILURE
+                phase == CollectionPhase.ROOT -> CollectionFinding.ROOT_GUARD
+                phase == CollectionPhase.PACKAGE_GATE -> CollectionFinding.PACKAGE_GUARD
+                phase == CollectionPhase.WINDOWS -> CollectionFinding.WINDOW_GUARD
+                phase == CollectionPhase.GEOMETRY -> CollectionFinding.GEOMETRY_GUARD
+                else -> CollectionFinding.NONE
+            }
+            return CollectionResult.Blocked(reason, targetPackage, targetId,
+                CollectionProtectionDiagnostic(phase, detail, tree, failure?.field ?: CollectionField.NONE,
+                    finding, related, frameStatus))
         }
         return try {
             val root = service.rootInActiveWindow
@@ -55,7 +70,9 @@ internal class AndroidSnapshotCollector {
             targetPackage = packageName
             targetId = root.windowId
             trace.root(packageName, root.windowId)
+            phase = CollectionPhase.PACKAGE_GATE
             packageGate(packageName)?.let { return blocked(it, CaptureDetail.PACKAGE_GATE) }
+            phase = CollectionPhase.WINDOWS
             androidWindows += service.windows
             if (requireCaptureIsolation && androidWindows.any { it.displayId != Display.DEFAULT_DISPLAY }) {
                 return blocked(PrivacyBlockReason.SYSTEM_WINDOW, CaptureDetail.SECONDARY_DISPLAY)
@@ -94,7 +111,9 @@ internal class AndroidSnapshotCollector {
                 }
             }
 
+            phase = CollectionPhase.GEOMETRY
             val geometryRead = (geometry ?: AndroidScreenGeometry(service).also { geometry = it }).read()
+            frameStatus = geometryRead.status
             trace.frameStatus(geometryRead.status)
             val screen = geometryRead.frame ?: return blocked(PrivacyBlockReason.UNREADABLE_TREE, CaptureDetail.DISPLAY_GEOMETRY_UNCERTAIN)
             trace.coordinates(targetWindow.bounds, screen, root.bounds()) {
@@ -102,9 +121,11 @@ internal class AndroidSnapshotCollector {
                 catch (_: Exception) { null }
             }
             val budget = TraversalBudget()
+            phase = CollectionPhase.PROTECTION_PASS
             // Inspect all trees of this application, including its obscured background window.
             for (candidateRoot in roots) {
                 if (candidateRoot.packageName?.toString() == packageName) {
+                    tree = if (candidateRoot === root) CollectionTree.TARGET else CollectionTree.SAME_APP_BACKGROUND
                     walk(candidateRoot, budget) { node, _ -> inspect(node, packageName) }
                 }
             }
@@ -114,12 +135,15 @@ internal class AndroidSnapshotCollector {
             val structure = MessageDigest.getInstance("SHA-256").apply { update(salt) }
             val content = MessageDigest.getInstance("SHA-256").apply { update(salt) }
             var textCharacters = 0
+            phase = CollectionPhase.SNAPSHOT_PASS
+            tree = CollectionTree.TARGET
             walk(root, budget) { node, path ->
                 inspect(node, packageName)
                 val text = node.text?.toString()
                 val description = node.contentDescription?.toString()
                 textCharacters += (text?.length ?: 0) + (description?.length ?: 0)
-                if (textCharacters > MAX_TEXT_CHARACTERS) throw GuardFailure(PrivacyBlockReason.TRUNCATED_TREE)
+                if (textCharacters > MAX_TEXT_CHARACTERS) throw CollectionGuardFailure(PrivacyBlockReason.TRUNCATED_TREE,
+                    finding = CollectionFinding.TOTAL_TEXT_LIMIT)
                 val bounds = node.bounds()
                 val actions = buildSet {
                     val ids = node.actionList.map { it.id }
@@ -154,8 +178,8 @@ internal class AndroidSnapshotCollector {
                 windows.filter { it.type == WindowType.APPLICATION }.mapTo(mutableSetOf()) { it.id },
                 structureDigest, screen, outlines.toList(), trigger, targetWindow.bounds,
             ))
-        } catch (failure: GuardFailure) {
-            blocked(failure.reason, CaptureDetail.TREE_PROTECTION)
+        } catch (failure: CollectionGuardFailure) {
+            blocked(failure.reason, CaptureDetail.TREE_PROTECTION, failure = failure)
         } catch (_: Exception) {
             // Framework exception messages can contain screen content: never log the exception.
             blocked(PrivacyBlockReason.UNREADABLE_TREE, CaptureDetail.COLLECTION_FAILED)
@@ -168,22 +192,19 @@ internal class AndroidSnapshotCollector {
     private fun inspect(node: AccessibilityNodeInfo, expectedPackage: String) {
         val packageName = node.packageName?.toString()
         if (packageName != null && packageName != expectedPackage) {
-            throw GuardFailure(PrivacyBlockReason.UNREADABLE_TREE)
+            throw CollectionGuardFailure(PrivacyBlockReason.UNREADABLE_TREE, CollectionField.NODE_PACKAGE, CollectionFinding.PACKAGE_MISMATCH)
         }
-        PrivacyPolicy.fieldBlock(node.isPassword, node.isEditable, node.inputType)?.let { throw GuardFailure(it) }
-        fun check(value: CharSequence?) {
-            if ((value?.length ?: 0) > MAX_NODE_TEXT_CHARACTERS) throw GuardFailure(PrivacyBlockReason.TRUNCATED_TREE)
-            if (PrivacyPolicy.hasSensitiveText(value) || PrivacyPolicy.hasUncertainText(value)) throw GuardFailure(PrivacyBlockReason.SENSITIVE_CONTENT)
-        }
-        check(node.text)
-        check(node.contentDescription)
-        check(node.viewIdResourceName)
-        check(node.className)
-        check(node.error)
-        check(node.hintText)
-        check(node.paneTitle)
-        check(node.tooltipText)
-        check(node.stateDescription)
+        CollectionProtectionCheck.field(node.isPassword, node.isEditable, node.inputType)
+        fun check(value: CharSequence?, field: CollectionField) = CollectionProtectionCheck.text(value, field, MAX_NODE_TEXT_CHARACTERS)
+        check(node.text, CollectionField.TEXT)
+        check(node.contentDescription, CollectionField.CONTENT_DESCRIPTION)
+        check(node.viewIdResourceName, CollectionField.VIEW_ID)
+        check(node.className, CollectionField.CLASS_NAME)
+        check(node.error, CollectionField.ERROR)
+        check(node.hintText, CollectionField.HINT)
+        check(node.paneTitle, CollectionField.PANE_TITLE)
+        check(node.tooltipText, CollectionField.TOOLTIP)
+        check(node.stateDescription, CollectionField.STATE_DESCRIPTION)
     }
 
     private fun walk(
@@ -195,9 +216,10 @@ internal class AndroidSnapshotCollector {
             budget.visit(depth)
             visitor(node, path)
             val count = node.childCount
-            if (count > MAX_NODES) throw GuardFailure(PrivacyBlockReason.TRUNCATED_TREE)
+            if (count > MAX_NODES) throw CollectionGuardFailure(PrivacyBlockReason.TRUNCATED_TREE, finding = CollectionFinding.CHILD_COUNT_LIMIT)
             for (index in 0 until count) {
-                val child = node.getChild(index) ?: throw GuardFailure(PrivacyBlockReason.UNREADABLE_TREE)
+                val child = node.getChild(index) ?: throw CollectionGuardFailure(PrivacyBlockReason.UNREADABLE_TREE,
+                    finding = CollectionFinding.MISSING_CHILD)
                 try { visit(child, "$path/$index", depth + 1) } finally { child.release() }
             }
         }
@@ -221,13 +243,15 @@ internal class AndroidSnapshotCollector {
         private var count = 0
         private val deadline = SystemClock.uptimeMillis() + MAX_CAPTURE_MILLIS
         fun visit(depth: Int) {
-            if (++count > MAX_NODES * 2 || depth > MAX_DEPTH || SystemClock.uptimeMillis() > deadline) {
-                throw GuardFailure(PrivacyBlockReason.TRUNCATED_TREE)
-            }
+            // Preserve original short-circuit order/thresholds, labeling only the first rejection.
+            if (++count > MAX_NODES * 2)
+                throw CollectionGuardFailure(PrivacyBlockReason.TRUNCATED_TREE, finding = CollectionFinding.NODE_COUNT_LIMIT)
+            if (depth > MAX_DEPTH)
+                throw CollectionGuardFailure(PrivacyBlockReason.TRUNCATED_TREE, finding = CollectionFinding.DEPTH_LIMIT)
+            if (SystemClock.uptimeMillis() > deadline)
+                throw CollectionGuardFailure(PrivacyBlockReason.TRUNCATED_TREE, finding = CollectionFinding.TIME_LIMIT)
         }
     }
-
-    private class GuardFailure(val reason: PrivacyBlockReason) : RuntimeException()
 
     companion object {
         private const val MAX_NODES = 1_200

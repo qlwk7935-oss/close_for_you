@@ -15,7 +15,7 @@ A 2차는 PR #1 병합 후 최신 `main`(`f52be56`)에서 만든 `feature/core-c
 | 접근성 서비스 등록·활성화 안내 | 서비스 선언·메타데이터, 목적·제한 안내, 시스템 설정 이동 | A/C: 실제 설정 화면·TalkBack 탐색 확인 |
 | F0-A 분석 보호 | 앱별 허용 기본값 없음, 비밀번호·입력·민감 징후·판정 불가 차단 구조 | A/D: 보호 시나리오 확장·오차단/누락 측정 |
 | F0-B 캡처 후 보호 | 2차: 영역 제한·OCR 후 독립 보호 검사, 민감/불명 OCR 미전달 | A/D: 이미지 민감 신호·OCR 누락·native 메모리 수명 실기기 검증 |
-| F1 팝업 감지 | bounded 창/의미 있는 overlay 근거와 비후보·불확실 분리, 고정 14개 모델 비교 및 실제 서비스 계측 소스 | A/D: API 37 계측 미실행, 일반 앱 precision/recall·캔버스/WebView·full-width/가상화 한계 확인 |
+| F1 팝업 감지 | bounded 창/의미 있는 overlay 근거와 비후보·불확실 분리, 고정 14개 모델 비교 및 실제 서비스 계측 소스 | 사용자 API 37은 baseline 차단으로 14개 미관측. 추가 차단 진단은 기기 미검증, 일반 앱 precision/recall 미확인 |
 | F2 노드·한국어 OCR | 2차: 번들 ML Kit 한국어 모델, tree/OCR 출처·화면 좌표·정렬 결합 | A: 실제 인식 정확도·복잡한 읽기 순서·확대/풀스크린 영역 확장 검증 |
 | F3 닫기 후보 | 공통 데이터와 Mock만 제공 | B/A: E1~E4 증거·현재 대상 재탐색; 아이콘만으로 자동 실행 금지 |
 | F4 이미지 의미 설명 | TODO, 분석기 인터페이스 경계 | A/B: 로컬 모델·실행 환경·한국어 품질 검증; ML Kit GenAI 배경 실행 가정 금지 |
@@ -261,3 +261,28 @@ python3 -B tools/verify_capture_test_apks.py --release-apk app/build/outputs/apk
 **BUILD SUCCESSFUL**. F1 코드/관측 수명 검증은 1분 10초(196 tasks: 25 executed / 171 up-to-date), 연속 시험의 첫 Dialog 성공 전제 보강 후 최종 동일 명령은 **31초(196 tasks: 11 executed / 185 up-to-date)**입니다. JVM **175개**(본 앱 115/호스트 60), 실패/오류/건너뜀 0. PR #6 이후 순증 28개: detector 회귀 순증 11 + 고정 matrix 1 + 관측 세션 11 + 정답 집계 5. 양쪽 debug Lint 이슈 0, Kotlin 컴파일 경고 없음. Debug/Release·계측 APK 빌드, 새로운 호스트/외부 driver/provider의 DEX 포함·독립 Kotlin 런타임/driver 분리·release debug/합성 코드 부재 검사 통과. 초기 합성 문자열 Lint 경고는 resources로 옮겨 해소했습니다.
 
 **실제 Android 결과는 미검증:** adb 기기 0대이며 새 API 37/35 F1 계측을 실행하지 않았습니다. 일반 앱 감지율, 빠른 연속 이벤트, full-width/bottom sheet/캔버스, 동일 경로 inline 교체, 가상화·freeform·TalkBack 호환성·지연/메모리는 후속 기기 검증입니다. PR #6의 일반 Dialog 큰 버퍼 및 전체 OCR 통합 실패도 그대로 미해결입니다. [F1_DETECTION_VALIDATION.md](F1_DETECTION_VALIDATION.md)에 고정 CASE별 기대 결과·실제 결과 해석과 Windows 설치/실행 명령을 기록했습니다. CI는 새 PR의 Checks에서 별도로 확인합니다. 자동 병합하지 않습니다. F5 유지/F6 제외/F10·F12·F13 필수도 유지합니다.
+
+## PR #7 후속: API 37 BASELINE_BLOCKED 고정 진단
+
+사용자 실제 보고: Windows API 37에서 SERVICE_CONNECTION_READY 뒤 SEQUENCE_SECOND를 제외한 13개 CASE가 BASELINE_BLOCKED, SEQUENCE_SECOND는 SEQUENCE_PREREQUISITE_MISSING. F1_SUMMARY는 UNOBSERVED=14, 탐지 성공/오탐/미탐 등은 0이며 전체 시험은 실패했습니다. 사용자는 APK·서비스·수집 동의·단일 host 허용·분석 시작 및 캡처 동의/앱 목록 OFF를 확인했습니다. **F1 정확도의 실패/성공으로 평가할 수 없는 baseline 미관측 결과**입니다.
+
+확인된 결함은 baseline의 blocks 검사 직후 예외가 나서 실제 차단 근거를 출력하지 않는 점입니다. 원래 bridge에는 수집 단계/검사 필드 진단도 없었습니다. 실제 Android 차단 원인은 이 보고만으로 확정하지 못했습니다. 알려진 고정 baseline 문구/위젯 클래스 문자열은 JVM 보호 검사에서 차단을 재현하지 않았으나, Android의 입력 속성/메타데이터/창/geometry/수집 상태가 검증된 것은 아닙니다.
+
+변경:
+
+- baseline assertion 이전 F1_EVIDENCE와 F1_COLLECTION 출력, BASELINE/STIMULUS 단계 분리. 기존 BASELINE_BLOCKED/UNOBSERVED 및 연속 시험 전제 실패 판정 유지.
+- Collector의 같은 실제 차단에 속한 사유·단계·CaptureDetail·대상/동일 앱 배경 트리·검사 필드·원인 범주·관련 창 종류·frame 상태를 enum tuple로 전달. 독립 시도의 마지막 사유들을 혼합하지 않음. 실제 값/노드/창 ID/좌표/예외 메시지는 출력하지 않음.
+- 기존 F0-A 필드/문자 검사를 동일 순서의 helper로 옮겨 진단만 부여. 비밀번호·editable·nonzero inputType·민감/불확실 텍스트·수집 상한은 그대로 차단. 시간/노드/깊이/자식 제한도 원래 상한과 short-circuit 순서 유지. PrivacyPolicy·F0-B·캡처/가림/동의/허용/예산·F1 판정·공통 계약 및 fixture 동작은 변경하지 않음.
+- baseline은 실제 collection 결과를 요구하고 raw SCROLL/notification 이벤트만으로 통과하지 않음. 이후 각 실제 자극/결과를 따로 요구하는 기존 검사 유지. 새 진단 문자열은 host의 enum allowlist에 없는 값을 출력하지 않으며 malformed 값도 반사하지 않음.
+- JVM 회귀 9개 추가: 기존 필드 보호 결과 동등성, non-editable/nonzero inputType 보호 유지, password/editable 구분, 텍스트 보호/상한·출처, 고정 baseline 문자열 검사, 창별 실패 tuple 결박/초기화, 고정 코드 형식·유출 방지, raw 이벤트만으로 baseline 통과 금지.
+
+최종 JDK 17 실행:
+
+```sh
+./gradlew --no-daemon :app:assembleDebug :app:assembleDebugAndroidTest :app:testDebugUnitTest :capture-test-host:testDebugUnitTest :app:lintDebug :capture-test-host:lintDebug :app:assembleRelease
+python3 -B tools/verify_capture_test_apks.py --release-apk app/build/outputs/apk/release/app-release-unsigned.apk
+```
+
+**BUILD SUCCESSFUL (1분 20초, 196 tasks: 35 executed / 161 up-to-date)**. JVM **184개**(본 앱121/호스트63), 실패/오류/건너뜀0. 양쪽 debug Lint 이슈0. Debug/Release·계측 APK 빌드 및 새 baseline formatter/readiness DEX 포함·독립 런타임/driver 분리·release debug/합성 구현 부재 패키징 검사 통과. GitHub Actions는 기존 PR #7의 해당 커밋 Checks에서 확인합니다.
+
+연결 Android 기기 0대로 **새 진단의 실제 API 37 출력, baseline 통과, 14개 실제 F1 자극 및 OCR 성공은 확인하지 않았습니다**. 원인 미확정 상태에서 임의의 보호 예외/fixture 변경/성공 변환/timeout 확대는 하지 않았습니다. [F1 문서의 최신 baseline 조사와 Windows 명령](F1_DETECTION_VALIDATION.md)에 해석·재설치 절차가 있습니다. 제출할 자료는 F1_EVIDENCE/F1_COLLECTION/F1_CASE/F1_SUMMARY 고정 코드이며 전체 Logcat/원문/이미지는 요청하지 않습니다. 새 PR/자동 병합은 하지 않습니다.

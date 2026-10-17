@@ -60,6 +60,7 @@ class SyntheticDetectionTestProvider : ContentProvider() {
                     putBoolean("overflow", report.overflow)
                     putStringArrayList("reasons", ArrayList(report.reasons.sorted()))
                     putStringArrayList("blockReasons", ArrayList(report.blockReasons.sorted()))
+                    putStringArrayList("collections", ArrayList(report.blockDiagnostics.sorted()))
                 }
             }
             else -> code("UNKNOWN_METHOD")

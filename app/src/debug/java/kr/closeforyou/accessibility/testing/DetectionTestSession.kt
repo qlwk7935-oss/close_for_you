@@ -6,7 +6,8 @@ import kr.closeforyou.core.model.PrivacyBlockReason
 /** Bounded, transient codes only. Window IDs are private correlation keys, never returned. */
 internal class DetectionTestSession(private val now: () -> Long, private val allowed: () -> Boolean) {
     private data class Record(val windowId: Int, val input: DetectionInput? = null,
-        val assessment: DetectionAssessment? = null, val block: PrivacyBlockReason? = null)
+        val assessment: DetectionAssessment? = null, val block: PrivacyBlockReason? = null,
+        val diagnostic: CollectionProtectionDiagnostic? = null)
     private val deadline = now() + 45_000
     private val records = mutableListOf<Record>()
     private var closed = false
@@ -22,7 +23,8 @@ internal class DetectionTestSession(private val now: () -> Long, private val all
     }
     fun event(target: String?, windowId: Int, input: DetectionInput) = add(target, Record(windowId, input))
     fun assessed(target: String, windowId: Int, result: DetectionAssessment) = add(target, Record(windowId, assessment = result))
-    fun blocked(target: String?, windowId: Int, reason: PrivacyBlockReason) = add(target, Record(windowId, block = reason))
+    fun blocked(target: String?, windowId: Int, reason: PrivacyBlockReason, diagnostic: CollectionProtectionDiagnostic? = null) =
+        add(target, Record(windowId, block = reason, diagnostic = diagnostic))
     @Synchronized fun report(windowId: Int): DetectionTestReport? {
         if (!valid() || windowId < 0) return null
         val scoped = records.filter { it.windowId == windowId }
@@ -35,6 +37,9 @@ internal class DetectionTestSession(private val now: () -> Long, private val all
             records.count { it.input == DetectionInput.NOTIFICATION },
             scoped.mapNotNull { it.assessment?.reason?.name }.toSet(),
             scoped.mapNotNull { it.block?.name }.toSet(), overflow,
+            scoped.mapNotNull { record -> record.diagnostic?.let { diagnostic ->
+                record.block?.let { "${it.name}:${diagnostic.encoded()}" }
+            } }.toSet(),
         )
     }
     @Synchronized fun close() { records.clear(); closed = true }
@@ -43,7 +48,8 @@ internal class DetectionTestSession(private val now: () -> Long, private val all
     companion object { const val HOST = "kr.closeforyou.capturetest" }
 }
 internal data class DetectionTestReport(val candidates: Int, val nonPopups: Int, val uncertain: Int,
-    val blocks: Int, val scrolls: Int, val toasts: Int, val reasons: Set<String>, val blockReasons: Set<String>, val overflow: Boolean) {
+    val blocks: Int, val scrolls: Int, val toasts: Int, val reasons: Set<String>, val blockReasons: Set<String>, val overflow: Boolean,
+    val blockDiagnostics: Set<String> = emptySet()) {
     val actual: String get() = when {
         overflow -> "UNOBSERVED"
         candidates > 0 && blocks > 0 -> "CONFLICT" // Never hide either observation behind the other.

@@ -52,11 +52,17 @@ class ServiceDetectionScenariosOptInTest {
                         val shown = instrumentation.startActivitySync(Intent(instrumentation.targetContext, DetectionScenarioActivity::class.java)
                             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)) as DetectionScenarioActivity
                         activity = shown
-                        val baseline = awaitReport(key, { ownedWindow(shown) }) { result -> observed(result) }
+                        val baseline = awaitReport(key, { ownedWindow(shown) }) { result ->
+                            DetectionObservationReadiness.collected(result.getInt("candidates"), result.getInt("nonPopups"),
+                                result.getInt("uncertain"), result.getInt("blocks"))
+                        }
+                        // Emit BEFORE every baseline assertion. It may fail before the actual stimulus.
+                        emitEvidence(scenario, DetectionObservationPhase.BASELINE, baseline)
                         baselineFp = baseline.getInt("candidates") > 0
                         if (baselineFp) throw ProbeFailure("BASELINE_FALSE_POSITIVE")
                         if (baseline.getInt("blocks") > 0) throw ProbeFailure("BASELINE_BLOCKED")
-                        if (!observed(baseline)) throw ProbeFailure("BASELINE_UNOBSERVED")
+                        if (!DetectionObservationReadiness.usableBaseline(baseline.getInt("nonPopups"), baseline.getInt("uncertain"),
+                            baseline.getString("complete") == "YES")) throw ProbeFailure("BASELINE_UNOBSERVED")
                     }
                     val shown = activity ?: throw ProbeFailure("SEQUENCE_HOST_MISSING")
                     val previousWindow = ownedWindow(shown)
@@ -95,7 +101,7 @@ class ServiceDetectionScenariosOptInTest {
                         val reasons = result.getStringArrayList("blockReasons").orEmpty()
                         if (reasons.isEmpty() || reasons.any { it !in allowed }) detail = "PROTECTION_REASON_NOT_VERIFIED"
                     }
-                    emit("F1_EVIDENCE;CASE=${scenario.name};REASONS=${codes(result, "reasons")};BLOCKS=${codes(result, "blockReasons")};SCROLL=${result.getInt("scrolls") > 0};TOAST=${result.getInt("toasts") > 0}")
+                    emitEvidence(scenario, DetectionObservationPhase.STIMULUS, result)
                 } catch (cancelled: CancellationException) { throw cancelled }
                 catch (failure: ProbeFailure) { detail = failure.code }
                 catch (_: Exception) { detail = "OBSERVATION_FAILED" }
@@ -155,6 +161,14 @@ class ServiceDetectionScenariosOptInTest {
     }
     private fun codes(result: Bundle, name: String): String = result.getStringArrayList(name).orEmpty()
         .map(DiagnosticCode::safe).joinToString(",").ifEmpty { "NONE" }
+    private fun emitEvidence(scenario: DetectionScenario, phase: DetectionObservationPhase, result: Bundle) {
+        emit("F1_EVIDENCE;CASE=${scenario.name};PHASE=${phase.name};REASONS=${codes(result, "reasons")};BLOCKS=${codes(result, "blockReasons")};SCROLL=${result.getInt("scrolls") > 0};TOAST=${result.getInt("toasts") > 0}")
+        val collections = result.getStringArrayList("collections").orEmpty()
+        if (collections.isEmpty()) emit("F1_COLLECTION;CASE=${scenario.name};PHASE=${phase.name};COLLECTION=NONE")
+        else collections.forEach { encoded ->
+            emit("F1_COLLECTION;CASE=${scenario.name};PHASE=${phase.name};${CollectionDiagnosticOutput.format(encoded)}")
+        }
+    }
     private fun emit(code: String) = instrumentation.sendStatus(0, Bundle().apply { putString("stream", "$code\n") })
     private class ProbeFailure(val code: String) : RuntimeException()
 }

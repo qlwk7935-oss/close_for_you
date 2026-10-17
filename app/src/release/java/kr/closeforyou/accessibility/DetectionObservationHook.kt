@@ -8,5 +8,5 @@ internal object DetectionObservationHook {
     fun policyChanged() = Unit
     fun event(target: String?, windowId: Int, input: DetectionInput) = Unit
     fun assessed(target: String, windowId: Int, result: DetectionAssessment) = Unit
-    fun blocked(target: String?, windowId: Int, reason: PrivacyBlockReason) = Unit
+    fun blocked(target: String?, windowId: Int, reason: PrivacyBlockReason, diagnostic: CollectionProtectionDiagnostic? = null) = Unit
 }

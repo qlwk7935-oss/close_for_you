@@ -9,5 +9,7 @@ internal object DetectionObservationHook {
     fun policyChanged() { session?.close(); session = null }
     fun event(target: String?, windowId: Int, input: DetectionInput) { session?.event(target, windowId, input) }
     fun assessed(target: String, windowId: Int, result: DetectionAssessment) { session?.assessed(target, windowId, result) }
-    fun blocked(target: String?, windowId: Int, reason: PrivacyBlockReason) { session?.blocked(target, windowId, reason) }
+    fun blocked(target: String?, windowId: Int, reason: PrivacyBlockReason, diagnostic: CollectionProtectionDiagnostic? = null) {
+        session?.blocked(target, windowId, reason, diagnostic)
+    }
 }
