@@ -36,6 +36,7 @@ data class AccessibilityStatus(
  * Never persist or log events; use synthetic Mock data for development outside a live session.
  */
 object AccessibilityRuntime : SnapshotSource, EvidenceExtractor, CaptureCapability {
+    internal val serviceLifecycle = ServiceLifecycleMonitor()
     private val mutableEvents = MutableSharedFlow<PopupEvent>(
         replay = 0, extraBufferCapacity = 1, onBufferOverflow = BufferOverflow.DROP_OLDEST,
     )

@@ -109,3 +109,15 @@ C02~C06·C09·C10·C12~C14 및 G2~G5는 관련 구현 뒤 시행합니다. C07�
 - 최종 검증: JDK 17에서 `./gradlew --no-daemon :app:assembleDebug :app:assembleDebugAndroidTest :app:testDebugUnitTest :app:lintDebug :capture-test-host:lintDebug` 실행, **BUILD SUCCESSFUL in 32s**. JVM 53개 성공 결과 유지(test 태스크는 변경 없는 production/unit 소스의 캐시 재사용), 실패/오류/건너뜀 0. 본 앱·호스트 Lint 오류/경고 0. 호스트 APK DEX의 Intrinsics 등 실제 정의·의존 참조 및 운영/계측 APK의 호스트 부재 검사 통과. 기존 APK는 Intrinsics 누락으로 검사 실패(exit 1) 재현. apkanalyzer로 정의/매니페스트 독립 교차 확인. debugRuntimeClasspath는 Kotlin stdlib 2.1.20/annotations뿐이며 release APK 태스크 없음. 최초 호스트 Lint의 백업 규칙 경고 1건은 dataExtractionRules 추가로 해소.
 - 기기 상태: adb 연결 0대, emulator/KVM 없음. 계측 6개는 컴파일만 확인, 실제 실행 0개. API 35/37의 호스트 UI·프로세스 유지·OCR/캡처는 미검증.
 - Windows 재검증 및 이전 명령 교체: [ANDROID_TEST_RUNTIME.md](ANDROID_TEST_RUNTIME.md).
+
+
+## 실제 서비스 연결 대기 수정 (2026-10-17)
+
+- 기준: PR #3 병합 main 28c5a77에서 fix/service-test-connection 생성.
+- 사용자 보고: Windows Medium Phone API 37에서 호스트 실행·한국어 모델 계측 3개 성공, 서비스 Bound/Crashed 없음. 기존 서비스 시험은 연결 단계 10초에서 실패했으며 캡처/OCR 실패로 해석하지 않음.
+- 원인 조사: AOSP 일반 계측 시작/종료 경로는 대상 앱을 종료할 수 있음. 서비스 앱 자체를 대상으로 한 시험이 process-local Runtime을 직접 대기하는 구조를 제거. 사용자 이미지의 정확한 콜백/로더 누락 원인은 아직 실측으로 확정하지 않음.
+- 변경: 합성 호스트 대상 외부 계측, debug-only signature/고정 호출자 보호 probe, 실제 서비스 콜백·초기화 phase·동일 프로세스/로더·메인 heartbeat 진단. Runtime connected 강제 설정 없음. 연결 10초/결과 20초 유지. BEGIN은 UI에서 직접 동의/시작하고 합성 호스트만 허용된 경우에만 관측; 설정 쓰기/자동 허용 없음.
+- 개인정보: IPC/실패 결과는 고정 코드·집계·boolean만. 원본 dumpsys는 실패 때 메모리 파싱 후 버림. 노드/이미지/본문/지문/다른 앱 정보 출력·저장 없음. release에 provider/시험 권한 없음.
+- 최종 검증: JDK 17에서 `./gradlew --no-daemon :app:assembleDebug :app:assembleDebugAndroidTest :app:testDebugUnitTest :capture-test-host:testDebugUnitTest :app:lintDebug :capture-test-host:lintDebug :app:assembleRelease` 실행, **BUILD SUCCESSFUL in 2m 6s**. JVM 본 앱 59개/호스트 6개, 총 65개 성공(실패/오류/건너뜀 0). 두 모듈 Lint 오류/경고 0. 본 앱 계측 5개/외부 계측 1개 컴파일. DEX에서 외부 드라이버의 본 앱 Runtime/Preferences/model 의존 부재, 실제 host 타깃 매니페스트, release APK의 debug probe 클래스·provider·권한 부재, debug 본 앱/호스트 서명 일치 확인. 패키징 스크립트/`git diff --check` 통과.
+- 초기 컴파일에서 UiAutomation.flags getter가 공개 SDK에 없어 실패. 해당 비공개 API 접근을 제거하고 공개 DONT_SUPPRESS 요청과 실제 콜백 확인으로 수정.
+- 이 환경에서는 기기 실행 0개. 본 앱 대상 계측 5개·외부 드라이버 1개 컴파일만 검증. [Windows 설치·정확한 새 runner·진단 해석](SERVICE_CAPTURE_TEST.md).

@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <permission
+        android:name="kr.closeforyou.permission.SYNTHETIC_CAPTURE_TEST"
+        android:protectionLevel="signature" />
+    <application>
+        <!-- Only debug builds. No image/text IPC, no service activation or arbitrary app selection. -->
+        <provider
+            android:name="kr.closeforyou.accessibility.testing.SyntheticCaptureTestProvider"
+            android:authorities="${applicationId}.syntheticcapturetest"
+            android:exported="true"
+            android:permission="kr.closeforyou.permission.SYNTHETIC_CAPTURE_TEST" />
+    </application>
+</manifest>

@@ -55,6 +55,8 @@ def main():
     parser.add_argument("--host-apk", type=Path, default=ROOT / "capture-test-host/build/outputs/apk/debug/capture-test-host-debug.apk")
     parser.add_argument("--app-apk", type=Path, default=ROOT / "app/build/outputs/apk/debug/app-debug.apk")
     parser.add_argument("--test-apk", type=Path, default=ROOT / "app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk")
+    parser.add_argument("--driver-apk", type=Path, default=ROOT / "capture-test-host/build/outputs/apk/androidTest/debug/capture-test-host-debug-androidTest.apk")
+    parser.add_argument("--release-apk", type=Path, help="Also verify debug bridge classes are absent from a release APK")
     args = parser.parse_args()
     host, host_refs = dex_classes(args.host_apk)
     # These must be DEFINED by the standalone host. An unresolved type/string is insufficient.
@@ -76,9 +78,22 @@ def main():
                 name + " unexpectedly contains the standalone host")
     require("Lkr/closeforyou/accessibility/capture/BundledKoreanOcrTest;" in tests, "OCR instrumentation tests missing")
     require("Lkr/closeforyou/accessibility/capture/SyntheticHostLaunchTest;" in tests, "Independent-process smoke test missing")
+    driver, driver_refs = dex_classes(args.driver_apk)
+    require("Lkr/closeforyou/servicetest/ServiceCaptureOptInTest;" in driver, "External service driver missing")
+    require(not any(t.startswith(("Lkr/closeforyou/accessibility/", "Lkr/closeforyou/app/", "Lkr/closeforyou/core/")) for t in driver_refs),
+            "External driver must not read target-app process-local singletons")
+    require("Lkr/closeforyou/accessibility/capture/ServiceCaptureOptInTest;" not in tests,
+            "Service integration test still targets/restarts the real service app")
+    require("Lkr/closeforyou/accessibility/testing/SyntheticCaptureTestProvider;" in app, "Debug probe missing")
+    if args.release_apk:
+        release, _ = dex_classes(args.release_apk)
+        require(not any(t.startswith("Lkr/closeforyou/accessibility/testing/") for t in release),
+                "Debug probe leaked into release APK")
+        print("PASS: debug probe classes absent from release APK")
     print("PASS: host defines Intrinsics + Kotlin runtime + synthetic Activity/image helper")
     print("PASS: host has no target-app/test-runner references; app and test APKs contain no host")
     print("PASS: instrumentation tests retained; target app defines its own Kotlin runtime")
+    print("PASS: external service driver has no target-app Runtime/Preferences/model class dependencies")
     print("Packaging verified. Standalone Android launch/OCR still require device execution.")
 
 

@@ -1,5 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Debug/test-only app: permission protects the real app's debug synthetic-test bridge. -->
+    <uses-permission android:name="kr.closeforyou.permission.SYNTHETIC_CAPTURE_TEST" />
+    <queries>
+        <provider android:authorities="kr.closeforyou.syntheticcapturetest" />
+    </queries>
     <application
         android:allowBackup="false"
         android:fullBackupContent="false"

@@ -166,3 +166,8 @@ check(repository.findExact(rule.key, nowEpochMillis = 2_000L) == null)
 ## 합성 호스트 독립 프로세스 (런타임 수정)
 
 합성 Activity는 별도 debug/testOnly `:capture-test-host` 앱으로 이동했습니다. 운영 앱·계측 APK에는 호스트가 없습니다. 분석 대상 패키지는 **kr.closeforyou.capturetest**, 계측 runner는 기존 **kr.closeforyou.test**로 구분합니다. 호스트에 자체 Kotlin stdlib를 포함하며 production 공통 계약·접근성/개인정보/OCR 코드는 변경하지 않았습니다. assembleDebugAndroidTest가 호스트도 빌드하지만 설치는 별도입니다. [Windows 설치·실행·계측·DEX 검사](ANDROID_TEST_RUNTIME.md)를 따릅니다. A/B/C/D의 합성 데이터 시험 패키지 설정도 새 호스트 패키지를 사용합니다. 실제 기기 실행은 미검증입니다.
+
+
+## 서비스 연결 시험의 외부 드라이버
+
+`ServiceCaptureOptInTest`를 합성 호스트의 androidTest로 옮겼습니다. runner는 **kr.closeforyou.capturetest.test**, target은 **kr.closeforyou.capturetest**이며 본 앱 Runtime을 직접 import/대기하지 않습니다. debug 본 앱의 signature·고정 호출자 보호 provider가 실제 서비스 콜백과 Runtime 상태를 조회하고 고정 코드/집계만 전달합니다. release에는 시험 연결점이 없습니다. B/C/D의 모델/계약/기능과 보호·캡처 정책은 유지합니다. 시험은 사용자 동의/허용 설정을 변경하지 않으며 UI에서 합성 호스트만 허용하고 분석을 시작해야 합니다. [설치·연결 진단·실제 캡처 명령](SERVICE_CAPTURE_TEST.md)을 따릅니다. 기존 본 앱 대상 계측은 서비스 프로세스를 재시작할 수 있으므로 서비스 통합 시험과 동시에 실행하지 않습니다.

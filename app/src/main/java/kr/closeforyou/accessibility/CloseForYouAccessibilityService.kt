@@ -4,6 +4,8 @@ import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.AccessibilityServiceInfo
 import android.content.Intent
 import android.content.res.Configuration
+import android.os.Looper
+import android.os.Process
 import android.view.accessibility.AccessibilityEvent
 import android.view.inputmethod.InputMethodManager
 import kotlinx.collections.immutable.toPersistentSet
@@ -33,8 +35,27 @@ class CloseForYouAccessibilityService : AccessibilityService() {
     private var inputMethodPackages: Set<String> = emptySet()
     private val preferences by lazy { CorePreferences.get(this) }
 
+    override fun onCreate() {
+        super.onCreate()
+        AccessibilityRuntime.serviceLifecycle.created(Process.myPid(),
+            javaClass.classLoader === AccessibilityRuntime::class.java.classLoader,
+            Looper.myLooper() == Looper.getMainLooper())
+    }
+
     override fun onServiceConnected() {
         super.onServiceConnected()
+        AccessibilityRuntime.serviceLifecycle.connecting(Looper.myLooper() == Looper.getMainLooper())
+        try {
+            initializeConnectedService()
+            AccessibilityRuntime.serviceLifecycle.phase(ServiceLifecyclePhase.CONNECTED)
+        } catch (failure: Exception) {
+            disconnect()
+            AccessibilityRuntime.serviceLifecycle.phase(ServiceLifecyclePhase.INITIALIZATION_FAILED)
+            throw failure
+        }
+    }
+
+    private fun initializeConnectedService() {
         serviceScope.cancel()
         serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
         serviceInfo = serviceInfo.apply {
@@ -46,10 +67,10 @@ class CloseForYouAccessibilityService : AccessibilityService() {
         touching = false
         inputMethodPackages = (getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager)
             .inputMethodList.mapTo(mutableSetOf()) { it.packageName }
-        AccessibilityRuntime.connect()
         val screenshots = AndroidScreenshotManager(this, preferences, ::isCurrent) { connected && !touching }
         AccessibilityRuntime.attachCaptureCapability(screenshots)
         pipeline = CaptureOcrPipeline(screenshots, KoreanMlKitOcr(), ::isCurrent, ::verifyScreen)
+        AccessibilityRuntime.connect()
         invalidate(clearBaseline = true)
         settingsObserver = serviceScope.launch {
             preferences.state.collect {
@@ -199,10 +220,12 @@ class CloseForYouAccessibilityService : AccessibilityService() {
 
     override fun onDestroy() {
         disconnect()
+        AccessibilityRuntime.serviceLifecycle.phase(ServiceLifecyclePhase.DESTROYED)
         super.onDestroy()
     }
 
     private fun disconnect() {
+        AccessibilityRuntime.serviceLifecycle.phase(ServiceLifecyclePhase.UNBOUND)
         connected = false
         touching = false
         settingsObserver?.cancel()
