@@ -31,7 +31,7 @@ class DecisionActionPolicyTest {
     @Test fun realRuntimeAnalysisWithoutCandidatesIsNeverPressed() = runBlocking {
         val real = ad.copy(limitations = realLimitations, closeCandidates = persistentListOf())
         assertDenied(decide(real), FIRST_SEEN, UNVERIFIED_TARGET)
-        assertDenied(decide(real, rule = rule()), UNVERIFIED_TARGET, INCOMPLETE_EVIDENCE)
+        assertDenied(decide(real, rule = rule()), UNVERIFIED_TARGET, INCOMPLETE_EVIDENCE, EXPLICIT_PERMISSION_REQUIRED)
         assertDenied(decide(real, choice = UserChoice(real.token, ChoiceKind.CLOSE_ONCE, "fixture-button")), UNVERIFIED_TARGET)
     }
 
@@ -74,10 +74,16 @@ class DecisionActionPolicyTest {
     }
 
     @Test fun fakeCloseButtonsAreNotPressed() = runBlocking {
-        for (label in listOf("설치", "자세히 보기", "오늘 하루 보지 않기", "오늘 하루 닫기", "7일간 보지 않기", "확인", "취소", "나중에", "OK", "Install", "Learn more")) {
+        // Candidates built elsewhere claim role CLOSE; the policy must not trust that role alone.
+        for (label in listOf(
+            "닫기 전 저장", "설치", "자세히 보기", "오늘 하루 보지 않기", "오늘 하루 닫기", "7일간 보지 않기",
+            "확인", "취소", "나중에", "OK", "Install", "Learn more", "건너뛰기",
+        )) {
             val fake = withCandidate(ad) { it.copy(label = label) }
             assertDenied(decide(fake, choice = choose(fake)), UNVERIFIED_TARGET)
         }
+        val closeLabelClaimingSkip = withCandidate(ad) { it.copy(role = ButtonRole.SKIP) }
+        assertDenied(decide(closeLabelClaimingSkip, choice = choose(closeLabelClaimingSkip, kind = ChoiceKind.SKIP_ONCE)), UNVERIFIED_TARGET)
         val unlabeledE2 = withCandidate(ad) { it.copy(label = null) }
         assertDenied(decide(unlabeledE2, choice = choose(unlabeledE2)), UNVERIFIED_TARGET)
         val navigateRole = withCandidate(ad) { it.copy(role = ButtonRole.NAVIGATE) }
@@ -108,17 +114,19 @@ class DecisionActionPolicyTest {
         }
     }
 
-    @Test fun rememberedExactRuleAllowsOnlyWhenEveryConditionHolds() = runBlocking {
-        val allowed = decide(notice, rule = rule())
-        assertEquals(ALLOW_ONCE, allowed.authorization)
-        assertEquals("fixture-button", allowed.candidateId)
+    @Test fun automaticRepeatStaysOffUntilTheContractCarriesItsConditions() = runBlocking {
+        // Even a fully matching rule only asks: the per-app setting and attempt history are not in the contract yet.
+        val matching = decide(notice, rule = rule())
+        assertConfirm(matching, EXPLICIT_PERMISSION_REQUIRED)
+        assertEquals("fixture-button", matching.candidateId)
 
-        assertConfirm(decide(notice, rule = rule(), announcement = false), FEEDBACK_UNAVAILABLE)
-        assertConfirm(decide(notice.copy(limitations = realLimitations), rule = rule()), INCOMPLETE_EVIDENCE)
-        assertConfirm(decide(notice, rule = rule().copy(failureCount = 1)), ALREADY_ATTEMPTED)
-        assertConfirm(decide(notice, rule = rule(repeat = false)), RULE_MISMATCH)
-        assertConfirm(decide(notice, rule = rule(confirmed = false, repeat = false)), RULE_MISMATCH)
-        assertConfirm(decide(notice, rule = rule().copy(enabled = false)), RULE_MISMATCH)
+        // Every other unmet condition is still reported.
+        assertConfirm(decide(notice, rule = rule(), announcement = false), EXPLICIT_PERMISSION_REQUIRED, FEEDBACK_UNAVAILABLE)
+        assertConfirm(decide(notice.copy(limitations = realLimitations), rule = rule()), EXPLICIT_PERMISSION_REQUIRED, INCOMPLETE_EVIDENCE)
+        assertConfirm(decide(notice, rule = rule().copy(failureCount = 1)), EXPLICIT_PERMISSION_REQUIRED, ALREADY_ATTEMPTED)
+        assertConfirm(decide(notice, rule = rule(repeat = false)), EXPLICIT_PERMISSION_REQUIRED, RULE_MISMATCH)
+        assertConfirm(decide(notice, rule = rule(confirmed = false, repeat = false)), EXPLICIT_PERMISSION_REQUIRED, RULE_MISMATCH)
+        assertConfirm(decide(notice, rule = rule().copy(enabled = false)), EXPLICIT_PERMISSION_REQUIRED, RULE_MISMATCH)
     }
 
     @Test fun personsCurrentChoiceWinsOverARememberedRule() = runBlocking {
@@ -137,7 +145,7 @@ class DecisionActionPolicyTest {
     @Test fun unlabeledDismissActionIsAVerifiedTarget() = runBlocking {
         val dismiss = withCandidate(notice) { it.copy(evidence = EvidenceLevel.E1_DISMISS, label = null) }
         assertEquals(ALLOW_ONCE, decide(dismiss, choice = choose(dismiss)).authorization)
-        assertEquals(ALLOW_ONCE, decide(dismiss, rule = rule()).authorization)
+        assertConfirm(decide(dismiss, rule = rule()), EXPLICIT_PERMISSION_REQUIRED)
     }
 
     @Test fun stopAskingRuleNeitherClosesNorAsksAgain() = runBlocking {
@@ -147,9 +155,9 @@ class DecisionActionPolicyTest {
     @Test fun ruleWithAnAmbiguousOrUnverifiedTargetIsDenied() = runBlocking {
         val candidate = notice.closeCandidates.single()
         val two = notice.copy(closeCandidates = persistentListOf(candidate, candidate.copy(id = "second")))
-        assertDenied(decide(two, rule = rule()), UNVERIFIED_TARGET)
+        assertDenied(decide(two, rule = rule()), UNVERIFIED_TARGET, EXPLICIT_PERMISSION_REQUIRED)
         val pixelOnly = withCandidate(notice) { it.copy(evidence = EvidenceLevel.E4_VISUAL_ONLY) }
-        assertDenied(decide(pixelOnly, rule = rule()), UNVERIFIED_TARGET)
+        assertDenied(decide(pixelOnly, rule = rule()), UNVERIFIED_TARGET, EXPLICIT_PERMISSION_REQUIRED)
     }
 
     private suspend fun decide(
@@ -183,8 +191,8 @@ class DecisionActionPolicyTest {
         assertNull(decision.candidateId)
     }
 
-    private fun assertConfirm(decision: ActionDecision, reason: SafetyReason) {
+    private fun assertConfirm(decision: ActionDecision, vararg reasons: SafetyReason) {
         assertEquals(NEEDS_CONFIRMATION, decision.authorization)
-        assertEquals(setOf(reason), decision.reasons)
+        assertEquals(reasons.toSet(), decision.reasons)
     }
 }

@@ -1,5 +1,7 @@
 package kr.closeforyou.decision
 
+import kr.closeforyou.core.model.ButtonRole
+
 /**
  * B keyword dictionary for display classification. Matching a keyword never authorizes an action.
  * Korean terms use substring matching; English terms use word boundaries so "read" is not "ad".
@@ -51,6 +53,26 @@ internal object DecisionKeywords {
 
     fun isRiskyButtonLabel(label: String): Boolean =
         isDecisionButtonLabel(label) || riskyButtonKo.any { it in label } || riskyButtonEn.containsMatchIn(label)
+
+    /**
+     * CLOSE or SKIP only when the whole label says so, so "오늘 하루 닫기" (grade K) or "닫기 전 저장"
+     * are neither. Shared by the candidate finder and the policy's recheck of a supplied role.
+     */
+    fun buttonRoleOf(label: String): ButtonRole? {
+        if (isRiskyButtonLabel(label)) return null
+        val normalized = label.lowercase().filterNot { it.isWhitespace() || it in "[]()<>·." }
+        return when (normalized) {
+            in closeLabels -> ButtonRole.CLOSE
+            in skipLabels -> ButtonRole.SKIP
+            else -> null
+        }
+    }
+
+    private val closeLabels = setOf(
+        "닫기", "닫음", "창닫기", "팝업닫기", "광고닫기", "공지닫기", "안내닫기", "닫기버튼",
+        "close", "closead", "closepopup", "closedialog", "closebutton", "dismiss", "x", "×", "✕", "✖", "╳",
+    )
+    private val skipLabels = setOf("건너뛰기", "광고건너뛰기", "건너뛰기버튼", "스킵", "광고스킵", "skip", "skipad", "skipads", "skipbutton")
 
     fun isAdvertisement(text: String): Boolean =
         advertisementKo.any { it in text } ||

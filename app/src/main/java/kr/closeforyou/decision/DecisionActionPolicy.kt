@@ -21,9 +21,11 @@ import kotlinx.collections.immutable.toPersistentSet
  * and ALLOW_ONCE needs none of either. The result is only a request: A's ActionExecutor rereads the
  * screen and performs at most one action. No clicks, gestures, focus changes or logging of screen text.
  *
- * An action is requested in exactly two ways: the person picks a verified button on this screen
- * (design 3-5 "닫아"), or an exact remembered rule explicitly allows repeating it. A display
- * classification such as ADVERTISEMENT never does (design 1-2).
+ * Today an action is requested only when the person picks a verified button on this screen
+ * (design 3-5 "닫아"). An exact remembered rule is still checked, but automatic repeats wait for the
+ * contract fields agreed in the PR #8 review. A display classification such as ADVERTISEMENT never
+ * requests an action (design 1-2), and INCOMPLETE_EVIDENCE never overrides A's privacy blocking:
+ * a blocked screen reaches B only as PopupEvent.Blocked, without an analysis to decide on.
  */
 class DecisionActionPolicy : ActionPolicy {
     override suspend fun decide(analysis: PopupAnalysis, context: DecisionContext): ActionDecision {
@@ -107,6 +109,10 @@ class DecisionActionPolicy : ActionPolicy {
             deny += SafetyReason.EXPLICIT_PERMISSION_REQUIRED
             return null
         }
+        // Automatic repeats stay off until DecisionContext carries the per-app automation setting
+        // (design 3-3 condition 1) and this popup's attempt history (condition 7), as agreed in the
+        // PR #8 review. The checks below still report every other unmet condition.
+        confirm += SafetyReason.EXPLICIT_PERMISSION_REQUIRED
         if (!rule.enabled || rule.choice != ChoiceKind.REMEMBER_EXACT_POPUP ||
             !rule.repeatAutomationExplicitlyAllowed || !rule.buttonMeaningConfirmed
         ) confirm += SafetyReason.RULE_MISMATCH
@@ -127,17 +133,20 @@ class DecisionActionPolicy : ActionPolicy {
 
     /**
      * Close or skip buttons with tree evidence (E1/E2), or an icon button whose meaning the person
-     * confirmed (E3). Pixel-only targets (E4) and labels of grades D/K/P/O are never pressed.
+     * confirmed (E3). Pixel-only targets (E4) are never pressed. A supplied role is not trusted on
+     * its own: a label must itself say that role, so `CLOSE` + "닫기 전 저장" or a grade D/K/P/O
+     * label is refused whoever built the candidate.
      */
     private fun isVerifiedTarget(candidate: CloseCandidate, allowBoundIcon: Boolean): Boolean {
+        val label = candidate.label?.takeIf { it.isNotBlank() }
         val evidenceVerified = when (candidate.evidence) {
             EvidenceLevel.E1_DISMISS -> true
-            EvidenceLevel.E2_LABELED_NODE -> !candidate.label.isNullOrBlank()
+            EvidenceLevel.E2_LABELED_NODE -> label != null
             EvidenceLevel.E3_USER_BOUND_NODE -> allowBoundIcon
             EvidenceLevel.E4_VISUAL_ONLY -> false
         }
         return evidenceVerified &&
             (candidate.role == ButtonRole.CLOSE || candidate.role == ButtonRole.SKIP) &&
-            candidate.label?.let(DecisionKeywords::isRiskyButtonLabel) != true
+            (label == null || DecisionKeywords.buttonRoleOf(label) == candidate.role)
     }
 }

@@ -85,16 +85,35 @@ class DecisionCloseCandidateFinderTest {
         val pageClose = node("1", text = "닫기", bounds = behindDialog)
 
         assertEquals(listOf("node:0/0"), find(dialogNode, popupClose, pageClose, signal = SAME_WINDOW_OVERLAY).map { it.id })
-        // Without exactly one Dialog bound, the page's own buttons cannot be told apart.
+        // Without exactly one Dialog, the page's own buttons cannot be told apart.
         assertTrue(find(popupClose, pageClose, signal = SAME_WINDOW_OVERLAY).isEmpty())
         val otherDialog = container("2", className = "test.OtherDialog", bounds = ScreenBounds(0, 0, 500, 300))
         assertTrue(find(dialogNode, otherDialog, popupClose, pageClose, signal = SAME_WINDOW_OVERLAY).isEmpty())
     }
 
-    @Test fun newWindowAndFullScreenSearchTheWholeActiveWindow() {
+    @Test fun pageButtonUnderTheDialogBoundsIsNotTheDialogs() {
+        // PR #8 review: a page node drawn inside the Dialog's area but outside its subtree.
+        val dialogNode = container("0/1", className = "test.ConfirmDialog")
+        val popupClose = node("0/1/0", text = "닫기")
+        val overlappingPageClose = node("0/0", text = "닫기", bounds = inDialog)
+        assertEquals(listOf("node:0/1/0"), find(dialogNode, popupClose, overlappingPageClose, signal = SAME_WINDOW_OVERLAY).map { it.id })
+        // A sibling whose path only starts with the same digits is not a descendant either.
+        val lookalikeSibling = node("0/10", text = "닫기", bounds = inDialog)
+        assertEquals(listOf("node:0/1/0"), find(dialogNode, popupClose, lookalikeSibling, signal = SAME_WINDOW_OVERLAY).map { it.id })
+    }
+
+    @Test fun dialogClassesNestedInOneDialogStillCount() {
+        val dialogNode = container("0", className = "test.ConfirmDialog")
+        val dialogLayout = container("0/0", className = "androidx.appcompat.app.AlertDialogLayout", bounds = inDialog)
+        val popupClose = node("0/0/0", text = "닫기")
+        assertEquals(listOf("node:0/0/0"), find(dialogNode, dialogLayout, popupClose, signal = SAME_WINDOW_OVERLAY).map { it.id })
+    }
+
+    @Test fun onlyANewWindowIsSearchedWhole() {
         val pageClose = node("1", text = "닫기", bounds = behindDialog)
         assertEquals(1, find(pageClose, signal = NEW_WINDOW).size)
-        assertEquals(1, find(pageClose, signal = FULL_SCREEN_TRANSITION).size)
+        // PR #8 review: a full-screen transition alone may be an ordinary Activity change.
+        assertTrue(find(pageClose, signal = FULL_SCREEN_TRANSITION).isEmpty())
     }
 
     @Test fun uncertainDetectionsGiveNothing() {

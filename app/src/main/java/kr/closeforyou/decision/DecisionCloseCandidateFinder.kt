@@ -23,31 +23,42 @@ class DecisionCloseCandidateFinder {
         if (detection.token != snapshot.token) return persistentListOf()
         val scope = popupScope(snapshot, detection.signals) ?: return persistentListOf()
         return snapshot.nodes
-            .filter { it.enabled && inside(it.bounds, scope) && inside(it.bounds, snapshot.screenBounds) }
+            .filter { it.enabled && scope.contains(it) && inside(it.bounds, snapshot.screenBounds) }
             .mapNotNull(::candidate)
             .toPersistentList()
     }
 
+    /** The popup's own nodes: an optional subtree root and the bounds that must contain them. */
+    private class PopupScope(private val rootPath: String?, private val bounds: ScreenBounds) {
+        fun contains(node: NodeSnapshot): Boolean = inside(node.bounds, bounds) &&
+            (rootPath == null || node.path == rootPath || node.path.startsWith("$rootPath/"))
+    }
+
     /**
-     * The active window holds only the popup for a new window or a full-screen transition. A
-     * same-window overlay shares it with the page behind, so only one unambiguous Dialog node
-     * bounds the search; otherwise the page's own buttons could be mistaken for the popup's.
-     * An uncertain detection may be an ordinary page change, so it yields nothing (agreed with A).
+     * Only a new window holds nothing but the popup. A same-window overlay shares the window with
+     * the page behind, so only the subtree of one unambiguous Dialog node counts: a page button
+     * lying under the Dialog's bounds is still not the popup's. A full-screen transition may be an
+     * ordinary Activity change and an uncertain detection may be anything, so neither yields
+     * candidates (agreed with A in the PR #8 review).
      */
-    private fun popupScope(snapshot: PopupSnapshot, signals: Set<PopupSignal>): ScreenBounds? = when {
-        PopupSignal.INSUFFICIENT_EVIDENCE in signals -> null
-        PopupSignal.NEW_WINDOW in signals || PopupSignal.FULL_SCREEN_TRANSITION in signals -> snapshot.screenBounds
-        PopupSignal.SAME_WINDOW_OVERLAY in signals -> snapshot.nodes
-            .filter { it.className?.contains("dialog", ignoreCase = true) == true }
-            .map { it.bounds }
-            .distinct()
-            .singleOrNull()
+    private fun popupScope(snapshot: PopupSnapshot, signals: Set<PopupSignal>): PopupScope? = when {
+        PopupSignal.INSUFFICIENT_EVIDENCE in signals || PopupSignal.FULL_SCREEN_TRANSITION in signals -> null
+        PopupSignal.NEW_WINDOW in signals -> PopupScope(null, snapshot.screenBounds)
+        PopupSignal.SAME_WINDOW_OVERLAY in signals -> dialogScope(snapshot.nodes)
         else -> null
+    }
+
+    private fun dialogScope(nodes: List<NodeSnapshot>): PopupScope? {
+        val dialogs = nodes.filter { it.className?.contains("dialog", ignoreCase = true) == true }
+        // Dialog classes nested inside one Dialog (e.g. its layout) belong to that same Dialog.
+        val outermost = dialogs.filter { dialog -> dialogs.none { dialog.path.startsWith("${it.path}/") } }
+        val dialog = outermost.singleOrNull() ?: return null
+        return PopupScope(dialog.path, dialog.bounds)
     }
 
     private fun candidate(node: NodeSnapshot): CloseCandidate? {
         val labels = listOfNotNull(node.text, node.contentDescription).map { it.trim() }.filter { it.isNotEmpty() }
-        val roles = labels.map(::roleOf).toSet()
+        val roles = labels.map(DecisionKeywords::buttonRoleOf).toSet()
         // Every label on the node must say the same close/skip thing; a conflict is not a candidate.
         val labeledRole = roles.singleOrNull()
         val label = labels.firstOrNull()
@@ -70,27 +81,8 @@ class DecisionCloseCandidateFinder {
         evidence = evidence,
         role = role,
     )
-
-    /** Whole-label match, so "오늘 하루 닫기" (grade K) or "닫기 전 저장" are not close buttons. */
-    private fun roleOf(label: String): ButtonRole? {
-        if (DecisionKeywords.isRiskyButtonLabel(label)) return null
-        val normalized = label.lowercase().filterNot { it.isWhitespace() || it in "[]()<>·." }
-        return when (normalized) {
-            in CLOSE_LABELS -> ButtonRole.CLOSE
-            in SKIP_LABELS -> ButtonRole.SKIP
-            else -> null
-        }
-    }
-
-    private fun inside(inner: ScreenBounds, outer: ScreenBounds): Boolean =
-        inner.width > 0 && inner.height > 0 &&
-            inner.left >= outer.left && inner.top >= outer.top && inner.right <= outer.right && inner.bottom <= outer.bottom
-
-    private companion object {
-        val CLOSE_LABELS = setOf(
-            "닫기", "닫음", "창닫기", "팝업닫기", "광고닫기", "공지닫기", "안내닫기", "닫기버튼",
-            "close", "closead", "closepopup", "closedialog", "closebutton", "dismiss", "x", "×", "✕", "✖", "╳",
-        )
-        val SKIP_LABELS = setOf("건너뛰기", "광고건너뛰기", "건너뛰기버튼", "스킵", "광고스킵", "skip", "skipad", "skipads", "skipbutton")
-    }
 }
+
+private fun inside(inner: ScreenBounds, outer: ScreenBounds): Boolean =
+    inner.width > 0 && inner.height > 0 &&
+        inner.left >= outer.left && inner.top >= outer.top && inner.right <= outer.right && inner.bottom <= outer.bottom
