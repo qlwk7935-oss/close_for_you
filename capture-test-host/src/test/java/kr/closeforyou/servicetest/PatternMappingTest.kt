@@ -7,9 +7,9 @@ import org.junit.Test
 class PatternMappingTest {
     private val plan = PatternPlan(7, PatternRect(80, 200, 320, 380), PatternRect(90, 220, 310, 370), true)
     private fun inspect(width: Int = 280, height: Int = 220, originX: Int = 20, originY: Int = 20,
-        change: (Int, Int, Int) -> Int = { _, _, p -> p }): PatternReport {
+        stillValid: () -> Boolean = { true }, change: (Int, Int, Int) -> Int = { _, _, p -> p }): PatternReport {
         val markers = PatternMapping.markers(plan.content.width, plan.content.height)
-        return PatternMapping.inspect(plan, width, height) { x, y ->
+        return PatternMapping.inspect(plan, width, height, stillValid) { x, y ->
             val localX = x - originX - (plan.content.left - plan.decor.left)
             val localY = y - originY - (plan.content.top - plan.decor.top)
             val marker = markers.indexOfFirst { localX in it.left until it.right && localY in it.top until it.bottom }
@@ -91,4 +91,70 @@ class PatternMappingTest {
         assertEquals(PatternCode.TRANSLATION_VERIFIED, report.code)
         assertEquals(OuterPixels.NONTRANSPARENT, report.outer)
     }
+    @Test fun classifiesAllTwelveBucketsWithoutRelaxingValidation() {
+        val locations = listOf(30 to 40, 100 to 40, 100 to 100)
+        val pixels = listOf(0x00ffffff, 0x80ffffff.toInt(), 0xfffcfcfc.toInt(), 0xff000000.toInt())
+        val expected = listOf(
+            listOf(ContentMismatch.CORNER_ALPHA_TRANSPARENT, ContentMismatch.CORNER_ALPHA_PARTIAL,
+                ContentMismatch.CORNER_OPAQUE_NEAR_WHITE, ContentMismatch.CORNER_OPAQUE_OTHER),
+            listOf(ContentMismatch.EDGE_ALPHA_TRANSPARENT, ContentMismatch.EDGE_ALPHA_PARTIAL,
+                ContentMismatch.EDGE_OPAQUE_NEAR_WHITE, ContentMismatch.EDGE_OPAQUE_OTHER),
+            listOf(ContentMismatch.INTERIOR_ALPHA_TRANSPARENT, ContentMismatch.INTERIOR_ALPHA_PARTIAL,
+                ContentMismatch.INTERIOR_OPAQUE_NEAR_WHITE, ContentMismatch.INTERIOR_OPAQUE_OTHER))
+        for ((zone, point) in locations.withIndex()) for ((appearance, value) in pixels.withIndex()) {
+            val result = inspect { x, y, p -> if (x == point.first && y == point.second) value else p }
+            assertEquals(PatternCode.CONTENT_NOT_SYNTHETIC, result.code)
+            assertEquals(setOf(expected[zone][appearance]), result.mismatches)
+            assertEquals(LandmarkCheck.ALIGNED, result.landmarks)
+            assertEquals(ContentScan.COMPLETE, result.contentScan)
+            assertEquals(DecorBufferRelation.UNKNOWN, result.decorBuffer)
+            assertEquals(OuterPixels.UNKNOWN, result.outer)
+        }
+    }
+    @Test fun collectsEarlyAndLateMismatchKindsInsteadOfReturningFirstPixel() {
+        val report = inspect { x, y, p -> when {
+            x == 30 && y == 40 -> 0x80ffffff.toInt()
+            x == 100 && y == 100 -> 0xff000000.toInt()
+            x == 249 && y == 189 -> 0xfffcfcfc.toInt()
+            else -> p
+        } }
+        assertEquals(PatternCode.CONTENT_NOT_SYNTHETIC, report.code)
+        assertEquals(setOf(ContentMismatch.CORNER_ALPHA_PARTIAL, ContentMismatch.INTERIOR_OPAQUE_OTHER,
+            ContentMismatch.CORNER_OPAQUE_NEAR_WHITE), report.mismatches)
+    }
+    @Test fun originalOneChannelToleranceIsStillTheAcceptanceBoundary() {
+        assertEquals(PatternCode.TRANSLATION_VERIFIED,
+            inspect { x, y, p -> if (x == 100 && y == 100) 0xfffefefe.toInt() else p }.code)
+        val outside = inspect { x, y, p -> if (x == 100 && y == 100) 0xfffdfdfd.toInt() else p }
+        assertEquals(PatternCode.CONTENT_NOT_SYNTHETIC, outside.code)
+        assertEquals(setOf(ContentMismatch.INTERIOR_OPAQUE_NEAR_WHITE), outside.mismatches)
+    }
+    @Test fun slightlyTransparentWhiteIsNotAcceptedAsOpaqueWhite() {
+        val report = inspect { x, y, p -> if (x == 100 && y == 100) 0xfeffffff.toInt() else p }
+        assertEquals(PatternCode.CONTENT_NOT_SYNTHETIC, report.code)
+        assertEquals(setOf(ContentMismatch.INTERIOR_ALPHA_PARTIAL), report.mismatches)
+    }
+    @Test fun interruptedContentScanKeepsOnlyBoundedPartialCodesAndNeverPasses() {
+        var checks = 0
+        val report = inspect(stillValid = { ++checks < 223 }) { x, y, p ->
+            if (x == 30 && y == 40) 0x00ffffff else p
+        }
+        assertEquals(PatternCode.INSPECTION_INTERRUPTED, report.code)
+        assertEquals(LandmarkCheck.ALIGNED, report.landmarks)
+        assertEquals(ContentScan.INTERRUPTED, report.contentScan)
+        assertEquals(setOf(ContentMismatch.CORNER_ALPHA_TRANSPARENT), report.mismatches)
+    }
+    @Test fun markerFailureDoesNotPretendToHaveScannedAlignedContent() {
+        val report = inspect { _, _, p -> if (p == PatternMapping.colors[0]) PatternMapping.WHITE else p }
+        assertEquals(LandmarkCheck.NOT_VERIFIED, report.landmarks)
+        assertEquals(ContentScan.NOT_RUN, report.contentScan)
+        assertTrue(report.mismatches.isEmpty())
+    }
+    @Test fun verifiedContentHasNoMismatchCodes() {
+        val report = inspect()
+        assertEquals(LandmarkCheck.ALIGNED, report.landmarks)
+        assertEquals(ContentScan.COMPLETE, report.contentScan)
+        assertTrue(report.mismatches.isEmpty())
+    }
+
 }

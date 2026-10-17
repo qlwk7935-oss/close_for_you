@@ -85,6 +85,8 @@ def main():
     require("Lkr/closeforyou/servicetest/ServiceCaptureOptInTest;" in driver, "External service driver missing")
     require("Lkr/closeforyou/servicetest/ServiceBufferGeometryOptInTest;" in driver, "Synthetic buffer geometry instrumentation missing")
     require("Lkr/closeforyou/servicetest/ServiceSyntheticPatternOptInTest;" in driver, "Synthetic landmark instrumentation missing")
+    require("Lkr/closeforyou/servicetest/PatternModeRunner;" in driver, "Two-mode observation runner missing")
+    require("Lkr/closeforyou/servicetest/PatternModeComparison;" in driver, "Strict final two-mode comparison missing")
     require("Lkr/closeforyou/servicetest/SyntheticDialogGeometryTest;" in driver, "Synthetic Dialog geometry instrumentation missing")
     require(not any(t.startswith(("Lkr/closeforyou/accessibility/", "Lkr/closeforyou/app/", "Lkr/closeforyou/core/")) for t in driver_refs),
             "External driver must not read target-app process-local singletons")

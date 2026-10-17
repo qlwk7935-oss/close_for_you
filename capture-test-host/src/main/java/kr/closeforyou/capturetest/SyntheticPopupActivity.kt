@@ -3,6 +3,9 @@ package kr.closeforyou.capturetest
 import android.app.Activity
 import android.app.Dialog
 import android.os.Bundle
+import android.view.View
+import android.view.ViewGroup
+import kr.closeforyou.synthetictest.PatternRenderHint
 import android.widget.Button
 import android.widget.ImageView
 import android.widget.LinearLayout
@@ -12,6 +15,8 @@ import android.widget.TextView
 class SyntheticPopupActivity : Activity() {
     private var dialog: Dialog? = null
     internal var patternArmCode: String = "NOT_ARMED"
+        private set
+    internal var patternRendering: Set<PatternRenderHint> = emptySet()
         private set
     private var image: android.graphics.Bitmap? = null
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -76,6 +81,7 @@ class SyntheticPopupActivity : Activity() {
                     }
                     pattern.viewTreeObserver.removeOnPreDrawListener(this)
                     previousGeometry = null
+                    patternRendering = renderingHints(pattern, decor)
                     val extras = Bundle().apply {
                         // Ephemeral private IPC only. Never attach this Bundle to status/assertions/logs.
                         putIntArray("ownedGeometry", geometry)
@@ -91,6 +97,25 @@ class SyntheticPopupActivity : Activity() {
         })
         owned.show()
         owned.window?.setLayout(minOf(resources.displayMetrics.widthPixels - 80, 1200), 420)
+    }
+
+    /** Read-only, owned-view hints at ARM. These do not prove which drawing step changed a pixel. */
+    private fun renderingHints(content: View, decor: View): Set<PatternRenderHint> = buildSet {
+        add(if (content.isHardwareAccelerated) PatternRenderHint.HARDWARE else PatternRenderHint.SOFTWARE)
+        if (content.clipToOutline) add(PatternRenderHint.CONTENT_OUTLINE)
+        if (decor.clipToOutline) add(PatternRenderHint.DECOR_OUTLINE)
+        if (content.foreground != null) add(PatternRenderHint.CONTENT_FOREGROUND)
+        var parent = content.parent
+        var depth = 0
+        while (parent is View && depth++ < 30) {
+            if (parent.clipToOutline) add(PatternRenderHint.ANCESTOR_OUTLINE)
+            if (parent.foreground != null) add(PatternRenderHint.ANCESTOR_FOREGROUND)
+            if (parent is ViewGroup) {
+                if (parent.clipChildren) add(PatternRenderHint.ANCESTOR_CLIP_CHILDREN)
+                if (parent.clipToPadding) add(PatternRenderHint.ANCESTOR_CLIP_PADDING)
+            }
+            parent = parent.parent
+        }
     }
 
     /** Public metadata hint only; elevation does not reveal surface insets or a crop transform. */

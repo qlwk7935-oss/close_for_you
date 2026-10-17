@@ -20,8 +20,25 @@ enum class PatternCode { TRANSLATION_VERIFIED, PLAN_INVALID, BUFFER_LIMIT, MARKE
     OWNED_WINDOW_MISMATCH, STALE_OR_NOT_ALLOWED, INSPECTION_FAILED, INSPECTION_INTERRUPTED, NOT_OBSERVED }
 enum class DecorBufferRelation { EXACT, INSET_ALL, INSET_SOME, UNKNOWN }
 enum class OuterPixels { NONE, TRANSPARENT, NONTRANSPARENT, MIXED, UNKNOWN }
+enum class LandmarkCheck { NOT_VERIFIED, ALIGNED }
+enum class ContentScan { NOT_RUN, COMPLETE, INTERRUPTED }
+enum class PatternColorSpace { SRGB, OTHER, UNKNOWN }
+enum class PatternRenderHint { HARDWARE, SOFTWARE, CONTENT_OUTLINE, ANCESTOR_OUTLINE, DECOR_OUTLINE,
+    ANCESTOR_CLIP_CHILDREN, ANCESTOR_CLIP_PADDING, CONTENT_FOREGROUND, ANCESTOR_FOREGROUND }
+/** A bounded set of twelve fixed codes, never positions, values, counts or samples. */
+enum class ContentMismatch {
+    CORNER_ALPHA_TRANSPARENT, CORNER_ALPHA_PARTIAL, CORNER_OPAQUE_NEAR_WHITE, CORNER_OPAQUE_OTHER,
+    EDGE_ALPHA_TRANSPARENT, EDGE_ALPHA_PARTIAL, EDGE_OPAQUE_NEAR_WHITE, EDGE_OPAQUE_OTHER,
+    INTERIOR_ALPHA_TRANSPARENT, INTERIOR_ALPHA_PARTIAL, INTERIOR_OPAQUE_NEAR_WHITE, INTERIOR_OPAQUE_OTHER,
+}
 data class PatternReport(val code: PatternCode, val decorBuffer: DecorBufferRelation = DecorBufferRelation.UNKNOWN,
-    val outer: OuterPixels = OuterPixels.UNKNOWN)
+    val outer: OuterPixels = OuterPixels.UNKNOWN,
+    val landmarks: LandmarkCheck = LandmarkCheck.NOT_VERIFIED,
+    val contentScan: ContentScan = ContentScan.NOT_RUN,
+    val mismatches: Set<ContentMismatch> = emptySet(),
+    val sourceColorSpace: PatternColorSpace = PatternColorSpace.UNKNOWN,
+    val copyColorSpace: PatternColorSpace = PatternColorSpace.UNKNOWN,
+)
 
 /** No estimated crop, resizing, OCR or transform export. Validates a translation only, then forgets it. */
 object PatternMapping {
@@ -39,6 +56,25 @@ object PatternMapping {
         kotlin.math.abs((a shr 16 and 255) - (b shr 16 and 255)) <= 1 &&
         kotlin.math.abs((a shr 8 and 255) - (b shr 8 and 255)) <= 1 &&
         kotlin.math.abs((a and 255) - (b and 255)) <= 1
+
+    // Diagnostic buckets only. Neither band nor near-white threshold exempts any pixel.
+    private fun mismatch(x: Int, y: Int, width: Int, height: Int, p: Int): ContentMismatch {
+        val band = minOf(32, width / 4, height / 4)
+        val verticalEdge = x < band || x >= width - band
+        val horizontalEdge = y < band || y >= height - band
+        val zone = if (verticalEdge && horizontalEdge) 0 else if (verticalEdge || horizontalEdge) 1 else 2
+        val alpha = p ushr 24
+        val red = p shr 16 and 255; val green = p shr 8 and 255; val blue = p and 255
+        val appearance = when {
+            alpha == 0 -> 0
+            alpha < 255 -> 1
+            minOf(red, green, blue) >= 240 && maxOf(red, green, blue) - minOf(red, green, blue) <= 4 -> 2
+            else -> 3
+        }
+        return ContentMismatch.entries[zone * 4 + appearance]
+    }
+    private fun mismatchCodes(mask: Int): Set<ContentMismatch> =
+        ContentMismatch.entries.filter { mask and (1 shl it.ordinal) != 0 }.toSet()
 
     fun inspect(plan: PatternPlan, width: Int, height: Int, stillValid: () -> Boolean = { true }, pixel: (Int, Int) -> Int): PatternReport {
         if (!plan.valid()) return PatternReport(PatternCode.PLAN_INVALID)
@@ -68,16 +104,26 @@ object PatternMapping {
         }
         val decor = plan.decor.shifted(dx, dy)
         val content = plan.content.shifted(dx, dy)
-        if (!PatternRect(0, 0, width, height).contains(decor)) return PatternReport(PatternCode.DECOR_OUTSIDE_BUFFER)
-        // Verify every known content pixel, not merely four matching colored points.
+        if (!PatternRect(0, 0, width, height).contains(decor)) return PatternReport(PatternCode.DECOR_OUTSIDE_BUFFER, landmarks = LandmarkCheck.ALIGNED)
+        // Inspect all known content pixels within the existing deadline; do not stop at the first
+        // mismatch or allocate per-pixel diagnostic objects. Even one mismatch still rejects it.
+        var mismatchMask = 0
         for (y in 0 until content.height) {
-            if (!stillValid()) return PatternReport(PatternCode.INSPECTION_INTERRUPTED)
+            if (!stillValid()) return PatternReport(PatternCode.INSPECTION_INTERRUPTED,
+                landmarks = LandmarkCheck.ALIGNED, contentScan = ContentScan.INTERRUPTED,
+                mismatches = mismatchCodes(mismatchMask))
             for (x in 0 until content.width) {
                 val index = markers.indexOfFirst { x >= it.left && x < it.right && y >= it.top && y < it.bottom }
                 val expected = if (index < 0) WHITE else colors[index]
-                if (!near(pixel(content.left + x, content.top + y), expected)) return PatternReport(PatternCode.CONTENT_NOT_SYNTHETIC)
+                val actual = pixel(content.left + x, content.top + y)
+                if (!near(actual, expected)) {
+                    mismatchMask = mismatchMask or (1 shl mismatch(x, y, content.width, content.height, actual).ordinal)
+                }
             }
         }
+        if (mismatchMask != 0) return PatternReport(PatternCode.CONTENT_NOT_SYNTHETIC,
+            landmarks = LandmarkCheck.ALIGNED, contentScan = ContentScan.COMPLETE,
+            mismatches = mismatchCodes(mismatchMask))
         val relation = when {
             decor.left == 0 && decor.top == 0 && decor.right == width && decor.bottom == height -> DecorBufferRelation.EXACT
             decor.left > 0 && decor.top > 0 && decor.right < width && decor.bottom < height -> DecorBufferRelation.INSET_ALL
@@ -85,7 +131,8 @@ object PatternMapping {
         }
         var transparent = false; var opaque = false
         for (y in 0 until height) {
-            if (!stillValid()) return PatternReport(PatternCode.INSPECTION_INTERRUPTED)
+            if (!stillValid()) return PatternReport(PatternCode.INSPECTION_INTERRUPTED,
+                landmarks = LandmarkCheck.ALIGNED, contentScan = ContentScan.COMPLETE)
             for (x in 0 until width) {
                 if (x >= decor.left && x < decor.right && y >= decor.top && y < decor.bottom) continue
                 if (pixel(x, y) ushr 24 == 0) transparent = true else opaque = true
@@ -93,6 +140,7 @@ object PatternMapping {
         }
         val outer = when { transparent && opaque -> OuterPixels.MIXED; transparent -> OuterPixels.TRANSPARENT
             opaque -> OuterPixels.NONTRANSPARENT; else -> OuterPixels.NONE }
-        return PatternReport(PatternCode.TRANSLATION_VERIFIED, relation, outer)
+        return PatternReport(PatternCode.TRANSLATION_VERIFIED, relation, outer,
+            landmarks = LandmarkCheck.ALIGNED, contentScan = ContentScan.COMPLETE)
     }
 }

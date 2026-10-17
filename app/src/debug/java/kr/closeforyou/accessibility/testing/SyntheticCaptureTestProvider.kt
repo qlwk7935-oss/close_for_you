@@ -115,6 +115,11 @@ class SyntheticCaptureTestProvider : ContentProvider() {
                     putString("patternCode", report.code.name)
                     putString("patternDecorBuffer", report.decorBuffer.name)
                     putString("patternOuter", report.outer.name)
+                    putString("patternLandmarks", report.landmarks.name)
+                    putString("patternContentScan", report.contentScan.name)
+                    putStringArrayList("patternMismatches", ArrayList(report.mismatches.sortedBy { it.ordinal }.map { it.name }))
+                    putString("patternSourceColorSpace", report.sourceColorSpace.name)
+                    putString("patternCopyColorSpace", report.copyColorSpace.name)
                     putBoolean("patternReleased", released)
                 }
                 val diagnostic = patternProbe?.diagnostic() ?: completedDiagnostic ?: diagnostics?.snapshot()

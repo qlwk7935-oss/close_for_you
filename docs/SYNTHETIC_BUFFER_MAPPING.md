@@ -1,12 +1,12 @@
 # PR #6: 합성 패턴으로 window 버퍼 좌표 대응 검증
 
-기존 `fix/dialog-capture-coordinates` / PR #6의 추가 계측입니다. 프로덕션 캡처 허용 정책은 변경하지 않습니다. 이전 [버퍼 크기 조사](WINDOW_CAPTURE_BUFFER.md) 다음 단계입니다.
+기존 `fix/dialog-capture-coordinates` / PR #6의 추가 계측입니다. 프로덕션 캡처 허용 정책은 변경하지 않습니다. 이전 [버퍼 크기 조사](WINDOW_CAPTURE_BUFFER.md) 다음 단계입니다. **최신 CONTENT_NOT_SYNTHETIC 진단·두 모드 관측 수정은 [합성 콘텐츠 불일치 조사](SYNTHETIC_CONTENT_DIAGNOSTICS.md)를 먼저 확인합니다.**
 
 ## 확인된 사실과 미확정 사항
 
 사용자가 Windows Medium Phone API 37에서 실행한 ServiceBufferGeometryOptInTest는 OK (1 test)였고, BUFFER_WIDTH/HEIGHT=LARGER, BUFFER_EXTENT=BUFFER_LARGER, BUFFER_DISPLAY_SIZED=NO, BUFFER_SWAPPED=NO, BUFFER_MAPPING=UNPROVEN_WINDOW, BUFFER_MEMORY=WITHIN_LIMIT, BUFFER_RELEASED=true, FRAME=VERIFIED, ROLE=SYNTHETIC_DIALOG, API=WINDOW을 보고했습니다. **양 축 크기 증가와 실제 버퍼 해제는 확인됐지만 원점·콘텐츠 대응·OCR 성공은 확인되지 않았습니다.**
 
-이번 새 패턴 계측은 이 개발 환경에서 기기로 실행하지 않았습니다. 아래의 기대 코드는 시험 판정 기준이며 실제 결과가 아닙니다.
+사용자의 후속 API 37 결과에서 DEFAULT 모드가 기준점/이동량 검사를 통과한 뒤 CONTENT_NOT_SYNTHETIC으로 실패했고, 기존 assertion 때문에 ZERO는 실행되지 않았습니다. 이 개발 환경에서는 기기로 실행하지 않았으며, 수정 계측의 기대 코드는 실제 결과가 아닙니다.
 
 공개 ScreenshotResult는 HardwareBuffer, ColorSpace, timestamp만 제공하며 화면 원점·surface inset·crop 행렬은 제공하지 않습니다. getLocationOnScreen과 View.width/height는 **자체 소유한 합성 View**의 기준 정보로만 사용합니다. 다른 앱의 decor나 숨겨진 LayoutParams.surfaceInsets를 읽거나 reflection을 사용하지 않습니다.
 
@@ -79,6 +79,8 @@ Start-Sleep -Seconds 3
 새 패턴 시험에 connectionOnly=true를 전달하면 캡처를 생략하지 않고 실패합니다. 잘못된 opt-in은 JUnit assumption으로 건너뛰므로 **OK만 보지 말고 두 MODE의 결과와 최종 비교 코드까지** 확인합니다. 실행 중 터치/화면 이동/회전은 하지 않습니다. 끝나면 본 앱 분석을 일시정지하거나 동의를 철회합니다. raw Logcat/이미지/노드/좌표 dump는 제출하지 않습니다.
 
 ## 기대 코드와 실패 해석
+
+수정 계측은 DEFAULT가 실패해도 ZERO를 관측한 뒤 두 결과와 비교(INCONCLUSIVE 포함)를 출력하고 최종 assertion을 실행합니다. 한 모드 실패는 최종 실패로 유지합니다. LANDMARKS/CONTENT_SCAN/MISMATCH/RENDER/SOURCE_COLOR/COPY_COLOR의 고정 코드 설명은 [최신 진단 문서](SYNTHETIC_CONTENT_DIAGNOSTICS.md)를 확인합니다.
 
 성공 조건: SERVICE_CONNECTION_READY → 두 번의 SYNTHETIC_PATTERN_OBSERVED에서 ARM=PATTERN_ARMED, PATTERN=TRANSLATION_VERIFIED, BUFFER_RELEASED=true, API=WINDOW, FRAME=VERIFIED → SYNTHETIC_PATTERN_COMPARISON;PRODUCTION_POLICY=UNCHANGED → OK (1 test).
 

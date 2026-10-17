@@ -54,7 +54,10 @@ internal class SyntheticPatternProbe(private val preferences: CorePreferences) {
                         val samples = IntArray(image.width * image.height).also { argb = it }
                         image.getPixels(samples, 0, image.width, 0, 0, image.width, image.height)
                         PatternMapping.inspect(expected, image.width, image.height,
-                            stillValid = { SystemClock.uptimeMillis() < deadline && allowed(snapshot) }) { x, y -> samples[y * image.width + x] }
+                            stillValid = { SystemClock.uptimeMillis() < deadline && allowed(snapshot) }) { x, y -> samples[y * image.width + x] }.copy(
+                                sourceColorSpace = if (colorSpace.isSrgb) PatternColorSpace.SRGB else PatternColorSpace.OTHER,
+                                copyColorSpace = image.colorSpace?.let { if (it.isSrgb) PatternColorSpace.SRGB else PatternColorSpace.OTHER }
+                                    ?: PatternColorSpace.UNKNOWN)
                     }
                 }
             }
