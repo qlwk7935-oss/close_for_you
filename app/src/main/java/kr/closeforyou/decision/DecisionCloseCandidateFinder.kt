@@ -32,8 +32,10 @@ class DecisionCloseCandidateFinder {
      * The active window holds only the popup for a new window or a full-screen transition. A
      * same-window overlay shares it with the page behind, so only one unambiguous Dialog node
      * bounds the search; otherwise the page's own buttons could be mistaken for the popup's.
+     * An uncertain detection may be an ordinary page change, so it yields nothing (agreed with A).
      */
     private fun popupScope(snapshot: PopupSnapshot, signals: Set<PopupSignal>): ScreenBounds? = when {
+        PopupSignal.INSUFFICIENT_EVIDENCE in signals -> null
         PopupSignal.NEW_WINDOW in signals || PopupSignal.FULL_SCREEN_TRANSITION in signals -> snapshot.screenBounds
         PopupSignal.SAME_WINDOW_OVERLAY in signals -> snapshot.nodes
             .filter { it.className?.contains("dialog", ignoreCase = true) == true }

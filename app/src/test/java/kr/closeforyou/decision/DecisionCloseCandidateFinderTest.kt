@@ -97,6 +97,14 @@ class DecisionCloseCandidateFinderTest {
         assertEquals(1, find(pageClose, signal = FULL_SCREEN_TRANSITION).size)
     }
 
+    @Test fun uncertainDetectionsGiveNothing() {
+        // A always pairs an uncertain full-screen transition with INSUFFICIENT_EVIDENCE: it may be
+        // an ordinary page change, so its own close buttons must not be offered as the popup's.
+        val snapshot = snapshot(node("0", text = "닫기"))
+        assertTrue(finder.find(snapshot, detection(snapshot, FULL_SCREEN_TRANSITION, INSUFFICIENT_EVIDENCE)).isEmpty())
+        assertTrue(finder.find(snapshot, detection(snapshot, NEW_WINDOW, INSUFFICIENT_EVIDENCE)).isEmpty())
+    }
+
     @Test fun staleDetectionMissingSignalsOrNoNodesGiveNothing() {
         val snapshot = snapshot(node("0", text = "닫기"))
         val stale = PopupDetection(MockPopupFixtures.advertisement().snapshot.token, persistentSetOf(NEW_WINDOW))
