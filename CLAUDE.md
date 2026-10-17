@@ -53,7 +53,8 @@
 
 ## 5. 개발 환경 (C 로컬)
 
-- 팀 저장소: `D:\close_for_you`. 예전 실험용 로컬 저장소 `D:\Internet_project`는 보관용이다.
+- 작업 폴더는 팀 저장소 `D:\close_for_you` 하나다. (예전 실험용 `D:\Internet_project`는 내용을 옮기고 삭제함)
+- C 참고 초안(설정 화면·TTS·음성 명령): `docs/c-notes/settings-tts-draft.md`
 - Android Studio `D:\Android\Android Studio`, SDK `D:\Android\SDK`.
 - 팀 빌드는 Gradle 8.11.1이라 **PC의 JDK 25로는 안 된다.** Android Studio 내장 JDK를 쓴다.
   ```powershell
