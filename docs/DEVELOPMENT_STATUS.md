@@ -236,3 +236,19 @@ python3 -B tools/verify_capture_test_apks.py --release-apk app/build/outputs/apk
 ```
 
 **BUILD SUCCESSFUL (13초, 196 tasks: 5 executed / 191 up-to-date)**. 기존 JVM 결과 147개(본 앱 92/호스트 55), 실패/오류/건너뜀 0. 양쪽 debug Lint 이슈 0. Debug/Release·계측 APK 빌드 및 DEX의 독립 Kotlin 런타임/driver 분리·release 합성 probe 부재 검사 통과. 문서 변경으로 대부분 작업은 up-to-date이며 새 기기 실행이나 새 런타임 회귀를 수행한 것은 아닙니다. adb 연결 기기 0대입니다. 정리 커밋의 CI는 기존 PR #6 Checks에서 별도 확인하며, 사용자 계측 결과와 CI/로컬 빌드를 구분합니다.
+
+## A 행동 게이트 비실행 1차 — feature/a-action-gate
+
+원격의 신규 브랜치를 가져와 미커밋 변경0개를 확인한 뒤 `feature/f1-popup-detection`에서 `feature/a-action-gate`로 안전하게 전환했습니다. 기준은 PR #8(B F3/F7/F8)/#9(TTS queries) 병합 main의 `04fcd27`입니다. 이전 F1 브랜치의 변경을 가져오거나 main에 커밋하지 않습니다.
+
+A 전용 `accessibility/action`에 ActionGateModels/ActionGateValidator/ActionAttemptLedger/NonExecutingActionExecutor를 추가했습니다. 공통 ActionRequest의 ALLOW_ONCE/후보 자체는 신뢰하지 않으며, 등록 문맥·토큰 전 성분·서비스 세대·원래 최대5초 TTL·동의/허용/조작·완전 수집·F0-A/F0-B/F1·geometry/가림/소속·사용자 선택 출처·실제 버튼 의미 근거를 각각 검사합니다. E1/E2의 좁은 명시 라벨만 합성 검사 대상으로 삼고 E3/E4/맨 X/중요 결정·가짜 닫기/확인·OK/기억 자동 반복은 거부합니다. deadline을 새 수집으로 연장하거나 잘못된 경계를 보정하지 않습니다.
+
+**현재 Android 검증 제공자는 미구현입니다.** 기본 source는 null이며 미등록 요청을 거부합니다. origin에는 UNAVAILABLE/SYNTHETIC_TEST만 있고 모든 평가에 ANDROID_REVALIDATION_NOT_IMPLEMENTED가 남습니다. syntheticChecksSatisfied는 JVM 합성 체크만 의미하며 productionReady는 항상 false입니다. 실제 재수집/보호/사용자 승인/팝업 신원 완료 값을 만들지 않았습니다. `execute` 정상 결과는 항상 NOT_EXECUTED/NOT_IMPLEMENTED, attempted=false, semanticSafetyConfirmedByUser=false입니다. 취소는 전파하고 예외 메시지는 출력하지 않습니다.
+
+장부는 한 개의 소유 합성 episode에 대한 검토 예약 모델입니다. 외부 episode/불명 연속성을 거부하고 새 UUID/토큰으로 새 팝업을 생성·reset·evict하는 API가 없습니다. synchronized 예약은 동시 검토 하나만 허용하고 완료/실패/취소 뒤 재개하지 않습니다. 중단 가능한 문맥 재조회 후 전체 재검사와 원래 TTL, 장부 연속성을 다시 검사합니다. 검토 COMPLETED/FAILED/CANCELLED는 실제 실행 기록이 아니며 attempted는 계속 false입니다. 실제 팝업 수명/재등장/세션·프로세스 재시작 식별, service 중앙 장부, action 직전 실제 시도 소비는 후속 합의/구현 사항입니다.
+
+운영 CloseForYouAccessibilityService/AccessibilityRuntime/설정·캡처·OCR 경로, core/model·core/contract, B/C/D, 기존 Mock/조립 예제, manifest/Gradle/workflow는 변경하지 않았습니다. 실제 Android 행동 API/행동 port/자동 클릭/좌표 탭/뒤로 가기/대체 action/재시도 루프는 추가하지 않습니다. PR #7의 미해결 F1 baseline/geometry를 우회하거나 UNOBSERVED를 성공으로 바꾸지 않습니다. F0-A/F0-B·전체 숨김 자식 검사·앱/시스템/다른 창 보호·ROI/PR6 버퍼 거부·동의·시간/메모리 제한은 그대로입니다. 원문/좌표/지문은 로그·DB·파일에 저장하지 않으며 A 내부 데이터의 toString은 redacted입니다.
+
+[설계·거부 조건·수명·테스트·남은 팀 합의](ACTION_GATE.md)를 기록했습니다. F5 유지/F6 제외/F10/F12/F13 필수는 그대로입니다. 실제 Android 노드 실행/보호 및 API35/37/TalkBack 동작은 미검증이며 이 단계는 운영 연결을 하지 않습니다. 사용자 요청에 따라 이 브랜치에만 커밋·push하고 새 PR 생성/main 병합은 하지 않습니다.
+
+검증(JDK17): ACTION_GATE.md의 전체 Gradle 명령과 APK 패키징 검사를 실행했습니다. 첫 전체 BUILD SUCCESSFUL (1분38초), 취소를 무시하는 제공자 회귀 추가 후 최종 BUILD SUCCESSFUL (43초, 196 tasks: 7 executed / 189 up-to-date). JVM **226개**(앱171/호스트55, 신규 게이트39개) 실패/오류/건너뜀0, 양쪽 Debug Lint 이슈0, Debug/Release·계측 APK 및 독립 호스트/Kotlin runtime/driver 격리/release probe 부재 패키징 검사 통과입니다. 초기 신규 회귀36개 중 연속성 상실1개 실패는 완료 경계의 동기화 재검사로 수정한 뒤 후속 전체 검증을 통과했습니다. 새 회귀가 있지만 실제 Android 검증은 없습니다. 현재 workflow push 필터에 이 브랜치가 없고 새 PR도 만들지 않아 이번 커밋 CI는 미실행이며 워크플로를 변경하지 않았습니다.
