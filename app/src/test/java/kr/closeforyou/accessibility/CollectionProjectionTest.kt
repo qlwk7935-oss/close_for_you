@@ -182,7 +182,8 @@ class CollectionProjectionTest {
     @Test fun invalidChildCountsDenyWithoutExpansionOrExceptions() {
         listOf(-1, Int.MAX_VALUE).forEach { count ->
             reject(ProjectionFixture.evidence(persistentListOf(ProjectionFixture.node().copy(childCount = count))),
-                ProjectionRejection.TOPOLOGY_INCOMPLETE)
+                if (count > CollectionProjectionLimits.MAX_CHILDREN) ProjectionRejection.CHILD_COUNT_LIMIT
+                else ProjectionRejection.TOPOLOGY_INCOMPLETE)
         }
     }
 

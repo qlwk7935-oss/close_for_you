@@ -417,3 +417,34 @@ git pull --ff-only origin feature/f1-popup-detection
 ```
 
 합성 시험은 40개 통과가 기대 결과입니다. 실제 API35/37의 collector 연결은 다음 단계이며 기존 기기 재현 절차/실패 해석은 F1_BASELINE_ISOLATION.md와 F1_DETECTION_VALIDATION.md를 유지합니다.
+
+
+## PR #7 후속: 독립 증거·변환 게이트의 상한과 할당 보강
+
+`8496608`에서 원격과 일치하는 feature/f1-popup-detection 및 깨끗한 작업 트리를 확인했습니다. 변경은 기존 신규 모델/변환기, 대응 시험, 이 문서와 F1_PROTECTION_GEOMETRY_CONTRACT_REVIEW.md에 한정합니다. AndroidSnapshotCollector·운영 service/Runtime·공통 계약·BCD·Mock·PR #10·원래14개 fixture/계측은 변경하지 않습니다.
+
+수정 전 기존 collector의 한도 대응을 검토했습니다. [상세 대응표와 불일치 범위](F1_PROTECTION_GEOMETRY_CONTRACT_REVIEW.md#0-a-독립-게이트-상한할당-보강--8496608-이후)를 기록했으며, 동일 소스의 모델 보존량에 적용할 수 있는 상한만 추가했습니다.
+
+- 창/보호 root 목록 각각32개, 전체 보존 노드2400개를 파생 목록 생성 전 검사합니다. 노드 합산은 잔여량 비교로 overflow를 피합니다. 이2400은 실제 두 pass의 공유 방문 수를 인증하는 값이 아닙니다.
+- root 깊이0 기준60, 노드당 자식1200, 모델에 보존되는 네 보호 필드 각각4096 UTF-16 코드 단위, 대상 root의 text+description 합계32768을 검사합니다. 합계는 Long입니다. 숨김/배경의 개별 필드도 검사하지만 기존에 없는 배경 본문 합계 제한이나 임의 target 노드1200 제한은 넣지 않습니다.
+- 깊이·ordinal에서 유도한 path/parentPath 최대301자를 검사합니다. 자식별 예상 경로/substring 생성을 없애고 열린 부모 stack만 O(depth)로 유지하며 원래 preorder·parent·ordinal·childCount 및 canonical 숫자를 비교합니다. 누락·중복·순서 오류는 계속 전체 거부합니다.
+- geometry 집계의 flatMap 전체 복사를 제거하고 원래 INCOMPLETE 우선 의미를 유지합니다. snapshot/outline/window는 persistent builder로 생성하고 동일 노드 bounds를 재사용합니다. 본문·경로·지문을 변경하거나 지문을 새로 만들지 않습니다.
+- 새 모델·완료 wrapper는 redacted, 실패는 enum만 반환합니다. 합성 sentinel과 메모리 stdout/stderr 시험에서 신규 출력·예외 노출이 없는지 검증합니다. 기존 공통 DTO를 꺼내 직접 출력하는 위험은 여전히 남아 있으며 공통 DTO는 변경하지 않았습니다.
+
+신규 JVM **27개**: 보존 노드2400/2401, 창·root32/33, 깊이60/61, 자식1200/1201·4자리 ordinal, 과도한 path/parentPath, 잘못된 숫자/path·누락·분기/형제 순회, 개별 필드4096/4097, 대상 합계32768/32769, 배경 합계와의 구분, null/빈 값 및 정상 snapshot/frame 전체 필드 보존, geometry 우선순위와 출력 비노출입니다. 기존 invalidChildCounts 시험은 Int.MAX_VALUE의 새 CHILD_COUNT_LIMIT 사유를 반영하되 거부 조건은 유지했습니다.
+
+**미해결 P1:** 실제 F0 전체 검사·배경 coverage, 동일 시도 token/구조·본문·outline 지문 결합, 실제 Android 서비스 세션·화면 무효화·TTL은 해결하지 않았습니다. 공급된 완료 표시는 인증이 아닙니다. 크기 상한은 실제100ms 수집 예산·코루틴 취소·전체 heap 사용량 또는 입력 생성 전 할당을 보장하지 않습니다. collector와의 DTO/지문 byte 동등성 및 기존 더 엄격한 배경 geometry/활성 창/Window-frame 거부 차이도 미검증입니다.
+
+운영 미연결을 유지하므로 Scroll MALFORMED_NODE_BOUNDS, 별도 WINDOW_OUTSIDE_FRAME, TIME_LIMIT/TARGET_MISSING과 기존14개 UNOBSERVED=14는 여전히 미해결입니다. 실제 Android API35/37 계측을 실행하지 않았으며 수집 복구/F1 정확도/캡처·OCR 성공을 주장하지 않습니다. 기존 F0/F1·ROI/버퍼 거부·동의/허용·개인정보 보호·예산·자동 행동 금지를 그대로 유지합니다. 기존 PR #7에만 반영하고 새 PR/병합은 하지 않습니다.
+
+최종 로컬 검증(JDK17)은 위와 같은 전체 Gradle 명령으로 **BUILD SUCCESSFUL (1분26초, 196 tasks: 26 executed / 170 up-to-date)**입니다. JVM **277개**(앱204/호스트73), 실패/오류/건너뜀0, 앱·호스트 debug Lint 이슈0. Debug/Release·계측 APK 빌드와 `verify_capture_test_apks.py --release-apk ...`의 호스트 런타임/driver 격리/release 합성 probe 부재 패키징 검사를 통과했습니다. 승인된6개 경로 밖의 app/host/synthetic-support 기존 추적 파일을8496608과 바이트 비교하여 변경0개를 확인했고, 나머지 추적 파일도 Git diff 변경이 없습니다. 전체 raw 바이트 비교에서는 기존 checkout의 gradlew.bat 줄바꿈 변환 차이가 있으므로 그 파일까지 바이트 동일하다고 주장하지 않습니다. CI는 이번 커밋의 기존 PR #7 Checks에서 별도 확인하며, 실제 Android 실행 결과로 해석하지 않습니다.
+
+Windows에서 신규 독립 회귀만 확인하려면 다음을 실행합니다. 원래14개 기기 baseline을 통과시키는 수정이 아니므로 새 Android 성공을 기대 결과로 안내하지 않습니다.
+
+```powershell
+git switch feature/f1-popup-detection
+git pull --ff-only origin feature/f1-popup-detection
+.\gradlew.bat --no-daemon :app:testDebugUnitTest --tests "kr.closeforyou.accessibility.CollectionProjectionLimitsTest"
+```
+
+기대 결과는 신규 합성27개 통과이며 전체 검증은 위 전체 Gradle 명령을 Windows의 `.\gradlew.bat`으로 실행합니다.

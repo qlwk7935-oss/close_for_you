@@ -77,13 +77,16 @@ internal data class CollectedTreeEvidence(
     val traversal: TreeCompletion = TreeCompletion.UNKNOWN,
 ) {
     val geometry: GeometryCompletion get() {
-        val nodes = roots.flatMap { it.nodes }
-        return when {
-            nodes.any { it.geometry == GeometryCompletion.INCOMPLETE } -> GeometryCompletion.INCOMPLETE
-            roots.isEmpty() || roots.any { it.nodes.isEmpty() } ||
-                nodes.any { it.geometry == GeometryCompletion.UNKNOWN } -> GeometryCompletion.UNKNOWN
-            else -> GeometryCompletion.COMPLETE
+        var unknown = roots.isEmpty()
+        for (root in roots) {
+            if (root.nodes.isEmpty()) unknown = true
+            for (node in root.nodes) when (node.geometry) {
+                GeometryCompletion.INCOMPLETE -> return GeometryCompletion.INCOMPLETE
+                GeometryCompletion.UNKNOWN -> unknown = true
+                GeometryCompletion.COMPLETE -> Unit
+            }
         }
+        return if (unknown) GeometryCompletion.UNKNOWN else GeometryCompletion.COMPLETE
     }
     override fun toString(): String = "CollectedTreeEvidence(redacted)"
 }

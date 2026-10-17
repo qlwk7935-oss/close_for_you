@@ -1,6 +1,7 @@
 package kr.closeforyou.accessibility
 
-import kotlinx.collections.immutable.toPersistentList
+import kotlinx.collections.immutable.persistentListOf
+import kotlinx.collections.immutable.persistentSetOf
 import kr.closeforyou.core.model.NodeAction
 import kr.closeforyou.core.model.NodeSnapshot
 import kr.closeforyou.core.model.PopupSnapshot
@@ -12,6 +13,22 @@ import kr.closeforyou.core.model.WindowType
 internal enum class ProjectionRejection {
     PROTECTION_NOT_COMPLETE, TREE_NOT_COMPLETE, ROOT_COVERAGE_INVALID, TOPOLOGY_INCOMPLETE,
     NODE_READ_INCOMPLETE, GEOMETRY_NOT_COMPLETE, METADATA_INCOMPLETE, WINDOW_GEOMETRY_INVALID,
+    NODE_COUNT_LIMIT, DEPTH_LIMIT, CHILD_COUNT_LIMIT, FIELD_LENGTH_LIMIT, TEXT_LENGTH_LIMIT,
+    WINDOW_COUNT_LIMIT, PATH_LENGTH_LIMIT,
+}
+
+/** Mirrors only bounds applicable to retained records, not Android's shared visit/time budget.
+ * Keep the collector unchanged. Any future reader must still enforce both passes' own budget.
+ */
+internal object CollectionProjectionLimits {
+    const val MAX_RETAINED_NODES = 2_400
+    const val MAX_DEPTH = 60
+    const val MAX_CHILDREN = 1_200
+    const val MAX_WINDOWS = 32
+    const val MAX_FIELD_CHARACTERS = 4_096
+    const val MAX_TARGET_TEXT_CHARACTERS = 32_768
+    // Root "0", then at most 60 slash + four-digit ordinals (0..1199).
+    const val MAX_PATH_CHARACTERS = 1 + MAX_DEPTH * 5
 }
 
 /** Not CollectionResult.Ready, not a public Candidate and not a runtime authorization. */
@@ -29,6 +46,17 @@ internal object CollectionProjection {
     fun project(evidence: CollectedTreeEvidence, metadata: CollectionProjectionMetadata): ProjectionOutcome {
         fun reject(reason: ProjectionRejection) = ProjectionOutcome.Rejected(reason)
         val roots = evidence.roots
+        // Check cardinalities before any input-sized scans, derived collections or DTO allocation.
+        if (roots.size > CollectionProjectionLimits.MAX_WINDOWS ||
+            evidence.expectedProtectionWindowIds.size > CollectionProjectionLimits.MAX_WINDOWS ||
+            metadata.windows.size > CollectionProjectionLimits.MAX_WINDOWS)
+            return reject(ProjectionRejection.WINDOW_COUNT_LIMIT)
+        var retainedNodes = 0
+        for (root in roots) {
+            if (root.nodes.size > CollectionProjectionLimits.MAX_RETAINED_NODES - retainedNodes)
+                return reject(ProjectionRejection.NODE_COUNT_LIMIT)
+            retainedNodes += root.nodes.size
+        }
         // Protection takes priority, including every retained hidden/background node.
         if (evidence.protection != ProtectionCompletion.COMPLETED_WITHOUT_BLOCK || roots.any { root ->
                 root.protection != ProtectionCompletion.COMPLETED_WITHOUT_BLOCK ||
@@ -44,7 +72,26 @@ internal object CollectionProjection {
             return reject(ProjectionRejection.ROOT_COVERAGE_INVALID)
         if (roots.any { root -> root.nodes.any { it.readCompletion != NodeReadCompletion.COMPLETE } })
             return reject(ProjectionRejection.NODE_READ_INCOMPLETE)
-        if (roots.any { !completePreorder(it.nodes) }) return reject(ProjectionRejection.TOPOLOGY_INCOMPLETE)
+        // Only four existing protected text fields are retained here; the reader must check the rest.
+        var targetTextCharacters = 0L
+        for (root in roots) for (node in root.nodes) {
+            if ((node.text?.length ?: 0) > CollectionProjectionLimits.MAX_FIELD_CHARACTERS ||
+                (node.contentDescription?.length ?: 0) > CollectionProjectionLimits.MAX_FIELD_CHARACTERS ||
+                (node.viewId?.length ?: 0) > CollectionProjectionLimits.MAX_FIELD_CHARACTERS ||
+                (node.className?.length ?: 0) > CollectionProjectionLimits.MAX_FIELD_CHARACTERS)
+                return reject(ProjectionRejection.FIELD_LENGTH_LIMIT)
+            if (node.path.length > CollectionProjectionLimits.MAX_PATH_CHARACTERS ||
+                (node.parentPath?.length ?: 0) > CollectionProjectionLimits.MAX_PATH_CHARACTERS)
+                return reject(ProjectionRejection.PATH_LENGTH_LIMIT)
+            if (node.childCount > CollectionProjectionLimits.MAX_CHILDREN)
+                return reject(ProjectionRejection.CHILD_COUNT_LIMIT)
+            if (root.role == EvidenceTreeRole.TARGET) {
+                targetTextCharacters += (node.text?.length ?: 0).toLong() + (node.contentDescription?.length ?: 0)
+                if (targetTextCharacters > CollectionProjectionLimits.MAX_TARGET_TEXT_CHARACTERS)
+                    return reject(ProjectionRejection.TEXT_LENGTH_LIMIT)
+            }
+        }
+        for (root in roots) completePreorder(root.nodes)?.let { return reject(it) }
         if (evidence.geometry != GeometryCompletion.COMPLETE)
             return reject(ProjectionRejection.GEOMETRY_NOT_COMPLETE)
 
@@ -68,44 +115,72 @@ internal object CollectionProjection {
             return reject(ProjectionRejection.WINDOW_GEOMETRY_INVALID)
 
         // All records have passed before any DTO is built. No retokenization or digest substitution.
-        val nodes = target.nodes.map { node -> NodeSnapshot(
-            node.path, node.viewId, node.className, node.text, node.contentDescription,
-            node.clickable, node.enabled, node.rect!!.toBounds(), node.actions,
-        ) }.toPersistentList()
-        val outlines = target.nodes.map { node -> DetectionOutline(
-            node.outlineFingerprint, node.rect!!.toBounds(), node.childCount,
-            node.className?.contains("dialog", ignoreCase = true) == true || NodeAction.DISMISS in node.actions,
-            node.path, node.pane, node.visible, node.scrollable,
-        ) }
-        val snapshot = PopupSnapshot(metadata.token, metadata.capturedAtUptimeMillis, nodes,
-            windows.map { WindowSnapshot(it.id, it.type, it.rect.toBounds(), it.active, it.focused, it.layer) }
-                .toPersistentList(), screen, metadata.trigger, SnapshotCompleteness.COMPLETE)
+        val nodes = persistentListOf<NodeSnapshot>().builder()
+        val outlines = persistentListOf<DetectionOutline>().builder()
+        for (node in target.nodes) {
+            val bounds = node.rect!!.toBounds()
+            nodes.add(NodeSnapshot(node.path, node.viewId, node.className, node.text, node.contentDescription,
+                node.clickable, node.enabled, bounds, node.actions))
+            outlines.add(DetectionOutline(node.outlineFingerprint, bounds, node.childCount,
+                node.className?.contains("dialog", ignoreCase = true) == true || NodeAction.DISMISS in node.actions,
+                node.path, node.pane, node.visible, node.scrollable))
+        }
+        val projectedWindows = persistentListOf<WindowSnapshot>().builder()
+        val applicationIds = persistentSetOf<Int>().builder()
+        for (window in windows) {
+            projectedWindows.add(WindowSnapshot(window.id, window.type, window.rect.toBounds(),
+                window.active, window.focused, window.layer))
+            if (window.type == WindowType.APPLICATION) applicationIds.add(window.id)
+        }
+        val snapshot = PopupSnapshot(metadata.token, metadata.capturedAtUptimeMillis, nodes.build(),
+            projectedWindows.build(), screen, metadata.trigger, SnapshotCompleteness.COMPLETE)
         val frame = DetectionFrame(metadata.applicationDigest, target.windowId,
-            windows.filter { it.type == WindowType.APPLICATION }.mapTo(mutableSetOf()) { it.id },
-            metadata.token.structureDigest, screen, outlines, metadata.trigger, windowBounds, metadata.windowAge)
+            applicationIds.build(), metadata.token.structureDigest, screen, outlines.build(), metadata.trigger,
+            windowBounds, metadata.windowAge)
         return ProjectionOutcome.Complete(snapshot, frame)
     }
 
-    /** Exact original preorder and child counts. Missing, reordered, duplicate or orphan nodes fail.
-     * Bound expansion by the supplied node count, so an invalid child count cannot allocate arbitrarily.
+    /** Exact original preorder and child counts. O(depth) pending parents, no child-path expansion.
+     * Compare path components in place; do not create substrings or concatenate full expected paths.
      */
-    private fun completePreorder(nodes: List<CollectedNodeEvidence>): Boolean {
-        if (nodes.isEmpty()) return false
-        data class Expected(val path: String, val parent: String?, val ordinal: Int) {
-            override fun toString(): String = "Expected(redacted)"
+    private fun completePreorder(nodes: List<CollectedNodeEvidence>): ProjectionRejection? {
+        if (nodes.isEmpty()) return ProjectionRejection.TOPOLOGY_INCOMPLETE
+        class Parent(val node: CollectedNodeEvidence, var nextChild: Int = 0) {
+            override fun toString(): String = "Parent(redacted)"
         }
-        val pending = ArrayDeque<Expected>()
-        pending.addLast(Expected("0", null, 0))
-        for (node in nodes) {
-            val expected = pending.removeLastOrNull() ?: return false
-            if (node.path != expected.path || node.parentPath != expected.parent ||
-                node.siblingOrdinal != expected.ordinal || node.childCount !in 0 until nodes.size)
-                return false
-            for (index in node.childCount - 1 downTo 0)
-                pending.addLast(Expected("${node.path}/$index", node.path, index))
-            if (pending.size > nodes.size) return false
+        val parents = ArrayDeque<Parent>()
+        for ((index, node) in nodes.withIndex()) {
+            while (parents.lastOrNull()?.let { it.nextChild == it.node.childCount } == true) parents.removeLast()
+            if (parents.size > CollectionProjectionLimits.MAX_DEPTH) return ProjectionRejection.DEPTH_LIMIT
+            if (node.childCount !in 0 until nodes.size) return ProjectionRejection.TOPOLOGY_INCOMPLETE
+            if (index == 0) {
+                if (node.path != "0" || node.parentPath != null || node.siblingOrdinal != 0)
+                    return ProjectionRejection.TOPOLOGY_INCOMPLETE
+            } else {
+                val parent = parents.lastOrNull() ?: return ProjectionRejection.TOPOLOGY_INCOMPLETE
+                val ordinal = parent.nextChild++
+                if (node.parentPath != parent.node.path || node.siblingOrdinal != ordinal ||
+                    !childPathMatches(node.path, parent.node.path, ordinal))
+                    return ProjectionRejection.TOPOLOGY_INCOMPLETE
+            }
+            if (node.childCount > 0) parents.addLast(Parent(node))
         }
-        return pending.isEmpty()
+        while (parents.lastOrNull()?.let { it.nextChild == it.node.childCount } == true) parents.removeLast()
+        return if (parents.isEmpty()) null else ProjectionRejection.TOPOLOGY_INCOMPLETE
+    }
+
+    private fun childPathMatches(path: String, parent: String, ordinal: Int): Boolean {
+        val start = parent.length + 1
+        val digits = path.length - start
+        if (digits !in 1..4 || !path.startsWith(parent) || path[parent.length] != '/' ||
+            (digits > 1 && path[start] == '0')) return false
+        var parsed = 0
+        for (index in start until path.length) {
+            val digit = path[index] - '0'
+            if (digit !in 0..9) return false
+            parsed = parsed * 10 + digit
+        }
+        return parsed == ordinal
     }
 
     /** Only called after ALL raw rectangles are checked. No require messages or normalization. */

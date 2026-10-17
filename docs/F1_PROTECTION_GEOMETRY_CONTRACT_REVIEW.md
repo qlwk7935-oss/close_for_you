@@ -2,6 +2,31 @@
 
 결론: **현재 운영 차단을 유지합니다.** `b8d8aab`의 문서 검토 이후, 승인된 **1단계: A 내부 증거 표현과 순수 Kotlin DTO 변환 게이트**만 구현했습니다. Android 수집기에는 연결하지 않았으며 기존 Ready/Blocked 생성, 두 pass·예산·진단·F1/14개 계측은 변경하지 않았습니다. 아래 0절은 이번 구현이고, 이후 절의 collector 연결·수명 관리·지문 동등성·부분 F1 관측은 여전히 후속 설계입니다.
 
+## 0-A. 독립 게이트 상한·할당 보강 — 8496608 이후
+
+운영 수집기에는 여전히 연결하지 않습니다. 아래 한도 대응을 **수정 전에 확인**하고, 원래 collector의 검사 순서·상수·두 pass를 바꾸지 않은 채 신규 A 내부 변환기에만 적용했습니다.
+
+| 항목 | 기존 AndroidSnapshotCollector | 신규 순수 게이트에 적용한 범위 |
+|---|---|---|
+| 창 | 전체 목록 최대32 | metadata 창·선언 보호 root·기록 root 각각 최대32. 큰 목록을 순회/복사하기 전에 검사 |
+| 노드 | 보호/대상 snapshot 두 pass 공유 방문 최대2400 | 모든 root의 **보존 노드 합계** 최대2400. 덧셈 전 잔여량 비교로 overflow 방지. 실제 중복 방문 수를 재현하는 한도는 아님 |
+| 깊이 | root=0, 최대60 | 원래 preorder의 열린 부모 수로 깊이 계산, 60 허용/61 거부 |
+| 자식 | 노드당 최대1200 | 원래 childCount 최대1200. 누락·음수·잘못된 topology는 계속 거부 |
+| 필드 | 보호 검사 각 필드 최대4096 UTF-16 코드 단위 | 모델에 보존되는 text/description/viewId/className 각각4096. 숨김·배경도 동일. 나머지 보호 필드는 모델에 없으므로 실제 reader가 검사해야 함 |
+| 본문 합계 | 대상 snapshot의 text+description 최대32768 | 대상 root에만 동일 합산, Long 사용. 기존에 없는 배경 합계32768 제한은 추가하지 않음 |
+| 경로 | `0` 아래 ordinal0..1199, 최대60단계에서 생성 | 최대 `1 + 60*(1+4) = 301`자. parentPath도 검사. 실제 ordinal/부모/preorder는 따로 검증 |
+| 시간/취소 | 기존 공유100ms·노드 방문 시 검사 및 서비스 무효화 | **미구현/동등성 미입증**. 크기 상한은 100ms 보증·코루틴 취소 검사가 아님 |
+
+노드당1200은 기존 **자식 상한**이고, 두 pass 공유2400은 **방문 상한**입니다. 보호 pass와 snapshot pass가 시간적으로 다를 수 있어 신규 모델의 target 노드 수에 임의의1200 제한을 넣거나, `전체 보존 노드 + target 노드`를 실제 방문 수라고 단정하지 않았습니다. 합성 기록2400개가 게이트를 통과해도 그 forest를 기존 두 pass가 실제 예산 내 수집했다는 뜻은 아닙니다. 새 상한은 필요조건 일부이며 새로운 완료 인증이 아닙니다. 이 차이와 배경 합계 제한의 부재를 유지하고 불필요한 추가 거부 정책을 만들지 않았습니다.
+
+`completePreorder()`는 자식별 Expected/full-path 문자열을 한꺼번에 생성하지 않습니다. 원래 노드 참조와 다음 자식 ordinal을 가진 **열린 부모 stack만 O(depth)**로 유지합니다. 경로는 substring/연결 없이 prefix·slash·최대4자리 canonical 숫자를 직접 비교합니다. 누락/중복/순서/부모 오류는 계속 전체 거부합니다. 숫자 선행0·부호·비숫자·과도한 segment도 거부합니다. 노드/path 길이 검사는 이 작업 전에 적용합니다.
+
+geometry 집계는 전체 노드 flatMap 복사를 없애고 중첩 순회로 수행합니다. UNKNOWN/빈 root가 먼저 나와도 뒤의 malformed가 있으면 INCOMPLETE인 기존 우선순위를 유지합니다. DTO 생성은 persistent builder로 한 번씩 수행하고 노드/outline의 동일 bounds를 재사용합니다. 문자열 원문은 복사·정규화하지 않고 기존 참조/필드를 보존합니다. 이 상한은 이미 만들어진 입력 문자열의 할당을 막거나 전체 heap 사용량을 보증하지 않습니다. token·지문 metadata의 출처/인증/수명 문제도 해결하지 않습니다.
+
+새 모델/완료 wrapper는 redacted, 거부는 고정 enum만 반환하며 원문을 담은 예외를 만들지 않습니다. 신규 시험은 메모리 스트림에서 stdout/stderr 무출력과 합성 sentinel의 문자열 비노출, 한도 경계값·기존 snapshot/frame 전체 필드 보존을 확인합니다. **기존 DTO를 꺼내 직접 문자열로 출력하면 여전히 노출될 수 있습니다.** 공통 DTO는 수정하지 않았으며 이 한계까지 해결했다고 주장하지 않습니다. 새 코드에 로그/파일/DB/행동 API 호출을 추가하지 않았습니다.
+
+P1(실제 전체 F0 및 배경 coverage, 동일 시도 token/구조·본문·outline 지문 결합, 실제 서비스 세션·화면 무효화·TTL)은 그대로 미해결입니다. 완료 enum이나 새 가짜 지문으로 해결하지 않았습니다. 실제 Android collector와 DTO/지문 byte 동등성 및 추가 비용 검증도 후속입니다. 원래14개 baseline·정답·관측과 Scroll/Window 거부를 변경하지 않습니다.
+
 ## 0. 1단계 구현 — 운영과 연결하지 않은 구조 검증
 
 신규 파일은 `accessibility/CollectedTreeEvidence.kt`, `accessibility/CollectionProjection.kt`와 대응 JVM 테스트 두 개입니다. 기존 `core/model`·`core/contract`, B/C/D, 운영 service/Runtime/collector, PR #10 행동 게이트를 변경하지 않았습니다.
