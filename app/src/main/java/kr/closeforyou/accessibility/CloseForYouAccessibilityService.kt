@@ -75,6 +75,7 @@ class CloseForYouAccessibilityService : AccessibilityService() {
         invalidate(clearBaseline = true)
         settingsObserver = serviceScope.launch {
             preferences.state.collect {
+                DetectionObservationHook.policyChanged()
                 invalidate(clearBaseline = true)
                 if (!it.consentGranted) AccessibilityRuntime.block(PrivacyBlockReason.NO_CONSENT, freshness.version)
                 else if (it.paused) AccessibilityRuntime.block(PrivacyBlockReason.PAUSED, freshness.version)
@@ -83,9 +84,21 @@ class CloseForYouAccessibilityService : AccessibilityService() {
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
-        if (!connected || event == null || event.eventType !in OBSERVED_EVENTS) return
+        if (!connected || event == null) return
+        // Toast/notification payloads are never read and do not start tree/OCR collection.
+        if (event.eventType == AccessibilityEvent.TYPE_NOTIFICATION_STATE_CHANGED) {
+            DetectionObservationHook.event(event.packageName?.toString(), event.windowId, DetectionInput.NOTIFICATION)
+            return
+        }
+        if (event.eventType !in OBSERVED_EVENTS) return
         // Copy only primitive enums/IDs, never keep the event or request event.source.
         val eventType = event.eventType
+        DetectionObservationHook.event(event.packageName?.toString(), event.windowId, when (eventType) {
+            AccessibilityEvent.TYPE_VIEW_SCROLLED -> DetectionInput.SCROLL
+            AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED, AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED -> DetectionInput.CONTENT
+            AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED, AccessibilityEvent.TYPE_WINDOWS_CHANGED -> DetectionInput.WINDOW
+            else -> DetectionInput.INTERACTION
+        })
         val epoch = invalidate(clearBaseline = false)
         if (eventType == AccessibilityEvent.TYPE_TOUCH_INTERACTION_START ||
             eventType == AccessibilityEvent.TYPE_TOUCH_EXPLORATION_GESTURE_START) {
@@ -133,15 +146,20 @@ class CloseForYouAccessibilityService : AccessibilityService() {
         when (val result = collector.capture(this, epoch, trigger, ::packageBlock, trace = trace)) {
             is CollectionResult.Blocked -> {
                 detector.clear()
+                DetectionObservationHook.blocked(result.targetPackage, result.windowId, result.reason)
                 AccessibilityRuntime.block(result.reason, epoch)
             }
             is CollectionResult.Ready -> {
                 if (!freshness.isCurrent(epoch) || touching) return
-                val signals = detector.detect(result.frame)
-                if (signals.isEmpty()) {
+                val assessment = detector.assess(result.frame)
+                DetectionObservationHook.assessed(result.snapshot.token.packageName, result.snapshot.token.windowId, assessment)
+                if (assessment.disposition != DetectionDisposition.POPUP_CANDIDATE) {
+                    // Preserve unknown transition/structure evidence in A diagnostics. Do not
+                    // count it as a confirmed popup or capture merely because a screen changed.
                     trace.detail(CaptureDetail.NO_POPUP_SIGNAL)
                     return
                 }
+                val signals = assessment.signals
                 trace.stage(CaptureStage.POPUP_DETECTED)
                 AccessibilityRuntime.begin(result.snapshot.token)
                 // Replace the transient event with Invalidated even if a collector stalled.
@@ -224,10 +242,11 @@ class CloseForYouAccessibilityService : AccessibilityService() {
         return freshness.invalidate().also(AccessibilityRuntime::invalidate)
     }
 
-    override fun onInterrupt() { invalidate(clearBaseline = true) }
+    override fun onInterrupt() { DetectionObservationHook.policyChanged(); invalidate(clearBaseline = true) }
 
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
+        DetectionObservationHook.policyChanged()
         collector.resetGeometry()
         invalidate(clearBaseline = true)
     }
@@ -244,6 +263,7 @@ class CloseForYouAccessibilityService : AccessibilityService() {
     }
 
     private fun disconnect() {
+        DetectionObservationHook.policyChanged()
         AccessibilityRuntime.serviceLifecycle.phase(ServiceLifecyclePhase.UNBOUND)
         connected = false
         touching = false

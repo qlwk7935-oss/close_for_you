@@ -16,7 +16,7 @@ import java.util.UUID
 
 internal sealed interface CollectionResult {
     data class Ready(val snapshot: PopupSnapshot, val frame: DetectionFrame) : CollectionResult
-    data class Blocked(val reason: PrivacyBlockReason) : CollectionResult
+    data class Blocked(val reason: PrivacyBlockReason, val targetPackage: String? = null, val windowId: Int = -1) : CollectionResult
 }
 
 /**
@@ -39,10 +39,12 @@ internal class AndroidSnapshotCollector {
     ): CollectionResult {
         val roots = mutableListOf<AccessibilityNodeInfo>()
         val androidWindows = mutableListOf<AccessibilityWindowInfo>()
+        var targetPackage: String? = null
+        var targetId = -1
         fun blocked(reason: PrivacyBlockReason, detail: CaptureDetail, related: WindowType? = null): CollectionResult {
             trace.detail(detail, related)
             trace.block(reason)
-            return CollectionResult.Blocked(reason)
+            return CollectionResult.Blocked(reason, targetPackage, targetId)
         }
         return try {
             val root = service.rootInActiveWindow
@@ -50,6 +52,8 @@ internal class AndroidSnapshotCollector {
             roots += root
             val packageName = root.packageName?.toString()
                 ?: return blocked(PrivacyBlockReason.UNREADABLE_TREE, CaptureDetail.ROOT_PACKAGE_UNAVAILABLE)
+            targetPackage = packageName
+            targetId = root.windowId
             trace.root(packageName, root.windowId)
             packageGate(packageName)?.let { return blocked(it, CaptureDetail.PACKAGE_GATE) }
             androidWindows += service.windows
@@ -133,9 +137,10 @@ internal class AndroidSnapshotCollector {
                 content.field(text)
                 content.field(description)
                 outlines += DetectionOutline(
-                    digest(*structuralFields.map { it?.toString() }.toTypedArray()), bounds, node.childCount,
+                    digest(path, snapshot.viewId, snapshot.className), bounds, node.childCount,
                     snapshot.className?.contains("dialog", ignoreCase = true) == true ||
-                        !node.paneTitle.isNullOrEmpty(),
+                        NodeAction.DISMISS in actions,
+                    path, !node.paneTitle.isNullOrEmpty(), node.isVisibleToUser, node.isScrollable,
                 )
             }
             trace.nodeClasses(nodes.any { it.className?.contains("dialog", ignoreCase = true) == true })
@@ -147,7 +152,7 @@ internal class AndroidSnapshotCollector {
             CollectionResult.Ready(snapshot, DetectionFrame(
                 digest(packageName), root.windowId,
                 windows.filter { it.type == WindowType.APPLICATION }.mapTo(mutableSetOf()) { it.id },
-                structureDigest, screen, outlines.toList(), trigger,
+                structureDigest, screen, outlines.toList(), trigger, targetWindow.bounds,
             ))
         } catch (failure: GuardFailure) {
             blocked(failure.reason, CaptureDetail.TREE_PROTECTION)

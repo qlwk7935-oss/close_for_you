@@ -4,6 +4,8 @@
 
 A 2차는 PR #1 병합 후 최신 `main`(`f52be56`)에서 만든 `feature/core-capture-ocr`입니다. [캡처/OCR 구현·자원 수명·시험 절차](CAPTURE_OCR.md)가 현재 캡처 경로의 상세 기준입니다. 기존 공통 계약은 유지하고 캡처는 별도 동의·앱별 허락 기본 꺼짐으로 연결했습니다.
 
+최신 F1 개선은 PR #6 병합 후 `main`의 `db63c83`에서 생성한 **feature/f1-popup-detection**입니다. [F1 판정·고정 시나리오·기대/실제 비교와 Windows API 37 절차](F1_DETECTION_VALIDATION.md)를 추가했습니다. 아래 F1 절은 JVM과 실제 Android 미검증을 구분합니다.
+
 ## 구현 범위
 
 | 항목 | 현재 상태 | 담당·남은 작업 |
@@ -13,7 +15,7 @@ A 2차는 PR #1 병합 후 최신 `main`(`f52be56`)에서 만든 `feature/core-c
 | 접근성 서비스 등록·활성화 안내 | 서비스 선언·메타데이터, 목적·제한 안내, 시스템 설정 이동 | A/C: 실제 설정 화면·TalkBack 탐색 확인 |
 | F0-A 분석 보호 | 앱별 허용 기본값 없음, 비밀번호·입력·민감 징후·판정 불가 차단 구조 | A/D: 보호 시나리오 확장·오차단/누락 측정 |
 | F0-B 캡처 후 보호 | 2차: 영역 제한·OCR 후 독립 보호 검사, 민감/불명 OCR 미전달 | A/D: 이미지 민감 신호·OCR 누락·native 메모리 수명 실기기 검증 |
-| F1 팝업 감지 | 새 창·동일 창 덮개·전면 전환의 후보 감지 기반 | A/D: 실제 팝업과 일반 전환 구분 실험·캔버스/WebView 한계 확인 |
+| F1 팝업 감지 | bounded 창/의미 있는 overlay 근거와 비후보·불확실 분리, 고정 14개 모델 비교 및 실제 서비스 계측 소스 | A/D: API 37 계측 미실행, 일반 앱 precision/recall·캔버스/WebView·full-width/가상화 한계 확인 |
 | F2 노드·한국어 OCR | 2차: 번들 ML Kit 한국어 모델, tree/OCR 출처·화면 좌표·정렬 결합 | A: 실제 인식 정확도·복잡한 읽기 순서·확대/풀스크린 영역 확장 검증 |
 | F3 닫기 후보 | 공통 데이터와 Mock만 제공 | B/A: E1~E4 증거·현재 대상 재탐색; 아이콘만으로 자동 실행 금지 |
 | F4 이미지 의미 설명 | TODO, 분석기 인터페이스 경계 | A/B: 로컬 모델·실행 환경·한국어 품질 검증; ML Kit GenAI 배경 실행 가정 금지 |
@@ -236,3 +238,26 @@ python3 -B tools/verify_capture_test_apks.py --release-apk app/build/outputs/apk
 ```
 
 **BUILD SUCCESSFUL (13초, 196 tasks: 5 executed / 191 up-to-date)**. 기존 JVM 결과 147개(본 앱 92/호스트 55), 실패/오류/건너뜀 0. 양쪽 debug Lint 이슈 0. Debug/Release·계측 APK 빌드 및 DEX의 독립 Kotlin 런타임/driver 분리·release 합성 probe 부재 검사 통과. 문서 변경으로 대부분 작업은 up-to-date이며 새 기기 실행이나 새 런타임 회귀를 수행한 것은 아닙니다. adb 연결 기기 0대입니다. 정리 커밋의 CI는 기존 PR #6 Checks에서 별도 확인하며, 사용자 계측 결과와 CI/로컬 빌드를 구분합니다.
+
+## A 담당 F1 개선: 고정 시나리오와 판정 정확도 회귀
+
+기준 main `db63c83`(PR #6 병합), 새 `feature/f1-popup-detection` 브랜치입니다. 이번 변경은 기존 PR #6의 추가 커밋이 아니며 새 PR로 검토합니다.
+
+- 감지: 새 창 ID/자식 수만으로 후보를 만들던 규칙을 bounded 창 또는 의미 있는 overlay 근거로 제한했습니다. 일반 첫 화면은 baseline, 일반 전환/이름 없는 구조 변화는 불확실로 분리합니다. 숨김·화면 밖·scrollable 조상 아래 노드 제외, 안정적 outline identity 및 중복/연속 Dialog 판정을 보강했습니다. 현재 휴리스틱의 불확실·미지원 화면을 자동 성공으로 올리지 않습니다.
+- 실제 연결: `AndroidSnapshotCollector`가 불변 A 내부 frame에 창 경계·가시성·pane/해제 의미·스크롤 조상 근거를 전달하고 서비스가 F1 판정 뒤 기존 분석 경로를 사용합니다. 공통 `PopupSnapshot/PopupEvent` 및 B·C·D 계약은 유지합니다. Candidate는 광고 판정이나 클릭 허가가 아닙니다. 불확실 신호의 별도 사용자 안내 연동은 TODO입니다.
+- 호스트: 기존 독립 testOnly 앱에 실제 Dialog, 같은 Activity의 pane overlay, 새 두 번째 Dialog, 실제 Activity 전환, scroll/layout/Toast/IME, 빈 로그인/금융 입력, 가상 권한 안내 및 해석 불확실 화면을 추가했습니다. 모두 고정 합성 정보이며 실제 입력·권한 요청·버튼 승인·자동 외부 행동은 없습니다.
+- 관측: signature/고정 host로 보호한 debug F1 IPC와 외부 계측을 추가했습니다. 수집 동의·단일 호스트 허용·분석 시작·실제 연결 및 **캡처 동의 OFF/캡처 앱 없음**을 요구합니다. 관측은 동일 소유 창으로 결박하고 45초/256개 코드로 제한합니다. 설정/연결/회전/중단·만료·END에서 폐기하며 release는 no-op입니다. 미관측·overflow·상충 관측·정리 실패를 성공으로 숨기지 않습니다.
+- 보호: PrivacyPolicy·F0-B·캡처 영역/불일치 버퍼 거부·동의/예산/메모리/해제·기존 OCR/패턴 계측은 변경하지 않았습니다. notification-state 이벤트는 payload를 읽지 않고 진단 코드만 관측하며 tree/OCR을 시작하지 않습니다. 스크롤·사용자 조작의 기존 무효화는 유지합니다. 화면 원문/이미지/실제 좌표/개인정보를 로그·파일에 쓰지 않습니다.
+
+**확인된 모델 결과:** JVM의 14개 합성 DTO/primitive 시나리오에서 탐지 5, 보호 차단 4, 일반 비후보 3, 불확실 유지 1, 미해결 일반 전환 1을 기대 결과와 비교해 통과했습니다. 해당 고정 모델 집합의 미탐/오탐은 0입니다. 실제 Android 이벤트/창/IME/Toast를 실행한 결과가 아니며 보호/불확실을 true negative에 포함하거나 모든 앱의 precision/recall로 환산하지 않습니다.
+
+최종 로컬 실행(JDK 17):
+
+```sh
+./gradlew --no-daemon :app:assembleDebug :app:assembleDebugAndroidTest :app:testDebugUnitTest :capture-test-host:testDebugUnitTest :app:lintDebug :capture-test-host:lintDebug :app:assembleRelease
+python3 -B tools/verify_capture_test_apks.py --release-apk app/build/outputs/apk/release/app-release-unsigned.apk
+```
+
+**BUILD SUCCESSFUL (1분 10초, 196 tasks: 25 executed / 171 up-to-date)**. JVM **175개**(본 앱 115/호스트 60), 실패/오류/건너뜀 0. PR #6 이후 순증 28개: detector 회귀 순증 11 + 고정 matrix 1 + 관측 세션 11 + 정답 집계 5. 양쪽 debug Lint 이슈 0, Kotlin 컴파일 경고 없음. Debug/Release·계측 APK 빌드, 새로운 호스트/외부 driver/provider의 DEX 포함·독립 Kotlin 런타임/driver 분리·release debug/합성 코드 부재 검사 통과. 초기 합성 문자열 Lint 경고는 resources로 옮겨 해소했습니다.
+
+**실제 Android 결과는 미검증:** adb 기기 0대이며 새 API 37/35 F1 계측을 실행하지 않았습니다. 일반 앱 감지율, 빠른 연속 이벤트, full-width/bottom sheet/캔버스, 동일 경로 inline 교체, 가상화·freeform·TalkBack 호환성·지연/메모리는 후속 기기 검증입니다. PR #6의 일반 Dialog 큰 버퍼 및 전체 OCR 통합 실패도 그대로 미해결입니다. [F1_DETECTION_VALIDATION.md](F1_DETECTION_VALIDATION.md)에 고정 CASE별 기대 결과·실제 결과 해석과 Windows 설치/실행 명령을 기록했습니다. CI는 새 PR의 Checks에서 별도로 확인합니다. 자동 병합하지 않습니다. F5 유지/F6 제외/F10·F12·F13 필수도 유지합니다.
