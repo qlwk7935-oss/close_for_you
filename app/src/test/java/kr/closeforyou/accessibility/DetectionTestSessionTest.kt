@@ -2,6 +2,8 @@ package kr.closeforyou.accessibility
 
 import kr.closeforyou.accessibility.testing.DetectionTestSession
 import kr.closeforyou.core.model.PrivacyBlockReason
+import kr.closeforyou.core.model.ScreenBounds
+import kr.closeforyou.core.model.PopupTrigger
 import org.junit.Assert.*
 import org.junit.Test
 
@@ -116,7 +118,7 @@ class DetectionTestSessionTest {
             operation = CollectionOperation.NODE_ACTION_READ, exception = CollectionExceptionKind.ILLEGAL_STATE)
         session.blocked(host, 1, PrivacyBlockReason.UNREADABLE_TREE, diagnostic, second)
         val attempts = requireNotNull(session.report(1)).attempts
-        assertEquals(listOf("1:ASSESSED:UNCERTAIN:INVALID_GEOMETRY", "2:BLOCKED:UNREADABLE_TREE:${diagnostic.encoded()}"), attempts)
+        assertEquals(listOf("1:ASSESSED:UNCERTAIN:INVALID_GEOMETRY:UNOBSERVED:UNOBSERVED", "2:BLOCKED:UNREADABLE_TREE:${diagnostic.encoded()}"), attempts)
         assertFalse(attempts[0].contains("COLLECTION_FAILED"))
         assertFalse(attempts[1].contains("INVALID_GEOMETRY"))
     }
@@ -127,7 +129,7 @@ class DetectionTestSessionTest {
         session.assessed(host, 1, candidate(), old)
         assertEquals("UNOBSERVED", session.report(1)?.actual)
         session.assessed(host, 1, candidate())
-        assertEquals(listOf("2:ASSESSED:POPUP_CANDIDATE:BOUNDED_WINDOW"), session.report(1)?.attempts)
+        assertEquals(listOf("2:ASSESSED:POPUP_CANDIDATE:BOUNDED_WINDOW:UNOBSERVED:UNOBSERVED"), session.report(1)?.attempts)
     }
     @Test fun `ticket cannot produce two results or enter a different session`() {
         val first = DetectionTestSession({ 0L }, { true })
@@ -149,5 +151,23 @@ class DetectionTestSessionTest {
         assertNull(session.beginAttempt())
         assertEquals("UNOBSERVED", session.report(1)?.actual)
         assertTrue(requireNotNull(session.report(1)).overflow)
+    }
+    @Test fun `node rejection and assessed frame relations cannot cross attempt boundaries`() {
+        val session = DetectionTestSession({ 0L }, { true })
+        val frame = ScreenBounds(0, 0, 100, 200)
+        val geometry = DetectionGeometryCheck.inspect(frame, ScreenBounds(-1, 0, 100, 200))
+        session.assessed(host, 1, DetectionAssessment(DetectionDisposition.UNCERTAIN, DetectionReason.INVALID_GEOMETRY,
+            geometry = geometry, windowAge = WindowBoundsAge.OLDER))
+        val bounds = NodeBoundsDiagnostic(NodeRectShape.REVERSED_Y, NodeVisibility.NOT_VISIBLE, NodeAncestry.SCROLL_ANCESTOR, NodeRole.DESCENDANT)
+        val diagnostic = CollectionProtectionDiagnostic(CollectionPhase.SNAPSHOT_PASS, CaptureDetail.TREE_PROTECTION, CollectionTree.TARGET,
+            finding = CollectionFinding.MALFORMED_NODE_BOUNDS, operation = CollectionOperation.NODE_BOUNDS_VALIDATE,
+            nodeBounds = bounds, windowAge = WindowBoundsAge.WITHIN_ONE_SECOND, trigger = PopupTrigger.CONTENT_CHANGED)
+        session.blocked(host, 1, PrivacyBlockReason.UNREADABLE_TREE, diagnostic)
+        val rows = requireNotNull(session.report(1)).attempts
+        assertTrue(rows[0].contains("WINDOW_OUTSIDE_FRAME"))
+        assertFalse(rows[0].contains("REVERSED_Y"))
+        assertTrue(rows[1].contains("REVERSED_Y:NOT_VISIBLE:SCROLL_ANCESTOR:DESCENDANT"))
+        assertFalse(rows[1].contains("WINDOW_OUTSIDE_FRAME"))
+        assertEquals("BLOCKED", session.report(1)?.actual)
     }
 }

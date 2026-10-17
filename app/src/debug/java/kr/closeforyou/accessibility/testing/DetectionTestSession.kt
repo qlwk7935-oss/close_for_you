@@ -56,7 +56,7 @@ internal class DetectionTestSession(private val now: () -> Long, private val all
             scoped.mapNotNull { it.assessment?.reason?.name }.toSet(),
             scoped.mapNotNull { it.block?.name }.toSet(), overflow,
             scoped.mapNotNull { record -> record.attempt?.let { ordinal ->
-                record.assessment?.let { "$ordinal:ASSESSED:${it.disposition.name}:${it.reason.name}" }
+                record.assessment?.let { "$ordinal:ASSESSED:${it.disposition.name}:${it.reason.name}:${it.geometry?.encoded() ?: "UNOBSERVED"}:${it.windowAge.name}" }
                     ?: record.block?.let { "$ordinal:BLOCKED:${it.name}:${record.diagnostic?.encoded() ?: "NONE"}" }
             } },
         )

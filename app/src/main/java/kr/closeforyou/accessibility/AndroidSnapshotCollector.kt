@@ -3,6 +3,7 @@ package kr.closeforyou.accessibility
 import android.accessibilityservice.AccessibilityService
 import android.graphics.Rect
 import android.os.SystemClock
+import android.os.Build
 import android.view.Display
 import android.view.WindowManager
 import android.view.accessibility.AccessibilityNodeInfo
@@ -45,6 +46,7 @@ internal class AndroidSnapshotCollector {
         var phase = CollectionPhase.ROOT
         var tree = CollectionTree.NONE
         var frameStatus = ScreenFrameStatus.UNAVAILABLE
+        var windowAge = WindowBoundsAge.UNOBSERVED
         val progress = CollectionProgress()
         fun blocked(reason: PrivacyBlockReason, detail: CaptureDetail, related: WindowType? = null,
             failure: CollectionGuardFailure? = null, exception: Exception? = null): CollectionResult {
@@ -62,7 +64,8 @@ internal class AndroidSnapshotCollector {
                 CollectionProtectionDiagnostic(phase, detail, tree, failure?.field ?: progress.failure?.field ?: CollectionField.NONE,
                     finding, related, frameStatus, progress.failure?.operation ?: if (exception == null)
                         CollectionOperation.NONE else CollectionOperation.UNCLASSIFIED,
-                    progress.failure?.exception ?: exception?.let(CollectionProgress::classify) ?: CollectionExceptionKind.NONE))
+                    progress.failure?.exception ?: exception?.let(CollectionProgress::classify) ?: CollectionExceptionKind.NONE,
+                    failure?.nodeBounds ?: NodeBoundsDiagnostic(), windowAge, trigger))
         }
         return try {
             val root = progress.at(CollectionOperation.ROOT_READ) { service.rootInActiveWindow }
@@ -96,6 +99,10 @@ internal class AndroidSnapshotCollector {
             if (frameworkTarget.displayId != Display.DEFAULT_DISPLAY) {
                 return blocked(PrivacyBlockReason.SYSTEM_WINDOW, CaptureDetail.SECONDARY_DISPLAY)
             }
+            windowAge = if (Build.VERSION.SDK_INT >= 34) {
+                try { WindowBoundsTiming.classify(frameworkTarget.transitionTimeMillis, SystemClock.uptimeMillis()) }
+                catch (_: Exception) { WindowBoundsAge.READ_FAILED } // Observation only; no retry or acceptance rule.
+            } else WindowBoundsAge.UNSUPPORTED
             trace.syntheticWindow { frameworkTarget.title }
             if (targetWindow.type != WindowType.APPLICATION) {
                 return blocked(PrivacyBlockReason.SYSTEM_WINDOW, CaptureDetail.TARGET_NOT_APPLICATION)
@@ -133,7 +140,7 @@ internal class AndroidSnapshotCollector {
             for (candidateRoot in roots) {
                 tree = if (candidateRoot === root) CollectionTree.TARGET else CollectionTree.SAME_APP_BACKGROUND
                 if (progress.at(CollectionOperation.NODE_PACKAGE_READ, CollectionField.NODE_PACKAGE) { candidateRoot.packageName?.toString() } == packageName) {
-                    walk(candidateRoot, budget, progress) { node, _ -> inspect(node, packageName, progress) }
+                    walk(candidateRoot, budget, progress) { node, _, _ -> inspect(node, packageName, progress); false }
                 }
             }
 
@@ -144,7 +151,7 @@ internal class AndroidSnapshotCollector {
             val structure = progress.at(CollectionOperation.DIGEST_INITIALIZE) { MessageDigest.getInstance("SHA-256").apply { update(salt) } }
             val content = progress.at(CollectionOperation.DIGEST_INITIALIZE) { MessageDigest.getInstance("SHA-256").apply { update(salt) } }
             var textCharacters = 0
-            walk(root, budget, progress) { node, path ->
+            walk(root, budget, progress) { node, path, underScrollAncestor ->
                 inspect(node, packageName, progress)
                 val text = progress.at(CollectionOperation.NODE_TEXT_READ, CollectionField.TEXT) { node.text?.toString() }
                 val description = progress.at(CollectionOperation.NODE_TEXT_READ, CollectionField.CONTENT_DESCRIPTION) { node.contentDescription?.toString() }
@@ -154,7 +161,15 @@ internal class AndroidSnapshotCollector {
                         finding = CollectionFinding.TOTAL_TEXT_LIMIT)
                 }
                 val rect = progress.at(CollectionOperation.NODE_BOUNDS_READ) { Rect().also(node::getBoundsInScreen) }
-                val bounds = progress.at(CollectionOperation.NODE_BOUNDS_DTO) { rect.toScreenBounds() }
+                val bounds = progress.at(CollectionOperation.NODE_BOUNDS_VALIDATE) {
+                    NodeBoundsPolicy.convert(rect.left, rect.top, rect.right, rect.bottom) { shape ->
+                        val visibility = try { if (node.isVisibleToUser) NodeVisibility.VISIBLE else NodeVisibility.NOT_VISIBLE }
+                            catch (_: Exception) { NodeVisibility.READ_FAILED }
+                        NodeBoundsDiagnostic(shape, visibility,
+                            if (underScrollAncestor) NodeAncestry.SCROLL_ANCESTOR else NodeAncestry.NO_SCROLL_ANCESTOR,
+                            if (path == "0") NodeRole.ROOT else NodeRole.DESCENDANT)
+                    }
+                }
                 val actionIds = progress.at(CollectionOperation.NODE_ACTION_READ) { node.actionList.map { it.id } }
                 val actions = progress.at(CollectionOperation.NODE_ACTIONS_DTO) {
                     buildSet {
@@ -187,6 +202,7 @@ internal class AndroidSnapshotCollector {
                         snapshot.className?.contains("dialog", ignoreCase = true) == true || NodeAction.DISMISS in actions,
                         path, pane, visible, scrollable)
                 }
+                scrollable // Context for descendants only; protection still inspects every node.
             }
             trace.nodeClasses(nodes.any { it.className?.contains("dialog", ignoreCase = true) == true })
             val structureDigest = progress.at(CollectionOperation.DIGEST_FINALIZE) { structure.digest().hex() }
@@ -203,7 +219,7 @@ internal class AndroidSnapshotCollector {
             val frame = progress.at(CollectionOperation.DETECTION_FRAME_DTO) {
                 DetectionFrame(applicationDigest, windowId,
                     windows.filter { it.type == WindowType.APPLICATION }.mapTo(mutableSetOf()) { it.id },
-                    structureDigest, screen, outlines.toList(), trigger, targetWindow.bounds)
+                    structureDigest, screen, outlines.toList(), trigger, targetWindow.bounds, windowAge)
             }
             CollectionResult.Ready(snapshot, frame)
         } catch (failure: CollectionGuardFailure) {
@@ -247,11 +263,11 @@ internal class AndroidSnapshotCollector {
         root: AccessibilityNodeInfo,
         budget: TraversalBudget,
         progress: CollectionProgress,
-        visitor: (AccessibilityNodeInfo, String) -> Unit,
+        visitor: (AccessibilityNodeInfo, String, Boolean) -> Boolean,
     ) {
-        fun visit(node: AccessibilityNodeInfo, path: String, depth: Int) {
+        fun visit(node: AccessibilityNodeInfo, path: String, depth: Int, underScrollAncestor: Boolean) {
             progress.at(CollectionOperation.TREE_BUDGET) { budget.visit(depth) }
-            visitor(node, path)
+            val scrollable = visitor(node, path, underScrollAncestor)
             val count = progress.at(CollectionOperation.CHILD_COUNT_READ) { node.childCount }
             if (count > MAX_NODES) throw CollectionGuardFailure(PrivacyBlockReason.TRUNCATED_TREE, finding = CollectionFinding.CHILD_COUNT_LIMIT)
             for (index in 0 until count) {
@@ -259,10 +275,10 @@ internal class AndroidSnapshotCollector {
                     node.getChild(index) ?: throw CollectionGuardFailure(PrivacyBlockReason.UNREADABLE_TREE,
                         finding = CollectionFinding.MISSING_CHILD)
                 }
-                try { visit(child, "$path/$index", depth + 1) } finally { progress.at(CollectionOperation.CHILD_RELEASE) { child.release() } }
+                try { visit(child, "$path/$index", depth + 1, underScrollAncestor || scrollable) } finally { progress.at(CollectionOperation.CHILD_RELEASE) { child.release() } }
             }
         }
-        visit(root, "0", 0)
+        visit(root, "0", 0, false)
     }
 
     private fun digest(vararg fields: String?): String = MessageDigest.getInstance("SHA-256").run {

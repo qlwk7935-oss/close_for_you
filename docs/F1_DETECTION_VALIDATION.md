@@ -2,6 +2,12 @@
 
 기준: PR #6 병합 후 `main`의 `db63c83`, 새 브랜치 `feature/f1-popup-detection`. A의 감지·보호 및 독립 합성 fixture 범위입니다. B 분류/행동, C 안내/음성, D Room을 구현하지 않습니다. **후보 감지 ≠ 광고 판정 ≠ 자동 실행 허가**입니다. 캡처/OCR 보호와 PR #6의 불일치 버퍼 거부를 유지합니다.
 
+## 최신 경계 조사
+
+후속 사용자 실측에서 NODE_BOUNDS_DTO/ILLEGAL_ARGUMENT가 확인됐습니다. [F1_BOUNDS_INVESTIGATION.md](F1_BOUNDS_INVESTIGATION.md)에 노드 역전 축·가시성/스크롤 관계, 별개 ASSESSED 시도의 창/frame 관계, AOSP 근거와 두 종류의 Windows 재시험을 정리했습니다. 역전 Rect는 이제 생성자 예외 대신 MALFORMED_NODE_BOUNDS로 명시적으로 거부하며 비가시성 예외나 경계 보정은 없습니다. 14개 시나리오의 사용자 실측 미관측 상태와 일반 앱 OCR 미해결은 유지합니다.
+
+아래 절은 이전 `0384187`까지의 조사 기록입니다. 최신 wire에는 NODE_RECT/NODE_VISIBILITY/NODE_ANCESTRY/NODE_ROLE/WINDOW_BOUNDS_AGE/TRIGGER와 ASSESSED geometry 관계가 추가되므로 3개 APK를 모두 함께 갱신합니다.
+
 ## PR #7 API 37 실측: SNAPSHOT_PASS 실패 위치 조사
 
 사용자 Windows API 37에서 진단 커밋 `f3c13dd`를 설치한 실제 결과입니다. SERVICE_CONNECTION_READY는 통과했습니다. 13개 CASE의 baseline은 반복적으로 `REASONS=INVALID_GEOMETRY`, `BLOCKS=UNREADABLE_TREE`, `STEP=SNAPSHOT_PASS;DETAIL=COLLECTION_FAILED;TREE=TARGET;FIELD=NONE;CAUSE=FRAMEWORK_FAILURE;FRAME=VERIFIED`였고 BASELINE_BLOCKED로 끝났습니다. UNMARKED_OVERLAY에서는 WINDOWS/TARGET_MISSING도 한 번 관측했습니다. SEQUENCE_SECOND는 전제 미충족이며 최종 **UNOBSERVED=14 / FAILURES (1 test, 1 failure)**입니다. 이는 **실제 F1 자극 전 baseline 문제**입니다. 감지 성공률/미탐률로 계산하지 않습니다.

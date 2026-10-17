@@ -11,8 +11,12 @@ internal object DetectionAttemptOutput {
         val fields = encoded.split(':')
         val ordinal = fields.firstOrNull()?.toIntOrNull()
         if (ordinal == null || ordinal !in 1..256 || fields[0] != ordinal.toString()) return "ATTEMPT_DIAGNOSTIC_INVALID"
-        if (fields.size == 4 && fields[1] == "ASSESSED" && fields[2] in dispositions && fields[3] in reasons)
-            return "ATTEMPT=$ordinal;RESULT=ASSESSED;DISPOSITION=${fields[2]};REASON=${fields[3]}"
+        if (fields.size in setOf(6, 10) && fields[1] == "ASSESSED" && fields[2] in dispositions && fields[3] in reasons &&
+            fields.last() in DetectionGeometryOutput.ages) {
+            val geometry = if (fields.size == 6 && fields[4] == "UNOBSERVED") "GEOMETRY=UNOBSERVED"
+                else DetectionGeometryOutput.format(fields.subList(4, fields.lastIndex)) ?: return "ATTEMPT_DIAGNOSTIC_INVALID"
+            return "ATTEMPT=$ordinal;RESULT=ASSESSED;DISPOSITION=${fields[2]};REASON=${fields[3]};$geometry;WINDOW_BOUNDS_AGE=${fields.last()}"
+        }
         if (fields.size >= 4 && fields[1] == "BLOCKED" && fields[2] in blocks) {
             val detail = if (fields.size == 4 && fields[3] == "NONE") "BLOCK=${fields[2]};COLLECTION=NONE"
                 else CollectionDiagnosticOutput.format(fields.drop(2).joinToString(":"))

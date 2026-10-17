@@ -25,6 +25,7 @@ internal data class DetectionFrame(
     val outlines: List<DetectionOutline>,
     val trigger: PopupTrigger,
     val windowBounds: ScreenBounds = screenBounds,
+    val windowAge: WindowBoundsAge = WindowBoundsAge.UNOBSERVED,
 )
 
 internal enum class DetectionDisposition { POPUP_CANDIDATE, NO_POPUP, UNCERTAIN }
@@ -38,6 +39,8 @@ internal data class DetectionAssessment(
     val disposition: DetectionDisposition,
     val reason: DetectionReason,
     val signals: Set<PopupSignal> = emptySet(),
+    val geometry: DetectionGeometryDiagnostic? = null,
+    val windowAge: WindowBoundsAge = WindowBoundsAge.UNOBSERVED,
 )
 
 /** F1 evidence only. Neither a candidate nor uncertainty authorizes any external action.
@@ -53,15 +56,16 @@ internal class PopupCandidateDetector {
         }
         val sameWindow = before?.frame?.activeWindowId == frame.activeWindowId
         val priorNodes = before?.frame?.outlines.orEmpty().associateBy { it.fingerprint }
+        val geometry = DetectionGeometryCheck.inspect(frame.screenBounds, frame.windowBounds)
         fun finish(result: DetectionAssessment, keys: Set<String> = emptySet()): DetectionAssessment {
             previous = Baseline(frame.copy(outlines = frame.outlines.toList(),
                 applicationWindowIds = frame.applicationWindowIds.toSet()), keys.toSet())
-            return result
+            return result.copy(geometry = geometry, windowAge = frame.windowAge)
         }
-        if (frame.screenBounds.width <= 0 || frame.screenBounds.height <= 0 ||
-            !contains(frame.screenBounds, frame.windowBounds) || frame.windowBounds.width <= 0 || frame.windowBounds.height <= 0) {
+        if (geometry.result != DetectionGeometry.VALID) {
             previous = null
-            return DetectionAssessment(DetectionDisposition.UNCERTAIN, DetectionReason.INVALID_GEOMETRY)
+            return DetectionAssessment(DetectionDisposition.UNCERTAIN, DetectionReason.INVALID_GEOMETRY,
+                geometry = geometry, windowAge = frame.windowAge)
         }
         // Both axes must be inset: status/navigation bars on an ordinary Activity are not a Dialog.
         if (bounded(frame.windowBounds, frame.screenBounds) &&

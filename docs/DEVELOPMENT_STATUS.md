@@ -314,3 +314,30 @@ python3 -B tools/verify_capture_test_apks.py --release-apk app/build/outputs/apk
 ```
 
 **BUILD SUCCESSFUL (1분 16초, 196 tasks: 31 executed / 165 up-to-date)**. JVM **196개**(앱130/호스트66), 실패/오류/건너뜀0, 양쪽 debug Lint 이슈0, Kotlin 컴파일 경고0. Debug/Release·계측 APK 빌드와 실제 DEX의 새 attempt formatter 포함, host 독립 Kotlin 런타임, driver의 앱 내부 클래스 의존 부재, release debug/합성 probe 부재 패키징 검사 통과입니다. CI는 이 커밋의 기존 PR #7 Checks에서 별도 확인합니다. 빌드/패키징 성공은 실제 Android 수집/감지/캡처/OCR 성공을 뜻하지 않습니다.
+
+
+## PR #7 후속: 역전된 노드 Rect와 독립 F1 창 경계 조사
+
+사용자 API 37 실측의 14개 시나리오는 BASELINE_BLOCKED/UNOBSERVED입니다. 다른 ATTEMPT에서 ASSESSED/INVALID_GEOMETRY와 SNAPSHOT_PASS/NODE_BOUNDS_DTO/ILLEGAL_ARGUMENT가 각각 발생합니다. 일부 TARGET_MISSING은 별도 창 목록 불일치이며 주원인으로 확정하지 않습니다. ScreenBounds의 순서 require와 해당 DTO 위치를 연결하면 역전 Rect 입력의 거부로 판단할 수 있으나, Android가 제공한 경계의 축/가시성/스크롤/전환 원인은 아직 실측이 필요합니다.
+
+공개 AOSP View에서 접근성 경계를 만들 때 부모 scroll을 빼고 max/min clipping을 적용해, viewport 밖 자식의 경계가 역전될 수 있는 경로를 확인했습니다. android15-release와 고정 main 리비전에서 읽었으며 **사용자의 API 37 이미지와 동일한 구현이라는 증거나 해당 실제 실패 원인 확정은 아닙니다**. 창 bounds의 region/변환 경로도 화면 frame과의 무조건 일치를 보장하지 않아 포함 관계를 임의로 완화하지 않았습니다.
+
+변경:
+
+- `NodeBoundsPolicy`가 전체 보호 순회 및 snapshot node의 inspect 이후 기존 Rect 변환 자리에 순서 검사를 수행합니다. 역전이면 UNREADABLE_TREE/TREE_PROTECTION/MALFORMED_NODE_BOUNDS/NODE_BOUNDS_VALIDATE/EXCEPTION=NONE으로 명시적 수집 거부합니다. 부분 데이터 전체 폐기를 유지하며 비가시성 노드도 생략하지 않습니다. 좌표를 정렬/보정하지 않습니다. NONE은 guard이며 성공이 아닙니다.
+- 동일 거부에 역전 축, isVisibleToUser의 고정 범주(읽기 실패 포함), 기존 순회의 스크롤 조상 boolean과 ROOT/DESCENDANT만 붙입니다. 실제 좌표/노드 ID/경로/값은 출력하지 않습니다.
+- F1 geometry guard를 같은 거부 조건/우선순위의 순수 helper로 분리하고 NONPOSITIVE_FRAME/WINDOW_OUTSIDE_FRAME/NONPOSITIVE_WINDOW, 축별 비양수와 초과 방향을 같은 ASSESSED에만 붙입니다. VALID는 허가가 아니며 기존 baseline 폐기와 UNCERTAIN을 유지합니다.
+- API 34+ 공개 window bounds transition time은 실제 시각 대신 고정 age bucket만 관측합니다. bounds가 최근 바뀌었다는 단서이며 애니메이션/노드 안정성의 증거나 허용/재시도 조건이 아닙니다. API 30~33은 UNSUPPORTED입니다. 노드 거부에는 고정 TRIGGER도 붙입니다.
+- 변경하지 않은 합성 baseline의 실제 native View 노드를 관측하는 `SyntheticBaselineBoundsTest`를 추가했습니다. 소유 View의 layout/가시성/스크롤/Rect 형태만 출력하고 일반 가시 control과 ScrollView의 실제 관측을 요구합니다. 가짜 bounds 주입이나 F1 성공 판정은 없습니다. SOURCE=OWN_VIEW/SERVICE_COLLECTION=NOT_TESTED이며 원격 service 경로와 구분합니다.
+- F0-A/F0-B·비밀번호/입력/민감 보호·창/시스템/가림·좌표/캡처 동의·앱별 허용·ROI/버퍼 거부·메모리/시간/해제·공통 계약/BCD 기능·자동 행동 금지를 유지합니다. baseline 조건/시간/UNOBSERVED 및 연속 시나리오 전제를 낮추지 않았습니다.
+
+[새 경계 조사 문서](F1_BOUNDS_INVESTIGATION.md)에 공개 소스 permalink, 수정 전후 거부 코드와 원인 미확정 범위, Windows 전체 빌드/3개 APK 설치/native probe/실제 F1 계측 명령을 기록했습니다. adb 연결 기기 0대로 **새 API 35/37 계측·baseline 복구·실제 F1 정확도·일반 앱 캡처/OCR 성공은 미검증**입니다. 실제 원인을 모르는 노드를 생략하거나 좌표를 보정해 통과시키지 않았습니다. 기존 PR #7에만 반영하며 새 PR/자동 병합은 하지 않습니다.
+
+최종 로컬 검증(JDK 17):
+
+```sh
+./gradlew --no-daemon :app:assembleDebug :app:assembleDebugAndroidTest :app:testDebugUnitTest :capture-test-host:testDebugUnitTest :app:lintDebug :capture-test-host:lintDebug :app:assembleRelease
+python3 -B tools/verify_capture_test_apks.py --release-apk app/build/outputs/apk/release/app-release-unsigned.apk
+```
+
+**BUILD SUCCESSFUL (1분 7초, 196 tasks: 19 executed / 177 up-to-date)**. JVM **205개**(앱137/호스트68), 실패/오류/건너뜀0. 새 회귀9개(앱7/호스트2)이며 기존 F0/보호 시험도 통과했습니다. 양쪽 debug Lint 이슈0, Kotlin 컴파일 경고0. Debug/Release·계측 APK 및 실제 DEX의 새 native bounds probe/geometry formatter 포함, 독립 host Kotlin 런타임·driver 격리·release debug/합성 구현 부재 패키징 검사 통과입니다. CI는 기존 PR #7의 이번 커밋 Checks에서 별도 확인합니다. 이 성공은 API 35/37 기기 실행 또는 F1 baseline 통과가 아닙니다.

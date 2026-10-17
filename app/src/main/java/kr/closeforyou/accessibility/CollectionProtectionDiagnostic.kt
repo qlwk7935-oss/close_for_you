@@ -14,13 +14,13 @@ internal enum class CollectionFinding {
     NONE, ROOT_GUARD, PACKAGE_GUARD, WINDOW_GUARD, GEOMETRY_GUARD, COLLECTION_EXCEPTION,
     PACKAGE_MISMATCH, PASSWORD_FLAG, PASSWORD_INPUT_TYPE, EDITABLE_FLAG, NON_ZERO_INPUT_TYPE,
     SENSITIVE_TEXT, UNCERTAIN_TEXT, NODE_TEXT_LIMIT, TOTAL_TEXT_LIMIT,
-    NODE_COUNT_LIMIT, DEPTH_LIMIT, TIME_LIMIT, CHILD_COUNT_LIMIT, MISSING_CHILD,
+    NODE_COUNT_LIMIT, DEPTH_LIMIT, TIME_LIMIT, CHILD_COUNT_LIMIT, MISSING_CHILD, MALFORMED_NODE_BOUNDS,
 }
 /** Actual synchronous code boundaries, not a claim about the origin of an exception. */
 internal enum class CollectionOperation {
     NONE, UNCLASSIFIED, ROOT_READ, ROOT_METADATA, WINDOWS_READ, WINDOW_METADATA, WINDOW_ROOT_READ,
     SCREEN_GEOMETRY, COORDINATE_CHECK, TREE_BUDGET, CHILD_COUNT_READ, CHILD_READ, CHILD_RELEASE,
-    NODE_PACKAGE_READ, NODE_FIELD_READ, NODE_FIELD_CHECK, NODE_TEXT_READ, NODE_TEXT_CHECK, NODE_BOUNDS_READ, NODE_BOUNDS_DTO,
+    NODE_PACKAGE_READ, NODE_FIELD_READ, NODE_FIELD_CHECK, NODE_TEXT_READ, NODE_TEXT_CHECK, NODE_BOUNDS_READ, NODE_BOUNDS_DTO, NODE_BOUNDS_VALIDATE,
     NODE_ACTION_READ, NODE_ACTIONS_DTO, NODE_PROPERTIES_READ, NODE_DTO, TEXT_BUDGET,
     DIGEST_INITIALIZE, STRUCTURE_FIELDS, STRUCTURE_HASH, CONTENT_HASH, APPLICATION_HASH, OUTLINE_HASH,
     OUTLINE_PROPERTIES_READ, OUTLINE_DTO, DIGEST_FINALIZE, TOKEN_DTO, SNAPSHOT_DTO, DETECTION_FRAME_DTO,
@@ -70,15 +70,19 @@ internal data class CollectionProtectionDiagnostic(
     val frame: ScreenFrameStatus = ScreenFrameStatus.UNAVAILABLE,
     val operation: CollectionOperation = CollectionOperation.NONE,
     val exception: CollectionExceptionKind = CollectionExceptionKind.NONE,
+    val nodeBounds: NodeBoundsDiagnostic = NodeBoundsDiagnostic(),
+    val windowAge: WindowBoundsAge = WindowBoundsAge.UNOBSERVED,
+    val trigger: kr.closeforyou.core.model.PopupTrigger? = null,
 ) {
     /** One tuple per real failure: do not combine fields from different collections. */
     fun encoded(): String = listOf(phase.name, detail.name, tree.name, field.name, finding.name,
-        related?.name ?: "NONE", frame.name, operation.name, exception.name).joinToString(":")
+        related?.name ?: "NONE", frame.name, operation.name, exception.name, nodeBounds.encoded(), windowAge.name, trigger?.name ?: "UNOBSERVED").joinToString(":")
 }
 
 internal class CollectionGuardFailure(val reason: PrivacyBlockReason,
     val field: CollectionField = CollectionField.NONE,
-    val finding: CollectionFinding = CollectionFinding.NONE) : RuntimeException()
+    val finding: CollectionFinding = CollectionFinding.NONE,
+    val nodeBounds: NodeBoundsDiagnostic? = null) : RuntimeException()
 
 /** Same F0-A checks and ordering as before; only labels the existing rejecting check. */
 internal object CollectionProtectionCheck {
