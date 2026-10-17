@@ -14,7 +14,7 @@
 | 계측 APK | `kr.closeforyou.test` — AndroidJUnitRunner, 실제 OCR/캡처/호스트 실행 시험. 합성 Activity 없음 |
 | 독립 호스트 | `kr.closeforyou.capturetest` — SyntheticPopupActivity와 독립 이미지 생성기, 자체 Kotlin stdlib 포함 |
 
-호스트는 Android framework와 명시적 `implementation(kotlin("stdlib"))`만 사용합니다. 본 앱·JUnit·계측 helper에 의존하지 않습니다. release 변형은 비활성화하며 debug/testOnly APK만 생성합니다. 권한·계정·네트워크·저장 기능이 없고 백업/전송은 차단합니다. 운영 앱 APK에 호스트 클래스나 Activity를 넣지 않습니다.
+호스트는 Android framework와 명시적 `implementation(kotlin("stdlib"))`만 사용합니다. 본 앱·JUnit·계측 helper에 의존하지 않습니다. release 변형은 비활성화하며 debug/testOnly APK만 생성합니다. 화면 캡처·마이크·인터넷 같은 시스템 권한과 계정·네트워크·저장 기능은 없고 백업/전송은 차단합니다. 후속 외부 서비스 시험을 위해 debug 본 앱의 시험 프로브에 접근하는 signature 권한 하나만 요청합니다. 이 권한은 Android 접근성 활성화나 캡처 동의를 대신하지 않습니다. 운영 앱 APK에 호스트 클래스나 Activity를 넣지 않습니다.
 
 `:app:assembleDebugAndroidTest`는 호스트의 assembleDebug도 빌드합니다. **`:app:installDebugAndroidTest`는 호스트 APK까지 설치하는 명령이 아닙니다.** 별도로 설치해야 합니다. 기존 `.test/SyntheticPopupActivity` 실행 명령은 더 이상 사용하지 않습니다. `.test` 패키지는 계측 runner 용도로 계속 사용하므로 삭제할 필요가 없습니다.
 
