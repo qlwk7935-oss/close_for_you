@@ -26,7 +26,7 @@ class ServiceCaptureOptInTest {
 /** Shared external session. Buffer-only observes a real callback and safe rejection;
  * its success must never be described as OCR_MATCH or a working pixel coordinate transform. */
 internal object SyntheticServiceSession {
-    suspend fun run(bufferOnly: Boolean) {
+    suspend fun run(bufferOnly: Boolean, connectionCheckOnly: Boolean = false) {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val arguments = InstrumentationRegistry.getArguments()
         assumeTrue(arguments.getString("captureOcrService") == "true")
@@ -68,7 +68,7 @@ internal object SyntheticServiceSession {
         }
         instrumentation.sendStatus(0, Bundle().apply { putString("stream", "SERVICE_CONNECTION_READY\n") })
         if (bufferOnly) assertFalse("BUFFER_PROBE_REQUIRES_CAPTURE", arguments.getString("connectionOnly") == "true")
-        if (arguments.getString("connectionOnly") == "true") return
+        if (connectionCheckOnly || arguments.getString("connectionOnly") == "true") return
         var session: String? = null
         try {
             val begun = call("BEGIN", optIn = true)

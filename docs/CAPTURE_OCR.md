@@ -137,3 +137,5 @@ PR #5 이후 영역 결정 수정: 일반 서비스 metrics를 화면 전체로 
 
 
 PR #6 추가: window screenshot buffer와 접근성 창 크기의 일반 동등 계약을 확인할 수 없어 mismatch 차단을 유지합니다. 실제 반환 버퍼 metadata로 메모리 한도를 먼저 검사하고 축별/디스플레이/교환 관계 코드와 해제 여부만 debug 세션에서 관측합니다. [AOSP·CTS 근거, 안전 거부, 버퍼 전용 계측과 Windows 명령](WINDOW_CAPTURE_BUFFER.md)을 확인합니다. 픽셀 대응·전체 OCR 성공은 기기 재시험 전 미검증입니다.
+
+PR #6의 후속 [합성 패턴 계측](SYNTHETIC_BUFFER_MAPPING.md)은 실제 window callback을 debug 세션에서만 검사합니다. 패턴 검증 결과를 프로덕션 크롭/변환/분류 근거로 사용하지 않으며, 불일치 버퍼는 계속 REGION_UNCERTAIN입니다. 일반 한국어 OCR fixture와 B·C·D 계약은 유지합니다.

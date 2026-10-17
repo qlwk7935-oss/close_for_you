@@ -1,5 +1,7 @@
 # 실제 서비스 연결·캡처 시험: 외부 계측 드라이버
 
+최신 추가 계측과 Windows 명령은 [합성 버퍼 좌표 대응 검증](SYNTHETIC_BUFFER_MAPPING.md)을 먼저 확인합니다. 큰 버퍼의 프로덕션 거부 정책은 유지합니다.
+
 > PR #6 기기 후속 결과 BUFFER_GEOMETRY 조사·버퍼 전용 계측 및 최신 Windows 명령은 [WINDOW_CAPTURE_BUFFER.md](WINDOW_CAPTURE_BUFFER.md)를 우선합니다.
 
 > PR #5의 OUTSIDE/REGION_NO_BOUNDED_DIALOG 후속 조사·수정과 최신 API 35/37 명령은 [Dialog 좌표 문서](DIALOG_CAPTURE_COORDINATES.md)를 우선합니다.

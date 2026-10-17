@@ -113,6 +113,11 @@ internal class AndroidScreenshotManager(
                                     buffer.layers, buffer.format == HardwareBuffer.RGBA_8888 || buffer.format == HardwareBuffer.RGBX_8888,
                                     region.window.bounds, snapshot.screenBounds, region.bounds, windowCapture)
                                 trace.buffer(assessment.diagnostic)
+                                // Debug-only synthetic calibration observes the SAME window callback.
+                                // Release is a no-op; acceptance below is deliberately unchanged.
+                                if (windowCapture && assessment.diagnostic.memory == BufferMemoryCheck.WITHIN_LIMIT) {
+                                    SyntheticBufferInspection.inspect(snapshot, region, buffer, result.colorSpace)
+                                }
                                 assessment.failure?.let {
                                     trace.detail(if (it == EvidenceIssue.MEMORY_LIMIT) CaptureDetail.BUFFER_MEMORY_LIMIT else CaptureDetail.BUFFER_GEOMETRY)
                                     throw EvidenceFailure(it)
@@ -145,6 +150,7 @@ internal class AndroidScreenshotManager(
                                 wrapped?.recycle()
                                 buffer.close()
                                 trace.bufferReleased()
+                                SyntheticBufferInspection.released(snapshot)
                             }
                             // Source hardware buffer is already closed before the OCR coroutine resumes.
                             val ready = frame

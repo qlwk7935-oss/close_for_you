@@ -65,6 +65,8 @@ def main():
         "Lkotlin/Unit;", "Lkotlin/KotlinVersion;", "Lkotlin/collections/CollectionsKt;",
         "Lkr/closeforyou/capturetest/SyntheticPopupActivity;",
         "Lkr/closeforyou/capturetest/SyntheticNoticeKt;",
+        "Lkr/closeforyou/capturetest/SyntheticPatternView;",
+        "Lkr/closeforyou/synthetictest/PatternMapping;",
     ):
         require(descriptor in host, "Standalone host missing DEX definition: " + descriptor)
     forbidden_refs = ("Lkr/closeforyou/accessibility/", "Lkr/closeforyou/app/", "Landroidx/test/", "Lorg/junit/")
@@ -82,16 +84,21 @@ def main():
     driver, driver_refs = dex_classes(args.driver_apk)
     require("Lkr/closeforyou/servicetest/ServiceCaptureOptInTest;" in driver, "External service driver missing")
     require("Lkr/closeforyou/servicetest/ServiceBufferGeometryOptInTest;" in driver, "Synthetic buffer geometry instrumentation missing")
+    require("Lkr/closeforyou/servicetest/ServiceSyntheticPatternOptInTest;" in driver, "Synthetic landmark instrumentation missing")
     require("Lkr/closeforyou/servicetest/SyntheticDialogGeometryTest;" in driver, "Synthetic Dialog geometry instrumentation missing")
     require(not any(t.startswith(("Lkr/closeforyou/accessibility/", "Lkr/closeforyou/app/", "Lkr/closeforyou/core/")) for t in driver_refs),
             "External driver must not read target-app process-local singletons")
     require("Lkr/closeforyou/accessibility/capture/ServiceCaptureOptInTest;" not in tests,
             "Service integration test still targets/restarts the real service app")
     require("Lkr/closeforyou/accessibility/testing/SyntheticCaptureTestProvider;" in app, "Debug probe missing")
+    require("Lkr/closeforyou/accessibility/testing/SyntheticPatternProbe;" in app, "Debug pattern inspector missing")
+    require("Lkr/closeforyou/synthetictest/PatternMapping;" in app, "Debug pattern matcher missing")
     if args.release_apk:
         release, _ = dex_classes(args.release_apk)
         require(not any(t.startswith("Lkr/closeforyou/accessibility/testing/") for t in release),
                 "Debug probe leaked into release APK")
+        require(not any(t.startswith("Lkr/closeforyou/synthetictest/") for t in release),
+                "Synthetic pattern implementation leaked into release APK")
         print("PASS: debug probe classes absent from release APK")
     print("PASS: host defines Intrinsics + Kotlin runtime + synthetic Activity/image helper")
     print("PASS: host has no target-app/test-runner references; app and test APKs contain no host")

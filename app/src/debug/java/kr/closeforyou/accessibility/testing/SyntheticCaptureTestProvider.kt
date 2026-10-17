@@ -15,6 +15,9 @@ import kr.closeforyou.accessibility.CaptureStage
 import kr.closeforyou.accessibility.CaptureAttemptDiagnostic
 import kr.closeforyou.accessibility.CaptureDiagnostics
 import kr.closeforyou.accessibility.CaptureDiagnosticSession
+import kr.closeforyou.accessibility.capture.SyntheticBufferInspection
+import kr.closeforyou.synthetictest.PatternPlan
+import kr.closeforyou.synthetictest.PatternRect
 import kr.closeforyou.app.CorePreferences
 import kr.closeforyou.core.contract.PopupEvent
 import kr.closeforyou.core.model.TextSource
@@ -33,6 +36,7 @@ class SyntheticCaptureTestProvider : ContentProvider() {
     private var result = "NOT_STARTED"
     private var diagnostics: CaptureDiagnosticSession? = null
     private var completedDiagnostic: CaptureAttemptDiagnostic? = null
+    private var patternProbe: SyntheticPatternProbe? = null
     private var ocrCount = 0
     private val prefs get() = CorePreferences.get(requireNotNull(context))
 
@@ -61,6 +65,9 @@ class SyntheticCaptureTestProvider : ContentProvider() {
                 completedDiagnostic = null
                 diagnostics = CaptureDiagnosticSession(HOST).also { CaptureDiagnostics.observer = it }
                 ocrCount = 0
+                if (extras.getBoolean("patternProbe")) {
+                    patternProbe = SyntheticPatternProbe(prefs).also { SyntheticBufferInspection.probe = it }
+                }
                 collector = scope.launch(start = CoroutineStart.UNDISPATCHED) {
                     AccessibilityRuntime.events.collect { event ->
                         when (event) {
@@ -93,9 +100,24 @@ class SyntheticCaptureTestProvider : ContentProvider() {
                     .also { main.postDelayed(it, 30_000) }
                 code("STARTED").apply { putString("session", key) }
             }
+            "ARM_PATTERN" -> {
+                if (session == null || session != arg) return code("INVALID_SESSION")
+                if (!syntheticSettingsReady(prefs.currentSettings())) return code("SYNTHETIC_SETTINGS_REQUIRED")
+                val values = extras?.getIntArray("ownedGeometry")
+                if (values == null || values.size != 9) return code("PATTERN_PLAN_INVALID")
+                val expected = PatternPlan(values[0], PatternRect(values[1], values[2], values[3], values[4]),
+                    PatternRect(values[5], values[6], values[7], values[8]), extras.getBoolean("decorElevated"))
+                code(if (patternProbe?.arm(expected) == true) "PATTERN_ARMED" else "PATTERN_PLAN_INVALID")
+            }
             "RESULT" -> if (session == null || session != arg) code("INVALID_SESSION") else code(result).apply {
                 putInt("ocrCount", ocrCount)
-                val diagnostic = completedDiagnostic ?: diagnostics?.snapshot()
+                patternProbe?.report()?.let { (report, released) ->
+                    putString("patternCode", report.code.name)
+                    putString("patternDecorBuffer", report.decorBuffer.name)
+                    putString("patternOuter", report.outer.name)
+                    putBoolean("patternReleased", released)
+                }
+                val diagnostic = patternProbe?.diagnostic() ?: completedDiagnostic ?: diagnostics?.snapshot()
                 putInt("attempt", diagnostic?.attempt ?: 0)
                 putString("stage", diagnostic?.stage?.name ?: "NO_HOST_ROOT")
                 putStringArrayList("reached", ArrayList(diagnostic?.reached?.map { it.name }.orEmpty()))
@@ -135,6 +157,9 @@ class SyntheticCaptureTestProvider : ContentProvider() {
 
     private fun finish() {
         session = null
+        if (SyntheticBufferInspection.probe === patternProbe) SyntheticBufferInspection.probe = null
+        patternProbe?.close()
+        patternProbe = null
         collector?.cancel()
         collector = null
         expiry?.let(main::removeCallbacks)

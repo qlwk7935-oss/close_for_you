@@ -1,5 +1,7 @@
 # PR #6 추가 조사: window 캡처 HardwareBuffer 경계
 
+최신 추가 계측과 Windows 명령은 [합성 버퍼 좌표 대응 검증](SYNTHETIC_BUFFER_MAPPING.md)을 먼저 확인합니다. 큰 버퍼의 프로덕션 거부 정책은 유지합니다.
+
 `fix/dialog-capture-coordinates`의 기존 PR #6에 추가합니다. 새 PR/브랜치 생성이나 main 병합은 하지 않습니다. 기준 커밋은 39c9bed입니다.
 
 ## 이번 기기 결과로 확인된 것

@@ -162,3 +162,18 @@ C02~C06·C09·C10·C12~C14 및 G2~G5는 관련 구현 뒤 시행합니다. C07�
 - 결과: JVM **99개**(본 앱 92, 호스트 7), 새 회귀 12개 포함, 실패/오류/건너뜀 0. 양쪽 debug Lint 이슈 0. Debug/Release 및 계측 APK 빌드 성공. 새 버퍼 계측 포함 DEX 패키징 검사 및 release의 debug provider/시험 권한/일반 overlay 권한 부재 확인 통과.
 - 한계: adb 기기 0대, emulator/KVM 없음. 계측 총 9개 컴파일/패키징만 확인했고 새 시험의 기기 실행 0개. API 35/37 캡처·OCR 성공 주장 없음. 불일치 buffer-to-screen 변환 지원은 미해결이며 REGION_UNCERTAIN으로 안전하게 거부함. 실제 native stride/driver 할당량은 공개 metadata로 알 수 없어 픽셀 예산을 전체 GPU/RSS 상한으로 표현하지 않음.
 - [WINDOW_CAPTURE_BUFFER.md](WINDOW_CAPTURE_BUFFER.md)에 API/AOSP/CTS 근거, 가능한 원인과 한계, 수정 전후, 고정 코드 및 API 35/37 Windows 설치/연결/버퍼/전체 OCR 명령 기록. B·C·D 공통 모델/인터페이스 변경 없음.
+
+## PR #6 추가: 합성 패턴 기반 버퍼 원점 검증 계측
+
+기존 `fix/dialog-capture-coordinates`에서 작업합니다. 사용자 보고 API 37의 버퍼 전용 시험은 양 축 LARGER, DISPLAY_SIZED=NO, SWAPPED=NO, UNPROVEN_WINDOW, 실제 해제를 확인했습니다. 원점/변환/실제 OCR 성공은 아직 확인되지 않았습니다.
+
+- 추가: `synthetic-test-support`의 순수 PatternMapping/좌표 redaction, 호스트의 SyntheticPatternView 및 명시적 pattern Intent 모드, ServiceSyntheticPatternOptInTest, 합성 JVM 회귀 15개.
+- 연결: debug provider의 일회성 ARM_PATTERN, SyntheticPatternProbe, build variant별 SyntheticBufferInspection. AndroidScreenshotManager에 실제 window callback의 메모리 검사 이후 관측/해제 알림만 추가했습니다. release는 no-op이며 CaptureBufferPolicy·ROI·OCR 수락 조건과 B·C·D 공통 모델/포트는 변경하지 않았습니다.
+- 보호: 기존 signature/caller/동의/단일 호스트 허용, 후보/F0-A/창·노드 경계·토큰 검증을 통과한 실제 callback만 검사. 실제 수치/이미지/원문 저장·출력·외부 전송 없음. 자체 geometry는 안정된 두 pre-draw 후 IPC 메모리로만 전달. 모든 픽셀 참조/배열은 즉시 정리하고 500ms 검사 예산과 END/취소 검사를 추가했습니다.
+- 원인 조사: AOSP의 z 기반 비공개 surface inset 및 surface 크기 증가 경로 확인. 새 기본 Dialog vs 첫 show 전 z=0인 새 Dialog를 비교하되 결과는 고정 코드만 반환. 디바이스 원인은 미확정이며 숨겨진 API/추정 크롭/resize/display fallback/Mock OCR은 없습니다.
+- 패키징: 새 계측/호스트 패턴/본 앱 debug 검사 클래스의 DEX 존재, 독립 런타임과 driver 클래스 분리, release의 패턴 구현/debug provider 부재 검사 보강.
+- 문서: [합성 버퍼 좌표 대응 검증](SYNTHETIC_BUFFER_MAPPING.md)에 변경 이유, 공식 API/AOSP 근거, 고정 코드, API 35/37 Windows 빌드·4개 APK 설치·계측 명령, 남은 제약 기록. CAPTURE_OCR/WINDOW_CAPTURE_BUFFER/CAPTURE_SESSION_DIAGNOSTICS/SERVICE_CAPTURE_TEST에서 연결합니다.
+
+최종 로컬 검증: JDK 17로 `./gradlew --no-daemon :app:assembleDebug :app:assembleDebugAndroidTest :app:testDebugUnitTest :capture-test-host:testDebugUnitTest :app:lintDebug :capture-test-host:lintDebug :app:assembleRelease` 실행, **BUILD SUCCESSFUL (58초, 196 tasks)**. JVM **114개**(본 앱 92 + 호스트 22, 새 회귀 15 포함), 실패/오류/건너뜀 0. 양쪽 debug Lint 이슈 0. 새 계측 포함 Debug/Release·계측 APK 컴파일, DEX 패키징 검사 및 release manifest의 debug provider/시험 권한/일반 overlay 권한 부재 검사 통과.
+
+연결된 adb 기기 0대이며 emulator/KVM이 없어 신규 계측은 **미실행**입니다. API 35/37의 패턴 검증·그림자 가설·실제 캡처/OCR은 미검증으로 유지합니다. 실제 합성 패턴 검증 성공도 일반 앱용 crop 허가나 OCR 성공을 의미하지 않습니다. 큰 버퍼의 REGION_UNCERTAIN 거부는 계속 유지하며, 다음 실제 고정 코드 결과로 원인을 좁혀야 합니다. GitHub Actions 결과는 해당 커밋의 PR #6 Checks에서 별도로 확인합니다. F10/F12/F13 후속 구현과 F6 제외는 유지합니다.
