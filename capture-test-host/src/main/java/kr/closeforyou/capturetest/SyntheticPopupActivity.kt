@@ -7,9 +7,8 @@ import android.widget.Button
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
-import kr.closeforyou.accessibility.capture.syntheticNotice
 
-/** Test-APK-only host. Never included in the production APK. No accounts/network/files. */
+/** Standalone debug-only synthetic host. No app/test-runner dependencies or personal data. */
 class SyntheticPopupActivity : Activity() {
     private var dialog: Dialog? = null
     private var image: android.graphics.Bitmap? = null

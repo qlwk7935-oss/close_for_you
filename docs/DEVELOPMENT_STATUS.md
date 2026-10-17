@@ -99,3 +99,13 @@ API 지원 범위 참고: [AccessibilityService](https://developer.android.com/r
 | C11 | API 30/34/35, 서로 다른 제조사·크기, TalkBack 켠 상태의 서비스·설정 UI | 미실시 |
 
 C02~C06·C09·C10·C12~C14 및 G2~G5는 관련 구현 뒤 시행합니다. C07은 F5 영상 감지와 안전 처리만 유지하며 F6 영상 내용·장면·줄거리 설명 평가는 최신 결정에 따라 제외합니다. 단위 시험은 실제 접근성 노드·음성·사용자의 이해·OS 권한 동작을 검증하지 않습니다.
+
+
+## Android 합성 테스트 호스트 런타임 수정 (2026-10-17)
+
+- 보고: API 37에서 test APK Activity 독립 실행 시 Intrinsics ClassNotFoundException. 기존 계측 DEX에는 Activity만, 대상 본 앱 DEX에는 Kotlin 런타임이 있는 것을 확인.
+- 수정: 별도 debug/testOnly capture-test-host 앱, 자체 stdlib·이미지 helper, release 변형 비활성화. 운영 앱의 production 소스와 공통 계약은 변경 없음.
+- 회귀 검사: 실제 DEX 정의/참조 검사 스크립트와 CI 단계 추가. 계측에 Intrinsics Class.forName과 외부 프로세스의 합성 Dialog 표시 시험 추가(명시적 opt-in). 서비스 OCR 시험의 대상 패키지도 독립 호스트로 변경.
+- 최종 검증: JDK 17에서 `./gradlew --no-daemon :app:assembleDebug :app:assembleDebugAndroidTest :app:testDebugUnitTest :app:lintDebug :capture-test-host:lintDebug` 실행, **BUILD SUCCESSFUL in 32s**. JVM 53개 성공 결과 유지(test 태스크는 변경 없는 production/unit 소스의 캐시 재사용), 실패/오류/건너뜀 0. 본 앱·호스트 Lint 오류/경고 0. 호스트 APK DEX의 Intrinsics 등 실제 정의·의존 참조 및 운영/계측 APK의 호스트 부재 검사 통과. 기존 APK는 Intrinsics 누락으로 검사 실패(exit 1) 재현. apkanalyzer로 정의/매니페스트 독립 교차 확인. debugRuntimeClasspath는 Kotlin stdlib 2.1.20/annotations뿐이며 release APK 태스크 없음. 최초 호스트 Lint의 백업 규칙 경고 1건은 dataExtractionRules 추가로 해소.
+- 기기 상태: adb 연결 0대, emulator/KVM 없음. 계측 6개는 컴파일만 확인, 실제 실행 0개. API 35/37의 호스트 UI·프로세스 유지·OCR/캡처는 미검증.
+- Windows 재검증 및 이전 명령 교체: [ANDROID_TEST_RUNTIME.md](ANDROID_TEST_RUNTIME.md).

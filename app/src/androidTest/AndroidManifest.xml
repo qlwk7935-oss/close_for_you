@@ -1,9 +1,0 @@
-<?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
-    <application android:icon="@android:drawable/ic_menu_info_details">
-        <activity
-            android:name="kr.closeforyou.capturetest.SyntheticPopupActivity"
-            android:exported="true"
-            android:theme="@android:style/Theme.Material.Light.NoActionBar" />
-    </application>
-</manifest>

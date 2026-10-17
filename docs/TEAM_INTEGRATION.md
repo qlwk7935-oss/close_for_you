@@ -161,3 +161,8 @@ check(repository.findExact(rule.key, nowEpochMillis = 2_000L) == null)
 - D: 요약은 원문/동일 팝업 지문이 아니며 반복 자동화 규칙으로 승격하지 않습니다. 기존의 OCR 포함 중요 본문 결박·현재 화면 재검사 요구를 유지합니다.
 
 캡처 예산은 프로세스 누적 상한에서 **최근 10분 30회, 시간 경과 시 자동 회복**으로 변경했습니다. 최소 2초·최근 1분 6회·동시 1개·동의/앱 허용 검사는 유지합니다. 상세 예제와 검증 절차는 [CAPTURE_OCR.md](CAPTURE_OCR.md)를 따릅니다.
+
+
+## 합성 호스트 독립 프로세스 (런타임 수정)
+
+합성 Activity는 별도 debug/testOnly `:capture-test-host` 앱으로 이동했습니다. 운영 앱·계측 APK에는 호스트가 없습니다. 분석 대상 패키지는 **kr.closeforyou.capturetest**, 계측 runner는 기존 **kr.closeforyou.test**로 구분합니다. 호스트에 자체 Kotlin stdlib를 포함하며 production 공통 계약·접근성/개인정보/OCR 코드는 변경하지 않았습니다. assembleDebugAndroidTest가 호스트도 빌드하지만 설치는 별도입니다. [Windows 설치·실행·계측·DEX 검사](ANDROID_TEST_RUNTIME.md)를 따릅니다. A/B/C/D의 합성 데이터 시험 패키지 설정도 새 호스트 패키지를 사용합니다. 실제 기기 실행은 미검증입니다.
