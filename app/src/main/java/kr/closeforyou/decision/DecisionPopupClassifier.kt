@@ -16,13 +16,9 @@ import kr.closeforyou.core.model.TextSource
 class DecisionPopupClassifier : PopupClassifier {
     override suspend fun classify(analysis: PopupAnalysis): PopupClassification {
         val texts = analysis.texts.filter { it.text.isNotBlank() }
-        val labels = analysis.closeCandidates.mapNotNull { it.label }
 
         // 1. Important decisions first, from any source: the cautious direction.
-        if (analysis.closeCandidates.any { it.role == ButtonRole.USER_DECISION } ||
-            texts.any { DecisionKeywords.isUserDecision(it.text) } ||
-            labels.any { DecisionKeywords.isDecisionButtonLabel(it) }
-        ) return PopupClassification.USER_DECISION
+        if (analysis.hasUserDecisionSignal()) return PopupClassification.USER_DECISION
 
         // 2. No text, or wording that says its own meaning is unconfirmed.
         if (texts.isEmpty() || texts.any { DecisionKeywords.isUncertain(it.text) }) {
@@ -41,3 +37,9 @@ class DecisionPopupClassifier : PopupClassifier {
         return PopupClassification.UNKNOWN
     }
 }
+
+/** A decision signal in any text, button label or button role. Shared with DecisionActionPolicy. */
+internal fun PopupAnalysis.hasUserDecisionSignal(): Boolean =
+    closeCandidates.any { it.role == ButtonRole.USER_DECISION } ||
+        texts.any { DecisionKeywords.isUserDecision(it.text) } ||
+        closeCandidates.any { candidate -> candidate.label?.let(DecisionKeywords::isDecisionButtonLabel) == true }

@@ -52,6 +52,15 @@ class DecisionPopupClassifierTest {
     @Test fun decisionWordingWinsOverAdvertisementAndNoticeWording() = runBlocking {
         assertEquals(PopupClassification.USER_DECISION, classify("광고 · 가상 상품 구매 안내" to TextSource.ACCESSIBILITY_TREE))
         assertEquals(PopupClassification.USER_DECISION, classify("가상 서비스 로그인 안내" to TextSource.ACCESSIBILITY_TREE))
+        // Design F7 decision signals.
+        assertEquals(PopupClassification.USER_DECISION, classify("가상 계정 연결 안내" to TextSource.ACCESSIBILITY_TREE))
+        assertEquals(PopupClassification.USER_DECISION, classify("가상 개인정보 수집 안내" to TextSource.ACCESSIBILITY_TREE))
+        assertEquals(PopupClassification.USER_DECISION, classify("Link your account" to TextSource.ACCESSIBILITY_TREE))
+    }
+
+    @Test fun onlyWordingThatDoubtsItselfIsUncertain() = runBlocking {
+        assertEquals(PopupClassification.ADVERTISEMENT, classify("광고 · 가상 이벤트 참여 여부 선택" to TextSource.ACCESSIBILITY_TREE))
+        assertEquals(PopupClassification.UNKNOWN, classify("광고 여부 불명" to TextSource.ACCESSIBILITY_TREE))
     }
 
     @Test fun installAdvertisementStaysAnAdvertisement() = runBlocking {
