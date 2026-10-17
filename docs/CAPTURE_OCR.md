@@ -2,6 +2,8 @@
 
 2026-10-17 검토 수정. PR #1을 병합한 `main`의 `f52be56`에서 `feature/core-capture-ocr`를 생성했습니다. 실제 캡처·한국어 인식의 기기별 성공과 정확도는 **미검증**입니다. JVM 시험이나 계측 APK 빌드 성공을 기기 시험 성공으로 해석하지 않습니다.
 
+PR #6의 최신 [사용자 API 37 실측·병합 검토 범위와 OCR 후속 방안](PR6_REVIEW_SCOPE.md)을 함께 확인합니다. ROUND_UNCLIPPED 및 두 SQUARE 통제는 실제 window 버퍼의 합성 전체 픽셀 검증을 통과했으나 ZERO/ROUND_CLIPPED는 계속 실패했습니다. 이 결과는 모서리 렌더링 조건의 근거이며 한국어 OCR 전체 경로의 성공이 아닙니다. 일반 타사 Dialog의 더 큰 버퍼 좌표 대응은 별개 미해결 문제로, 프로덕션 REGION_UNCERTAIN 거부와 F0-A/F0-B 등 보호 조건은 그대로입니다.
+
 ## 실행 경로
 
 `CloseForYouAccessibilityService` → `AndroidSnapshotCollector` F0-A → 후보 감지 → 토큰 시작/5초 TTL → `CaptureOcrPipeline` → 최신 트리로 F0-A 재검사 → 캡처 동의·앱 허용·영역·필요성 검사 → `AndroidScreenshotManager` → 영역 제한·빈 이미지 검사 → 최신 F0-A/토큰 재검사 → `KoreanMlKitOcr` → 최신 F0-A/토큰 재검사 → `OcrPrivacyReview` F0-B → `PopupAnalysis` → `AccessibilityRuntime.publish`.

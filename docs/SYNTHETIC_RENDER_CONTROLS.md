@@ -8,7 +8,19 @@
 
 이는 네 기준점이 정수 이동 대응에 일치하고 등록 콘텐츠 모서리에서 알파가 달랐다는 근거입니다. 전체 콘텐츠 검증은 실패했고 실제 원인은 미확정입니다. elevation만으로는 두 실패의 원인을 분리하지 못했습니다. rounded background/outline clipping/알파 합성과 일관되지만 기기 내부 경로를 확정한 것은 아닙니다.
 
-이번 신규 통제 실험은 개발 환경에 Android 기기가 없어 **실행하지 않았습니다**. 아래 성공/실패 조합은 결과를 읽는 조건이지 이미 관측한 결과가 아닙니다.
+이후 사용자가 Windows Android Studio / Medium Phone API 37.0에서 신규 통제 실험을 실제 실행했습니다. 개발 환경에서 직접 재실행한 결과는 아닙니다. 아래 표는 사용자가 제공한 실측이며, API 35 결과와 설치 APK의 정확한 커밋 해시는 별도로 확인하지 않았습니다.
+
+| 모드 | 사용자 API 37 실측 |
+|---|---|
+| ZERO_ELEVATION | MAPPING_NOT_VERIFIED |
+| ROUND_CLIPPED | MAPPING_NOT_VERIFIED |
+| ROUND_UNCLIPPED | PASSED |
+| SQUARE_CLIPPED | PASSED |
+| SQUARE_UNCLIPPED | PASSED |
+
+SERVICE_CONNECTION_READY, OBSERVATIONS=COMPLETE, SQUARE_CONTROLS=PASSED 및 **OK (1 test)**를 보고했습니다. CLIPPED_RADIUS_CONTRAST/ROUND_CLIP_CONTRAST/THEME_TO_SQUARE_CONTRAST는 CORNER_ALPHA_FAILURE_REMOVED, SQUARE_CLIP_CONTRAST는 NO_CONTENT_FAILURE, PRODUCTION_POLICY는 UNCHANGED였습니다.
+
+이 fixture의 **둥근 배경 × outline clipping** 조합이 모서리 알파 불일치에 관여한다는 통제 근거입니다. 기본/둥근 clipping 모드의 실패는 그대로이며, Android 내부 합성 경로의 확정이나 일반 Dialog 버퍼 원점의 증명은 아닙니다. 기존 elevation 단독 비교의 INCONCLUSIVE도 유지합니다. 합성 렌더링과 더 큰 버퍼의 문제 분리, 공개 API 후속 방안 및 병합 가능 범위는 [PR #6 정리](PR6_REVIEW_SCOPE.md)에 기록했습니다. 아래 비교표는 이 실측을 해석하는 규칙이며 다른 환경의 결과는 별도 관측이 필요합니다.
 
 ## 원래 시험 보존과 독립적인 성공 범위
 
@@ -98,6 +110,6 @@ Start-Sleep -Seconds 60
 
 app/src/main과 app/src/release는 이번 수정에서 변경하지 않습니다. F0-A/F0-B, 개인정보/시스템·보안 창·가림 검사, 동의·허용 앱·토큰, 실제 버퍼/ROI 메모리 제한, budget, timeout, native/Bitmap 해제, B·C·D 인터페이스를 유지합니다. release에 합성 검사/통제 호스트 구현을 포함하지 않는 DEX 검사를 유지·보강합니다.
 
-JVM은 anchor/최종 결과 분리, 사각형 성공과 baseline 실패 분리, 통제 구성/상대 layout/scan/해제 미검증의 보수적 판정, 모드 누락·예외·취소, 원래 두 모드 보존을 합성 데이터로 검증합니다. 새 실제 Dialog/캡처 계측은 컴파일과 패키징만 확인할 수 있습니다. **개발 환경에서 실제 API 37/35 통제 성공, 원인 확정, 전체 캡처/OCR 성공은 미검증**입니다. 최종 빌드·테스트·Lint 결과는 [개발 상태](DEVELOPMENT_STATUS.md)에 기록합니다.
+JVM은 anchor/최종 결과 분리, 사각형 성공과 baseline 실패 분리, 통제 구성/상대 layout/scan/해제 미검증의 보수적 판정, 모드 누락·예외·취소, 원래 두 모드 보존을 합성 데이터로 검증합니다. 개발 환경에서는 실제 Dialog/캡처 계측의 컴파일과 패키징을 확인했고 연결 기기가 없어 직접 실행하지 않았습니다. **사용자 API 37 통제 성공은 위 표의 범위로 확인했으며, API 35 통제·일반 앱 좌표 대응·한국어 전체 캡처/OCR은 여전히 미검증/미해결**입니다. 최종 빌드·테스트·Lint 결과는 [개발 상태](DEVELOPMENT_STATUS.md)에 기록합니다.
 
 공개 API 근거: [Window.setBackgroundDrawable](https://developer.android.com/reference/android/view/Window#setBackgroundDrawable(android.graphics.drawable.Drawable)), [Window.setClipToOutline](https://developer.android.com/reference/android/view/Window#setClipToOutline(boolean)), [GradientDrawable.setCornerRadius](https://developer.android.com/reference/android/graphics/drawable/GradientDrawable#setCornerRadius(float)), [ViewOutlineProvider.BACKGROUND](https://developer.android.com/reference/android/view/ViewOutlineProvider#BACKGROUND). SDK 35의 공개 API와 AOSP PhoneWindow/DecorView 경로를 기준으로 구현하며 API 37 구현이 완전히 같다고 단정하지 않습니다.

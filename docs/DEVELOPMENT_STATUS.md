@@ -1,6 +1,6 @@
 # A 담당 개발 상태 — 1차 기반과 2차 캡처/OCR
 
-기준일: 2026-10-17. Android 코어와 최초 공통 계약을 제안하는 단계입니다. **실기기·에뮬레이터·TalkBack 시험은 미실시**이며 제조사별 호환성·팝업 감지 성능·사용성 개선을 주장하지 않습니다. 원문 설계와 검증 계획은 보존하고 최신 팀 결정을 적용합니다.
+기준일: 2026-10-17. Android 코어와 최초 공통 계약을 제안하는 단계입니다. 개발 환경에서 실기기·에뮬레이터·TalkBack 시험은 미실시입니다. **사용자 제공 API 37 에뮬레이터 결과는 아래 PR별 기록과 [최신 PR #6 정리](PR6_REVIEW_SCOPE.md)에 별도로 반영**합니다. 이전 절의 미실시/미검증은 당시 개발 환경의 기록이며 후속 사용자 실측과 구분합니다. 제조사별 호환성·팝업 감지 성능·사용성 개선을 주장하지 않습니다. 원문 설계와 검증 계획은 보존하고 최신 팀 결정을 적용합니다.
 
 A 2차는 PR #1 병합 후 최신 `main`(`f52be56`)에서 만든 `feature/core-capture-ocr`입니다. [캡처/OCR 구현·자원 수명·시험 절차](CAPTURE_OCR.md)가 현재 캡처 경로의 상세 기준입니다. 기존 공통 계약은 유지하고 캡처는 별도 동의·앱별 허락 기본 꺼짐으로 연결했습니다.
 
@@ -207,3 +207,32 @@ C02~C06·C09·C10·C12~C14 및 G2~G5는 관련 구현 뒤 시행합니다. C07�
 최종 JDK 17 실행: `./gradlew --no-daemon :app:assembleDebug :app:assembleDebugAndroidTest :app:testDebugUnitTest :capture-test-host:testDebugUnitTest :app:lintDebug :capture-test-host:lintDebug :app:assembleRelease` → **BUILD SUCCESSFUL (26초, 196 tasks)**. JVM **147개**(본 앱 92/호스트 55), 새 회귀 15개 포함, 실패/오류/건너뜀 0. 양쪽 debug Lint 이슈 0. Debug/Release·계측 APK 컴파일 및 DEX/독립 Kotlin 런타임/driver 분리 검사, release의 합성 검사·host/debug provider·시험/overlay 권한 부재 검사 통과.
 
 연결된 adb 기기가 없어 **새 통제의 API 37/35 실행·사각형 콘텐츠 성공·실제 원인 확정·전체 캡처/OCR은 미검증**입니다. 기기 결과를 확인하기 전에는 특정 렌더링 경로를 확정하지 않습니다. 통제 성공이 관측되어도 그것은 통제 fixture 범위의 근거이며 기존 Dialog/일반 앱의 매핑이나 큰 버퍼 지원을 증명하지 않습니다. CI 결과는 해당 커밋의 PR #6 Checks에서 확인합니다. 새 PR/자동 병합은 수행하지 않습니다. F10/F12/F13 후속 요구와 F6 제외를 유지합니다.
+
+## PR #6 정리: API 37 통제 실측과 병합 검토 범위
+
+위 절의 통제 미실시는 당시 개발 환경의 기록입니다. 이후 **사용자가 Windows Android Studio / Medium Phone API 37.0 에뮬레이터에서 실제 실행한 결과**를 제공했습니다. 개발 환경에서 재실행한 것이 아니며 설치 APK의 정확한 커밋 해시와 API 35 결과는 별도로 확인하지 않았습니다.
+
+| `ServiceSyntheticRenderControlsOptInTest` 모드 | 사용자 실측 |
+|---|---|
+| ZERO_ELEVATION | MAPPING_NOT_VERIFIED |
+| ROUND_CLIPPED | MAPPING_NOT_VERIFIED |
+| ROUND_UNCLIPPED | PASSED |
+| SQUARE_CLIPPED | PASSED |
+| SQUARE_UNCLIPPED | PASSED |
+
+SERVICE_CONNECTION_READY, OBSERVATIONS=COMPLETE, SQUARE_CONTROLS=PASSED, **OK (1 test)**. CLIPPED_RADIUS_CONTRAST/ROUND_CLIP_CONTRAST/THEME_TO_SQUARE_CONTRAST는 CORNER_ALPHA_FAILURE_REMOVED, SQUARE_CLIP_CONTRAST는 NO_CONTENT_FAILURE, PRODUCTION_POLICY는 UNCHANGED입니다. 원본 화면·좌표·RGB·OCR 원문은 기록하지 않습니다.
+
+- 확인 범위: 이 합성 fixture의 둥근 배경 × outline clipping 조합이 모서리 알파 불일치에 관여한다는 통제 근거입니다. 기본/둥근 clipping 실패를 성공 처리하지 않으며 elevation 단독 비교의 INCONCLUSIVE도 유지합니다. 기본 테마 전체 원인·Android 내부 Surface 경로를 확정한 것은 아닙니다.
+- 별개 미해결: 일반 타사 Dialog의 더 큰 HardwareBuffer에서 원점·변환·안전 ROI는 여전히 미입증입니다. 합성 기준점의 대응을 타사 창에 재사용하지 않으며 **REGION_UNCERTAIN 차단 유지**입니다. 실제 한국어 캡처→OCR→F0-B→결과 발행 전체 경로의 성공을 주장하지 않습니다.
+- 병합 검토 범위: 좌표/버퍼의 보수적 검증·안전 중단·개인정보 없는 진단·debug 합성 실험·회귀/패키징 및 문서입니다. 일반 앱 OCR 지원 완료나 전체 계측 suite 성공을 뜻하지 않습니다. 알려진 기본 모드/전체 통합 실패를 남기고 팀 리뷰로 판단할 수 있으며 이번 작업에서 병합하지 않습니다.
+- 후속: [PR6_REVIEW_SCOPE.md](PR6_REVIEW_SCOPE.md)에 공개 API로 확인 가능한 소유 창/PixelCopy/기존 exact-size 경로 및 별도 MediaProjection 설계 후보와 한계를 정리했습니다. 크기 차이 기반 추정 crop/resize, display 자동 fallback, 숨겨진 API, 전체 window OCR로 ROI 보호 우회는 허용하지 않습니다. 후속 API 35/37 전체 OCR 및 보호/취소/메모리/TalkBack 기기 시험은 TODO입니다.
+- 이번 변경은 **문서 5개만**입니다. 테스트의 기존 독립 판정이 요구사항에 맞아 Kotlin/Gradle/매니페스트/공통 계약을 수정하지 않았습니다. F0-A/F0-B, 동의·허용 앱·가림·민감/보안 창·토큰·예산·메모리·버퍼 해제 및 B·C·D 책임을 유지합니다. F10/F12/F13 필수와 F6 제외도 유지합니다.
+
+정리 커밋의 로컬 재검증(JDK 17):
+
+```sh
+./gradlew --no-daemon :app:assembleDebug :app:assembleDebugAndroidTest :app:testDebugUnitTest :capture-test-host:testDebugUnitTest :app:lintDebug :capture-test-host:lintDebug :app:assembleRelease
+python3 -B tools/verify_capture_test_apks.py --release-apk app/build/outputs/apk/release/app-release-unsigned.apk
+```
+
+**BUILD SUCCESSFUL (13초, 196 tasks: 5 executed / 191 up-to-date)**. 기존 JVM 결과 147개(본 앱 92/호스트 55), 실패/오류/건너뜀 0. 양쪽 debug Lint 이슈 0. Debug/Release·계측 APK 빌드 및 DEX의 독립 Kotlin 런타임/driver 분리·release 합성 probe 부재 검사 통과. 문서 변경으로 대부분 작업은 up-to-date이며 새 기기 실행이나 새 런타임 회귀를 수행한 것은 아닙니다. adb 연결 기기 0대입니다. 정리 커밋의 CI는 기존 PR #6 Checks에서 별도 확인하며, 사용자 계측 결과와 CI/로컬 빌드를 구분합니다.
