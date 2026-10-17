@@ -11,6 +11,10 @@ import android.view.accessibility.AccessibilityManager
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.collect
 import kr.closeforyou.accessibility.AccessibilityRuntime
+import kr.closeforyou.accessibility.CaptureStage
+import kr.closeforyou.accessibility.CaptureAttemptDiagnostic
+import kr.closeforyou.accessibility.CaptureDiagnostics
+import kr.closeforyou.accessibility.CaptureDiagnosticSession
 import kr.closeforyou.app.CorePreferences
 import kr.closeforyou.core.contract.PopupEvent
 import kr.closeforyou.core.model.TextSource
@@ -27,7 +31,8 @@ class SyntheticCaptureTestProvider : ContentProvider() {
     private var collector: Job? = null
     private var expiry: Runnable? = null
     private var result = "NOT_STARTED"
-    private var lastBlock = "NONE"
+    private var diagnostics: CaptureDiagnosticSession? = null
+    private var completedDiagnostic: CaptureAttemptDiagnostic? = null
     private var ocrCount = 0
     private val prefs get() = CorePreferences.get(requireNotNull(context))
 
@@ -53,7 +58,8 @@ class SyntheticCaptureTestProvider : ContentProvider() {
                 val key = UUID.randomUUID().toString()
                 session = key
                 result = "WAITING"
-                lastBlock = "NONE"
+                completedDiagnostic = null
+                diagnostics = CaptureDiagnosticSession(HOST).also { CaptureDiagnostics.observer = it }
                 ocrCount = 0
                 collector = scope.launch(start = CoroutineStart.UNDISPATCHED) {
                     AccessibilityRuntime.events.collect { event ->
@@ -63,17 +69,22 @@ class SyntheticCaptureTestProvider : ContentProvider() {
                                 val analysis = try { AccessibilityRuntime.extract(event.snapshot) }
                                     catch (_: CancellationException) { currentCoroutineContext().ensureActive(); return@collect }
                                 synchronized(this@SyntheticCaptureTestProvider) {
-                                    if (session == key) {
+                                    val matching = diagnostics?.completed(event.snapshot.token.screenVersion, event.snapshot.token.windowId)
+                                    if (session == key && result == "WAITING" && matching != null) {
                                         ocrCount = analysis.texts.count { it.source == TextSource.OCR }
-                                        if (ocrCount > 0) result = if (analysis.texts.any {
-                                            it.source == TextSource.OCR && it.text.contains("점검")
-                                        }) "OCR_MATCH" else "OCR_NO_EXPECTED_TEXT"
+                                        if (ocrCount > 0) {
+                                            // Receiving this real Candidate proves publication, even if the
+                                            // service thread has not yet appended its post-publish trace step.
+                                            completedDiagnostic = matching.copy(stage = CaptureStage.PUBLISHED,
+                                                reached = matching.reached + CaptureStage.PUBLISHED)
+                                            result = if (analysis.texts.any {
+                                                it.source == TextSource.OCR && it.text.contains("점검")
+                                            }) "OCR_MATCH" else "OCR_NO_EXPECTED_TEXT"
+                                        }
                                     }
                                 }
                             }
-                            is PopupEvent.Blocked -> synchronized(this@SyntheticCaptureTestProvider) {
-                                if (session == key) lastBlock = event.reason.name
-                            }
+                            is PopupEvent.Blocked -> Unit // Unscoped events must never become host diagnostics.
                             is PopupEvent.Invalidated -> Unit
                         }
                     }
@@ -84,8 +95,19 @@ class SyntheticCaptureTestProvider : ContentProvider() {
             }
             "RESULT" -> if (session == null || session != arg) code("INVALID_SESSION") else code(result).apply {
                 putInt("ocrCount", ocrCount)
-                putString("block", lastBlock)
-                putString("evidence", AccessibilityRuntime.status.value.lastEvidenceIssue?.name ?: "NONE")
+                val diagnostic = completedDiagnostic ?: diagnostics?.snapshot()
+                putInt("attempt", diagnostic?.attempt ?: 0)
+                putString("stage", diagnostic?.stage?.name ?: "NO_HOST_ROOT")
+                putStringArrayList("reached", ArrayList(diagnostic?.reached?.map { it.name }.orEmpty()))
+                putString("block", diagnostic?.block?.name ?: "NONE")
+                putString("evidence", diagnostic?.evidence?.name ?: "NONE")
+                putString("detail", diagnostic?.detail?.name ?: "NONE")
+                putString("geometry", diagnostic?.geometry?.name ?: "UNKNOWN")
+                putString("api", diagnostic?.api?.name ?: "NONE")
+                putString("targetType", diagnostic?.targetType?.name ?: "UNKNOWN")
+                putString("relatedType", diagnostic?.relatedType?.name ?: "NONE")
+                putString("eventWindow", diagnostic?.eventWindow?.name ?: "UNKNOWN")
+                putInt("ignoredEvents", diagnostics?.ignoredEvents() ?: 0)
             }
             "END" -> if (session == null || session != arg) code("INVALID_SESSION") else {
                 finish()
@@ -103,7 +125,10 @@ class SyntheticCaptureTestProvider : ContentProvider() {
         expiry = null
         // The probe never changes user consent, app permissions or pause state.
         result = "ENDED"
-        lastBlock = "NONE"
+        if (CaptureDiagnostics.observer === diagnostics) CaptureDiagnostics.observer = null
+        diagnostics?.close()
+        diagnostics = null
+        completedDiagnostic = null
         ocrCount = 0
     }
 

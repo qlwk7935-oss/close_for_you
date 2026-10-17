@@ -1,5 +1,7 @@
 # 실제 서비스 연결·캡처 시험: 외부 계측 드라이버
 
+> PR #4 이후 연결 성공 및 전체 캡처 실패 조사: [세션별 진단·API 37 재시험](CAPTURE_SESSION_DIAGNOSTICS.md). 기존 BLOCK/EVIDENCE는 다른 시도의 값일 수 있으므로 새 진단 명령과 해석을 우선합니다.
+
 2026-10-17. `main`의 `28c5a77`에서 `fix/service-test-connection` 생성.
 
 사용자 보고(Windows, Medium Phone API 37.0): 본 앱/독립 합성 호스트 실행, BundledKoreanOcrTest 3개 통과, dumpsys의 Bound services 포함 및 Crashed services 비어 있음. 기존 서비스 시험은 10초 연결 대기에서 실패했으므로 **그 실패는 아직 화면 캡처/OCR 실패가 아닙니다**. 아래 변경은 이 클라우드에서 JVM/빌드/패키징만 검증하며 실제 기기 재시험은 별도입니다.
@@ -90,7 +92,7 @@ SDK 경로가 다르면 SDK Manager 값을 사용합니다. assembleDebugAndroid
 | CALLBACK_THREAD_MISMATCH / MAIN_LOOP_UNRESPONSIVE | 연결 콜백 스레드 또는 서비스 main 응답 문제 |
 | RUNTIME_DISCONNECTED | 콜백 기록과 앱 Runtime 상태 불일치 |
 | SYNTHETIC_SETTINGS_REQUIRED | 연결 이후 사용자 수집·캡처 동의/시작·합성 앱 단독 허용 조건 미충족 |
-| CAPTURE_RESULT_TIMEOUT | 연결 단계는 통과했지만 실제 OCR 완료 근거를 얻지 못함. BLOCK/EVIDENCE의 고정 이유 코드 확인 |
+| CAPTURE_RESULT_TIMEOUT | 연결 단계는 통과했지만 실제 OCR 완료 근거를 얻지 못함. 같은 합성 root 시도의 STAGE/REACHED/DETAIL/BLOCK/EVIDENCE 확인([해석](CAPTURE_SESSION_DIAGNOSTICS.md)) |
 
 연결 실패 시 `SERVICE_CONNECTION_TIMEOUT:코드;PHASE=코드;MAIN=boolean;CREATES=횟수;CALLBACKS=횟수;FRAMEWORK=코드`만 출력합니다. dumpsys는 실패 시 메모리에서 한 번 읽어 해당 서비스의 Bound/Binding/Crashed를 파싱하고 즉시 원문을 버립니다. 다른 서비스 라벨·앱·화면·PID·클래스로더 식별자나 원본 dump를 결과/로그/파일에 붙이지 않습니다. 형식/다중 사용자 상황을 확신할 수 없으면 FRAMEWORK=UNKNOWN입니다. Bound와 앱 콜백이 다르면 불일치로 보고하며 Bound만으로 통과시키지 않습니다.
 

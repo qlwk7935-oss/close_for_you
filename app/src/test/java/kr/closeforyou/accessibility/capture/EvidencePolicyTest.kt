@@ -2,6 +2,8 @@ package kr.closeforyou.accessibility.capture
 
 import kotlinx.collections.immutable.persistentListOf
 import kr.closeforyou.core.model.*
+import kr.closeforyou.accessibility.CaptureDetail
+import kr.closeforyou.accessibility.RegionGeometry
 import kr.closeforyou.testing.mock.MockPopupFixtures
 import org.junit.Assert.*
 import org.junit.Test
@@ -28,6 +30,47 @@ class EvidencePolicyTest {
             s.nodes.first().copy(path = "other", className = "android.app.Dialog", bounds = ScreenBounds(100, 500, 800, 900)))
         assertNull(PopupRegionResolver.resolve(s.copy(windows = persistentListOf(s.windows.first().copy(bounds = s.screenBounds)), nodes = nodes)))
         assertNull(PopupRegionResolver.resolve(s.copy(completeness = SnapshotCompleteness.TRUNCATED)))
+    }
+
+    @Test fun regionDiagnosticsDistinguishInactiveMissingAndNonApplicationWithoutRelaxation() {
+        val s = MockPopupFixtures.notice().snapshot
+        val w = s.windows.first()
+        fun reason(window: WindowSnapshot) = PopupRegionResolver.inspect(s.copy(windows = persistentListOf(window))).detail
+        assertEquals(CaptureDetail.REGION_TARGET_INACTIVE, reason(w.copy(active = false)))
+        assertEquals(CaptureDetail.REGION_TARGET_MISSING, reason(w.copy(id = w.id + 1)))
+        assertEquals(CaptureDetail.REGION_TARGET_NOT_APPLICATION, reason(w.copy(type = WindowType.SYSTEM)))
+        assertEquals(CaptureDetail.REGION_WINDOW_BOUNDED, reason(w))
+    }
+
+    @Test fun regionDiagnosticsSeparateLargeDialogAmbiguityAndOccludingLayerType() {
+        val s = MockPopupFixtures.notice().snapshot
+        val w = s.windows.first()
+        val full = s.copy(windows = persistentListOf(w.copy(bounds = s.screenBounds)),
+            nodes = persistentListOf(s.nodes.first().copy(className = "android.widget.FrameLayout")))
+        assertEquals(CaptureDetail.REGION_NO_BOUNDED_DIALOG, PopupRegionResolver.inspect(full).detail)
+        val dialogs = full.copy(nodes = persistentListOf(
+            s.nodes.first().copy(className = "android.app.Dialog"),
+            s.nodes.first().copy(path = "other", className = "android.app.Dialog", bounds = ScreenBounds(100, 500, 800, 900))))
+        assertEquals(CaptureDetail.REGION_MULTIPLE_DIALOGS, PopupRegionResolver.inspect(dialogs).detail)
+        for (type in listOf(WindowType.SYSTEM, WindowType.INPUT_METHOD, WindowType.APPLICATION, WindowType.ACCESSIBILITY_OVERLAY)) {
+            val overlay = WindowSnapshot(20, type, w.bounds, false, false, w.layer + 1)
+            val overlaid = s.copy(windows = persistentListOf(w, overlay))
+            val result = PopupRegionResolver.inspect(overlaid)
+            assertNull(result.region)
+            assertEquals(CaptureDetail.REGION_OCCLUDED, result.detail)
+            assertEquals(type, result.relatedType)
+            // Only the pre-existing API 34+ exclusion of inactive/unfocused accessibility overlays remains.
+            assertEquals(type == WindowType.ACCESSIBILITY_OVERLAY, PopupRegionResolver.resolve(overlaid, true) != null)
+            assertNull(PopupRegionResolver.resolve(overlaid.copy(windows = persistentListOf(w, overlay.copy(active = true))), true))
+        }
+    }
+
+    @Test fun geometryReportsRelativeValidityWithoutPublishingCoordinates() {
+        val screen = ScreenBounds(0, 0, 1000, 2000)
+        assertEquals(RegionGeometry.BOUNDED, PopupRegionResolver.geometry(ScreenBounds(100, 500, 900, 1000), screen))
+        assertEquals(RegionGeometry.LARGE_OR_FULL, PopupRegionResolver.geometry(screen, screen))
+        assertEquals(RegionGeometry.OUTSIDE, PopupRegionResolver.geometry(ScreenBounds(-1, 0, 900, 1000), screen))
+        assertEquals(RegionGeometry.EMPTY, PopupRegionResolver.geometry(ScreenBounds(0, 0, 0, 0), screen))
     }
 
     @Test fun captureBudgetSerializesLateCallbacksAndEnforcesIntervalAndRate() {

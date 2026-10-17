@@ -15,6 +15,10 @@ import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withTimeout
 import kr.closeforyou.app.CorePreferences
+import kr.closeforyou.accessibility.CaptureApi
+import kr.closeforyou.accessibility.CaptureTrace
+import kr.closeforyou.accessibility.CaptureStage
+import kr.closeforyou.accessibility.CaptureDetail
 import kr.closeforyou.core.contract.CaptureAvailability
 import kr.closeforyou.core.model.PopupSnapshot
 import kr.closeforyou.core.model.ScreenBounds
@@ -72,9 +76,18 @@ internal class AndroidScreenshotManager(
         return budget.denial()
     }
 
-    override suspend fun capture(snapshot: PopupSnapshot, region: CaptureRegion): CaptureFrame {
-        denial(snapshot.token)?.let { throw EvidenceFailure(it) }
-        if (PopupRegionResolver.resolve(snapshot, isolatedWindowCapture) != region) throw EvidenceFailure(EvidenceIssue.REGION_UNCERTAIN)
+    override fun denialTraced(token: SnapshotToken, trace: CaptureTrace): EvidenceIssue? = denial(token).also {
+        if (it == EvidenceIssue.REGION_UNCERTAIN) trace.detail(CaptureDetail.MAGNIFIED)
+    }
+    override suspend fun capture(snapshot: PopupSnapshot, region: CaptureRegion): CaptureFrame =
+        captureTraced(snapshot, region, CaptureTrace(null))
+
+    override suspend fun captureTraced(snapshot: PopupSnapshot, region: CaptureRegion, trace: CaptureTrace): CaptureFrame {
+        denialTraced(snapshot.token, trace)?.let { throw EvidenceFailure(it) }
+        if (PopupRegionResolver.resolve(snapshot, isolatedWindowCapture) != region) {
+            trace.detail(CaptureDetail.REGION_REVALIDATION)
+            throw EvidenceFailure(EvidenceIssue.REGION_UNCERTAIN)
+        }
         val requestedSource = if (Build.VERSION.SDK_INT >= 34) region.window.bounds else snapshot.screenBounds
         if (PopupRegionResolver.area(requestedSource) > MAX_SOURCE_PIXELS ||
             PopupRegionResolver.area(region.bounds) > MAX_ROI_PIXELS) throw EvidenceFailure(EvidenceIssue.MEMORY_LIMIT)
@@ -98,6 +111,7 @@ internal class AndroidScreenshotManager(
                                 val source = if (windowCapture) region.window.bounds else snapshot.screenBounds
                                 if (buffer.width != source.width || buffer.height != source.height ||
                                     !PopupRegionResolver.contains(source, region.bounds)) {
+                                    trace.detail(CaptureDetail.BUFFER_GEOMETRY)
                                     throw EvidenceFailure(EvidenceIssue.REGION_UNCERTAIN)
                                 }
                                 if ((buffer.format != HardwareBuffer.RGBA_8888 && buffer.format != HardwareBuffer.RGBX_8888) ||
@@ -160,6 +174,8 @@ internal class AndroidScreenshotManager(
                         }
                     }
                     try {
+                        trace.api(if (windowCapture) CaptureApi.WINDOW else CaptureApi.DISPLAY)
+                        trace.stage(CaptureStage.CAPTURE_API)
                         if (Build.VERSION.SDK_INT >= 34) {
                             service.takeScreenshotOfWindow(snapshot.token.windowId, service.mainExecutor, callback)
                         } else {
