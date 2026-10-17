@@ -20,6 +20,7 @@ android {
     }
     kotlinOptions { jvmTarget = "17" }
     sourceSets {
+        getByName("main").java.srcDir("../synthetic-test-support/src/main/java")
         getByName("androidTest").java.srcDir("src/testShared/java")
         getByName("test").java.srcDir("src/testShared/java")
     }

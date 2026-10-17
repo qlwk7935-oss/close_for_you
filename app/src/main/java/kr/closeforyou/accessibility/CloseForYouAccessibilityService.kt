@@ -56,6 +56,7 @@ class CloseForYouAccessibilityService : AccessibilityService() {
     }
 
     private fun initializeConnectedService() {
+        collector.resetGeometry()
         serviceScope.cancel()
         serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
         serviceInfo = serviceInfo.apply {
@@ -227,6 +228,7 @@ class CloseForYouAccessibilityService : AccessibilityService() {
 
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
+        collector.resetGeometry()
         invalidate(clearBaseline = true)
     }
 

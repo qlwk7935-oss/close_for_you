@@ -31,13 +31,18 @@ internal object PopupRegionResolver {
             ?: return denied(CaptureDetail.REGION_TARGET_MISSING)
         if (window.type != WindowType.APPLICATION) return denied(CaptureDetail.REGION_TARGET_NOT_APPLICATION)
         if (!window.active) return denied(CaptureDetail.REGION_TARGET_INACTIVE)
+        // A window outside the verified frame is inconsistent input, not a reason to clip it
+        // or trust an inner node. Reject before the Dialog fallback, preserving original bounds.
+        if (!contains(snapshot.screenBounds, window.bounds)) return denied(CaptureDetail.REGION_WINDOW_OUTSIDE)
         val windowBounded = bounded(window.bounds, snapshot.screenBounds)
         val bounds = if (windowBounded) window.bounds else {
-            val dialogs = snapshot.nodes.filter {
-                it.className?.contains("dialog", ignoreCase = true) == true &&
-                    bounded(it.bounds, window.bounds) && contains(snapshot.screenBounds, it.bounds)
-            }.map { it.bounds }.distinct()
-            if (dialogs.isEmpty()) return denied(CaptureDetail.REGION_NO_BOUNDED_DIALOG)
+            val candidates = snapshot.nodes.filter { it.className?.contains("dialog", ignoreCase = true) == true }
+            if (candidates.isEmpty()) return denied(CaptureDetail.REGION_NO_BOUNDED_DIALOG)
+            val dialogs = candidates.filter { bounded(it.bounds, window.bounds) && contains(snapshot.screenBounds, it.bounds) }
+                .map { it.bounds }.distinct()
+            if (dialogs.isEmpty()) return denied(if (candidates.any {
+                    !contains(window.bounds, it.bounds) || !contains(snapshot.screenBounds, it.bounds)
+                }) CaptureDetail.REGION_DIALOG_OUTSIDE else CaptureDetail.REGION_DIALOG_NOT_BOUNDED)
             if (dialogs.size != 1) return denied(CaptureDetail.REGION_MULTIPLE_DIALOGS)
             dialogs.single()
         }

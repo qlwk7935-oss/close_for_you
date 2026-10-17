@@ -108,17 +108,21 @@ internal class AndroidScreenshotManager(
                                 if (!continuation.isActive || denialIgnoringBudget(snapshot.token) != null) {
                                     throw EvidenceFailure(EvidenceIssue.STALE_SCREEN)
                                 }
+                                trace.stage(CaptureStage.CAPTURE_BUFFER_RECEIVED)
+                                val assessment = CaptureBufferPolicy.assess(buffer.width, buffer.height,
+                                    buffer.layers, buffer.format == HardwareBuffer.RGBA_8888 || buffer.format == HardwareBuffer.RGBX_8888,
+                                    region.window.bounds, snapshot.screenBounds, region.bounds, windowCapture)
+                                trace.buffer(assessment.diagnostic)
+                                // Debug-only synthetic calibration observes the SAME window callback.
+                                // Release is a no-op; acceptance below is deliberately unchanged.
+                                if (windowCapture && assessment.diagnostic.memory == BufferMemoryCheck.WITHIN_LIMIT) {
+                                    SyntheticBufferInspection.inspect(snapshot, region, buffer, result.colorSpace)
+                                }
+                                assessment.failure?.let {
+                                    trace.detail(if (it == EvidenceIssue.MEMORY_LIMIT) CaptureDetail.BUFFER_MEMORY_LIMIT else CaptureDetail.BUFFER_GEOMETRY)
+                                    throw EvidenceFailure(it)
+                                }
                                 val source = if (windowCapture) region.window.bounds else snapshot.screenBounds
-                                if (buffer.width != source.width || buffer.height != source.height ||
-                                    !PopupRegionResolver.contains(source, region.bounds)) {
-                                    trace.detail(CaptureDetail.BUFFER_GEOMETRY)
-                                    throw EvidenceFailure(EvidenceIssue.REGION_UNCERTAIN)
-                                }
-                                if ((buffer.format != HardwareBuffer.RGBA_8888 && buffer.format != HardwareBuffer.RGBX_8888) ||
-                                    buffer.layers != 1 || buffer.width.toLong() * buffer.height > MAX_SOURCE_PIXELS ||
-                                    PopupRegionResolver.area(region.bounds) > MAX_ROI_PIXELS) {
-                                    throw EvidenceFailure(EvidenceIssue.MEMORY_LIMIT)
-                                }
                                 wrapped = Bitmap.wrapHardwareBuffer(buffer, result.colorSpace)
                                     ?: throw EvidenceFailure(EvidenceIssue.CAPTURE_FAILED)
                                 // Crop BEFORE OCR/pixel inspection. Outside pixels are never copied into CPU memory.
@@ -145,6 +149,8 @@ internal class AndroidScreenshotManager(
                                 if (cropped !== wrapped) cropped?.recycle()
                                 wrapped?.recycle()
                                 buffer.close()
+                                trace.bufferReleased()
+                                SyntheticBufferInspection.released(snapshot)
                             }
                             // Source hardware buffer is already closed before the OCR coroutine resumes.
                             val ready = frame
@@ -219,8 +225,8 @@ internal class AndroidScreenshotManager(
     }
 
     companion object {
-        private const val MAX_SOURCE_PIXELS = 8_000_000L // <=32 MB at RGBA8888; reject before copy.
-        private const val MAX_ROI_PIXELS = 2_000_000L // <=8 MB software input.
+        private const val MAX_SOURCE_PIXELS = CaptureBufferPolicy.MAX_SOURCE_PIXELS
+        private const val MAX_ROI_PIXELS = CaptureBufferPolicy.MAX_ROI_PIXELS
         private val budget = CaptureBudget(SystemClock::elapsedRealtime)
     }
 }

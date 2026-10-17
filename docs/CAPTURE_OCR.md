@@ -2,6 +2,8 @@
 
 2026-10-17 검토 수정. PR #1을 병합한 `main`의 `f52be56`에서 `feature/core-capture-ocr`를 생성했습니다. 실제 캡처·한국어 인식의 기기별 성공과 정확도는 **미검증**입니다. JVM 시험이나 계측 APK 빌드 성공을 기기 시험 성공으로 해석하지 않습니다.
 
+PR #6의 최신 [사용자 API 37 실측·병합 검토 범위와 OCR 후속 방안](PR6_REVIEW_SCOPE.md)을 함께 확인합니다. ROUND_UNCLIPPED 및 두 SQUARE 통제는 실제 window 버퍼의 합성 전체 픽셀 검증을 통과했으나 ZERO/ROUND_CLIPPED는 계속 실패했습니다. 이 결과는 모서리 렌더링 조건의 근거이며 한국어 OCR 전체 경로의 성공이 아닙니다. 일반 타사 Dialog의 더 큰 버퍼 좌표 대응은 별개 미해결 문제로, 프로덕션 REGION_UNCERTAIN 거부와 F0-A/F0-B 등 보호 조건은 그대로입니다.
+
 ## 실행 경로
 
 `CloseForYouAccessibilityService` → `AndroidSnapshotCollector` F0-A → 후보 감지 → 토큰 시작/5초 TTL → `CaptureOcrPipeline` → 최신 트리로 F0-A 재검사 → 캡처 동의·앱 허용·영역·필요성 검사 → `AndroidScreenshotManager` → 영역 제한·빈 이미지 검사 → 최신 F0-A/토큰 재검사 → `KoreanMlKitOcr` → 최신 F0-A/토큰 재검사 → `OcrPrivacyReview` F0-B → `PopupAnalysis` → `AccessibilityRuntime.publish`.
@@ -131,3 +133,15 @@ PR #2 검토 후 추가 실기기 확인(모두 합성 데이터, 아직 미실�
 
 
 PR #4 이후 API 37 통합 시험의 혼합 진단을 수정했습니다. F0-A/F0-B·시스템 창/불확실 영역 보호는 유지하며, debug 세션에서 합성 root 시도별 단계·영역 거부 분기를 관찰합니다. 전체 캡처 성공은 기기 재시험 전 미검증입니다. [확인된 진단 결함·미확정 원인·Windows 명령](CAPTURE_SESSION_DIAGNOSTICS.md)을 따릅니다. B·C·D 공통 계약은 변경하지 않았습니다.
+
+
+PR #5 이후 영역 결정 수정: 일반 서비스 metrics를 화면 전체로 가정하지 않고 명시적 기본 디스플레이 WindowContext 경계를 논리 크기와 교차 검증합니다. 창/노드 screen 좌표는 원본을 유지하며 화면 밖 창은 내부 노드로 우회하지 않습니다. [수정 전후·새 진단·API 35/37 계측 명령](DIALOG_CAPTURE_COORDINATES.md)을 확인합니다. 실제 캡처 API 반환/OCR은 기기 재시험 전 미검증입니다.
+
+
+PR #6 추가: window screenshot buffer와 접근성 창 크기의 일반 동등 계약을 확인할 수 없어 mismatch 차단을 유지합니다. 실제 반환 버퍼 metadata로 메모리 한도를 먼저 검사하고 축별/디스플레이/교환 관계 코드와 해제 여부만 debug 세션에서 관측합니다. [AOSP·CTS 근거, 안전 거부, 버퍼 전용 계측과 Windows 명령](WINDOW_CAPTURE_BUFFER.md)을 확인합니다. 픽셀 대응·전체 OCR 성공은 기기 재시험 전 미검증입니다.
+
+PR #6의 후속 [합성 패턴 계측](SYNTHETIC_BUFFER_MAPPING.md)은 실제 window callback을 debug 세션에서만 검사합니다. 패턴 검증 결과를 프로덕션 크롭/변환/분류 근거로 사용하지 않으며, 불일치 버퍼는 계속 REGION_UNCERTAIN입니다. 일반 한국어 OCR fixture와 B·C·D 계약은 유지합니다.
+
+PR #6의 [콘텐츠 불일치 진단](SYNTHETIC_CONTENT_DIAGNOSTICS.md)은 합성 패턴에만 위치/알파·색상 범주를 추가하고 두 모드 관측 후 최종 실패를 보존합니다. 원인과 전체 매핑은 미확정이며 프로덕션·F0-A/F0-B·캡처/OCR 메모리/해제 정책은 변경하지 않습니다.
+
+PR #6의 [사각형 Dialog 통제 실험](SYNTHETIC_RENDER_CONTROLS.md)은 합성 호스트만 대상으로 합니다. ANCHOR_DECOR는 부분 진단이며 기존 콘텐츠 실패/프로덕션 버퍼 거부를 승격하지 않습니다. F0-A/F0-B와 공통 계약은 유지합니다.
