@@ -41,6 +41,10 @@ class ServiceDetectionScenariosOptInTest {
                 var actual = DetectionActual.UNOBSERVED
                 var detail = "NONE"
                 try {
+                    if (scenario == DetectionScenario.SEQUENCE_SECOND && outcomes.lastOrNull()?.let {
+                        it.scenario == DetectionScenario.SEQUENCE_FIRST && it.grade == DetectionGrade.DETECTION_SUCCESS &&
+                            it.detail == "NONE" && !it.baselineFalsePositive
+                    } != true) throw ProbeFailure("SEQUENCE_PREREQUISITE_MISSING")
                     val begun = call("BEGIN", extras = Bundle().apply { putBoolean("explicitOptIn", true) })
                     requireCode(begun, "STARTED")
                     key = begun.getString("session") ?: throw ProbeFailure("SESSION_UNAVAILABLE")

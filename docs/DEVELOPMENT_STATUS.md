@@ -258,6 +258,6 @@ python3 -B tools/verify_capture_test_apks.py --release-apk app/build/outputs/apk
 python3 -B tools/verify_capture_test_apks.py --release-apk app/build/outputs/apk/release/app-release-unsigned.apk
 ```
 
-**BUILD SUCCESSFUL (1분 10초, 196 tasks: 25 executed / 171 up-to-date)**. JVM **175개**(본 앱 115/호스트 60), 실패/오류/건너뜀 0. PR #6 이후 순증 28개: detector 회귀 순증 11 + 고정 matrix 1 + 관측 세션 11 + 정답 집계 5. 양쪽 debug Lint 이슈 0, Kotlin 컴파일 경고 없음. Debug/Release·계측 APK 빌드, 새로운 호스트/외부 driver/provider의 DEX 포함·독립 Kotlin 런타임/driver 분리·release debug/합성 코드 부재 검사 통과. 초기 합성 문자열 Lint 경고는 resources로 옮겨 해소했습니다.
+**BUILD SUCCESSFUL**. F1 코드/관측 수명 검증은 1분 10초(196 tasks: 25 executed / 171 up-to-date), 연속 시험의 첫 Dialog 성공 전제 보강 후 최종 동일 명령은 **31초(196 tasks: 11 executed / 185 up-to-date)**입니다. JVM **175개**(본 앱 115/호스트 60), 실패/오류/건너뜀 0. PR #6 이후 순증 28개: detector 회귀 순증 11 + 고정 matrix 1 + 관측 세션 11 + 정답 집계 5. 양쪽 debug Lint 이슈 0, Kotlin 컴파일 경고 없음. Debug/Release·계측 APK 빌드, 새로운 호스트/외부 driver/provider의 DEX 포함·독립 Kotlin 런타임/driver 분리·release debug/합성 코드 부재 검사 통과. 초기 합성 문자열 Lint 경고는 resources로 옮겨 해소했습니다.
 
 **실제 Android 결과는 미검증:** adb 기기 0대이며 새 API 37/35 F1 계측을 실행하지 않았습니다. 일반 앱 감지율, 빠른 연속 이벤트, full-width/bottom sheet/캔버스, 동일 경로 inline 교체, 가상화·freeform·TalkBack 호환성·지연/메모리는 후속 기기 검증입니다. PR #6의 일반 Dialog 큰 버퍼 및 전체 OCR 통합 실패도 그대로 미해결입니다. [F1_DETECTION_VALIDATION.md](F1_DETECTION_VALIDATION.md)에 고정 CASE별 기대 결과·실제 결과 해석과 Windows 설치/실행 명령을 기록했습니다. CI는 새 PR의 Checks에서 별도로 확인합니다. 자동 병합하지 않습니다. F5 유지/F6 제외/F10·F12·F13 필수도 유지합니다.

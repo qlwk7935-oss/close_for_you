@@ -66,6 +66,8 @@ debug 전용 `SyntheticDetectionTestProvider`는 signature 권한과 고정 host
 
 후보와 보호 차단이 동일 대상 창에서 모두 나오면 CONFLICT이며 실패입니다. baseline 자체가 후보이면 BASELINE_FP로 별도 실패합니다. 세션/호스트 정리 실패도 최종 실패입니다. 한 CASE 실패 후에도 나머지 CASE를 시도해 개별 결과·종합 집계를 출력합니다. 명시적 전체 취소는 전파합니다.
 
+연속 시험은 첫 Dialog의 실제 탐지와 정리가 검증된 경우에만 둘째 탐지를 집계합니다. 전제가 없으면 SEQUENCE_PREREQUISITE_MISSING/UNOBSERVED로 실패하며, 첫 표시 실패 뒤 생긴 첫 Dialog를 둘째 성공으로 잘못 세지 않습니다.
+
 관측은 45초/256개 고정 코드로 제한하고 overflow는 미관측으로 실패합니다. 만료·END·설정 철회·연결 해제 시 참조를 폐기합니다. 실제 좌표·창 ID·패키지·노드·텍스트·스크린샷·RGB·해시·이미지는 반환/저장하지 않습니다. release에는 provider/session/호스트 구현을 포함하지 않고 관측 hook은 no-op입니다.
 
 ## Windows Android Studio API 37 절차
