@@ -5,8 +5,8 @@ import org.junit.Test
 
 class CollectionDiagnosticOutputTest {
     @Test fun `renders one correlated fixed code tuple`() {
-        assertEquals("BLOCK=EDITABLE_FIELD;STEP=PROTECTION_PASS;DETAIL=TREE_PROTECTION;TREE=TARGET;FIELD=INPUT_TYPE;CAUSE=NON_ZERO_INPUT_TYPE;RELATED=NONE;FRAME=VERIFIED",
-            CollectionDiagnosticOutput.format("EDITABLE_FIELD:PROTECTION_PASS:TREE_PROTECTION:TARGET:INPUT_TYPE:NON_ZERO_INPUT_TYPE:NONE:VERIFIED"))
+        assertEquals("BLOCK=EDITABLE_FIELD;STEP=PROTECTION_PASS;DETAIL=TREE_PROTECTION;TREE=TARGET;FIELD=INPUT_TYPE;CAUSE=NON_ZERO_INPUT_TYPE;RELATED=NONE;FRAME=VERIFIED;OP=NODE_FIELD_CHECK;EXCEPTION=NONE",
+            CollectionDiagnosticOutput.format("EDITABLE_FIELD:PROTECTION_PASS:TREE_PROTECTION:TARGET:INPUT_TYPE:NON_ZERO_INPUT_TYPE:NONE:VERIFIED:NODE_FIELD_CHECK:NONE"))
     }
     @Test fun `malformed payload never echoes text positions or identities`() {
         for (payload in listOf("합성 문서", "123", "APP:100,200", "A:B:C:D:E:F:G:H;INJECTED", "A:B:C:D:E:F:G", "a:B:C:D:E:F:G:H",

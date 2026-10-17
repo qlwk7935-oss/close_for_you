@@ -100,10 +100,54 @@ class DetectionTestSessionTest {
         session.blocked(host, 1, PrivacyBlockReason.EDITABLE_FIELD, target)
         session.blocked(host, 1, PrivacyBlockReason.SENSITIVE_CONTENT, background)
         session.blocked(host, 2, PrivacyBlockReason.PASSWORD, target)
-        assertEquals(setOf("EDITABLE_FIELD:${target.encoded()}", "SENSITIVE_CONTENT:${background.encoded()}"),
-            session.report(1)?.blockDiagnostics)
+        assertEquals(listOf("1:BLOCKED:EDITABLE_FIELD:${target.encoded()}", "2:BLOCKED:SENSITIVE_CONTENT:${background.encoded()}"),
+            session.report(1)?.attempts)
         assertEquals("BLOCKED", session.report(1)?.actual)
         session.reset()
-        assertTrue(requireNotNull(session.report(1)).blockDiagnostics.isEmpty())
+        assertTrue(requireNotNull(session.report(1)).attempts.isEmpty())
+    }
+    @Test fun `geometry assessment and collection exception remain different attempts`() {
+        val session = DetectionTestSession({ 0L }, { true })
+        val first = session.beginAttempt()
+        session.assessed(host, 1, DetectionAssessment(DetectionDisposition.UNCERTAIN, DetectionReason.INVALID_GEOMETRY), first)
+        val second = session.beginAttempt()
+        val diagnostic = CollectionProtectionDiagnostic(CollectionPhase.SNAPSHOT_PASS, CaptureDetail.COLLECTION_FAILED,
+            CollectionTree.TARGET, finding = CollectionFinding.COLLECTION_EXCEPTION,
+            operation = CollectionOperation.NODE_ACTION_READ, exception = CollectionExceptionKind.ILLEGAL_STATE)
+        session.blocked(host, 1, PrivacyBlockReason.UNREADABLE_TREE, diagnostic, second)
+        val attempts = requireNotNull(session.report(1)).attempts
+        assertEquals(listOf("1:ASSESSED:UNCERTAIN:INVALID_GEOMETRY", "2:BLOCKED:UNREADABLE_TREE:${diagnostic.encoded()}"), attempts)
+        assertFalse(attempts[0].contains("COLLECTION_FAILED"))
+        assertFalse(attempts[1].contains("INVALID_GEOMETRY"))
+    }
+    @Test fun `reset rejects an in flight collection and does not reuse its ordinal`() {
+        val session = DetectionTestSession({ 0L }, { true })
+        val old = session.beginAttempt()
+        session.reset()
+        session.assessed(host, 1, candidate(), old)
+        assertEquals("UNOBSERVED", session.report(1)?.actual)
+        session.assessed(host, 1, candidate())
+        assertEquals(listOf("2:ASSESSED:POPUP_CANDIDATE:BOUNDED_WINDOW"), session.report(1)?.attempts)
+    }
+    @Test fun `ticket cannot produce two results or enter a different session`() {
+        val first = DetectionTestSession({ 0L }, { true })
+        val second = DetectionTestSession({ 0L }, { true })
+        val ticket = first.beginAttempt()
+        second.assessed(host, 1, candidate(), ticket)
+        first.assessed(host, 1, candidate(), ticket)
+        first.blocked(host, 1, PrivacyBlockReason.PASSWORD, attempt = ticket)
+        assertEquals("UNOBSERVED", second.report(1)?.actual)
+        assertEquals("DETECTED", first.report(1)?.actual)
+        assertEquals(1, first.report(1)?.attempts?.size)
+        first.close()
+        first.assessed(host, 1, candidate(), first.beginAttempt())
+        assertNull(first.report(1))
+    }
+    @Test fun `attempt cap is bounded even when results were discarded across resets`() {
+        val session = DetectionTestSession({ 0L }, { true })
+        repeat(256) { assertNotNull(session.beginAttempt()); session.reset() }
+        assertNull(session.beginAttempt())
+        assertEquals("UNOBSERVED", session.report(1)?.actual)
+        assertTrue(requireNotNull(session.report(1)).overflow)
     }
 }

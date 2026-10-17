@@ -11,10 +11,54 @@ internal enum class CollectionField {
     VIEW_ID, CLASS_NAME, ERROR, HINT, PANE_TITLE, TOOLTIP, STATE_DESCRIPTION,
 }
 internal enum class CollectionFinding {
-    NONE, ROOT_GUARD, PACKAGE_GUARD, WINDOW_GUARD, GEOMETRY_GUARD, FRAMEWORK_FAILURE,
+    NONE, ROOT_GUARD, PACKAGE_GUARD, WINDOW_GUARD, GEOMETRY_GUARD, COLLECTION_EXCEPTION,
     PACKAGE_MISMATCH, PASSWORD_FLAG, PASSWORD_INPUT_TYPE, EDITABLE_FLAG, NON_ZERO_INPUT_TYPE,
     SENSITIVE_TEXT, UNCERTAIN_TEXT, NODE_TEXT_LIMIT, TOTAL_TEXT_LIMIT,
     NODE_COUNT_LIMIT, DEPTH_LIMIT, TIME_LIMIT, CHILD_COUNT_LIMIT, MISSING_CHILD,
+}
+/** Actual synchronous code boundaries, not a claim about the origin of an exception. */
+internal enum class CollectionOperation {
+    NONE, UNCLASSIFIED, ROOT_READ, ROOT_METADATA, WINDOWS_READ, WINDOW_METADATA, WINDOW_ROOT_READ,
+    SCREEN_GEOMETRY, COORDINATE_CHECK, TREE_BUDGET, CHILD_COUNT_READ, CHILD_READ, CHILD_RELEASE,
+    NODE_PACKAGE_READ, NODE_FIELD_READ, NODE_FIELD_CHECK, NODE_TEXT_READ, NODE_TEXT_CHECK, NODE_BOUNDS_READ, NODE_BOUNDS_DTO,
+    NODE_ACTION_READ, NODE_ACTIONS_DTO, NODE_PROPERTIES_READ, NODE_DTO, TEXT_BUDGET,
+    DIGEST_INITIALIZE, STRUCTURE_FIELDS, STRUCTURE_HASH, CONTENT_HASH, APPLICATION_HASH, OUTLINE_HASH,
+    OUTLINE_PROPERTIES_READ, OUTLINE_DTO, DIGEST_FINALIZE, TOKEN_DTO, SNAPSHOT_DTO, DETECTION_FRAME_DTO,
+}
+internal enum class CollectionExceptionKind {
+    NONE, SECURITY, ILLEGAL_ARGUMENT, ILLEGAL_STATE, INDEX_OUT_OF_BOUNDS,
+    UNSUPPORTED_OPERATION, NULL_POINTER, CLASS_CAST, DIGEST_UNAVAILABLE, OTHER_EXCEPTION,
+}
+internal data class CollectionFailureLocation(val operation: CollectionOperation, val field: CollectionField,
+    val exception: CollectionExceptionKind)
+
+/** Saves only enums at the innermost failing boundary. Never retains a Throwable or its message. */
+internal class CollectionProgress {
+    var failure: CollectionFailureLocation? = null
+        private set
+    // Inline keeps boundary instrumentation light on the hot traversal path; clock allowance is unchanged.
+    inline fun <T> at(operation: CollectionOperation, field: CollectionField = CollectionField.NONE, block: () -> T): T =
+        try { block() } catch (exception: Exception) {
+            failed(operation, field, exception)
+            throw exception
+        }
+    @PublishedApi internal fun failed(operation: CollectionOperation, field: CollectionField, exception: Exception) {
+        if (failure == null) failure = CollectionFailureLocation(operation, field, classify(exception))
+    }
+    companion object {
+        fun classify(exception: Exception): CollectionExceptionKind = when (exception) {
+            is CollectionGuardFailure -> CollectionExceptionKind.NONE // Existing protection, not a runtime failure.
+            is SecurityException -> CollectionExceptionKind.SECURITY
+            is IndexOutOfBoundsException -> CollectionExceptionKind.INDEX_OUT_OF_BOUNDS
+            is IllegalArgumentException -> CollectionExceptionKind.ILLEGAL_ARGUMENT
+            is IllegalStateException -> CollectionExceptionKind.ILLEGAL_STATE
+            is UnsupportedOperationException -> CollectionExceptionKind.UNSUPPORTED_OPERATION
+            is NullPointerException -> CollectionExceptionKind.NULL_POINTER
+            is ClassCastException -> CollectionExceptionKind.CLASS_CAST
+            is java.security.NoSuchAlgorithmException -> CollectionExceptionKind.DIGEST_UNAVAILABLE
+            else -> CollectionExceptionKind.OTHER_EXCEPTION
+        }
+    }
 }
 internal data class CollectionProtectionDiagnostic(
     val phase: CollectionPhase,
@@ -24,10 +68,12 @@ internal data class CollectionProtectionDiagnostic(
     val finding: CollectionFinding = CollectionFinding.NONE,
     val related: WindowType? = null,
     val frame: ScreenFrameStatus = ScreenFrameStatus.UNAVAILABLE,
+    val operation: CollectionOperation = CollectionOperation.NONE,
+    val exception: CollectionExceptionKind = CollectionExceptionKind.NONE,
 ) {
     /** One tuple per real failure: do not combine fields from different collections. */
     fun encoded(): String = listOf(phase.name, detail.name, tree.name, field.name, finding.name,
-        related?.name ?: "NONE", frame.name).joinToString(":")
+        related?.name ?: "NONE", frame.name, operation.name, exception.name).joinToString(":")
 }
 
 internal class CollectionGuardFailure(val reason: PrivacyBlockReason,

@@ -162,11 +162,11 @@ class ServiceDetectionScenariosOptInTest {
     private fun codes(result: Bundle, name: String): String = result.getStringArrayList(name).orEmpty()
         .map(DiagnosticCode::safe).joinToString(",").ifEmpty { "NONE" }
     private fun emitEvidence(scenario: DetectionScenario, phase: DetectionObservationPhase, result: Bundle) {
-        emit("F1_EVIDENCE;CASE=${scenario.name};PHASE=${phase.name};REASONS=${codes(result, "reasons")};BLOCKS=${codes(result, "blockReasons")};SCROLL=${result.getInt("scrolls") > 0};TOAST=${result.getInt("toasts") > 0}")
-        val collections = result.getStringArrayList("collections").orEmpty()
-        if (collections.isEmpty()) emit("F1_COLLECTION;CASE=${scenario.name};PHASE=${phase.name};COLLECTION=NONE")
-        else collections.forEach { encoded ->
-            emit("F1_COLLECTION;CASE=${scenario.name};PHASE=${phase.name};${CollectionDiagnosticOutput.format(encoded)}")
+        emit("F1_EVIDENCE;CASE=${scenario.name};PHASE=${phase.name};SCOPE=AGGREGATE;REASONS=${codes(result, "reasons")};BLOCKS=${codes(result, "blockReasons")};SCROLL=${result.getInt("scrolls") > 0};TOAST=${result.getInt("toasts") > 0}")
+        val attempts = result.getStringArrayList("attempts").orEmpty()
+        if (attempts.isEmpty()) emit("F1_ATTEMPT;CASE=${scenario.name};PHASE=${phase.name};ATTEMPT=NONE")
+        else attempts.forEach { encoded ->
+            emit("F1_ATTEMPT;CASE=${scenario.name};PHASE=${phase.name};${DetectionAttemptOutput.format(encoded)}")
         }
     }
     private fun emit(code: String) = instrumentation.sendStatus(0, Bundle().apply { putString("stream", "$code\n") })

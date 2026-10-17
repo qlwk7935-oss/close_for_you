@@ -89,6 +89,7 @@ def main():
     require("Lkr/closeforyou/servicetest/ServiceCaptureOptInTest;" in driver, "External service driver missing")
     require("Lkr/closeforyou/servicetest/ServiceDetectionScenariosOptInTest;" in driver, "External F1 scenario driver missing")
     require("Lkr/closeforyou/servicetest/CollectionDiagnosticOutput;" in driver, "F1 baseline code formatter missing")
+    require("Lkr/closeforyou/servicetest/DetectionAttemptOutput;" in driver, "F1 attempt code formatter missing")
     require("Lkr/closeforyou/servicetest/DetectionObservationReadiness;" in driver, "F1 baseline collection gate missing")
     require("Lkr/closeforyou/servicetest/ServiceBufferGeometryOptInTest;" in driver, "Synthetic buffer geometry instrumentation missing")
     require("Lkr/closeforyou/servicetest/ServiceSyntheticPatternOptInTest;" in driver, "Synthetic landmark instrumentation missing")

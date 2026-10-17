@@ -143,16 +143,17 @@ class CloseForYouAccessibilityService : AccessibilityService() {
 
     private fun capture(epoch: Long, trigger: PopupTrigger, eventWindowId: Int) {
         val trace = CaptureDiagnostics.trace(eventWindowId, epoch)
+        val observation = DetectionObservationHook.beginAttempt()
         when (val result = collector.capture(this, epoch, trigger, ::packageBlock, trace = trace)) {
             is CollectionResult.Blocked -> {
                 detector.clear()
-                DetectionObservationHook.blocked(result.targetPackage, result.windowId, result.reason, result.diagnostic)
+                DetectionObservationHook.blocked(result.targetPackage, result.windowId, result.reason, result.diagnostic, observation)
                 AccessibilityRuntime.block(result.reason, epoch)
             }
             is CollectionResult.Ready -> {
                 if (!freshness.isCurrent(epoch) || touching) return
                 val assessment = detector.assess(result.frame)
-                DetectionObservationHook.assessed(result.snapshot.token.packageName, result.snapshot.token.windowId, assessment)
+                DetectionObservationHook.assessed(result.snapshot.token.packageName, result.snapshot.token.windowId, assessment, observation)
                 if (assessment.disposition != DetectionDisposition.POPUP_CANDIDATE) {
                     // Preserve unknown transition/structure evidence in A diagnostics. Do not
                     // count it as a confirmed popup or capture merely because a screen changed.

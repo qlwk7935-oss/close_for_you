@@ -2,36 +2,50 @@
 
 기준: PR #6 병합 후 `main`의 `db63c83`, 새 브랜치 `feature/f1-popup-detection`. A의 감지·보호 및 독립 합성 fixture 범위입니다. B 분류/행동, C 안내/음성, D Room을 구현하지 않습니다. **후보 감지 ≠ 광고 판정 ≠ 자동 실행 허가**입니다. 캡처/OCR 보호와 PR #6의 불일치 버퍼 거부를 유지합니다.
 
-## PR #7 API 37 실측: baseline 차단 조사
+## PR #7 API 37 실측: SNAPSHOT_PASS 실패 위치 조사
 
-사용자가 Windows API 37에서 실제 실행한 결과는 SERVICE_CONNECTION_READY 이후 13개 CASE의 BASELINE_BLOCKED와 SEQUENCE_SECOND의 SEQUENCE_PREREQUISITE_MISSING, 종합 **UNOBSERVED=14 / FAILURES (1 test, 1 failure)**입니다. APK·실제 서비스·수집 동의·단일 host 허용·분석 시작과 캡처 동의/목록 OFF를 확인했다고 보고했습니다. **F1 감지 정확도의 미탐/오탐 결과가 아니라, 실제 자극 전 baseline에서 멈춘 결과**입니다. 이전 JVM 모델 14개 성공을 이 실측의 성공으로 대체하지 않습니다.
+사용자 Windows API 37에서 진단 커밋 `f3c13dd`를 설치한 실제 결과입니다. SERVICE_CONNECTION_READY는 통과했습니다. 13개 CASE의 baseline은 반복적으로 `REASONS=INVALID_GEOMETRY`, `BLOCKS=UNREADABLE_TREE`, `STEP=SNAPSHOT_PASS;DETAIL=COLLECTION_FAILED;TREE=TARGET;FIELD=NONE;CAUSE=FRAMEWORK_FAILURE;FRAME=VERIFIED`였고 BASELINE_BLOCKED로 끝났습니다. UNMARKED_OVERLAY에서는 WINDOWS/TARGET_MISSING도 한 번 관측했습니다. SEQUENCE_SECOND는 전제 미충족이며 최종 **UNOBSERVED=14 / FAILURES (1 test, 1 failure)**입니다. 이는 **실제 F1 자극 전 baseline 문제**입니다. 감지 성공률/미탐률로 계산하지 않습니다.
 
-확인된 진단 결함: baseline의 blocks 확인 직후 예외를 던져 기존 F1_EVIDENCE 출력에 도달하지 않았습니다. 또한 F1 bridge는 차단 사유만 보유해 수집 단계/검사 필드를 구분하지 못했습니다. 이번 수정은 baseline assertion **전에** BASELINE 근거와 F1_COLLECTION을 출력하고, 실제 자극 결과는 PHASE=STIMULUS로 분리합니다.
+### 확인한 사실과 미확정 원인
 
-**기기 차단 원인은 아직 미확정**입니다. 코드의 고정 baseline 문구/기본 클래스 문자열만으로는 JVM 보호 검사에서 차단을 재현하지 못했습니다. 이는 실제 노드의 inputType/editable/password 속성, 생성된 메타데이터, 배경 창, 시스템/다른 앱 창, geometry/수집 오류가 안전하다는 증명이 아닙니다. PrivacyPolicy·F0-A/F0-B의 판정·상한·순서와 fixture의 동작을 바꾸지 않았습니다. 증거 없이 특정 단어를 허용하거나 편집/민감 속성을 무시하지 않습니다.
+- `INVALID_GEOMETRY`는 `CollectionResult.Ready` 뒤 `PopupCandidateDetector.assess()`에서 화면/창 경계가 비어 있거나 창이 화면에 포함되지 않을 때만 나옵니다. `SNAPSHOT_PASS` 예외는 반대로 `Blocked`로 끝나 detector에 전달되지 않습니다. 따라서 두 코드는 **서로 다른 수집 시도**이며 원인과 결과로 결합할 수 없습니다. `FRAME=VERIFIED`는 화면 frame 검증이지 모든 노드/창 경계의 유효성 보장이 아닙니다.
+- 이전 `FRAMEWORK_FAILURE`는 일반 `catch (Exception)`의 공통 이름이었습니다. Android getter 외에도 앱의 bounds 생성, 컬렉션, 해시, DTO 구성에서 발생할 수 있습니다. **Android framework 결함이라는 증거가 아니므로 `COLLECTION_EXCEPTION`으로 변경**했습니다.
+- 기본 문자열/클래스명 검사에서는 차단을 재현하지 못했습니다. 정적 분석과 JVM 검사만으로 실제 예외 위치/유형을 확정하지 못했습니다. 이번에는 정책이나 fixture를 추측으로 수정하지 않고 실제 실패 경계를 계측합니다.
+- TARGET_MISSING은 활성 root의 창 ID가 그 시점의 `service.windows`에 없는 별도 거부 경로입니다. root/windows는 원자적으로 읽히지 않아 전환 중 불일치가 가능하지만, API 37 결함이나 주원인으로 확정하지 않습니다. 계속 차단하며 재시도를 추가하지 않았습니다.
 
-새 `F1_COLLECTION`은 한 번의 실제 차단에 속한 enum tuple을 그대로 전달합니다. 여러 시도의 마지막 STEP/FIELD를 섞지 않으며 다른 대상 창의 차단은 계속 제외합니다. 코드 외 원문/이미지/좌표/창 ID/노드/예외 메시지는 포함하지 않습니다.
+### 같은 시도의 고정 코드 진단
 
-| 필드 | 의미와 후속 판단 |
+`F1_EVIDENCE;SCOPE=AGGREGATE`의 REASONS/BLOCKS는 같은 소유 창·같은 관측 구간의 **집계**입니다. 서로의 원인을 설명하지 않습니다. 실제 인과관계는 아래 `F1_ATTEMPT` 한 줄 안에서만 읽습니다. 이전 F1_COLLECTION 출력은 시도별 F1_ATTEMPT로 교체했습니다.
+
+각 CASE의 새 debug 세션에서 수집 시작 전에 익명 순번 ATTEMPT(1~256)를 발급합니다. 시간·실제 창/노드 ID·화면 version에서 파생하지 않습니다. 원래 창 ID는 메모리에서 소유 창을 선택할 때만 사용합니다. 결과는 한 번만 소비하고 RESET 전 진행 중이던 시도, 이전 세션 결과, 다른 소유 창 결과는 이후 구간에 섞지 않습니다. RESET은 기록/세대만 바꾸며 detector·동의·허용·예산·순번을 초기화하지 않습니다. 45초/256 records와 별도로 256 attempts도 초과하면 UNOBSERVED입니다.
+
+| 필드 | 의미 |
 |---|---|
-| PHASE | BASELINE 또는 STIMULUS. 전제 실패와 실제 F1 자극 결과를 구분 |
-| BLOCK | PASSWORD / EDITABLE_FIELD / SENSITIVE_CONTENT / SYSTEM_WINDOW / UNREADABLE_TREE / TRUNCATED_TREE 등 기존 보호 사유 |
-| STEP / DETAIL | ROOT / PACKAGE_GATE / WINDOWS / GEOMETRY / PROTECTION_PASS / SNAPSHOT_PASS와 기존 고정 CaptureDetail. 수집·보호 실패 위치 |
-| TREE | TARGET / SAME_APP_BACKGROUND / NONE. 같은 앱의 가려진 배경 트리에서 발생한 보호도 계속 유지 |
-| FIELD / CAUSE | INPUT_TYPE·EDITABLE_FLAG·PASSWORD_FLAG·TEXT·VIEW_ID·CLASS_NAME·HINT 등 검사 출처와 NON_ZERO_INPUT_TYPE / SENSITIVE_TEXT / UNCERTAIN_TEXT / 제한·미확인 수집 코드. 실제 속성값이나 문자열은 반환하지 않음 |
-| RELATED / FRAME | 관련 창 종류와 화면 frame의 검증 상태만 반환. 창 정체성이나 실제 치수 없음 |
+| CASE / PHASE / ATTEMPT | 고정 시나리오, BASELINE/STIMULUS, 해당 세션 내부 수집 순번. 다른 CASE의 순번과 연결하지 않음 |
+| RESULT=ASSESSED | 완전 수집 후 F1 평가. DISPOSITION / REASON만 표시. 차단의 STEP/CAUSE를 붙이지 않음 |
+| RESULT=BLOCKED | 그 수집 시도의 BLOCK / STEP / DETAIL / TREE / FIELD / CAUSE / RELATED / FRAME / OP / EXCEPTION만 표시 |
+| STEP / TREE / FIELD | ROOT·WINDOWS·GEOMETRY·PROTECTION_PASS·SNAPSHOT_PASS 등 단계, 대상/동일 앱 배경 트리, 보호 또는 getter 검사 필드 |
+| OP | 실제 호출 경계. NODE_FIELD_READ/CHECK, NODE_TEXT_READ/CHECK, NODE_BOUNDS_READ/DTO, NODE_ACTION_READ/ACTIONS_DTO, NODE_PROPERTIES_READ, NODE_DTO, CHILD_COUNT_READ/CHILD_READ/CHILD_RELEASE, TREE_BUDGET, TEXT_BUDGET, DIGEST_INITIALIZE, STRUCTURE_FIELDS/HASH, CONTENT_HASH, APPLICATION_HASH, OUTLINE_HASH/PROPERTIES_READ/DTO, DIGEST_FINALIZE, TOKEN_DTO, SNAPSHOT_DTO, DETECTION_FRAME_DTO 등 |
+| EXCEPTION | 미리 정한 SECURITY, ILLEGAL_ARGUMENT, ILLEGAL_STATE, INDEX_OUT_OF_BOUNDS, UNSUPPORTED_OPERATION, NULL_POINTER, CLASS_CAST, DIGEST_UNAVAILABLE, OTHER_EXCEPTION. 기존 보호 guard는 NONE |
 
-읽는 순서:
+예외 진단은 가장 안쪽 실패 경계의 enum만 보존하고 같은 예외를 다시 던져 기존 전체 폐기를 유지합니다. 읽기와 검사를 분리하고 Android getter를 DTO 생성 인수 밖에서 먼저 읽어, getter 예외를 DTO 예외로 오인하지 않게 했습니다. SHA 초기화도 SNAPSHOT_PASS로 정확히 표시합니다. 노드마다 실행하는 경계 helper는 inline이며 기존 100ms 시간 한도를 늘리지 않습니다. 예상하지 못한 경계는 UNCLASSIFIED로 남기며 framework 원인으로 단정하지 않습니다. 예외 메시지·stack·클래스명·실제 속성값·원문·좌표·ID는 출력하지 않습니다. 호스트 formatter는 각 위치의 enum allowlist와 제한된 순번만 허용하며 잘못된 IPC는 반사하지 않습니다.
 
-1. WINDOWS의 NON_APPLICATION_FOCUS/FOREIGN_APPLICATION 등이면 차단을 유지합니다. 전용 합성 에뮬레이터에서 키보드·다른 창·남은 시험용 입력 화면 등 준비 조건을 검토합니다. 다른 앱 허용 추가나 시스템 창 무시는 해결책이 아닙니다.
-2. GEOMETRY의 DISPLAY_GEOMETRY_UNCERTAIN이면 FRAME 코드와 기존 화면 geometry 시험으로 조사합니다. 좌표 보정·전체 화면 캡처 우회는 하지 않습니다.
-3. PROTECTION_PASS/SNAPSHOT_PASS이면 TREE/FIELD/CAUSE로 입력 속성·민감/불확실 텍스트·수집 제한을 구분합니다. NON_ZERO_INPUT_TYPE도 기존 규칙대로 차단합니다. 해당 고정 fixture의 Android 속성이 실제로 입증된 뒤에만 fixture 수정 여부를 검토합니다.
-4. FRAMEWORK_FAILURE/MISSING_CHILD/TIME_LIMIT/NODE_COUNT_LIMIT/DEPTH_LIMIT/CHILD_COUNT_LIMIT 등은 보호 불확실성으로 계속 차단합니다. 시간·개수·깊이 제한을 구분하는 코드만 추가했으며 기존 순서와 상한은 같습니다. 제한을 늘리거나 부분 수집을 성공 취급하지 않습니다.
-5. COLLECTION=NONE은 해당 소유 창에 연결된 상세 차단 기록이 없다는 뜻입니다. 정상 수집 성공이 아니며 APK 버전 혼합/수집 미관측을 확인합니다.
+다음은 **형식 예시이지 기기 관측 결과가 아닙니다**:
 
-baseline은 실제 collection/F0-A 결과를 요구합니다. SCROLL/notification 같은 raw 이벤트만으로 baseline을 통과하지 않습니다. baseline이 통과해도 RESET 후 각 실제 자극과 탐지/차단 결과를 별도로 요구하고, 기존 8초/최소 2초 관측·실패 판정·연속 전제는 유지합니다. BASELINE_BLOCKED는 계속 UNOBSERVED이며 새 계측 자체가 성공으로 바꾸지 않습니다.
+```text
+F1_ATTEMPT;CASE=DIALOG;PHASE=BASELINE;ATTEMPT=1;RESULT=ASSESSED;DISPOSITION=UNCERTAIN;REASON=INVALID_GEOMETRY
+F1_ATTEMPT;CASE=DIALOG;PHASE=BASELINE;ATTEMPT=2;RESULT=BLOCKED;BLOCK=UNREADABLE_TREE;STEP=SNAPSHOT_PASS;DETAIL=COLLECTION_FAILED;TREE=TARGET;FIELD=NONE;CAUSE=COLLECTION_EXCEPTION;RELATED=NONE;FRAME=VERIFIED;OP=NODE_ACTION_READ;EXCEPTION=ILLEGAL_STATE
+```
 
-재시험은 아래 Windows 절차로 **본 앱 debug APK + host debug APK + host 계측 APK 모두** 새로 빌드/설치합니다. 개인정보 없는 고정 화면에서만 실행하고, 제공할 결과는 F1_EVIDENCE의 PHASE=BASELINE, F1_COLLECTION, F1_CASE, F1_SUMMARY의 고정 코드입니다. 전체 Logcat/스크린샷/좌표 dump는 수집하지 않습니다. 개발 환경에서는 실제 API 37을 실행하지 않았으며 새 원인 코드와 F1 시나리오 성공은 미검증입니다.
+### 재검증과 안전 조건
+
+1. 아래 Windows 명령으로 본 앱/host/host 계측 APK **3개 모두** 최신 빌드로 설치합니다. 서비스·수집 동의·host 단독 허용·분석 시작 및 캡처 동의/목록 OFF를 UI에서 재확인합니다.
+2. F1_ATTEMPT의 같은 CASE/PHASE/ATTEMPT에서 OP/EXCEPTION을 읽습니다. 예를 들어 NODE_BOUNDS_DTO/ILLEGAL_ARGUMENT는 앱의 경계 모델 생성 거부 위치, NODE_TEXT_READ/ILLEGAL_STATE는 해당 읽기 경계의 예외입니다. 이것만으로 왜 잘못된 경계/노드가 생겼는지까지 확정하지 않습니다.
+3. WINDOWS/TARGET_MISSING은 별도 시도 그대로 보고합니다. 다른 단계의 예외를 그 창 전환 탓으로 단정하지 않습니다. 시스템/보안/다른 앱/편집·민감 화면, 수집/좌표 불확실은 계속 차단합니다.
+4. baseline은 실제 완전 수집 결과를 요구합니다. raw 이벤트만으로 통과하지 않으며, 차단 하나라도 있으면 BASELINE_BLOCKED/UNOBSERVED입니다. baseline 통과 후에도 RESET 뒤 각 실제 자극/탐지·보호 결과가 필요합니다. timeout, 2초 최소 구간, 연속 전제, 정답/성공 기준은 변경하지 않았습니다.
+5. 제공할 것은 F1_EVIDENCE/F1_ATTEMPT/F1_CASE/F1_SUMMARY 고정 코드뿐입니다. 전체 Logcat·스크린샷·좌표 dump·실제 사용자 화면을 수집하지 않습니다.
+
+**실제 기기 예외 원인은 추가 실측 필요**입니다. 개발 환경에 adb 연결 기기가 없어 새 진단의 API 37 실행, baseline 복구, 실제 F1 정확도 및 캡처/OCR 성공은 미검증입니다. 재현 가능한 원인 수정은 아직 없으며, 진단 명명/실패 경계/시도 상관관계만 보완했습니다. F0-A/F0-B, 비밀번호·입력·민감 문맥, 시스템/가림/좌표 검사, 캡처 동의/허용·ROI 거부, 메모리·시간 제한·해제와 PR #6 불일치 버퍼 거부를 유지합니다. 자동 행동·부분 수집 성공·재시도·가짜 결과는 추가하지 않습니다.
 
 ## 수정 전후
 

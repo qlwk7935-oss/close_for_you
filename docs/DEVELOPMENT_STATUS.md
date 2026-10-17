@@ -286,3 +286,31 @@ python3 -B tools/verify_capture_test_apks.py --release-apk app/build/outputs/apk
 **BUILD SUCCESSFUL (1분 20초, 196 tasks: 35 executed / 161 up-to-date)**. JVM **184개**(본 앱121/호스트63), 실패/오류/건너뜀0. 양쪽 debug Lint 이슈0. Debug/Release·계측 APK 빌드 및 새 baseline formatter/readiness DEX 포함·독립 런타임/driver 분리·release debug/합성 구현 부재 패키징 검사 통과. GitHub Actions는 기존 PR #7의 해당 커밋 Checks에서 확인합니다.
 
 연결 Android 기기 0대로 **새 진단의 실제 API 37 출력, baseline 통과, 14개 실제 F1 자극 및 OCR 성공은 확인하지 않았습니다**. 원인 미확정 상태에서 임의의 보호 예외/fixture 변경/성공 변환/timeout 확대는 하지 않았습니다. [F1 문서의 최신 baseline 조사와 Windows 명령](F1_DETECTION_VALIDATION.md)에 해석·재설치 절차가 있습니다. 제출할 자료는 F1_EVIDENCE/F1_COLLECTION/F1_CASE/F1_SUMMARY 고정 코드이며 전체 Logcat/원문/이미지는 요청하지 않습니다. 새 PR/자동 병합은 하지 않습니다.
+
+
+## PR #7 후속: SNAPSHOT_PASS 예외 위치와 수집 시도 분리
+
+사용자 API 37 재실행(`f3c13dd` 설치): SERVICE_CONNECTION_READY 통과 뒤 13개 baseline이 `INVALID_GEOMETRY` 집계와 `SNAPSHOT_PASS/COLLECTION_FAILED/TARGET/NONE/FRAMEWORK_FAILURE/VERIFIED` 차단을 보고했습니다. UNMARKED_OVERLAY에 WINDOWS/TARGET_MISSING도 한 번 있으며 최종 UNOBSERVED=14, Tests run 1 / Failures 1입니다. baseline 문제가 남아 실제 F1 감지율은 측정하지 못했습니다.
+
+**코드로 확인:** INVALID_GEOMETRY는 완전 수집 후 Ready를 F1 평가할 때, SNAPSHOT_PASS 예외는 Blocked를 반환할 때 발생합니다. 따라서 서로 다른 수집 시도입니다. 이전 F1_EVIDENCE는 같은 관측 구간의 집합이어서 두 결과가 함께 보였습니다. FRAMEWORK_FAILURE라는 일반 catch 명칭도 Android framework 자체 원인을 입증하지 못합니다. TARGET_MISSING은 활성 root와 별도 window 목록 사이의 불일치 거부이며 전환 가능성만으로 주원인을 확정하지 않습니다.
+
+**이번 변경:**
+
+- Collector의 실제 경계에 OP와 EXCEPTION을 추가했습니다. 보호용 필드/텍스트 getter와 검사, bounds 읽기/모델 변환, action 읽기/불변 set 구성, 노드 DTO, 구조/본문/outline/앱 지문 SHA-256, 최종 digest·token·snapshot·DetectionFrame 구성을 분리합니다. 일반 예외는 COLLECTION_EXCEPTION이며 정해진 예외 타입 범주만 반환합니다. framework/앱 원인으로 추정하지 않습니다. 기존 guard는 원래 보호 사유와 EXCEPTION=NONE입니다.
+- 경계 helper는 inline으로 적용하며 실패 시 가장 안쪽 경계의 enum만 보존합니다. 원래 예외를 다시 던져 부분 결과 전체 폐기를 유지합니다. Throwable/메시지/stack·사용자 값은 진단 객체에 보관하지 않습니다.
+- debug F1 수집 시작 시 세션 내부 순번을 발급하고 결과를 한 번만 소비합니다. F1_ATTEMPT는 한 시도의 ASSESSED 또는 BLOCKED만 표시합니다. 집계 F1_EVIDENCE에는 SCOPE=AGGREGATE를 명시합니다. 실제 창/노드/화면 버전/시간을 번호로 변환하지 않습니다. RESET 이전 진행 중 결과·다른 세션/소유 창 결과는 다음 구간에 섞이지 않습니다. 원래 45초/256 records에 추가하여 256 attempts 상한도 적용하며 초과는 UNOBSERVED입니다.
+- host 출력은 enum별 allowlist와 1~256의 익명 순번만 허용합니다. 공개 common model/BCD 계약은 유지하고 관측 IPC는 debug 전용입니다. release hook은 no-op입니다.
+- 새 JVM 12개: 예외 타입 분류/동일 예외 전파·메시지 미보관, 안쪽 위치/필드 보존, 실제 bounds 생성 거부와 getter 구분, 기존 보호 guard 보존, 정상 경계 상태, 서로 다른 수집 결과의 분리, RESET 중 진행 중 시도 폐기, 중복/다른 세션 ticket 거부, 관측 상한, 출력 형식과 유출 방지 및 상세 미관측 표현입니다. bounds 생성 거부 회귀는 진단 분류를 검증하며 실제 API 37 오류의 원인이라는 증거가 아닙니다.
+
+**미확정:** API 37의 실제 예외 위치/유형은 새 F1_ATTEMPT 실측이 필요합니다. 코드의 재현 가능한 원인 오류를 아직 확인하지 못해 보호 판정/fixture/감지 휴리스틱/재시도를 수정하지 않았습니다. F0-A/F0-B, 비밀번호·편집/민감 화면, 시스템/가림/좌표 검사, 캡처 동의·앱별 허용·ROI/불일치 버퍼 거부, 메모리·시간 상한·해제는 그대로입니다. baseline 차단/UNOBSERVED/연속 전제/실제 자극의 성공 조건과 timeout을 유지합니다. 자동 행동은 없습니다. adb 연결 기기 0대로 새 API 37 런타임·baseline 복구·F1 정확도·실제 캡처/OCR 성공을 주장하지 않습니다.
+
+[최신 진단 해석과 Windows 빌드/설치/계측 명령](F1_DETECTION_VALIDATION.md)을 갱신했습니다. 실제 사용자 화면·전체 Logcat·좌표·이미지를 요구하거나 저장하지 않습니다. 기존 feature/f1-popup-detection 및 PR #7에서만 계속하며 새 PR/자동 병합은 하지 않습니다.
+
+로컬 최종 검증(JDK 17):
+
+```sh
+./gradlew --no-daemon :app:assembleDebug :app:assembleDebugAndroidTest :app:testDebugUnitTest :capture-test-host:testDebugUnitTest :app:lintDebug :capture-test-host:lintDebug :app:assembleRelease
+python3 -B tools/verify_capture_test_apks.py --release-apk app/build/outputs/apk/release/app-release-unsigned.apk
+```
+
+**BUILD SUCCESSFUL (1분 16초, 196 tasks: 31 executed / 165 up-to-date)**. JVM **196개**(앱130/호스트66), 실패/오류/건너뜀0, 양쪽 debug Lint 이슈0, Kotlin 컴파일 경고0. Debug/Release·계측 APK 빌드와 실제 DEX의 새 attempt formatter 포함, host 독립 Kotlin 런타임, driver의 앱 내부 클래스 의존 부재, release debug/합성 probe 부재 패키징 검사 통과입니다. CI는 이 커밋의 기존 PR #7 Checks에서 별도 확인합니다. 빌드/패키징 성공은 실제 Android 수집/감지/캡처/OCR 성공을 뜻하지 않습니다.
