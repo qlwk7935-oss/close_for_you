@@ -68,6 +68,7 @@ def main():
         "Lkr/closeforyou/capturetest/SyntheticPatternView;",
         "Lkr/closeforyou/capturetest/DetectionScenarioActivity;",
         "Lkr/closeforyou/capturetest/SyntheticPlainActivity;",
+        "Lkr/closeforyou/capturetest/MinimalBaselineActivity;",
         "Lkr/closeforyou/synthetictest/DetectionScenario;",
         "Lkr/closeforyou/synthetictest/PatternMapping;",
         "Lkr/closeforyou/synthetictest/SyntheticDialogControl;",
@@ -91,6 +92,9 @@ def main():
     require("Lkr/closeforyou/servicetest/CollectionDiagnosticOutput;" in driver, "F1 baseline code formatter missing")
     require("Lkr/closeforyou/servicetest/DetectionAttemptOutput;" in driver, "F1 attempt code formatter missing")
     require("Lkr/closeforyou/servicetest/DetectionGeometryOutput;" in driver, "F1 geometry code formatter missing")
+    require("Lkr/closeforyou/servicetest/ServiceBaselineIsolationOptInTest;" in driver, "Independent baseline isolation driver missing")
+    require("Lkr/closeforyou/servicetest/OwnedIsolationGeometry;" in driver, "Owned geometry isolation reader missing")
+    require("Lkr/closeforyou/servicetest/IsolationEvidence;" in driver, "Baseline isolation evidence model missing")
     require("Lkr/closeforyou/servicetest/SyntheticBaselineBoundsTest;" in driver, "Native baseline bounds probe missing")
     require("Lkr/closeforyou/servicetest/DetectionObservationReadiness;" in driver, "F1 baseline collection gate missing")
     require("Lkr/closeforyou/servicetest/ServiceBufferGeometryOptInTest;" in driver, "Synthetic buffer geometry instrumentation missing")

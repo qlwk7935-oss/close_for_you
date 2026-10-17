@@ -1,4 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">닫아줄게 합성 팝업 시험</string>
+    <string name="minimal_baseline">합성 기준 문서</string>
 </resources>

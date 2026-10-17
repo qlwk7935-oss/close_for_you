@@ -2,6 +2,10 @@
 
 기준: PR #6 병합 후 `main`의 `db63c83`, 새 브랜치 `feature/f1-popup-detection`. A의 감지·보호 및 독립 합성 fixture 범위입니다. B 분류/행동, C 안내/음성, D Room을 구현하지 않습니다. **후보 감지 ≠ 광고 판정 ≠ 자동 실행 허가**입니다. 캡처/OCR 보호와 PR #6의 불일치 버퍼 거부를 유지합니다.
 
+## 최신 baseline 분리 실험
+
+`f79ad2d` 사용자 API 37 실측은 안정된 ScrollView의 숨겨진 자식에서 malformed를, 다른 완전 수집에서는 RIGHT/RIGHT,BOTTOM의 창 초과를 확인했습니다. [F1_BASELINE_ISOLATION.md](F1_BASELINE_ISOLATION.md)에 원래 ScrollView/별도 최소 화면과 시작/관측 안정 구간을 비교하는 독립 시험, geometry 제외의 필수 불변식과 현재 차단 유지 이유, Windows 실행 순서를 정리했습니다. 원래 14개 baseline/자극/정답은 그대로입니다. 새 probe의 관측 완료와 F1 정확도 성공을 구분합니다.
+
 ## 최신 경계 조사
 
 후속 사용자 실측에서 NODE_BOUNDS_DTO/ILLEGAL_ARGUMENT가 확인됐습니다. [F1_BOUNDS_INVESTIGATION.md](F1_BOUNDS_INVESTIGATION.md)에 노드 역전 축·가시성/스크롤 관계, 별개 ASSESSED 시도의 창/frame 관계, AOSP 근거와 두 종류의 Windows 재시험을 정리했습니다. 역전 Rect는 이제 생성자 예외 대신 MALFORMED_NODE_BOUNDS로 명시적으로 거부하며 비가시성 예외나 경계 보정은 없습니다. 14개 시나리오의 사용자 실측 미관측 상태와 일반 앱 OCR 미해결은 유지합니다.

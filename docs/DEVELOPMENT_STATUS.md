@@ -341,3 +341,27 @@ python3 -B tools/verify_capture_test_apks.py --release-apk app/build/outputs/apk
 ```
 
 **BUILD SUCCESSFUL (1분 7초, 196 tasks: 19 executed / 177 up-to-date)**. JVM **205개**(앱137/호스트68), 실패/오류/건너뜀0. 새 회귀9개(앱7/호스트2)이며 기존 F0/보호 시험도 통과했습니다. 양쪽 debug Lint 이슈0, Kotlin 컴파일 경고0. Debug/Release·계측 APK 및 실제 DEX의 새 native bounds probe/geometry formatter 포함, 독립 host Kotlin 런타임·driver 격리·release debug/합성 구현 부재 패키징 검사 통과입니다. CI는 기존 PR #7의 이번 커밋 Checks에서 별도 확인합니다. 이 성공은 API 35/37 기기 실행 또는 F1 baseline 통과가 아닙니다.
+
+
+## PR #7 후속: ScrollView/최소 baseline 독립 대조
+
+사용자 `f79ad2d` API37 실측은 14개 BASELINE_BLOCKED/UNOBSERVED=14입니다. 실제 서비스와 안정된 native ScrollView 자식에서 REVERSED_Y/NOT_VISIBLE/SCROLL_ANCESTOR가 확인됐습니다. 별도의 완전 수집에서는 WINDOW_OUTSIDE_FRAME(RIGHT 또는 RIGHT,BOTTOM), 일부 VALID/BASELINE_ONLY도 관측됐습니다. bounds age만으로 애니메이션이라고 단정하지 않습니다.
+
+현재 공통 NodeSnapshot에는 geometry 미확인 표현이 없고 완전성/지문/토폴로지 및 B 후보 경로를 보존해야 합니다. F0-A를 완료했다는 이유만으로 geometry가 부적격인 노드를 삭제하고 COMPLETE로 반환하는 안전성을 입증하지 못해 프로덕션의 전체 차단을 유지했습니다. [분리 실험 문서](F1_BASELINE_ISOLATION.md)에 전체 트리 보호, 노드 의미/부모·자식/지문 보존, 미확인 coverage, 불완전 수집·토큰 폐기·실행 불가 및 필수 Android 회귀의 설계 불변식을 정리했습니다. 실행되지 않는 우회용 production 모델/부분 수집 모드를 추가하지 않았습니다.
+
+변경은 독립 testOnly host/계측·JVM·패키징·문서에 한정합니다. 기존 DetectionScenarioActivity와 ServiceDetectionScenariosOptInTest 및 app/src는 변경하지 않았습니다. 최소 Activity를 기존 14개 baseline에 대입하지 않습니다. 새 ServiceBaselineIsolationOptInTest 하나가 원래 ScrollView와 화면 밖 자식 없는 별도 MinimalBaselineActivity를 비교하고, 첫 일관된 창 샘플/실제 값과 레이아웃이 반복해서 같은 관측 안정 구간을 분리합니다. 최소 화면의 native control이 실제로 맞는지 확인하고, 소유 metadata의 실제 변경으로 기존 서비스 수집을 유발합니다. ROOT/geometry/서비스 연결/결과를 주입하지 않습니다.
+
+실제 서비스 ATTEMPT와 별도의 host/UiAutomation 좌표 관계 샘플은 출처를 구분합니다. display/overlay context/Activity max·current/decor/content/window/remote root의 관계와 초과 변만 출력합니다. actual raw 값·창 ID·시각은 bounded RAM에서만 비교하며 이미지·텍스트·좌표를 로그/파일에 남기지 않습니다. native 노드·window 참조는 해제하고 window context를 매 샘플 생성하지 않습니다. 시간이나 관계 enum이 같다는 이유만으로 안정/유효성을 인정하지 않습니다. 안정 관측은 안전 허가가 아니고, 이때도 실제 거부는 그대로 기록합니다.
+
+새 JVM 5개는 mixed 수집과 geometry의 독립성, 불완전/overflow/다른 차단 대조를 깨끗한 대조로 승격하지 않음, 안정된 malformed도 거부 유지, 원시 사각형 관계·redacted 표현, 시간/관계 코드만으로 안정 판정 금지를 확인합니다. app의 기존 보호 회귀도 그대로 실행합니다. F0-A/F0-B·입력/암호/민감·시스템/다른 앱/가림·좌표/ROI·캡처 동의/허용·큰 버퍼·시간/메모리/해제 및 자동 행동 금지는 유지합니다. BCD/공통 계약도 변경하지 않습니다.
+
+개발 환경 adb 기기0대로 **새 독립 계측과 API35/37 비교, baseline 복구·실제 F1 정확도·캡처/OCR 성공은 미검증**입니다. probe OK는 대조 관측 완료일 뿐 원래 14개의 실패를 대체하지 않습니다. 두 문제가 해결되기 전 F1 정확도 완료를 주장하지 않습니다. [Windows 설치 및 독립 비교→원래 14개 회귀 순서](F1_BASELINE_ISOLATION.md)를 기록했습니다. 기존 PR #7에만 반영하고 새 PR/자동 병합은 하지 않습니다.
+
+최종 로컬 검증(JDK17):
+
+```sh
+./gradlew --no-daemon :app:assembleDebug :app:assembleDebugAndroidTest :app:testDebugUnitTest :capture-test-host:testDebugUnitTest :app:lintDebug :capture-test-host:lintDebug :app:assembleRelease
+python3 -B tools/verify_capture_test_apks.py --release-apk app/build/outputs/apk/release/app-release-unsigned.apk
+```
+
+**BUILD SUCCESSFUL (34초, 196 tasks: 9 executed / 187 up-to-date)**. JVM **210개**(앱137/호스트73), 실패/오류/건너뜀0. 양쪽 debug Lint 이슈0, Kotlin 컴파일 경고0. Debug/Release·계측 APK 및 실제 DEX의 독립 최소 Activity/새 isolation driver·reader/evidence 포함, Kotlin 런타임/driver 격리/release debug·합성 probe 부재 패키징 검사 통과입니다. app 소스가 변경되지 않아 관련 작업은 대부분 up-to-date이며 기기 실행을 뜻하지 않습니다. 최초 새 fixture 빌드의 View 상수 미지정 컴파일 오류는 `View.IMPORTANT_FOR_ACCESSIBILITY_YES`로 수정했고 후속 전체 검증을 통과했습니다. CI는 기존 PR #7의 이번 커밋 Checks에서 별도 확인합니다.
