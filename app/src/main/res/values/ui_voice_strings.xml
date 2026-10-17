@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- C(ui/voice) 전용 문장. A의 strings.xml과 분리해 병합 충돌을 피한다. 이름은 ui_ 접두사. -->
+<resources>
+    <string name="ui_announce_nothing_to_repeat">다시 들을 안내가 없어요.</string>
+</resources>
