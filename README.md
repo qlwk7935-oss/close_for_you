@@ -41,3 +41,6 @@ Android SDK 경로는 로컬 `local.properties`의 `sdk.dir` 또는 `ANDROID_HOM
 
 
 합성 팝업 시험 화면은 별도 debug/testOnly `:capture-test-host` 앱입니다. 본 앱과 계측 APK에 포함되지 않으며 별도 설치가 필요합니다. Kotlin 독립 프로세스 런타임 수정, 새 실행 패키지 `kr.closeforyou.capturetest`, Windows 명령은 [Android 테스트 런타임 안내](docs/ANDROID_TEST_RUNTIME.md)를 따르세요. 기존 kr.closeforyou.test/SyntheticPopupActivity 실행 명령은 사용하지 않습니다.
+
+
+실제 서비스 캡처 시험은 본 앱 프로세스를 계측하지 않는 외부 드라이버로 실행합니다. 새 runner, APK 4개 설치, 연결 전용 진단과 UI 동의 조건은 [서비스 연결·캡처 시험](docs/SERVICE_CAPTURE_TEST.md)을 확인하세요. 연결만 확인할 때는 캡처하지 않습니다.

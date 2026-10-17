@@ -77,16 +77,13 @@ python .\tools\verify_capture_test_apks.py
 & $adbPath shell am instrument -w -e class kr.closeforyou.accessibility.capture.BundledKoreanOcrTest kr.closeforyou.test/androidx.test.runner.AndroidJUnitRunner
 ```
 
-서비스 캡처 시험 전에는 본 앱 수집 동의를 철회해 허용 앱 목록을 비우고, Android 설정에서 닫아줄게 접근성 서비스를 직접 켭니다. 테스트가 합성 호스트만 임시 허용하며 종료 시 동의를 철회합니다.
-
-```powershell
-& $adbPath shell am instrument -w -e class kr.closeforyou.accessibility.capture.ServiceCaptureOptInTest -e captureOcrService true kr.closeforyou.test/androidx.test.runner.AndroidJUnitRunner
-```
-
-`captureOcrService=true` 누락 또는 초기 동의/앱 목록 조건 불일치는 skip입니다. skipped/ignored를 통과로 기록하지 않습니다. 수동 관찰을 할 때만 본 앱에서 **kr.closeforyou.capturetest**를 분석·캡처 허용하고 분석 시작 후 호스트를 엽니다. `kr.closeforyou.test`는 이제 분석 대상 합성 호스트가 아닙니다.
+서비스 연결·실제 캡처 시험은 이제 **합성 호스트를 대상으로 하는 외부 계측 드라이버**에서 실행합니다. 본 앱 대상 am instrument가 서비스 프로세스를 재시작할 수 있어 기존 ServiceCaptureOptInTest 실행 명령을 폐기했습니다. APK 4개 설치, 연결만 검사하는 명령, 사용자 UI에서의 동의/허용 설정은 [SERVICE_CAPTURE_TEST.md](SERVICE_CAPTURE_TEST.md)를 따릅니다. 시험은 사용자 설정을 변경하지 않습니다. `kr.closeforyou.capturetest`만 분석/캡처 허용하며 실제 사용자 화면은 시험하지 않습니다.
 
 앱 설정 화면은 OCR 본문이 아닌 최근 OCR 영역 개수만 표시합니다. 정확한 본문·좌표는 계측 assertion 또는 디버거로 확인합니다. 처음 모델 실행/느린 에뮬레이터에서 3초 OCR 제한·5초 토큰 수명으로 실패할 수 있으며, 런타임 로딩 복구와 OCR 통합 성공은 따로 기록합니다. 실제 메시지·은행·결제 화면이나 개인정보 이미지는 시험하지 않습니다.
 
 ## 검증 기록과 한계
 
-최종 빌드·Lint·패키징 결과는 [DEVELOPMENT_STATUS.md](DEVELOPMENT_STATUS.md)에 기록합니다. CI는 호스트/계측 APK 빌드와 DEX 검사를 수행합니다. 연결된 기기가 없어 계측 6개(기존 4개, 추가 2개)는 컴파일 확인만 했으며 실제 실행은 0개입니다. API 35/37의 호스트 표시·프로세스 유지·실제 한국어 OCR·접근성 캡처·TalkBack은 Windows 재검증이 필요합니다. 자동 병합하지 않습니다.
+최종 빌드·Lint·패키징 결과는 [DEVELOPMENT_STATUS.md](DEVELOPMENT_STATUS.md)에 기록합니다. CI는 호스트/계측 APK 빌드와 DEX 검사를 수행합니다. 연결된 기기가 없어 계측은 본 앱 대상 5개와 외부 드라이버 1개로 나뉘며, 이 환경에서는 컴파일 확인만 했고 실제 실행은 0개입니다. API 35/37의 호스트 표시·프로세스 유지·실제 한국어 OCR·접근성 캡처·TalkBack은 Windows 재검증이 필요합니다. 자동 병합하지 않습니다.
+
+
+2026-10-17 후속 사용자 보고: Windows API 37에서 합성 호스트 실행과 BundledKoreanOcrTest 3개 통과를 확인했다고 전달받았습니다. 서비스 연결 대기의 10초 시간 초과는 후속 [서비스 연결 시험 수정](SERVICE_CAPTURE_TEST.md)의 대상이며, 이 클라우드에서 기기 실행을 했다는 뜻은 아닙니다.

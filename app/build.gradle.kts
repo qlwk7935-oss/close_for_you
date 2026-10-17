@@ -56,5 +56,5 @@ dependencies {
 // The external synthetic host must be a standalone APK, never an app dependency.
 // Building instrumentation fixtures also builds the separately installable debug host.
 tasks.matching { it.name == "assembleDebugAndroidTest" }.configureEach {
-    dependsOn(":capture-test-host:assembleDebug")
+    dependsOn(":capture-test-host:assembleDebug", ":capture-test-host:assembleDebugAndroidTest")
 }

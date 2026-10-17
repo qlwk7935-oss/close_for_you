@@ -105,11 +105,7 @@ F0-B는 F0-A와 독립된 **텍스트 기반 보호 휴리스틱**입니다. 비
    adb shell am instrument -w -e class kr.closeforyou.accessibility.capture.BundledKoreanOcrTest kr.closeforyou.test/androidx.test.runner.AndroidJUnitRunner
    ```
 
-3. 앱의 기존 분석 동의·허용 앱은 비어 있는 깨끗한 상태를 유지하고 Android 접근성 설정에서 서비스를 **직접** 켭니다. `ServiceCaptureOptInTest`는 기본 실행에서 건너뛰며 아래 인자로만 실제 캡처를 시도합니다. 이 시험은 합성 host만 허용하도록 설정한 뒤 종료 시 동의를 철회합니다.
-
-   ```bash
-   adb shell am instrument -w -e class kr.closeforyou.accessibility.capture.ServiceCaptureOptInTest -e captureOcrService true kr.closeforyou.test/androidx.test.runner.AndroidJUnitRunner
-   ```
+3. 실제 서비스 연결·캡처 통합 시험은 이제 본 앱이 아닌 합성 호스트 대상 외부 계측에서 실행합니다. APK 4개 설치, 연결 전용 검사, 사용자 UI 동의/합성 호스트 단독 허용 조건과 새 명령은 [SERVICE_CAPTURE_TEST.md](SERVICE_CAPTURE_TEST.md)를 따릅니다. 기존 `kr.closeforyou.test` runner의 ServiceCaptureOptInTest 명령은 사용하지 않습니다. 연결 검사는 동의를 켜지 않으며, 캡처 시험도 사용자 설정을 변경하지 않습니다.
 
 4. 수동 관찰은 앱에서 `kr.closeforyou.capturetest`를 분석 허용하고, 캡처 설명 별도 동의와 해당 앱의 이미지 글자 읽기 허용을 켜고 분석을 시작합니다. 다음 debug/testOnly 독립 호스트 Activity를 열면 합성 한국어 이미지 Dialog가 나타납니다.
 
