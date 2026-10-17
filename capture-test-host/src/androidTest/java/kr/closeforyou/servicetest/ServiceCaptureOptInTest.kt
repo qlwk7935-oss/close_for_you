@@ -79,7 +79,9 @@ class ServiceCaptureOptInTest {
                 }
                 true
             } == true
-            if (!completed) throw AssertionError("CAPTURE_RESULT_TIMEOUT:BLOCK=${safeCode(result.getString("block"))};EVIDENCE=${safeCode(result.getString("evidence"))}")
+            val diagnostic = diagnostic(result)
+            if (!completed) throw AssertionError("CAPTURE_RESULT_TIMEOUT:$diagnostic")
+            instrumentation.sendStatus(0, Bundle().apply { putString("stream", "CAPTURE_RESULT:$diagnostic\n") })
             assertEquals("SYNTHETIC_OCR_NOT_CONFIRMED", "OCR_MATCH", safeCode(result.getString("code")))
             assertTrue("OCR_EVIDENCE_EMPTY", result.getInt("ocrCount") > 0)
         } finally {
@@ -87,8 +89,23 @@ class ServiceCaptureOptInTest {
         }
     }
 
+    private fun diagnostic(result: Bundle): String = listOf(
+        "ATTEMPT=${result.getInt("attempt").coerceIn(0, 999)}",
+        "STAGE=${safeCode(result.getString("stage"))}",
+        "REACHED=${result.getStringArrayList("reached").orEmpty().take(20).joinToString(",") { safeCode(it) }}",
+        "BLOCK=${safeCode(result.getString("block"))}",
+        "EVIDENCE=${safeCode(result.getString("evidence"))}",
+        "DETAIL=${safeCode(result.getString("detail"))}",
+        "GEOMETRY=${safeCode(result.getString("geometry"))}",
+        "API=${safeCode(result.getString("api"))}",
+        "TARGET=${safeCode(result.getString("targetType"))}",
+        "RELATED=${safeCode(result.getString("relatedType"))}",
+        "EVENT_WINDOW=${safeCode(result.getString("eventWindow"))}",
+        "IGNORED=${result.getInt("ignoredEvents").coerceIn(0, 999)}",
+    ).joinToString(";")
+
     private fun reply(code: String) = Bundle().apply { putString("code", code) }
-    private fun safeCode(value: String?): String = value?.takeIf { it.matches(Regex("[A-Z_]{1,64}")) } ?: "UNKNOWN"
+    private fun safeCode(value: String?): String = DiagnosticCode.safe(value)
     private fun shell(automation: UiAutomation, command: String): String =
         ParcelFileDescriptor.AutoCloseInputStream(automation.executeShellCommand(command)).use { it.readBytes().toString(Charsets.UTF_8) }
     private companion object {

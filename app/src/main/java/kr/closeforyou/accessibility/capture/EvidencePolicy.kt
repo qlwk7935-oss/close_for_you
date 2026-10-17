@@ -2,6 +2,8 @@ package kr.closeforyou.accessibility.capture
 
 import kr.closeforyou.core.model.*
 import kr.closeforyou.accessibility.PrivacyPolicy
+import kr.closeforyou.accessibility.CaptureDetail
+import kr.closeforyou.accessibility.RegionGeometry
 
 /** Codes only. Neither diagnostics nor exceptions contain OCR text. */
 enum class EvidenceIssue {
@@ -18,23 +20,34 @@ internal data class CaptureRegion(val window: WindowSnapshot, val bounds: Screen
 /** Only bounded application windows or explicit dialog nodes establish an OCR region.
  * A generic newly added container/full-screen transition is deliberately insufficient. */
 internal object PopupRegionResolver {
-    fun resolve(snapshot: PopupSnapshot, isolatedWindowCapture: Boolean = false): CaptureRegion? {
-        if (snapshot.completeness != SnapshotCompleteness.COMPLETE) return null
-        val window = snapshot.windows.singleOrNull { it.id == snapshot.token.windowId } ?: return null
-        if (window.type != WindowType.APPLICATION || !window.active) return null
-        val bounds = if (bounded(window.bounds, snapshot.screenBounds)) window.bounds else {
-            snapshot.nodes.filter {
+    data class Resolution(val region: CaptureRegion?, val detail: CaptureDetail, val relatedType: WindowType? = null)
+    fun resolve(snapshot: PopupSnapshot, isolatedWindowCapture: Boolean = false): CaptureRegion? =
+        inspect(snapshot, isolatedWindowCapture).region
+
+    fun inspect(snapshot: PopupSnapshot, isolatedWindowCapture: Boolean = false): Resolution {
+        fun denied(detail: CaptureDetail, type: WindowType? = null) = Resolution(null, detail, type)
+        if (snapshot.completeness != SnapshotCompleteness.COMPLETE) return denied(CaptureDetail.REGION_TRUNCATED)
+        val window = snapshot.windows.singleOrNull { it.id == snapshot.token.windowId }
+            ?: return denied(CaptureDetail.REGION_TARGET_MISSING)
+        if (window.type != WindowType.APPLICATION) return denied(CaptureDetail.REGION_TARGET_NOT_APPLICATION)
+        if (!window.active) return denied(CaptureDetail.REGION_TARGET_INACTIVE)
+        val windowBounded = bounded(window.bounds, snapshot.screenBounds)
+        val bounds = if (windowBounded) window.bounds else {
+            val dialogs = snapshot.nodes.filter {
                 it.className?.contains("dialog", ignoreCase = true) == true &&
                     bounded(it.bounds, window.bounds) && contains(snapshot.screenBounds, it.bounds)
-            }.map { it.bounds }.distinct().singleOrNull() ?: return null
+            }.map { it.bounds }.distinct()
+            if (dialogs.isEmpty()) return denied(CaptureDetail.REGION_NO_BOUNDED_DIALOG)
+            if (dialogs.size != 1) return denied(CaptureDetail.REGION_MULTIPLE_DIALOGS)
+            dialogs.single()
         }
-        if (!contains(snapshot.screenBounds, bounds) || !contains(window.bounds, bounds)) return null
-        if (snapshot.windows.any {
+        if (!contains(snapshot.screenBounds, bounds) || !contains(window.bounds, bounds)) return denied(CaptureDetail.REGION_OUTSIDE)
+        snapshot.windows.firstOrNull {
             val excludedByWindowApi = isolatedWindowCapture && it.type == WindowType.ACCESSIBILITY_OVERLAY &&
                 !it.active && !it.focused
             it.id != window.id && it.layer >= window.layer && intersects(it.bounds, bounds) && !excludedByWindowApi
-        }) return null
-        return CaptureRegion(window, bounds)
+        }?.let { return denied(CaptureDetail.REGION_OCCLUDED, it.type) }
+        return Resolution(CaptureRegion(window, bounds), if (windowBounded) CaptureDetail.REGION_WINDOW_BOUNDED else CaptureDetail.REGION_DIALOG_BOUNDED)
     }
 
     fun needsOcr(snapshot: PopupSnapshot, region: CaptureRegion): Boolean {
@@ -47,6 +60,14 @@ internal object PopupRegionResolver {
             (it.text?.trim()?.length ?: 0) + (it.contentDescription?.trim()?.length ?: 0)
         }
         return unlabeledImage || body < 4
+    }
+
+    fun geometry(inner: ScreenBounds, outer: ScreenBounds): RegionGeometry = when {
+        inner.width <= 0 || inner.height <= 0 -> RegionGeometry.EMPTY
+        !contains(outer, inner) -> RegionGeometry.OUTSIDE
+        inner.width < 32 || inner.height < 24 -> RegionGeometry.TOO_SMALL
+        bounded(inner, outer) -> RegionGeometry.BOUNDED
+        else -> RegionGeometry.LARGE_OR_FULL
     }
 
     private fun bounded(inner: ScreenBounds, outer: ScreenBounds): Boolean =

@@ -121,3 +121,16 @@ C02~C06·C09·C10·C12~C14 및 G2~G5는 관련 구현 뒤 시행합니다. C07�
 - 최종 검증: JDK 17에서 `./gradlew --no-daemon :app:assembleDebug :app:assembleDebugAndroidTest :app:testDebugUnitTest :capture-test-host:testDebugUnitTest :app:lintDebug :capture-test-host:lintDebug :app:assembleRelease` 실행, **BUILD SUCCESSFUL in 2m 6s**. JVM 본 앱 59개/호스트 6개, 총 65개 성공(실패/오류/건너뜀 0). 두 모듈 Lint 오류/경고 0. 본 앱 계측 5개/외부 계측 1개 컴파일. DEX에서 외부 드라이버의 본 앱 Runtime/Preferences/model 의존 부재, 실제 host 타깃 매니페스트, release APK의 debug probe 클래스·provider·권한 부재, debug 본 앱/호스트 서명 일치 확인. 패키징 스크립트/`git diff --check` 통과.
 - 초기 컴파일에서 UiAutomation.flags getter가 공개 SDK에 없어 실패. 해당 비공개 API 접근을 제거하고 공개 DONT_SUPPRESS 요청과 실제 콜백 확인으로 수정.
 - 이 환경에서는 기기 실행 0개. 본 앱 대상 계측 5개·외부 드라이버 1개 컴파일만 검증. [Windows 설치·정확한 새 runner·진단 해석](SERVICE_CAPTURE_TEST.md).
+
+## API 37 캡처·OCR 세션별 진단 (2026-10-17)
+
+- 기준: PR #4 병합 main cf52770에서 `fix/capture-session-diagnostics` 생성.
+- 사용자 보고: 서비스 연결 전용 시험은 통과. 전체 시험은 20초 후 `SYSTEM_WINDOW;REGION_UNCERTAIN`으로 실패. 이 클라우드의 실행 결과와 구분함.
+- 확인된 결함: provider의 BLOCK은 모든 패키지 이벤트, EVIDENCE는 전역 마지막 상태여서 같은 시도라는 보장이 없었음. 실제 합성 Dialog의 차단 사유나 API 호출 여부를 이전 문자열만으로 확정할 수 없음.
+- 구현: 합성 root를 확인한 시도만 기록하는 A 내부 일회성 진단, 새 시도 시 두 코드/단계 동시 초기화, 이전 콜백·취소·END 격리. collector의 시스템/IME/외부 창 보호 분기, 영역 판정의 active/경계/모호함/가림, 확대·버퍼/프레임 경계 불일치를 고정 코드로 분리. 실제 캡처 API 호출부터 OCR/F0-B/발행까지 단계 관측. 성공 Candidate도 같은 화면 버전·창·실제 API 호출·F0-B 통과를 확인하고 결과와 진단을 함께 고정.
+- 출력 필터: F0_A/F0_B 등 숫자 0이 포함된 고정 단계 코드도 보존하고 원문/구분자 입력은 UNKNOWN 처리하는 회귀 검사 추가.
+- 유지: PrivacyPolicy, 보안/입력/외부 앱 보호, 사용자 동의·앱별 허용·캡처 예산·모든 타임아웃, 합성 호스트 화면, B·C·D 공통 모델/인터페이스. 원문·이미지·좌표·실제 창 ID/지문은 진단/로그/파일로 출력하지 않음. 운영 UI 및 B·C·D 기능 추가 없음.
+- 최종 로컬 명령: `./gradlew --no-daemon :app:assembleDebug :app:assembleDebugAndroidTest :app:testDebugUnitTest :capture-test-host:testDebugUnitTest :app:lintDebug :capture-test-host:lintDebug :app:assembleRelease` (JDK 17).
+- 결과: **BUILD SUCCESSFUL in 28s**, 196 tasks(15 실행, 181 up-to-date). JVM **78개**(본 앱 71, 호스트 7), 실패/오류/건너뜀 0. 새 회귀 시험 13개 포함. 본 앱/호스트 debug Lint 오류·경고 0. 본 앱 debug/release·독립 호스트·계측 APK 2개 빌드/컴파일 확인. DEX 패키징 검사 통과 및 release 매니페스트에서 debug provider/시험 권한 부재 확인.
+- 한계: adb 연결 0대, emulator/KVM 없음. 계측 실행 0개. API 37에서 실제 어떤 창/영역이 차단됐는지는 미확정이며 캡처·OCR 성공 주장 없음. 보호를 추측으로 완화하거나 타임아웃을 늘리지 않음.
+- 재시험: [CAPTURE_SESSION_DIAGNOSTICS.md](CAPTURE_SESSION_DIAGNOSTICS.md)의 Windows 설치 4개 APK·연결·전체 시험 명령 및 고정 코드 해석. 합성 앱만 사용하고 실제 개인정보 화면은 제외.

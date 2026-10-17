@@ -33,43 +33,53 @@ internal class AndroidSnapshotCollector {
         trigger: PopupTrigger,
         packageGate: (String) -> PrivacyBlockReason?,
         requireCaptureIsolation: Boolean = false,
+        trace: CaptureTrace = CaptureTrace(null),
     ): CollectionResult {
         val roots = mutableListOf<AccessibilityNodeInfo>()
         val androidWindows = mutableListOf<AccessibilityWindowInfo>()
+        fun blocked(reason: PrivacyBlockReason, detail: CaptureDetail, related: WindowType? = null): CollectionResult {
+            trace.detail(detail, related)
+            trace.block(reason)
+            return CollectionResult.Blocked(reason)
+        }
         return try {
             val root = service.rootInActiveWindow
-                ?: return CollectionResult.Blocked(PrivacyBlockReason.UNREADABLE_TREE)
+                ?: return blocked(PrivacyBlockReason.UNREADABLE_TREE, CaptureDetail.ROOT_UNAVAILABLE)
             roots += root
             val packageName = root.packageName?.toString()
-                ?: return CollectionResult.Blocked(PrivacyBlockReason.UNREADABLE_TREE)
-            packageGate(packageName)?.let { return CollectionResult.Blocked(it) }
+                ?: return blocked(PrivacyBlockReason.UNREADABLE_TREE, CaptureDetail.ROOT_PACKAGE_UNAVAILABLE)
+            trace.root(packageName, root.windowId)
+            packageGate(packageName)?.let { return blocked(it, CaptureDetail.PACKAGE_GATE) }
             androidWindows += service.windows
             if (requireCaptureIsolation && androidWindows.any { it.displayId != Display.DEFAULT_DISPLAY }) {
-                return CollectionResult.Blocked(PrivacyBlockReason.SYSTEM_WINDOW)
+                return blocked(PrivacyBlockReason.SYSTEM_WINDOW, CaptureDetail.SECONDARY_DISPLAY)
             }
             if (androidWindows.isEmpty() || androidWindows.size > MAX_WINDOWS) {
-                return CollectionResult.Blocked(PrivacyBlockReason.UNREADABLE_TREE)
+                return blocked(PrivacyBlockReason.UNREADABLE_TREE, CaptureDetail.WINDOW_LIST_UNAVAILABLE)
             }
             val windows = androidWindows.map { window ->
                 WindowSnapshot(window.id, windowType(window.type), window.bounds(),
                     window.isActive, window.isFocused, window.layer)
             }
             val targetWindow = windows.firstOrNull { it.id == root.windowId }
-                ?: return CollectionResult.Blocked(PrivacyBlockReason.UNREADABLE_TREE)
-            if (targetWindow.type != WindowType.APPLICATION ||
-                windows.any { (it.active || it.focused) && it.type != WindowType.APPLICATION }) {
-                return CollectionResult.Blocked(PrivacyBlockReason.SYSTEM_WINDOW)
+                ?: return blocked(PrivacyBlockReason.UNREADABLE_TREE, CaptureDetail.TARGET_MISSING)
+            trace.target(targetWindow.type)
+            if (targetWindow.type != WindowType.APPLICATION) {
+                return blocked(PrivacyBlockReason.SYSTEM_WINDOW, CaptureDetail.TARGET_NOT_APPLICATION)
+            }
+            windows.firstOrNull { (it.active || it.focused) && it.type != WindowType.APPLICATION }?.let {
+                return blocked(PrivacyBlockReason.SYSTEM_WINDOW, CaptureDetail.NON_APPLICATION_FOCUS, it.type)
             }
 
             for (window in androidWindows) {
                 if (window.type != AccessibilityWindowInfo.TYPE_APPLICATION || window.id == root.windowId) continue
                 val other = window.root
-                    ?: return CollectionResult.Blocked(PrivacyBlockReason.UNREADABLE_TREE)
+                    ?: return blocked(PrivacyBlockReason.UNREADABLE_TREE, CaptureDetail.WINDOW_LIST_UNAVAILABLE)
                 roots += other
                 val otherPackage = other.packageName?.toString()
-                    ?: return CollectionResult.Blocked(PrivacyBlockReason.UNREADABLE_TREE)
+                    ?: return blocked(PrivacyBlockReason.UNREADABLE_TREE, CaptureDetail.WINDOW_LIST_UNAVAILABLE)
                 if (otherPackage != packageName && (requireCaptureIsolation || window.isActive || window.isFocused)) {
-                    return CollectionResult.Blocked(PrivacyBlockReason.SYSTEM_WINDOW)
+                    return blocked(PrivacyBlockReason.SYSTEM_WINDOW, CaptureDetail.FOREIGN_APPLICATION, WindowType.APPLICATION)
                 }
             }
 
@@ -126,10 +136,10 @@ internal class AndroidSnapshotCollector {
                 structureDigest, screen, outlines.toList(), trigger,
             ))
         } catch (failure: GuardFailure) {
-            CollectionResult.Blocked(failure.reason)
+            blocked(failure.reason, CaptureDetail.TREE_PROTECTION)
         } catch (_: Exception) {
             // Framework exception messages can contain screen content: never log the exception.
-            CollectionResult.Blocked(PrivacyBlockReason.UNREADABLE_TREE)
+            blocked(PrivacyBlockReason.UNREADABLE_TREE, CaptureDetail.COLLECTION_FAILED)
         } finally {
             roots.forEach { it.release() }
             androidWindows.forEach { it.release() }

@@ -11,6 +11,7 @@ import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kr.closeforyou.core.contract.CaptureAvailability
 import kr.closeforyou.core.model.*
+import kr.closeforyou.accessibility.*
 import kr.closeforyou.testing.mock.MockPopupFixtures
 import org.junit.Assert.*
 import org.junit.Test
@@ -43,6 +44,54 @@ class CaptureOcrPipelineTest {
             failure?.let { throw EvidenceFailure(it) }
             return Frame(region.bounds).also { frame = it; afterCapture() }
         }
+    }
+
+    private fun diagnosticTrace(snapshot: PopupSnapshot): Pair<CaptureDiagnosticSession, CaptureTrace> {
+        val session = CaptureDiagnosticSession(snapshot.token.packageName)
+        val trace = CaptureTrace(session, snapshot.token.windowId, snapshot.token.screenVersion)
+        trace.root(snapshot.token.packageName, snapshot.token.windowId)
+        trace.stage(CaptureStage.POPUP_DETECTED)
+        return session to trace
+    }
+
+    @Test fun stageTraceDoesNotClaimApiOrOcrOnRegionFailure() = runTest {
+        val base = imagePopup()
+        val s = base.copy(windows = persistentListOf(base.windows.first().copy(active = false)))
+        val (session, trace) = diagnosticTrace(s)
+        val shots = Shots()
+        val result = CaptureOcrPipeline(shots, OcrPort { error("No OCR") }, { true }, { null })
+            .analyze(s, trace) as EvidenceOutcome.Ready
+        assertEquals(EvidenceIssue.REGION_UNCERTAIN, result.issue)
+        assertEquals(CaptureDetail.REGION_TARGET_INACTIVE, session.snapshot()!!.detail)
+        assertEquals(CaptureStage.REGION, session.snapshot()!!.stage)
+        assertFalse(CaptureStage.CAPTURE_REQUEST in session.snapshot()!!.reached)
+        assertEquals(CaptureApi.NONE, session.snapshot()!!.api)
+        assertEquals(0, shots.calls)
+    }
+
+    @Test fun stageTraceSeparatesOcrReturnAndIndependentF0bBlock() = runTest {
+        val s = imagePopup()
+        val (session, trace) = diagnosticTrace(s)
+        val result = CaptureOcrPipeline(Shots(), OcrPort { listOf(OcrLine("비밀번호 입력", box)) }, { true }, { null })
+            .analyze(s, trace) as EvidenceOutcome.Blocked
+        assertEquals(PrivacyBlockReason.SENSITIVE_CONTENT, result.reason)
+        val diagnostic = session.snapshot()!!
+        assertTrue(CaptureStage.OCR_RETURNED in diagnostic.reached)
+        assertEquals(CaptureStage.F0_B, diagnostic.stage)
+        assertFalse(CaptureStage.F0_B_PASSED in diagnostic.reached)
+        // A JVM fake ScreenshotPort is not evidence of an Android capture API invocation.
+        assertEquals(CaptureApi.NONE, diagnostic.api)
+        assertNull(session.completed(s.token.screenVersion, s.token.windowId))
+    }
+
+    @Test fun f0aFailureTraceNeverClaimsRegionOrCapture() = runTest {
+        val s = imagePopup()
+        val (session, trace) = diagnosticTrace(s)
+        CaptureOcrPipeline(Shots(), OcrPort { error("No OCR") }, { true }, { PrivacyBlockReason.PASSWORD })
+            .analyze(s, trace)
+        assertEquals(CaptureStage.F0_A, session.snapshot()!!.stage)
+        assertEquals(PrivacyBlockReason.PASSWORD, session.snapshot()!!.block)
+        assertFalse(CaptureStage.REGION in session.snapshot()!!.reached)
     }
 
     @Test fun koreanNoticeDatesTimesAndAmountsRemainUnknownEvidence() = runTest {
