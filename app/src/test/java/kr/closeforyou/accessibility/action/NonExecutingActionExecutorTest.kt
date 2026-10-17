@@ -2,6 +2,8 @@ package kr.closeforyou.accessibility.action
 
 import kotlinx.coroutines.*
 import kotlinx.coroutines.test.runTest
+import kotlinx.collections.immutable.ImmutableSet
+import kotlinx.collections.immutable.persistentSetOf
 import kr.closeforyou.core.model.*
 import org.junit.Assert.*
 import org.junit.Test
@@ -190,5 +192,86 @@ class NonExecutingActionExecutorTest {
         // Continuity loss must be rechecked after the provider suspension too.
         assertFalse(result.syntheticChecksSatisfied)
         assertTrue(GateDenial.POPUP_IDENTITY_UNPROVEN in result.denials)
+    }
+
+    private suspend fun cancellationInClock(clockCall: Int, scope: CoroutineScope) {
+        val f = ActionGateTestFixture()
+        var reads = 0
+        var returned = false
+        lateinit var pending: Deferred<GateEvaluation>
+        val executor = executor(f, clock = GateClock {
+            if (++reads == clockCall) pending.cancel()
+            100
+        })
+        pending = scope.async(start = CoroutineStart.LAZY) {
+            executor.inspect(f.request).also { returned = true }
+        }
+        pending.start()
+        pending.join()
+        assertTrue(pending.isCancelled)
+        assertFalse(returned)
+        assertEquals(clockCall, reads)
+        assertEquals(ActionAttemptLedger.ReviewState.CANCELLED, f.ledger.state())
+        assertFalse(f.ledger.attempted)
+        assertEquals(GateDenial.REVIEW_ALREADY_FINISHED,
+            f.ledger.reserveReview(f.registration.episode, GateCheck.PASSED).denial)
+    }
+
+    @Test fun cancellationInFinalValidationClockCannotCompleteReview() = runTest {
+        cancellationInClock(clockCall = 2, scope = this)
+    }
+
+    @Test fun cancellationInCompletionClockCannotCompleteReview() = runTest {
+        cancellationInClock(clockCall = 3, scope = this)
+    }
+
+    @Test fun exceptionInCompletionClockClosesReviewWithoutRetry() = runTest {
+        val f = ActionGateTestFixture()
+        var reads = 0
+        val executor = executor(f, clock = GateClock {
+            if (++reads == 3) error("synthetic-private-message")
+            100
+        })
+        val result = executor.inspect(f.request)
+        assertEquals(setOf(GateDenial.ANDROID_REVALIDATION_NOT_IMPLEMENTED, GateDenial.INSPECTION_FAILED), result.denials)
+        assertEquals(ActionAttemptLedger.ReviewState.FAILED, f.ledger.state())
+        assertFalse(result.productionReady)
+        assertFalse(f.ledger.attempted)
+        assertTrue(GateDenial.REVIEW_ALREADY_FINISHED in executor.inspect(f.request).denials)
+    }
+
+    @Test fun ttlExpiresDuringSynchronousFinalValidationBeforeCompletion() = runTest {
+        val f = ActionGateTestFixture()
+        var time = 4_999L
+        var validations = 0
+        var clockReads = 0
+        val members = persistentSetOf(NodeAction.CLICK)
+        // Contents stay immutable. The second action lookup advances synthetic time INSIDE
+        // the final synchronous validator, after it has sampled 4,999ms. No sleep/scheduling.
+        val actions = object : ImmutableSet<NodeAction> by members {
+            override fun contains(element: NodeAction): Boolean {
+                if (++validations == 2) time = 5_000
+                return element in members
+            }
+        }
+        val node = f.node.copy(actions = actions)
+        val context = f.context.copy(registration = f.registration.copy(node = node), currentNode = node)
+        val executor = executor(f, ActionGateContextSource { context }, GateClock {
+            if (++clockReads == 3) assertTrue(Thread.holdsLock(f.ledger))
+            time
+        })
+        val result = executor.inspect(f.request)
+        assertEquals(2, validations)
+        assertTrue(GateDenial.TTL_EXPIRED in result.denials)
+        assertFalse(result.syntheticChecksSatisfied)
+        assertFalse(result.productionReady)
+        assertEquals(3, clockReads)
+        assertEquals(ActionAttemptLedger.ReviewState.FAILED, f.ledger.state())
+        assertFalse(f.ledger.attempted)
+        assertEquals(GateDenial.REVIEW_ALREADY_FINISHED,
+            f.ledger.reserveReview(f.registration.episode, GateCheck.PASSED).denial)
+        val output = executor.execute(f.request)
+        assertEquals(ActionStatus.NOT_EXECUTED, output.status)
+        assertFalse(output.attempted)
     }
 }

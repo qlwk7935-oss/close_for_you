@@ -40,7 +40,11 @@ internal class NonExecutingActionExecutor(
             val final = validator.evaluate(request, latest, clock.nowMillis())
             if (latest != first) return GateEvaluation(final.denials + GateDenial.INVALIDATED_DURING_CHECK)
             if (!final.syntheticChecksSatisfied) return final
-            ledger.completeReview(reservation)?.let { return GateEvaluation(unavailable + it) }
+            // Do not pass the validator's earlier timestamp. Re-observe cancellation and time
+            // inside the ledger's completion monitor, using the original registration deadline.
+            ledger.completeReview(reservation, first.registration.issuedAtMillis,
+                first.registration.expiresAtMillis, clock, currentCoroutineContext())
+                ?.let { return GateEvaluation(unavailable + it) }
             return final // Still ANDROID_REVALIDATION_NOT_IMPLEMENTED, never ALLOW.
         } catch (cancelled: CancellationException) {
             terminal = ActionAttemptLedger.ReviewState.CANCELLED

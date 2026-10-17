@@ -69,10 +69,29 @@ Windows에서는 `./gradlew`를 `.\gradlew.bat`, `python3`를 설치한 Python �
 
 새 게이트를 운영 서비스에 연결하거나 B 정책/기존 Mock을 교체하는 작업은 이번 범위가 아닙니다. 새 PR 생성/main 병합도 하지 않습니다.
 
-## 이번 브랜치 로컬 검증 결과
+## 비실행 1차 d7652d7 당시 로컬 검증 결과
 
 JDK17에서 위 전체 명령을 실행했습니다. 첫 전체 실행은 BUILD SUCCESSFUL (1분38초, 196 tasks: 66 executed / 130 up-to-date), 취소를 무시하는 제공자 회귀를 추가한 최종 실행은 BUILD SUCCESSFUL (43초, 196 tasks: 7 executed / 189 up-to-date)입니다. 최종 JVM **226개**(앱171/호스트55, 신규 게이트39개), 실패/오류/건너뜀0, 양쪽 debug Lint 이슈0입니다. Debug/Release·계측 APK 빌드와 기존 DEX/독립 Kotlin runtime/driver 격리/release probe 부재 패키징 검사도 통과했습니다.
 
 초기 신규 회귀36개 중 연속성 상실 중 검토 완료를 허용하는 테스트1개가 실패했습니다. 제공자 재조회 뒤 장부의 연속성/예약 소유권을 동기화된 완료 연산에서 다시 검사하도록 수정했고 후속38개 및 최종39개가 모두 통과했습니다. 실패를 삭제하거나 정답을 완화하지 않았습니다.
 
-연결 기기0대로 Android 실행은 미검증입니다. 실제 클릭/재수집/사용자 선택/팝업 identity를 구현·검증했다고 주장하지 않습니다. 현재 workflow는 이 브랜치 push를 대상으로 하지 않고 workflow_dispatch도 없습니다. 새 PR을 만들지 않으므로 이번 커밋의 GitHub Actions 자동 검증은 수행하지 않으며 workflow도 변경하지 않습니다. 로컬 빌드/테스트/Lint 결과와 CI를 구분합니다.
+연결 기기0대로 Android 실행은 미검증입니다. 실제 클릭/재수집/사용자 선택/팝업 identity를 구현·검증했다고 주장하지 않습니다. 당시에는 이 브랜치 push가 workflow 대상이 아니고 PR도 없어 CI를 실행하지 않았습니다. 이후 사용자가 Draft PR #10을 생성해 d7652d7의 Actions 성공을 확인했습니다. 아래 P2 후속은 기존 PR #10에서만 진행하며 새 PR이나 workflow 변경은 하지 않습니다. 로컬 결과와 최신 커밋의 CI 결과는 구분합니다.
+
+## PR #10 P2: 합성 검토 완료 경계의 취소·TTL 재검사
+
+`inspect()`의 마지막 검증 시각만 확인한 뒤 완료하던 경로를 변경했습니다. 검증 때의 오래된 시각을 `completeReview()`에 전달하지 않습니다. 원래 등록 문맥의 issuedAt/expiresAt, clock, 현재 코루틴 context를 전달하고, 장부의 synchronized 완료 연산 안에서 시계를 새로 읽습니다. 최종 검증이나 잠금 대기에서 소모한 시간도 이 새 조회에 반영됩니다. clock은 빠르고 중단되지 않는 동일 monotonic clock이어야 하며 Android 재수집 같은 작업을 수행하는 자리가 아닙니다.
+
+완료 연산은 취소 확인 → 새 clock 조회 → 취소 재확인 → `now < issuedAt`/`now >= expiresAt` 거부 → 연속성/예약 소유권 확인 → 취소 확인 → 완료 기록 순서입니다. 시계 조회가 Job을 취소해도 후속 확인이 CancellationException을 발생시킵니다. inspect의 기존 catch/finally가 CANCELLED로 닫고 취소를 전파합니다. 만료·clock 예외는 FAILED로 닫으며 어느 경우에도 재예약하지 않습니다. deadline을 새로 계산하거나 연장하지 않습니다.
+
+추가 결정론적 JVM 회귀:
+
+- 마지막 검증용 두 번째 clock 조회 중 Job 취소: 검토 완료/정상 반환 없음, CANCELLED, 재예약 거부.
+- 완료 잠금 안 세 번째 clock 조회 중 Job 취소: 동일하게 CANCELLED 및 취소 전파.
+- 최종 동기 검증의 두 번째 action 조회가 합성 시각을 4999→5000ms로 변경: 새 완료 시각이 TTL_EXPIRED를 검출하고 FAILED. 고정 멤버의 ImmutableSet 조회 hook으로 시각만 변경하며 sleep/스케줄링 추정/허용 오차는 사용하지 않음.
+- 장부 완료 clock이 실제 장부 monitor를 소유한 상태인지 확인하고 4999/5000ms 배타 경계를 비교.
+- 완료 clock 안에서 연속성 상실 시 완료 거부.
+- 완료 clock 예외 시 고정 코드/FAILED 및 재검토 거부.
+
+**보장 한계:** 락은 이 장부의 예약·연속성·상태만 직렬화합니다. clock·외부 Job·서비스 세대·Android 화면과 공유하는 원자적 트랜잭션이 아닙니다. 마지막 관측 뒤의 시각 경과나 취소 도착을 물리적으로 막거나 이미 끝난 검토를 소급 취소하지 않습니다. 이 수정은 긴 동기 검증 전의 오래된 시각을 완료 판단에 재사용하지 않고, 완료 경계의 관측에서 발견한 취소/만료를 거부하는 것입니다. 실제 화면 변경까지 원자적으로 보장하지 않습니다. 검토는 여전히 합성 전용이고 실제 실행 경로와 연결하지 않습니다. productionReady=false, NOT_EXECUTED, attempted=false 및 모든 F0/F1·ROI·버퍼 보호는 그대로입니다.
+
+P2 로컬 검증: 수정 전 신규 재현3개가 모두 실패(실행기 회귀16개 중3개)했고, 완료 경계 수정 뒤 게이트 회귀45개가 통과했습니다. 위 전체 Gradle 명령도 BUILD SUCCESSFUL (1분10초, 196 tasks: 22 executed / 174 up-to-date). JVM **232개**(앱177/호스트55, 게이트45개=기존39+신규6), 실패/오류/건너뜀0, 양쪽 Debug Lint 이슈0입니다. Debug/Release·계측 APK와 독립 호스트/Kotlin runtime/driver 격리/release probe 부재 패키징 검사도 통과했습니다. 기기 계측은 실행하지 않았습니다. 기존 Draft PR #10에만 추가 커밋하며 최신 CI는 해당 커밋의 Checks로 구분해 확인합니다.
