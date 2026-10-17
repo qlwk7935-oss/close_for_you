@@ -19,6 +19,14 @@ import org.junit.runner.RunWith
 @RunWith(AndroidJUnit4::class)
 class ServiceCaptureOptInTest {
     @Test fun serviceCapturesAndReadsSyntheticDialog() = runBlocking {
+        SyntheticServiceSession.run(bufferOnly = false)
+    }
+}
+
+/** Shared external session. Buffer-only observes a real callback and safe rejection;
+ * its success must never be described as OCR_MATCH or a working pixel coordinate transform. */
+internal object SyntheticServiceSession {
+    suspend fun run(bufferOnly: Boolean) {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val arguments = InstrumentationRegistry.getArguments()
         assumeTrue(arguments.getString("captureOcrService") == "true")
@@ -59,7 +67,8 @@ class ServiceCaptureOptInTest {
             throw AssertionError("SERVICE_CONNECTION_TIMEOUT:$code;PHASE=$phase;MAIN=$main;CREATES=$creates;CALLBACKS=$callbacks;FRAMEWORK=${framework.name}")
         }
         instrumentation.sendStatus(0, Bundle().apply { putString("stream", "SERVICE_CONNECTION_READY\n") })
-        if (arguments.getString("connectionOnly") == "true") return@runBlocking
+        if (bufferOnly) assertFalse("BUFFER_PROBE_REQUIRES_CAPTURE", arguments.getString("connectionOnly") == "true")
+        if (arguments.getString("connectionOnly") == "true") return
         var session: String? = null
         try {
             val begun = call("BEGIN", optIn = true)
@@ -74,13 +83,34 @@ class ServiceCaptureOptInTest {
             val completed = withTimeoutOrNull(20_000) {
                 while (true) {
                     result = call("RESULT", session)
-                    if (result.getString("code") != "WAITING") break
+                    val terminal = result.getString("code") != "WAITING"
+                    val bufferReviewed = result.getBoolean("bufferReleased") &&
+                        (result.getString("evidence") !in setOf(null, "NONE") || terminal)
+                    if (if (bufferOnly) bufferReviewed else terminal) break
                     delay(100)
                 }
                 true
             } == true
             val diagnostic = diagnostic(result)
-            if (!completed) throw AssertionError("CAPTURE_RESULT_TIMEOUT:$diagnostic")
+            if (!completed) throw AssertionError("${if (bufferOnly) "BUFFER_PROBE_TIMEOUT" else "CAPTURE_RESULT_TIMEOUT"}:$diagnostic")
+            if (bufferOnly) {
+                assertEquals("BUFFER_PROBE_WRONG_WINDOW", "SYNTHETIC_DIALOG", safeCode(result.getString("syntheticRole")))
+                assertEquals("BUFFER_PROBE_UNVERIFIED_FRAME", "VERIFIED", safeCode(result.getString("frameStatus")))
+                assertEquals("BUFFER_PROBE_API_NOT_CALLED", "WINDOW", safeCode(result.getString("api")))
+                assertTrue("BUFFER_CALLBACK_NOT_OBSERVED", result.getStringArrayList("reached").orEmpty().contains("CAPTURE_BUFFER_RECEIVED"))
+                assertTrue("BUFFER_NOT_RELEASED", result.getBoolean("bufferReleased"))
+                assertEquals("BUFFER_PROBE_PRIVACY_BLOCKED", "NONE", safeCode(result.getString("block")))
+                if (result.getString("bufferMemory") != "WITHIN_LIMIT") {
+                    assertEquals("BUFFER_MEMORY_NOT_REJECTED", "MEMORY_LIMIT", safeCode(result.getString("evidence")))
+                    assertEquals("REJECTED_BUFFER_REACHED_OCR", 0, result.getInt("ocrCount"))
+                } else if (result.getString("bufferMapping") != "EXACT_SIZE") {
+                    assertEquals("UNPROVEN_MAPPING_NOT_REJECTED", "REGION_UNCERTAIN", safeCode(result.getString("evidence")))
+                    assertEquals("REJECTED_BUFFER_REACHED_OCR", 0, result.getInt("ocrCount"))
+                    assertFalse("REJECTED_BUFFER_REACHED_OCR", result.getStringArrayList("reached").orEmpty().contains("OCR"))
+                }
+                instrumentation.sendStatus(0, Bundle().apply { putString("stream", "BUFFER_GEOMETRY_OBSERVED:$diagnostic\n") })
+                return
+            }
             instrumentation.sendStatus(0, Bundle().apply { putString("stream", "CAPTURE_RESULT:$diagnostic\n") })
             assertEquals("SYNTHETIC_OCR_NOT_CONFIRMED", "OCR_MATCH", safeCode(result.getString("code")))
             assertTrue("OCR_EVIDENCE_EMPTY", result.getInt("ocrCount") > 0)
@@ -106,6 +136,14 @@ class ServiceCaptureOptInTest {
         "ROOT_WITHIN_WINDOW=${safeCode(result.getString("rootWithinWindow"))}",
         "DIALOG_CLASS=${safeCode(result.getString("dialogClass"))}",
         "ROLE=${safeCode(result.getString("syntheticRole"))}",
+        "BUFFER_WIDTH=${safeCode(result.getString("bufferWidth"))}",
+        "BUFFER_HEIGHT=${safeCode(result.getString("bufferHeight"))}",
+        "BUFFER_EXTENT=${safeCode(result.getString("bufferExtent"))}",
+        "BUFFER_DISPLAY_SIZED=${safeCode(result.getString("bufferDisplaySized"))}",
+        "BUFFER_SWAPPED=${safeCode(result.getString("bufferSwapped"))}",
+        "BUFFER_MAPPING=${safeCode(result.getString("bufferMapping"))}",
+        "BUFFER_MEMORY=${safeCode(result.getString("bufferMemory"))}",
+        "BUFFER_RELEASED=${result.getBoolean("bufferReleased")}",
         "API=${safeCode(result.getString("api"))}",
         "TARGET=${safeCode(result.getString("targetType"))}",
         "RELATED=${safeCode(result.getString("relatedType"))}",
@@ -117,8 +155,6 @@ class ServiceCaptureOptInTest {
     private fun safeCode(value: String?): String = DiagnosticCode.safe(value)
     private fun shell(automation: UiAutomation, command: String): String =
         ParcelFileDescriptor.AutoCloseInputStream(automation.executeShellCommand(command)).use { it.readBytes().toString(Charsets.UTF_8) }
-    private companion object {
-        const val HOST = "kr.closeforyou.capturetest"
-        val PROBE: Uri = Uri.parse("content://kr.closeforyou.syntheticcapturetest")
-    }
+    private const val HOST = "kr.closeforyou.capturetest"
+    private val PROBE: Uri = Uri.parse("content://kr.closeforyou.syntheticcapturetest")
 }

@@ -1,6 +1,7 @@
 package kr.closeforyou.accessibility
 
 import kr.closeforyou.accessibility.capture.EvidenceIssue
+import kr.closeforyou.accessibility.capture.CaptureBufferPolicy
 import kr.closeforyou.core.model.PrivacyBlockReason
 import kr.closeforyou.core.model.WindowType
 import kr.closeforyou.core.model.ScreenBounds
@@ -109,6 +110,27 @@ class CaptureDiagnosticsTest {
         trace(session, 2)
         assertEquals(FrameRelation.UNKNOWN, session.snapshot()!!.legacyFrame)
         assertEquals(SyntheticWindowRole.UNKNOWN, session.snapshot()!!.syntheticRole)
+    }
+
+    @Test fun bufferRelationsResetPerAttemptAndReleasedRequiresCurrentTrace() {
+        val session = CaptureDiagnosticSession(host)
+        val first = trace(session, 1)
+        val window = ScreenBounds(40, 900, 1040, 1320)
+        val diagnostic = CaptureBufferPolicy.assess(1080, 2400, 1, true,
+            window, ScreenBounds(0, 0, 1080, 2400), window, true).diagnostic
+        first.buffer(diagnostic)
+        assertEquals(false, session.snapshot()!!.buffer!!.released)
+        first.bufferReleased()
+        assertEquals(true, session.snapshot()!!.buffer!!.released)
+        val second = trace(session, 2)
+        assertNull(session.snapshot()!!.buffer)
+        first.buffer(diagnostic)
+        first.bufferReleased()
+        assertNull(session.snapshot()!!.buffer)
+        second.stage(CaptureStage.CANCELLED)
+        second.buffer(diagnostic)
+        second.bufferReleased()
+        assertNull(session.snapshot()!!.buffer)
     }
 
     @Test fun eventRootWindowRelationIsCodeOnly() {

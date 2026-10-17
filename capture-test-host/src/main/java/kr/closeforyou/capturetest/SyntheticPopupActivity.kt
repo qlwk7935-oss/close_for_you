@@ -36,6 +36,9 @@ class SyntheticPopupActivity : Activity() {
         }
     }
 
+    /** Public metadata hint only; elevation does not reveal surface insets or a crop transform. */
+    internal fun syntheticDialogHasElevatedDecor(): Boolean? = dialog?.window?.decorView?.let { it.z > 0f }
+
     override fun onDestroy() {
         dialog?.dismiss()
         image?.recycle()

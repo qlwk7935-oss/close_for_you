@@ -148,3 +148,17 @@ C02~C06·C09·C10·C12~C14 및 G2~G5는 관련 구현 뒤 시행합니다. C07�
 - 보호 유지: 개인정보 보호/시스템·외부 앱·가림/보안 창/확대/버퍼 크기/동의·앱별 허용/빈도·메모리·타임아웃 유지. 전체 화면 fallback이나 Mock OCR 주입 없음. B·C·D 공통 모델/포트 및 기능 변경 없음.
 - 미검증: adb 연결 0대, emulator/KVM 없음. 신규 계측 2개 포함 전체 계측 8개는 컴파일/패키징만 확인, 기기 실행 0개. API 35/37의 창 실제 경계·캡처 버퍼/이미지·OCR 성공은 주장하지 않음. 파티션/호환 모드/원점·크기 불일치는 임의 변환하지 않고 지원 제한으로 차단.
 - 재시험: [DIALOG_CAPTURE_COORDINATES.md](DIALOG_CAPTURE_COORDINATES.md)에 좌표계 공식 근거, 수정 전후, 고정 진단 해석, API 35/37 Windows 명령을 기록. geometry 계측을 먼저 실행한 후 서비스 재확인 및 사용자 UI 동의를 거쳐 외부 연결/캡처 시험 진행. 합성 화면만 사용.
+
+## PR #6 추가: HardwareBuffer 크기 불일치 조사 (2026-10-17)
+
+- 작업 위치: 기존 `fix/dialog-capture-coordinates`, PR #6. 기준 39c9bed. 새 브랜치/PR 생성 및 main 병합 없음.
+- 사용자 보고(API 37): 화면 출처/독립 Dialog geometry 계측 각각 OK, 서비스/후보/F0-A/FRAME/ROLE 통과. 실제 window 캡처는 onSuccess의 BUFFER_GEOMETRY·REGION_UNCERTAIN에서 멈춤. bounded ROI=window이므로 한 축 이상의 실제 버퍼 크기 불일치는 확인되지만 구체적 크기/원점/원인은 미확정. OCR/F0-B 전 실패.
+- 조사: 공개 API에 buffer 크기=접근성 창 bounds 계약이나 원점/변환 metadata 없음. AOSP는 대상 ViewRootImpl SurfaceControl의 layer 캡처이며 접근성 사각형 crop을 넘기지 않음. WindowLayout은 surface inset/FLAG_SCALED/resize 크기를 고려. CTS는 일반 Activity decor와 버퍼 크기 비교이며 모든 Dialog/compat/rotation의 screen 매핑 증명이 아님.
+- 구현: A 내부 CaptureBufferPolicy에서 실제 buffer width/height/layers/format의 메모리 조건을 Bitmap wrap/복사 전에 우선 검사. exact-size 기존 경로 유지, 모든 불일치/디스플레이 크기/교환 관계는 좌표 대응 미입증으로 계속 차단. 임의 crop/resize/회전/display fallback/Mock OCR 없음.
+- 진단: 같은 시도에서 CAPTURE_BUFFER_RECEIVED 및 축별 MATCH/LARGER/SMALLER, extent/display-sized/swapped, mapping, memory, 실제 HardwareBuffer.close 이후 released만 기록. 원문·픽셀 수·좌표·여백·이미지·OCR 본문 저장/출력 없음. 이전 시도/취소/END 뒤 진단 갱신은 폐기. CPU Bitmap/native OCR lease와 모든 timeout/예산/보호는 유지.
+- 계측: 새 ServiceBufferGeometryOptInTest는 실제 합성 Dialog callback·해제와 안전 거부만 검사하고 OCR 성공을 요구하는 기존 시험과 분리. 버퍼 시험 OK를 OCR 성공으로 취급하지 않음. 공개 decor.z 유무만 별도 보조 관측하며 inset/transform의 증명으로 쓰지 않음. 호스트 UI/elevation/크기 변경 없음. DEX 검사에도 새 시험 포함 확인.
+- 빌드 오류 수정: 처음에는 공개 SDK에 없는 LayoutParams.surfaceInsets 참조로 host 컴파일 실패. 숨겨진 API/반사 사용 없이 공개 decor.z 진단으로 교체. 이어 계측 helper 호출 수신자가 Activity 타입이어서 실패한 부분을 실제 SyntheticPopupActivity 타입으로 명시하여 수정. 최종 실패를 남기지 않음.
+- 최종 실행: JDK 17의 `./gradlew --no-daemon :app:assembleDebug :app:assembleDebugAndroidTest :app:testDebugUnitTest :capture-test-host:testDebugUnitTest :app:lintDebug :capture-test-host:lintDebug :app:assembleRelease` → **BUILD SUCCESSFUL in 1m 17s**, 196 tasks(38 실행, 158 up-to-date).
+- 결과: JVM **99개**(본 앱 92, 호스트 7), 새 회귀 12개 포함, 실패/오류/건너뜀 0. 양쪽 debug Lint 이슈 0. Debug/Release 및 계측 APK 빌드 성공. 새 버퍼 계측 포함 DEX 패키징 검사 및 release의 debug provider/시험 권한/일반 overlay 권한 부재 확인 통과.
+- 한계: adb 기기 0대, emulator/KVM 없음. 계측 총 9개 컴파일/패키징만 확인했고 새 시험의 기기 실행 0개. API 35/37 캡처·OCR 성공 주장 없음. 불일치 buffer-to-screen 변환 지원은 미해결이며 REGION_UNCERTAIN으로 안전하게 거부함. 실제 native stride/driver 할당량은 공개 metadata로 알 수 없어 픽셀 예산을 전체 GPU/RSS 상한으로 표현하지 않음.
+- [WINDOW_CAPTURE_BUFFER.md](WINDOW_CAPTURE_BUFFER.md)에 API/AOSP/CTS 근거, 가능한 원인과 한계, 수정 전후, 고정 코드 및 API 35/37 Windows 설치/연결/버퍼/전체 OCR 명령 기록. B·C·D 공통 모델/인터페이스 변경 없음.

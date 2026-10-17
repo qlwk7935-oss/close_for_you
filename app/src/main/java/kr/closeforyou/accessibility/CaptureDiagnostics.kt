@@ -1,6 +1,7 @@
 package kr.closeforyou.accessibility
 
 import kr.closeforyou.accessibility.capture.EvidenceIssue
+import kr.closeforyou.accessibility.capture.BufferDiagnostic
 import kr.closeforyou.core.model.PrivacyBlockReason
 import kr.closeforyou.core.model.WindowType
 import kr.closeforyou.core.model.ScreenBounds
@@ -8,14 +9,14 @@ import kr.closeforyou.accessibility.capture.PopupRegionResolver
 
 /** A-internal, opt-in, ephemeral diagnostics. No nodes, text, bounds, digests or image references. */
 internal enum class CaptureStage {
-    COLLECTION, POPUP_DETECTED, F0_A, F0_A_PASSED, REGION, CAPTURE_REQUEST, CAPTURE_API,
+    COLLECTION, POPUP_DETECTED, F0_A, F0_A_PASSED, REGION, CAPTURE_REQUEST, CAPTURE_API, CAPTURE_BUFFER_RECEIVED,
     CAPTURE_RETURNED, OCR, OCR_RETURNED, F0_B, F0_B_PASSED, PUBLISHED, CANCELLED,
 }
 internal enum class CaptureDetail {
     NONE, ROOT_UNAVAILABLE, ROOT_PACKAGE_UNAVAILABLE, PACKAGE_GATE, WINDOW_LIST_UNAVAILABLE,
     TARGET_MISSING, TARGET_NOT_APPLICATION, NON_APPLICATION_FOCUS, FOREIGN_APPLICATION,
     SECONDARY_DISPLAY, TREE_PROTECTION, COLLECTION_FAILED, NO_POPUP_SIGNAL,
-    SCREEN_CHANGED, MAGNIFIED, REGION_REVALIDATION, BUFFER_GEOMETRY, FRAME_GEOMETRY,
+    SCREEN_CHANGED, MAGNIFIED, REGION_REVALIDATION, BUFFER_GEOMETRY, BUFFER_MEMORY_LIMIT, FRAME_GEOMETRY,
     REGION_TRUNCATED, REGION_TARGET_MISSING, REGION_TARGET_NOT_APPLICATION, REGION_TARGET_INACTIVE,
     REGION_NO_BOUNDED_DIALOG, REGION_MULTIPLE_DIALOGS, REGION_OUTSIDE, REGION_OCCLUDED,
     DISPLAY_GEOMETRY_UNCERTAIN, REGION_WINDOW_OUTSIDE, REGION_DIALOG_OUTSIDE, REGION_DIALOG_NOT_BOUNDED,
@@ -42,6 +43,7 @@ internal data class CaptureAttemptDiagnostic(
     val rootWithinWindow: Boolean? = null,
     val dialogClassPresent: Boolean? = null,
     val syntheticRole: SyntheticWindowRole = SyntheticWindowRole.UNKNOWN,
+    val buffer: BufferDiagnostic? = null,
     val eventWindow: EventWindowRelation = EventWindowRelation.UNKNOWN,
 )
 
@@ -122,6 +124,8 @@ internal class CaptureTrace(
         val role = ScreenFramePolicy.syntheticRole(title())
         update { it.copy(syntheticRole = role) }
     }
+    fun buffer(diagnostic: BufferDiagnostic) = update { it.copy(buffer = diagnostic) }
+    fun bufferReleased() = update { it.copy(buffer = it.buffer?.copy(released = true)) }
     fun target(type: WindowType) = update { it.copy(targetType = type) }
     fun block(reason: PrivacyBlockReason) = update { it.copy(block = reason) }
     fun evidence(issue: EvidenceIssue) = update { it.copy(evidence = issue) }

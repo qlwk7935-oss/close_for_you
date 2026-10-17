@@ -35,14 +35,16 @@ class SyntheticDialogGeometryTest {
         var activity: android.app.Activity? = null
         var code = "WINDOWS_NOT_OBSERVED"
         var dialogClass = false
+        var decorElevated = "UNKNOWN"
         try {
             val shown = instrumentation.startActivitySync(Intent(instrumentation.targetContext, SyntheticPopupActivity::class.java)
-                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK))
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)) as SyntheticPopupActivity
             activity = shown
             val frame = Rect()
             var backgroundId = -1
             instrumentation.runOnMainSync {
                 frame.set(shown.windowManager.maximumWindowMetrics.bounds)
+                decorElevated = shown.syntheticDialogHasElevatedDecor()?.let { if (it) "YES" else "NO" } ?: "UNKNOWN"
                 val ownNode = shown.window.decorView.createAccessibilityNodeInfo()
                 try { backgroundId = ownNode.windowId } finally { ownNode.recycle() }
             }
@@ -86,7 +88,7 @@ class SyntheticDialogGeometryTest {
             } == true
             assertTrue("SYNTHETIC_GEOMETRY:$code", ready)
             instrumentation.sendStatus(0, Bundle().apply {
-                putString("stream", "SYNTHETIC_DIALOG_GEOMETRY_READY;ROOT_CLASS_DIALOG=${if (dialogClass) "YES" else "NO"}\n")
+                putString("stream", "SYNTHETIC_DIALOG_GEOMETRY_READY;ROOT_CLASS_DIALOG=${if (dialogClass) "YES" else "NO"};OWN_DECOR_ELEVATED=$decorElevated\n")
             })
         } finally {
             activity?.let { shown -> instrumentation.runOnMainSync { shown.finish() } }

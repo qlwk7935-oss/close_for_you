@@ -1,5 +1,7 @@
 # Dialog OCR 영역: 화면 좌표 출처 수정과 API 35/37 재시험
 
+> PR #6 기기 후속 결과 BUFFER_GEOMETRY 조사·버퍼 전용 계측 및 최신 Windows 명령은 [WINDOW_CAPTURE_BUFFER.md](WINDOW_CAPTURE_BUFFER.md)를 우선합니다.
+
 기준: PR #5 병합 main `f72fd0f` → `fix/dialog-capture-coordinates`. 실제 기기 성공 보고서가 아닙니다.
 
 ## 사용자 관측과 확인된 실패 분기

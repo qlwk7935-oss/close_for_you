@@ -207,7 +207,8 @@ class CaptureOcrPipelineTest {
     }
 
     @Test fun secureCaptureAndOcrFailuresKeepSafeTreeOnly() = runTest {
-        for (issue in listOf(EvidenceIssue.SECURE_WINDOW, EvidenceIssue.CAPTURE_FAILED, EvidenceIssue.CAPTURE_TIMEOUT)) {
+        for (issue in listOf(EvidenceIssue.SECURE_WINDOW, EvidenceIssue.CAPTURE_FAILED, EvidenceIssue.CAPTURE_TIMEOUT,
+            EvidenceIssue.REGION_UNCERTAIN, EvidenceIssue.MEMORY_LIMIT)) {
             val shots = Shots().also { it.failure = issue }
             val result = CaptureOcrPipeline(shots, OcrPort { error("No OCR") }, { true }, { null }).analyze(imagePopup()) as EvidenceOutcome.Ready
             assertEquals(issue, result.issue)
