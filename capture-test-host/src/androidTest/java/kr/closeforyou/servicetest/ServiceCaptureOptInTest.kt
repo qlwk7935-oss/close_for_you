@@ -105,7 +105,7 @@ class ServiceCaptureOptInTest {
     ).joinToString(";")
 
     private fun reply(code: String) = Bundle().apply { putString("code", code) }
-    private fun safeCode(value: String?): String = value?.takeIf { it.matches(Regex("[A-Z_]{1,64}")) } ?: "UNKNOWN"
+    private fun safeCode(value: String?): String = DiagnosticCode.safe(value)
     private fun shell(automation: UiAutomation, command: String): String =
         ParcelFileDescriptor.AutoCloseInputStream(automation.executeShellCommand(command)).use { it.readBytes().toString(Charsets.UTF_8) }
     private companion object {

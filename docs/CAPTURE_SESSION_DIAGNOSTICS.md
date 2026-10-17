@@ -86,4 +86,4 @@ $adbPath = "$env:LOCALAPPDATA\Android\Sdk\platform-tools\adb.exe"
 
 회귀 단위 시험은 다른 패키지 이벤트 제외, 시도별 코드 초기화, 늦은 콜백/취소/END 격리, 현재 시도 매칭, 영역 거부 사유/상위 창 유형, F0-A/F0-B 단계와 비호출을 합성 DTO로 검사합니다. Android 캡처 API 실행 성공을 JVM Mock으로 주장하지 않습니다. 최종 빌드·테스트 수치는 [DEVELOPMENT_STATUS.md](DEVELOPMENT_STATUS.md)에 기록합니다.
 
-최종 로컬 결과: 위 debug 명령과 추가 `:app:assembleRelease` 실행으로 BUILD SUCCESSFUL(1분 6초), JVM 77개(실패/오류/건너뜀 0), 양쪽 debug Lint 이슈 0. DEX 패키징 검사와 release의 debug provider/권한 부재 확인 통과. 기기 계측은 컴파일만 했고 실행하지 않았습니다.
+최종 로컬 결과: 위 debug 명령과 추가 `:app:assembleRelease` 실행으로 BUILD SUCCESSFUL(28초), JVM 78개(실패/오류/건너뜀 0), 양쪽 debug Lint 이슈 0. DEX 패키징 검사와 release의 debug provider/권한 부재 확인 통과. 기기 계측은 컴파일만 했고 실행하지 않았습니다.
