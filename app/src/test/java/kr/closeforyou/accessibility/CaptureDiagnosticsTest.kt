@@ -1,8 +1,10 @@
 package kr.closeforyou.accessibility
 
 import kr.closeforyou.accessibility.capture.EvidenceIssue
+import kr.closeforyou.accessibility.capture.CaptureBufferPolicy
 import kr.closeforyou.core.model.PrivacyBlockReason
 import kr.closeforyou.core.model.WindowType
+import kr.closeforyou.core.model.ScreenBounds
 import org.junit.Assert.*
 import org.junit.Test
 
@@ -85,6 +87,50 @@ class CaptureDiagnosticsTest {
         assertNull(session.completed(11, 8))
         trace.evidence(EvidenceIssue.REGION_UNCERTAIN)
         assertNull(session.completed(11, 7))
+    }
+
+    @Test fun coordinateDiagnosticsRetainOnlyRelationsAndResetWithTheAttempt() {
+        val session = CaptureDiagnosticSession(host)
+        val trace = trace(session, 1)
+        val frame = ScreenBounds(0, 0, 1080, 2400)
+        val window = ScreenBounds(40, 900, 1040, 1320)
+        trace.frameStatus(ScreenFrameStatus.VERIFIED)
+        trace.coordinates(window, frame, window) { ScreenBounds(0, 0, 0, 0) }
+        trace.syntheticWindow { "합성 이미지 창" }
+        trace.nodeClasses(false)
+        val diagnostic = session.snapshot()!!
+        assertEquals(FrameRelation.EMPTY, diagnostic.legacyFrame)
+        assertEquals(setOf(OutsideEdge.RIGHT, OutsideEdge.BOTTOM), diagnostic.legacyOutside)
+        assertTrue(diagnostic.windowOutside.isEmpty())
+        assertEquals(true, diagnostic.rootWithinWindow)
+        assertEquals(false, diagnostic.dialogClassPresent)
+        assertEquals(SyntheticWindowRole.SYNTHETIC_DIALOG, diagnostic.syntheticRole)
+        assertFalse(diagnostic.toString().contains("1080"))
+        assertFalse(diagnostic.toString().contains("합성 이미지 창"))
+        trace(session, 2)
+        assertEquals(FrameRelation.UNKNOWN, session.snapshot()!!.legacyFrame)
+        assertEquals(SyntheticWindowRole.UNKNOWN, session.snapshot()!!.syntheticRole)
+    }
+
+    @Test fun bufferRelationsResetPerAttemptAndReleasedRequiresCurrentTrace() {
+        val session = CaptureDiagnosticSession(host)
+        val first = trace(session, 1)
+        val window = ScreenBounds(40, 900, 1040, 1320)
+        val diagnostic = CaptureBufferPolicy.assess(1080, 2400, 1, true,
+            window, ScreenBounds(0, 0, 1080, 2400), window, true).diagnostic
+        first.buffer(diagnostic)
+        assertEquals(false, session.snapshot()!!.buffer!!.released)
+        first.bufferReleased()
+        assertEquals(true, session.snapshot()!!.buffer!!.released)
+        val second = trace(session, 2)
+        assertNull(session.snapshot()!!.buffer)
+        first.buffer(diagnostic)
+        first.bufferReleased()
+        assertNull(session.snapshot()!!.buffer)
+        second.stage(CaptureStage.CANCELLED)
+        second.buffer(diagnostic)
+        second.bufferReleased()
+        assertNull(session.snapshot()!!.buffer)
     }
 
     @Test fun eventRootWindowRelationIsCodeOnly() {

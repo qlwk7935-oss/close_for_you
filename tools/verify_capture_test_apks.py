@@ -65,6 +65,9 @@ def main():
         "Lkotlin/Unit;", "Lkotlin/KotlinVersion;", "Lkotlin/collections/CollectionsKt;",
         "Lkr/closeforyou/capturetest/SyntheticPopupActivity;",
         "Lkr/closeforyou/capturetest/SyntheticNoticeKt;",
+        "Lkr/closeforyou/capturetest/SyntheticPatternView;",
+        "Lkr/closeforyou/synthetictest/PatternMapping;",
+        "Lkr/closeforyou/synthetictest/SyntheticDialogControl;",
     ):
         require(descriptor in host, "Standalone host missing DEX definition: " + descriptor)
     forbidden_refs = ("Lkr/closeforyou/accessibility/", "Lkr/closeforyou/app/", "Landroidx/test/", "Lorg/junit/")
@@ -78,17 +81,30 @@ def main():
                 name + " unexpectedly contains the standalone host")
     require("Lkr/closeforyou/accessibility/capture/BundledKoreanOcrTest;" in tests, "OCR instrumentation tests missing")
     require("Lkr/closeforyou/accessibility/capture/SyntheticHostLaunchTest;" in tests, "Independent-process smoke test missing")
+    require("Lkr/closeforyou/accessibility/capture/ScreenGeometryInstrumentedTest;" in tests, "Window-context geometry instrumentation missing")
     driver, driver_refs = dex_classes(args.driver_apk)
     require("Lkr/closeforyou/servicetest/ServiceCaptureOptInTest;" in driver, "External service driver missing")
+    require("Lkr/closeforyou/servicetest/ServiceBufferGeometryOptInTest;" in driver, "Synthetic buffer geometry instrumentation missing")
+    require("Lkr/closeforyou/servicetest/ServiceSyntheticPatternOptInTest;" in driver, "Synthetic landmark instrumentation missing")
+    require("Lkr/closeforyou/servicetest/ServiceSyntheticRenderControlsOptInTest;" in driver, "Real Dialog render controls missing")
+    require("Lkr/closeforyou/servicetest/RenderControlMatrix;" in driver, "Render control comparison missing")
+    require("Lkr/closeforyou/servicetest/SyntheticPatternObservation;" in driver, "Shared real-API observer missing")
+    require("Lkr/closeforyou/servicetest/PatternModeRunner;" in driver, "Two-mode observation runner missing")
+    require("Lkr/closeforyou/servicetest/PatternModeComparison;" in driver, "Strict final two-mode comparison missing")
+    require("Lkr/closeforyou/servicetest/SyntheticDialogGeometryTest;" in driver, "Synthetic Dialog geometry instrumentation missing")
     require(not any(t.startswith(("Lkr/closeforyou/accessibility/", "Lkr/closeforyou/app/", "Lkr/closeforyou/core/")) for t in driver_refs),
             "External driver must not read target-app process-local singletons")
     require("Lkr/closeforyou/accessibility/capture/ServiceCaptureOptInTest;" not in tests,
             "Service integration test still targets/restarts the real service app")
     require("Lkr/closeforyou/accessibility/testing/SyntheticCaptureTestProvider;" in app, "Debug probe missing")
+    require("Lkr/closeforyou/accessibility/testing/SyntheticPatternProbe;" in app, "Debug pattern inspector missing")
+    require("Lkr/closeforyou/synthetictest/PatternMapping;" in app, "Debug pattern matcher missing")
     if args.release_apk:
         release, _ = dex_classes(args.release_apk)
         require(not any(t.startswith("Lkr/closeforyou/accessibility/testing/") for t in release),
                 "Debug probe leaked into release APK")
+        require(not any(t.startswith("Lkr/closeforyou/synthetictest/") for t in release),
+                "Synthetic pattern implementation leaked into release APK")
         print("PASS: debug probe classes absent from release APK")
     print("PASS: host defines Intrinsics + Kotlin runtime + synthetic Activity/image helper")
     print("PASS: host has no target-app/test-runner references; app and test APKs contain no host")

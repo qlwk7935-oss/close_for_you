@@ -1,6 +1,6 @@
 # A 담당 개발 상태 — 1차 기반과 2차 캡처/OCR
 
-기준일: 2026-10-17. Android 코어와 최초 공통 계약을 제안하는 단계입니다. **실기기·에뮬레이터·TalkBack 시험은 미실시**이며 제조사별 호환성·팝업 감지 성능·사용성 개선을 주장하지 않습니다. 원문 설계와 검증 계획은 보존하고 최신 팀 결정을 적용합니다.
+기준일: 2026-10-17. Android 코어와 최초 공통 계약을 제안하는 단계입니다. 개발 환경에서 실기기·에뮬레이터·TalkBack 시험은 미실시입니다. **사용자 제공 API 37 에뮬레이터 결과는 아래 PR별 기록과 [최신 PR #6 정리](PR6_REVIEW_SCOPE.md)에 별도로 반영**합니다. 이전 절의 미실시/미검증은 당시 개발 환경의 기록이며 후속 사용자 실측과 구분합니다. 제조사별 호환성·팝업 감지 성능·사용성 개선을 주장하지 않습니다. 원문 설계와 검증 계획은 보존하고 최신 팀 결정을 적용합니다.
 
 A 2차는 PR #1 병합 후 최신 `main`(`f52be56`)에서 만든 `feature/core-capture-ocr`입니다. [캡처/OCR 구현·자원 수명·시험 절차](CAPTURE_OCR.md)가 현재 캡처 경로의 상세 기준입니다. 기존 공통 계약은 유지하고 캡처는 별도 동의·앱별 허락 기본 꺼짐으로 연결했습니다.
 
@@ -134,3 +134,105 @@ C02~C06·C09·C10·C12~C14 및 G2~G5는 관련 구현 뒤 시행합니다. C07�
 - 결과: **BUILD SUCCESSFUL in 28s**, 196 tasks(15 실행, 181 up-to-date). JVM **78개**(본 앱 71, 호스트 7), 실패/오류/건너뜀 0. 새 회귀 시험 13개 포함. 본 앱/호스트 debug Lint 오류·경고 0. 본 앱 debug/release·독립 호스트·계측 APK 2개 빌드/컴파일 확인. DEX 패키징 검사 통과 및 release 매니페스트에서 debug provider/시험 권한 부재 확인.
 - 한계: adb 연결 0대, emulator/KVM 없음. 계측 실행 0개. API 37에서 실제 어떤 창/영역이 차단됐는지는 미확정이며 캡처·OCR 성공 주장 없음. 보호를 추측으로 완화하거나 타임아웃을 늘리지 않음.
 - 재시험: [CAPTURE_SESSION_DIAGNOSTICS.md](CAPTURE_SESSION_DIAGNOSTICS.md)의 Windows 설치 4개 APK·연결·전체 시험 명령 및 고정 코드 해석. 합성 앱만 사용하고 실제 개인정보 화면은 제외.
+
+## Dialog OCR 영역과 화면 좌표 출처 수정 (2026-10-17)
+
+- 기준: PR #5 병합 main f72fd0f에서 `fix/dialog-capture-coordinates` 생성.
+- 사용자 보고: API 37에서 후보/F0-A 통과, REGION_NO_BOUNDED_DIALOG·OUTSIDE·API=NONE. 실제 캡처 API/OCR/F0-B 이전의 영역 결정 실패로 확인. 이전 screen bounds가 빈 값인지/회전·컨텍스트 크기 차이인지, 실제 창이 이탈했는지는 좌표/역할 자료가 없어 미확정.
+- 확인한 코드 결함: 일반 Service 컨텍스트의 maximumWindowMetrics를 다른 앱 접근성 screen 좌표의 전체 화면으로 가정. 이 API는 Context의 UI Configuration 기반이고 전체 논리 화면을 보장하지 않음. 기본 Dialog의 이벤트 클래스명과 노드 클래스도 구분해야 함.
+- 수정: 기본 디스플레이를 명시한 WindowContext에서 화면 경계를 읽고 논리 디스플레이 크기/0 원점/읽기 전후 회전을 교차 확인. 불일치는 차단하며 원본 창/노드 경계를 자르거나 이동하지 않음. API 30 생성 경로와 API 31+ 생성 경로 분리. 서비스/화면 구성 변경 때 캐시 초기화. 화면 밖 창은 Dialog 노드로 우회하지 않고 REGION_WINDOW_OUTSIDE로 차단.
+- 진단: 예전 서비스 metrics와 새 경계의 관계, 벗어난 방향, root/창 포함 관계, Dialog 클래스 존재 여부, 고정 합성 Dialog/배경 역할을 같은 시도에서 코드로만 제공. 호스트는 제목만 추가하고 이미지/버튼/창 크기 유지. 제목에 OCR 정답 단어를 넣지 않음. 전체 시험 성공 시 FRAME=VERIFIED 및 실제 합성 Dialog 역할도 검사.
+- 회귀: JVM 9개 추가. API 35/37에서 실제 실행할 화면 출처 검사와 독립 Dialog 기하 검사 계측 2개 추가. 모달 Dialog로 배경 창이 getWindows에 안 나와도 호스트 자신의 decor 노드 ID와 비교하므로 목록 존재를 강제하지 않음. DEX 검사도 새 계측 클래스 2개의 실제 포함 확인.
+- 실행: JDK 17에서 `./gradlew --no-daemon :app:assembleDebug :app:assembleDebugAndroidTest :app:testDebugUnitTest :capture-test-host:testDebugUnitTest :app:lintDebug :capture-test-host:lintDebug :app:assembleRelease`.
+- 결과: 최종 **BUILD SUCCESSFUL in 28s**, 196 tasks(9 실행, 187 up-to-date). JVM **87개**(본 앱 80, 호스트 7), 실패/오류/건너뜀 0. 단위 소스 검증은 이전 동일 명령 실행에서 수행했고 마지막 계측 보강 실행은 변경 없는 unit 결과 재사용. 양쪽 debug Lint 오류·경고 0. 본 앱 debug/release·호스트 및 계측 APK 2개 컴파일 성공. 새 geometry 계측을 포함한 DEX 패키징 검사 통과. release 매니페스트에 debug provider/시험 권한/일반 overlay 권한 없음.
+- 보호 유지: 개인정보 보호/시스템·외부 앱·가림/보안 창/확대/버퍼 크기/동의·앱별 허용/빈도·메모리·타임아웃 유지. 전체 화면 fallback이나 Mock OCR 주입 없음. B·C·D 공통 모델/포트 및 기능 변경 없음.
+- 미검증: adb 연결 0대, emulator/KVM 없음. 신규 계측 2개 포함 전체 계측 8개는 컴파일/패키징만 확인, 기기 실행 0개. API 35/37의 창 실제 경계·캡처 버퍼/이미지·OCR 성공은 주장하지 않음. 파티션/호환 모드/원점·크기 불일치는 임의 변환하지 않고 지원 제한으로 차단.
+- 재시험: [DIALOG_CAPTURE_COORDINATES.md](DIALOG_CAPTURE_COORDINATES.md)에 좌표계 공식 근거, 수정 전후, 고정 진단 해석, API 35/37 Windows 명령을 기록. geometry 계측을 먼저 실행한 후 서비스 재확인 및 사용자 UI 동의를 거쳐 외부 연결/캡처 시험 진행. 합성 화면만 사용.
+
+## PR #6 추가: HardwareBuffer 크기 불일치 조사 (2026-10-17)
+
+- 작업 위치: 기존 `fix/dialog-capture-coordinates`, PR #6. 기준 39c9bed. 새 브랜치/PR 생성 및 main 병합 없음.
+- 사용자 보고(API 37): 화면 출처/독립 Dialog geometry 계측 각각 OK, 서비스/후보/F0-A/FRAME/ROLE 통과. 실제 window 캡처는 onSuccess의 BUFFER_GEOMETRY·REGION_UNCERTAIN에서 멈춤. bounded ROI=window이므로 한 축 이상의 실제 버퍼 크기 불일치는 확인되지만 구체적 크기/원점/원인은 미확정. OCR/F0-B 전 실패.
+- 조사: 공개 API에 buffer 크기=접근성 창 bounds 계약이나 원점/변환 metadata 없음. AOSP는 대상 ViewRootImpl SurfaceControl의 layer 캡처이며 접근성 사각형 crop을 넘기지 않음. WindowLayout은 surface inset/FLAG_SCALED/resize 크기를 고려. CTS는 일반 Activity decor와 버퍼 크기 비교이며 모든 Dialog/compat/rotation의 screen 매핑 증명이 아님.
+- 구현: A 내부 CaptureBufferPolicy에서 실제 buffer width/height/layers/format의 메모리 조건을 Bitmap wrap/복사 전에 우선 검사. exact-size 기존 경로 유지, 모든 불일치/디스플레이 크기/교환 관계는 좌표 대응 미입증으로 계속 차단. 임의 crop/resize/회전/display fallback/Mock OCR 없음.
+- 진단: 같은 시도에서 CAPTURE_BUFFER_RECEIVED 및 축별 MATCH/LARGER/SMALLER, extent/display-sized/swapped, mapping, memory, 실제 HardwareBuffer.close 이후 released만 기록. 원문·픽셀 수·좌표·여백·이미지·OCR 본문 저장/출력 없음. 이전 시도/취소/END 뒤 진단 갱신은 폐기. CPU Bitmap/native OCR lease와 모든 timeout/예산/보호는 유지.
+- 계측: 새 ServiceBufferGeometryOptInTest는 실제 합성 Dialog callback·해제와 안전 거부만 검사하고 OCR 성공을 요구하는 기존 시험과 분리. 버퍼 시험 OK를 OCR 성공으로 취급하지 않음. 공개 decor.z 유무만 별도 보조 관측하며 inset/transform의 증명으로 쓰지 않음. 호스트 UI/elevation/크기 변경 없음. DEX 검사에도 새 시험 포함 확인.
+- 빌드 오류 수정: 처음에는 공개 SDK에 없는 LayoutParams.surfaceInsets 참조로 host 컴파일 실패. 숨겨진 API/반사 사용 없이 공개 decor.z 진단으로 교체. 이어 계측 helper 호출 수신자가 Activity 타입이어서 실패한 부분을 실제 SyntheticPopupActivity 타입으로 명시하여 수정. 최종 실패를 남기지 않음.
+- 최종 실행: JDK 17의 `./gradlew --no-daemon :app:assembleDebug :app:assembleDebugAndroidTest :app:testDebugUnitTest :capture-test-host:testDebugUnitTest :app:lintDebug :capture-test-host:lintDebug :app:assembleRelease` → **BUILD SUCCESSFUL in 1m 17s**, 196 tasks(38 실행, 158 up-to-date).
+- 결과: JVM **99개**(본 앱 92, 호스트 7), 새 회귀 12개 포함, 실패/오류/건너뜀 0. 양쪽 debug Lint 이슈 0. Debug/Release 및 계측 APK 빌드 성공. 새 버퍼 계측 포함 DEX 패키징 검사 및 release의 debug provider/시험 권한/일반 overlay 권한 부재 확인 통과.
+- 한계: adb 기기 0대, emulator/KVM 없음. 계측 총 9개 컴파일/패키징만 확인했고 새 시험의 기기 실행 0개. API 35/37 캡처·OCR 성공 주장 없음. 불일치 buffer-to-screen 변환 지원은 미해결이며 REGION_UNCERTAIN으로 안전하게 거부함. 실제 native stride/driver 할당량은 공개 metadata로 알 수 없어 픽셀 예산을 전체 GPU/RSS 상한으로 표현하지 않음.
+- [WINDOW_CAPTURE_BUFFER.md](WINDOW_CAPTURE_BUFFER.md)에 API/AOSP/CTS 근거, 가능한 원인과 한계, 수정 전후, 고정 코드 및 API 35/37 Windows 설치/연결/버퍼/전체 OCR 명령 기록. B·C·D 공통 모델/인터페이스 변경 없음.
+
+## PR #6 추가: 합성 패턴 기반 버퍼 원점 검증 계측
+
+기존 `fix/dialog-capture-coordinates`에서 작업합니다. 사용자 보고 API 37의 버퍼 전용 시험은 양 축 LARGER, DISPLAY_SIZED=NO, SWAPPED=NO, UNPROVEN_WINDOW, 실제 해제를 확인했습니다. 원점/변환/실제 OCR 성공은 아직 확인되지 않았습니다.
+
+- 추가: `synthetic-test-support`의 순수 PatternMapping/좌표 redaction, 호스트의 SyntheticPatternView 및 명시적 pattern Intent 모드, ServiceSyntheticPatternOptInTest, 합성 JVM 회귀 15개.
+- 연결: debug provider의 일회성 ARM_PATTERN, SyntheticPatternProbe, build variant별 SyntheticBufferInspection. AndroidScreenshotManager에 실제 window callback의 메모리 검사 이후 관측/해제 알림만 추가했습니다. release는 no-op이며 CaptureBufferPolicy·ROI·OCR 수락 조건과 B·C·D 공통 모델/포트는 변경하지 않았습니다.
+- 보호: 기존 signature/caller/동의/단일 호스트 허용, 후보/F0-A/창·노드 경계·토큰 검증을 통과한 실제 callback만 검사. 실제 수치/이미지/원문 저장·출력·외부 전송 없음. 자체 geometry는 안정된 두 pre-draw 후 IPC 메모리로만 전달. 모든 픽셀 참조/배열은 즉시 정리하고 500ms 검사 예산과 END/취소 검사를 추가했습니다.
+- 원인 조사: AOSP의 z 기반 비공개 surface inset 및 surface 크기 증가 경로 확인. 새 기본 Dialog vs 첫 show 전 z=0인 새 Dialog를 비교하되 결과는 고정 코드만 반환. 디바이스 원인은 미확정이며 숨겨진 API/추정 크롭/resize/display fallback/Mock OCR은 없습니다.
+- 패키징: 새 계측/호스트 패턴/본 앱 debug 검사 클래스의 DEX 존재, 독립 런타임과 driver 클래스 분리, release의 패턴 구현/debug provider 부재 검사 보강.
+- 문서: [합성 버퍼 좌표 대응 검증](SYNTHETIC_BUFFER_MAPPING.md)에 변경 이유, 공식 API/AOSP 근거, 고정 코드, API 35/37 Windows 빌드·4개 APK 설치·계측 명령, 남은 제약 기록. CAPTURE_OCR/WINDOW_CAPTURE_BUFFER/CAPTURE_SESSION_DIAGNOSTICS/SERVICE_CAPTURE_TEST에서 연결합니다.
+
+최종 로컬 검증: JDK 17로 `./gradlew --no-daemon :app:assembleDebug :app:assembleDebugAndroidTest :app:testDebugUnitTest :capture-test-host:testDebugUnitTest :app:lintDebug :capture-test-host:lintDebug :app:assembleRelease` 실행, **BUILD SUCCESSFUL (58초, 196 tasks)**. JVM **114개**(본 앱 92 + 호스트 22, 새 회귀 15 포함), 실패/오류/건너뜀 0. 양쪽 debug Lint 이슈 0. 새 계측 포함 Debug/Release·계측 APK 컴파일, DEX 패키징 검사 및 release manifest의 debug provider/시험 권한/일반 overlay 권한 부재 검사 통과.
+
+연결된 adb 기기 0대이며 emulator/KVM이 없어 신규 계측은 **미실행**입니다. API 35/37의 패턴 검증·그림자 가설·실제 캡처/OCR은 미검증으로 유지합니다. 실제 합성 패턴 검증 성공도 일반 앱용 crop 허가나 OCR 성공을 의미하지 않습니다. 큰 버퍼의 REGION_UNCERTAIN 거부는 계속 유지하며, 다음 실제 고정 코드 결과로 원인을 좁혀야 합니다. GitHub Actions 결과는 해당 커밋의 PR #6 Checks에서 별도로 확인합니다. F10/F12/F13 후속 구현과 F6 제외는 유지합니다.
+
+## PR #6 추가: CONTENT_NOT_SYNTHETIC 고정 진단과 두 모드 최종 판정
+
+- 기준: 기존 `fix/dialog-capture-coordinates`의 abfc754, PR #6에서 계속 작업. 사용자 API 37 결과는 DEFAULT의 서비스 연결/ARM/기준점/동일 이동량/decor 포함 이후 콘텐츠 불일치, 실제 버퍼 해제입니다. 기존 assertion 때문에 ZERO는 미실행이었고 원인은 미확정입니다.
+- 조사: AOSP Android 15의 Dialog rounded/inset 배경, Material windowClipToOutline → PhoneWindow/decor, View foreground 및 Bitmap.getPixels의 sRGB/non-premultiplied 계약 확인. corner clipping, decor 덮임, 하드웨어 합성, 색상/읽기 변환은 가능한 원인이며 사용자 API 37 내부의 실제 원인이라고 단정하지 않습니다.
+- 구현: 순수 PatternMapping에서 전체 콘텐츠 검사 중 위치(CORNER/EDGE/INTERIOR) × 알파·색상(TRANSPARENT/PARTIAL/OPAQUE_NEAR_WHITE/OPAQUE_OTHER) 12개 범주 존재만 bit mask로 집계. LANDMARKS/CONTENT_SCAN 단계와 함께 debug provider를 통해 고정 코드만 전달. 실제 위치/RGB/이미지/원문/픽셀 개수 출력·저장 없음. 성공 허용 조건(알파 255, 채널 차이 1 이하), 500ms 예산과 전체 픽셀 검증 유지. 중단된 스캔을 성공으로 보고하지 않음.
+- 관측: 합성 호스트 ARM 시점의 자체 하드웨어/outline/ancestor clipping/foreground 플래그 및 ScreenshotResult/CPU copy의 색 공간 범주만 추가. Dialog 모양, clipping, Paint, 하드웨어 가속 설정은 변경하지 않음.
+- 계측: ServiceSyntheticPatternOptInTest의 모드 내부 assertion을 고정 실패 코드 수집으로 변경. PatternModeRunner가 기본 실패/일반 예외/AssertionError 이후에도 각 세션/Activity 정리와 기존 간격을 거쳐 ZERO 관측을 시도. 두 모드 결과와 elevation 비교를 출력한 후 최종 assertion. 한 모드 실패나 정리 실패는 최종 실패 유지. UNKNOWN=UNKNOWN 또는 어느 모드든 미검증이면 INCONCLUSIVE. 명시적 전체 취소는 전파하고 다음 모드를 실행하지 않음.
+- 보호: 이번 수정은 app/src/main과 app/src/release를 변경하지 않음. F0-A/F0-B, 동의/허용 앱/가림/민감/시스템·보안 창, native/Bitmap 해제, 실제 메모리/캡처 예산/timeout, 프로덕션 버퍼 불일치 거부 및 B·C·D 공통 계약 유지. 임의 crop/resize/tolerance 확대/Mock OCR 없음.
+- 회귀: PatternMappingTest 확장 7개 및 새 PatternModeComparisonTest 11개. 12종 범주, 첫·마지막 불일치 집계, tolerance/알파 경계, 부분 스캔, 양 모드 관측·최종 실패, 예외/취소/불확실 비교 검증. APK 검사에 실제 two-mode runner/comparison DEX 포함 검사 추가.
+- 문서: [SYNTHETIC_CONTENT_DIAGNOSTICS.md](SYNTHETIC_CONTENT_DIAGNOSTICS.md)에 확인 사실/가설, 고정 코드 정의와 한계, 모드별 판정 및 Windows API 35/37 설치·재시험 명령. SYNTHETIC_BUFFER_MAPPING/CAPTURE_OCR에서도 연결.
+
+최종 JDK 17 검증: `./gradlew --no-daemon :app:assembleDebug :app:assembleDebugAndroidTest :app:testDebugUnitTest :capture-test-host:testDebugUnitTest :app:lintDebug :capture-test-host:lintDebug :app:assembleRelease` → **BUILD SUCCESSFUL (28초, 196 tasks)**. JVM **132개**(본 앱 92 + 호스트 40, 새 회귀 18 포함), 실패/오류/건너뜀 0. 양쪽 debug Lint 이슈 0. Debug/Release·계측 APK 컴파일, 독립 런타임/driver 클래스 분리/새 runner DEX 패키징 검사, release 패턴 검사 구현·debug provider/시험 권한/overlay 권한 부재 검사 통과.
+
+연결된 adb 기기가 없어 **수정된 계측의 API 35/37 실행·콘텐츠 불일치 실제 원인·전체 매핑/OCR 성공은 미검증**입니다. Windows에서는 DEFAULT가 같은 이유로 실패해도 ZERO 결과와 INCONCLUSIVE 비교를 먼저 보고한 뒤 JUnit 실패를 유지해야 합니다. CI 결과는 해당 추가 커밋의 PR #6 Checks에서 별도로 확인합니다. 새 PR/자동 병합을 수행하지 않습니다. F10/F12/F13 후속 요구와 F6 제외도 유지합니다.
+
+## PR #6 추가: API 37 모서리 알파의 사각형 Dialog 통제 실험
+
+- 작업 기준: 기존 fix/dialog-capture-coordinates의 4b966f2, 기존 PR #6. 사용자 실제 API 37 결과는 DEFAULT/ZERO 모두 기준점 정렬/전체 스캔 완료, 모서리 알파만 불일치, 실제 z 대비 YES/NO, SRGB, 버퍼 해제입니다. 원인은 미확정이며 기존 두 모드의 실패를 유지합니다.
+- 새 실험: ServiceSyntheticRenderControlsOptInTest가 별도로 ZERO 참조와 ROUND_CLIPPED/ROUND_UNCLIPPED/SQUARE_CLIPPED/SQUARE_UNCLIPPED를 실제 Android Dialog와 기존 실제 window API로 관측합니다. 고정 8px/0px corner radius와 outline flag만 네 통제 사이에서 달리하고 흰색 단색/alpha255, z=0, 창 크기/패턴은 동일하게 유지합니다. Window/GradientDrawable/ViewOutlineProvider의 공개 API만 사용합니다. 일반 한국어 fixture와 기존 DEFAULT/ZERO의 설정/판정을 변경하지 않습니다.
+- 조건 검증: ARM에서 자체 background identity/shape/불투명 단색/radius/clip/provider/z 및 다른 부모 outline을 확인하고 CONTROL_CONFIG/CONTROL_ISSUE 코드만 반환합니다. 네 통제의 자체 상대 layout도 SAME/DIFFERENT/UNKNOWN으로 비교합니다. 실제 측정값은 출력하지 않으며 임시 layout signature의 toString은 redacted이고 finally에서 참조를 해제합니다.
+- 진단 분리: PatternMapping의 기준점/포함 검사로 확인한 임시 ANCHOR_DECOR 관계를 전체 콘텐츠 검증과 분리. 콘텐츠 실패면 ANCHOR_DECOR가 알려져도 최종 DECOR_BUFFER는 UNKNOWN, PATTERN/MODE_RESULT는 계속 실패입니다. 새 정보를 production crop/수락 정책으로 전달하지 않습니다.
+- 판정 분리: 새 실험의 성공 범위는 **사각형 두 통제의 엄격한 전체 픽셀 검증과 실험 관측 조건**입니다. baseline/라운드의 실패는 별도 그대로 보고하며 전체 기본 매핑 성공으로 승격하지 않습니다. 기존 ServiceSyntheticPatternOptInTest는 두 기본 모드 모두 통과를 요구해 현재 실패가 재현되면 계속 JUnit 실패입니다. 새 비교는 검증된 관측/layout/config 아래의 모서리 알파 실패 제거/실패 없음만 코드로 표시하고 불확실하면 INCONCLUSIVE입니다.
+- 안전: 이번 추가 수정에서 app/src/main과 app/src/release, F0-A/F0-B, 동의·허용 앱·가림·민감/시스템/보안 창, buffer/Bitmap 해제, 메모리/캡처 예산/timeout, 불일치 버퍼 거부, B·C·D 계약은 변경하지 않습니다. 색상 허용 오차/전체 픽셀 검증을 유지하고 임의 crop/resize/알파 채움/Mock 버퍼·OCR은 없습니다. 화면 이미지/실제 좌표/RGB/원문을 로그·파일에 저장하지 않습니다.
+- 검증 보강: 새 RenderControlMatrixTest 12개와 PatternMappingTest 3개를 추가. 기본 실패와 square 성공 분리, 사각형 실패/불완전 관측/미검증 설정/다른 layout/취소·예외의 보수적 판정, 원래 두 모드 유지, provisional/최종 진단 분리를 합성 데이터로 검사합니다. APK 검사에 실제 새 계측/공유 관측기/matrix 및 host 통제 클래스 DEX 포함을 추가했습니다.
+- 문서: [SYNTHETIC_RENDER_CONTROLS.md](SYNTHETIC_RENDER_CONTROLS.md)에 실험 변수·판정 범위·해석 조건, API 근거, Windows API 37 및 API 35의 빌드/4개 APK 설치/기존 실패 회귀/별도 통제 명령 기록. 기존 분당 제한을 지키기 위해 두 시험 사이 시간 회복을 기다리고 예산 초기화로 우회하지 않습니다.
+
+최종 JDK 17 실행: `./gradlew --no-daemon :app:assembleDebug :app:assembleDebugAndroidTest :app:testDebugUnitTest :capture-test-host:testDebugUnitTest :app:lintDebug :capture-test-host:lintDebug :app:assembleRelease` → **BUILD SUCCESSFUL (26초, 196 tasks)**. JVM **147개**(본 앱 92/호스트 55), 새 회귀 15개 포함, 실패/오류/건너뜀 0. 양쪽 debug Lint 이슈 0. Debug/Release·계측 APK 컴파일 및 DEX/독립 Kotlin 런타임/driver 분리 검사, release의 합성 검사·host/debug provider·시험/overlay 권한 부재 검사 통과.
+
+연결된 adb 기기가 없어 **새 통제의 API 37/35 실행·사각형 콘텐츠 성공·실제 원인 확정·전체 캡처/OCR은 미검증**입니다. 기기 결과를 확인하기 전에는 특정 렌더링 경로를 확정하지 않습니다. 통제 성공이 관측되어도 그것은 통제 fixture 범위의 근거이며 기존 Dialog/일반 앱의 매핑이나 큰 버퍼 지원을 증명하지 않습니다. CI 결과는 해당 커밋의 PR #6 Checks에서 확인합니다. 새 PR/자동 병합은 수행하지 않습니다. F10/F12/F13 후속 요구와 F6 제외를 유지합니다.
+
+## PR #6 정리: API 37 통제 실측과 병합 검토 범위
+
+위 절의 통제 미실시는 당시 개발 환경의 기록입니다. 이후 **사용자가 Windows Android Studio / Medium Phone API 37.0 에뮬레이터에서 실제 실행한 결과**를 제공했습니다. 개발 환경에서 재실행한 것이 아니며 설치 APK의 정확한 커밋 해시와 API 35 결과는 별도로 확인하지 않았습니다.
+
+| `ServiceSyntheticRenderControlsOptInTest` 모드 | 사용자 실측 |
+|---|---|
+| ZERO_ELEVATION | MAPPING_NOT_VERIFIED |
+| ROUND_CLIPPED | MAPPING_NOT_VERIFIED |
+| ROUND_UNCLIPPED | PASSED |
+| SQUARE_CLIPPED | PASSED |
+| SQUARE_UNCLIPPED | PASSED |
+
+SERVICE_CONNECTION_READY, OBSERVATIONS=COMPLETE, SQUARE_CONTROLS=PASSED, **OK (1 test)**. CLIPPED_RADIUS_CONTRAST/ROUND_CLIP_CONTRAST/THEME_TO_SQUARE_CONTRAST는 CORNER_ALPHA_FAILURE_REMOVED, SQUARE_CLIP_CONTRAST는 NO_CONTENT_FAILURE, PRODUCTION_POLICY는 UNCHANGED입니다. 원본 화면·좌표·RGB·OCR 원문은 기록하지 않습니다.
+
+- 확인 범위: 이 합성 fixture의 둥근 배경 × outline clipping 조합이 모서리 알파 불일치에 관여한다는 통제 근거입니다. 기본/둥근 clipping 실패를 성공 처리하지 않으며 elevation 단독 비교의 INCONCLUSIVE도 유지합니다. 기본 테마 전체 원인·Android 내부 Surface 경로를 확정한 것은 아닙니다.
+- 별개 미해결: 일반 타사 Dialog의 더 큰 HardwareBuffer에서 원점·변환·안전 ROI는 여전히 미입증입니다. 합성 기준점의 대응을 타사 창에 재사용하지 않으며 **REGION_UNCERTAIN 차단 유지**입니다. 실제 한국어 캡처→OCR→F0-B→결과 발행 전체 경로의 성공을 주장하지 않습니다.
+- 병합 검토 범위: 좌표/버퍼의 보수적 검증·안전 중단·개인정보 없는 진단·debug 합성 실험·회귀/패키징 및 문서입니다. 일반 앱 OCR 지원 완료나 전체 계측 suite 성공을 뜻하지 않습니다. 알려진 기본 모드/전체 통합 실패를 남기고 팀 리뷰로 판단할 수 있으며 이번 작업에서 병합하지 않습니다.
+- 후속: [PR6_REVIEW_SCOPE.md](PR6_REVIEW_SCOPE.md)에 공개 API로 확인 가능한 소유 창/PixelCopy/기존 exact-size 경로 및 별도 MediaProjection 설계 후보와 한계를 정리했습니다. 크기 차이 기반 추정 crop/resize, display 자동 fallback, 숨겨진 API, 전체 window OCR로 ROI 보호 우회는 허용하지 않습니다. 후속 API 35/37 전체 OCR 및 보호/취소/메모리/TalkBack 기기 시험은 TODO입니다.
+- 이번 변경은 **문서 5개만**입니다. 테스트의 기존 독립 판정이 요구사항에 맞아 Kotlin/Gradle/매니페스트/공통 계약을 수정하지 않았습니다. F0-A/F0-B, 동의·허용 앱·가림·민감/보안 창·토큰·예산·메모리·버퍼 해제 및 B·C·D 책임을 유지합니다. F10/F12/F13 필수와 F6 제외도 유지합니다.
+
+정리 커밋의 로컬 재검증(JDK 17):
+
+```sh
+./gradlew --no-daemon :app:assembleDebug :app:assembleDebugAndroidTest :app:testDebugUnitTest :capture-test-host:testDebugUnitTest :app:lintDebug :capture-test-host:lintDebug :app:assembleRelease
+python3 -B tools/verify_capture_test_apks.py --release-apk app/build/outputs/apk/release/app-release-unsigned.apk
+```
+
+**BUILD SUCCESSFUL (13초, 196 tasks: 5 executed / 191 up-to-date)**. 기존 JVM 결과 147개(본 앱 92/호스트 55), 실패/오류/건너뜀 0. 양쪽 debug Lint 이슈 0. Debug/Release·계측 APK 빌드 및 DEX의 독립 Kotlin 런타임/driver 분리·release 합성 probe 부재 검사 통과. 문서 변경으로 대부분 작업은 up-to-date이며 새 기기 실행이나 새 런타임 회귀를 수행한 것은 아닙니다. adb 연결 기기 0대입니다. 정리 커밋의 CI는 기존 PR #6 Checks에서 별도 확인하며, 사용자 계측 결과와 CI/로컬 빌드를 구분합니다.

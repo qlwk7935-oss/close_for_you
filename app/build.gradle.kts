@@ -30,6 +30,8 @@ android {
     kotlinOptions {
         jvmTarget = "17"
     }
+    sourceSets.getByName("debug").java.srcDir("../synthetic-test-support/src/main/java")
+
     buildFeatures {
         compose = true
     }

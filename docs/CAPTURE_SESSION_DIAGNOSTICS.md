@@ -1,5 +1,11 @@
 # API 37 캡처·OCR 실패: 세션별 진단과 재시험
 
+최신 추가 계측과 Windows 명령은 [합성 버퍼 좌표 대응 검증](SYNTHETIC_BUFFER_MAPPING.md)을 먼저 확인합니다. 큰 버퍼의 프로덕션 거부 정책은 유지합니다.
+
+> PR #6 기기 후속 결과 BUFFER_GEOMETRY 조사·버퍼 전용 계측 및 최신 Windows 명령은 [WINDOW_CAPTURE_BUFFER.md](WINDOW_CAPTURE_BUFFER.md)를 우선합니다.
+
+> PR #5의 OUTSIDE/REGION_NO_BOUNDED_DIALOG 후속 조사·수정과 최신 API 35/37 명령은 [Dialog 좌표 문서](DIALOG_CAPTURE_COORDINATES.md)를 우선합니다.
+
 기준: PR #4 병합 `main` cf52770 → `fix/capture-session-diagnostics`. 이 문서는 기기 성공 보고서가 아니라 코드 조사와 재시험 절차입니다.
 
 ## 확인한 사실과 아직 모르는 원인

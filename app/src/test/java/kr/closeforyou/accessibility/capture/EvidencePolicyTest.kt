@@ -73,6 +73,48 @@ class EvidencePolicyTest {
         assertEquals(RegionGeometry.EMPTY, PopupRegionResolver.geometry(ScreenBounds(0, 0, 0, 0), screen))
     }
 
+    @Test fun originalBoundedWindowIsUsableWithoutAnyDialogClassNode() {
+        val s = MockPopupFixtures.notice().snapshot
+        val nodes = persistentListOf(s.nodes.first().copy(className = "android.widget.FrameLayout"))
+        val badFrame = s.copy(nodes = nodes, screenBounds = ScreenBounds(0, 0, 0, 0))
+        assertEquals(RegionGeometry.OUTSIDE, PopupRegionResolver.geometry(s.windows.first().bounds, badFrame.screenBounds))
+        assertEquals(CaptureDetail.REGION_WINDOW_OUTSIDE, PopupRegionResolver.inspect(badFrame).detail)
+        val corrected = badFrame.copy(screenBounds = s.screenBounds)
+        val result = PopupRegionResolver.inspect(corrected)
+        assertEquals(CaptureDetail.REGION_WINDOW_BOUNDED, result.detail)
+        assertEquals(s.windows.first().bounds, result.region!!.bounds) // No clipping or synthetic coordinates.
+        assertEquals(s.windows.first(), result.region.window)
+    }
+
+    @Test fun outOfFrameWindowNeverFallsBackToAnInnerDialogEvenByOnePixel() {
+        val s = MockPopupFixtures.notice().snapshot
+        val w = s.windows.first()
+        val screen = s.screenBounds
+        for (box in listOf(ScreenBounds(-1, 0, screen.right, screen.bottom),
+                ScreenBounds(0, -1, screen.right, screen.bottom),
+                ScreenBounds(0, 0, screen.right + 1, screen.bottom),
+                ScreenBounds(0, 0, screen.right, screen.bottom + 1))) {
+            val snapshot = s.copy(windows = persistentListOf(w.copy(bounds = box)),
+                nodes = persistentListOf(s.nodes.first().copy(className = "android.app.Dialog")))
+            val result = PopupRegionResolver.inspect(snapshot, isolatedWindowCapture = true)
+            assertNull(result.region)
+            assertEquals(CaptureDetail.REGION_WINDOW_OUTSIDE, result.detail)
+            assertEquals(box, snapshot.windows.first().bounds)
+        }
+    }
+
+    @Test fun fullScreenActivityAndInvalidDialogNodesStillFailClosed() {
+        val s = MockPopupFixtures.notice().snapshot
+        val full = s.copy(windows = persistentListOf(s.windows.first().copy(bounds = s.screenBounds)))
+        val noDialog = full.copy(nodes = persistentListOf(s.nodes.first().copy(className = "android.widget.FrameLayout")))
+        assertEquals(CaptureDetail.REGION_NO_BOUNDED_DIALOG, PopupRegionResolver.inspect(noDialog).detail)
+        val outside = full.copy(nodes = persistentListOf(s.nodes.first().copy(className = "android.app.Dialog",
+            bounds = ScreenBounds(-1, 0, 300, 600))))
+        assertEquals(CaptureDetail.REGION_DIALOG_OUTSIDE, PopupRegionResolver.inspect(outside).detail)
+        val large = full.copy(nodes = persistentListOf(s.nodes.first().copy(className = "android.app.Dialog", bounds = s.screenBounds)))
+        assertEquals(CaptureDetail.REGION_DIALOG_NOT_BOUNDED, PopupRegionResolver.inspect(large).detail)
+    }
+
     @Test fun captureBudgetSerializesLateCallbacksAndEnforcesIntervalAndRate() {
         var now = 0L
         val budget = CaptureBudget { now }
