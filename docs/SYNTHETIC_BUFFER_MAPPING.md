@@ -1,5 +1,7 @@
 # PR #6: 합성 패턴으로 window 버퍼 좌표 대응 검증
 
+최신 후속: [사각형·라운드 배경과 outline clipping 통제 실험](SYNTHETIC_RENDER_CONTROLS.md). 기존 DEFAULT/ZERO의 실패는 보존하고 통제 성공과 분리합니다.
+
 기존 `fix/dialog-capture-coordinates` / PR #6의 추가 계측입니다. 프로덕션 캡처 허용 정책은 변경하지 않습니다. 이전 [버퍼 크기 조사](WINDOW_CAPTURE_BUFFER.md) 다음 단계입니다. **최신 CONTENT_NOT_SYNTHETIC 진단·두 모드 관측 수정은 [합성 콘텐츠 불일치 조사](SYNTHETIC_CONTENT_DIAGNOSTICS.md)를 먼저 확인합니다.**
 
 ## 확인된 사실과 미확정 사항

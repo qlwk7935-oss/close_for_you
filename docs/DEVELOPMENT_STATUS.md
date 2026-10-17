@@ -192,3 +192,18 @@ C02~C06·C09·C10·C12~C14 및 G2~G5는 관련 구현 뒤 시행합니다. C07�
 최종 JDK 17 검증: `./gradlew --no-daemon :app:assembleDebug :app:assembleDebugAndroidTest :app:testDebugUnitTest :capture-test-host:testDebugUnitTest :app:lintDebug :capture-test-host:lintDebug :app:assembleRelease` → **BUILD SUCCESSFUL (28초, 196 tasks)**. JVM **132개**(본 앱 92 + 호스트 40, 새 회귀 18 포함), 실패/오류/건너뜀 0. 양쪽 debug Lint 이슈 0. Debug/Release·계측 APK 컴파일, 독립 런타임/driver 클래스 분리/새 runner DEX 패키징 검사, release 패턴 검사 구현·debug provider/시험 권한/overlay 권한 부재 검사 통과.
 
 연결된 adb 기기가 없어 **수정된 계측의 API 35/37 실행·콘텐츠 불일치 실제 원인·전체 매핑/OCR 성공은 미검증**입니다. Windows에서는 DEFAULT가 같은 이유로 실패해도 ZERO 결과와 INCONCLUSIVE 비교를 먼저 보고한 뒤 JUnit 실패를 유지해야 합니다. CI 결과는 해당 추가 커밋의 PR #6 Checks에서 별도로 확인합니다. 새 PR/자동 병합을 수행하지 않습니다. F10/F12/F13 후속 요구와 F6 제외도 유지합니다.
+
+## PR #6 추가: API 37 모서리 알파의 사각형 Dialog 통제 실험
+
+- 작업 기준: 기존 fix/dialog-capture-coordinates의 4b966f2, 기존 PR #6. 사용자 실제 API 37 결과는 DEFAULT/ZERO 모두 기준점 정렬/전체 스캔 완료, 모서리 알파만 불일치, 실제 z 대비 YES/NO, SRGB, 버퍼 해제입니다. 원인은 미확정이며 기존 두 모드의 실패를 유지합니다.
+- 새 실험: ServiceSyntheticRenderControlsOptInTest가 별도로 ZERO 참조와 ROUND_CLIPPED/ROUND_UNCLIPPED/SQUARE_CLIPPED/SQUARE_UNCLIPPED를 실제 Android Dialog와 기존 실제 window API로 관측합니다. 고정 8px/0px corner radius와 outline flag만 네 통제 사이에서 달리하고 흰색 단색/alpha255, z=0, 창 크기/패턴은 동일하게 유지합니다. Window/GradientDrawable/ViewOutlineProvider의 공개 API만 사용합니다. 일반 한국어 fixture와 기존 DEFAULT/ZERO의 설정/판정을 변경하지 않습니다.
+- 조건 검증: ARM에서 자체 background identity/shape/불투명 단색/radius/clip/provider/z 및 다른 부모 outline을 확인하고 CONTROL_CONFIG/CONTROL_ISSUE 코드만 반환합니다. 네 통제의 자체 상대 layout도 SAME/DIFFERENT/UNKNOWN으로 비교합니다. 실제 측정값은 출력하지 않으며 임시 layout signature의 toString은 redacted이고 finally에서 참조를 해제합니다.
+- 진단 분리: PatternMapping의 기준점/포함 검사로 확인한 임시 ANCHOR_DECOR 관계를 전체 콘텐츠 검증과 분리. 콘텐츠 실패면 ANCHOR_DECOR가 알려져도 최종 DECOR_BUFFER는 UNKNOWN, PATTERN/MODE_RESULT는 계속 실패입니다. 새 정보를 production crop/수락 정책으로 전달하지 않습니다.
+- 판정 분리: 새 실험의 성공 범위는 **사각형 두 통제의 엄격한 전체 픽셀 검증과 실험 관측 조건**입니다. baseline/라운드의 실패는 별도 그대로 보고하며 전체 기본 매핑 성공으로 승격하지 않습니다. 기존 ServiceSyntheticPatternOptInTest는 두 기본 모드 모두 통과를 요구해 현재 실패가 재현되면 계속 JUnit 실패입니다. 새 비교는 검증된 관측/layout/config 아래의 모서리 알파 실패 제거/실패 없음만 코드로 표시하고 불확실하면 INCONCLUSIVE입니다.
+- 안전: 이번 추가 수정에서 app/src/main과 app/src/release, F0-A/F0-B, 동의·허용 앱·가림·민감/시스템/보안 창, buffer/Bitmap 해제, 메모리/캡처 예산/timeout, 불일치 버퍼 거부, B·C·D 계약은 변경하지 않습니다. 색상 허용 오차/전체 픽셀 검증을 유지하고 임의 crop/resize/알파 채움/Mock 버퍼·OCR은 없습니다. 화면 이미지/실제 좌표/RGB/원문을 로그·파일에 저장하지 않습니다.
+- 검증 보강: 새 RenderControlMatrixTest 12개와 PatternMappingTest 3개를 추가. 기본 실패와 square 성공 분리, 사각형 실패/불완전 관측/미검증 설정/다른 layout/취소·예외의 보수적 판정, 원래 두 모드 유지, provisional/최종 진단 분리를 합성 데이터로 검사합니다. APK 검사에 실제 새 계측/공유 관측기/matrix 및 host 통제 클래스 DEX 포함을 추가했습니다.
+- 문서: [SYNTHETIC_RENDER_CONTROLS.md](SYNTHETIC_RENDER_CONTROLS.md)에 실험 변수·판정 범위·해석 조건, API 근거, Windows API 37 및 API 35의 빌드/4개 APK 설치/기존 실패 회귀/별도 통제 명령 기록. 기존 분당 제한을 지키기 위해 두 시험 사이 시간 회복을 기다리고 예산 초기화로 우회하지 않습니다.
+
+최종 JDK 17 실행: `./gradlew --no-daemon :app:assembleDebug :app:assembleDebugAndroidTest :app:testDebugUnitTest :capture-test-host:testDebugUnitTest :app:lintDebug :capture-test-host:lintDebug :app:assembleRelease` → **BUILD SUCCESSFUL (26초, 196 tasks)**. JVM **147개**(본 앱 92/호스트 55), 새 회귀 15개 포함, 실패/오류/건너뜀 0. 양쪽 debug Lint 이슈 0. Debug/Release·계측 APK 컴파일 및 DEX/독립 Kotlin 런타임/driver 분리 검사, release의 합성 검사·host/debug provider·시험/overlay 권한 부재 검사 통과.
+
+연결된 adb 기기가 없어 **새 통제의 API 37/35 실행·사각형 콘텐츠 성공·실제 원인 확정·전체 캡처/OCR은 미검증**입니다. 기기 결과를 확인하기 전에는 특정 렌더링 경로를 확정하지 않습니다. 통제 성공이 관측되어도 그것은 통제 fixture 범위의 근거이며 기존 Dialog/일반 앱의 매핑이나 큰 버퍼 지원을 증명하지 않습니다. CI 결과는 해당 커밋의 PR #6 Checks에서 확인합니다. 새 PR/자동 병합은 수행하지 않습니다. F10/F12/F13 후속 요구와 F6 제외를 유지합니다.

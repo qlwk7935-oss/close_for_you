@@ -141,3 +141,5 @@ PR #6 추가: window screenshot buffer와 접근성 창 크기의 일반 동등 
 PR #6의 후속 [합성 패턴 계측](SYNTHETIC_BUFFER_MAPPING.md)은 실제 window callback을 debug 세션에서만 검사합니다. 패턴 검증 결과를 프로덕션 크롭/변환/분류 근거로 사용하지 않으며, 불일치 버퍼는 계속 REGION_UNCERTAIN입니다. 일반 한국어 OCR fixture와 B·C·D 계약은 유지합니다.
 
 PR #6의 [콘텐츠 불일치 진단](SYNTHETIC_CONTENT_DIAGNOSTICS.md)은 합성 패턴에만 위치/알파·색상 범주를 추가하고 두 모드 관측 후 최종 실패를 보존합니다. 원인과 전체 매핑은 미확정이며 프로덕션·F0-A/F0-B·캡처/OCR 메모리/해제 정책은 변경하지 않습니다.
+
+PR #6의 [사각형 Dialog 통제 실험](SYNTHETIC_RENDER_CONTROLS.md)은 합성 호스트만 대상으로 합니다. ANCHOR_DECOR는 부분 진단이며 기존 콘텐츠 실패/프로덕션 버퍼 거부를 승격하지 않습니다. F0-A/F0-B와 공통 계약은 유지합니다.

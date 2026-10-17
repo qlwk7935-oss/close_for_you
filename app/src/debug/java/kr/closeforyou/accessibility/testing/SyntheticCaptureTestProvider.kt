@@ -115,6 +115,7 @@ class SyntheticCaptureTestProvider : ContentProvider() {
                     putString("patternCode", report.code.name)
                     putString("patternDecorBuffer", report.decorBuffer.name)
                     putString("patternOuter", report.outer.name)
+                    putString("patternAnchorDecor", report.anchorDecor.name)
                     putString("patternLandmarks", report.landmarks.name)
                     putString("patternContentScan", report.contentScan.name)
                     putStringArrayList("patternMismatches", ArrayList(report.mismatches.sortedBy { it.ordinal }.map { it.name }))

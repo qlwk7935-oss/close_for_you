@@ -67,6 +67,7 @@ def main():
         "Lkr/closeforyou/capturetest/SyntheticNoticeKt;",
         "Lkr/closeforyou/capturetest/SyntheticPatternView;",
         "Lkr/closeforyou/synthetictest/PatternMapping;",
+        "Lkr/closeforyou/synthetictest/SyntheticDialogControl;",
     ):
         require(descriptor in host, "Standalone host missing DEX definition: " + descriptor)
     forbidden_refs = ("Lkr/closeforyou/accessibility/", "Lkr/closeforyou/app/", "Landroidx/test/", "Lorg/junit/")
@@ -85,6 +86,9 @@ def main():
     require("Lkr/closeforyou/servicetest/ServiceCaptureOptInTest;" in driver, "External service driver missing")
     require("Lkr/closeforyou/servicetest/ServiceBufferGeometryOptInTest;" in driver, "Synthetic buffer geometry instrumentation missing")
     require("Lkr/closeforyou/servicetest/ServiceSyntheticPatternOptInTest;" in driver, "Synthetic landmark instrumentation missing")
+    require("Lkr/closeforyou/servicetest/ServiceSyntheticRenderControlsOptInTest;" in driver, "Real Dialog render controls missing")
+    require("Lkr/closeforyou/servicetest/RenderControlMatrix;" in driver, "Render control comparison missing")
+    require("Lkr/closeforyou/servicetest/SyntheticPatternObservation;" in driver, "Shared real-API observer missing")
     require("Lkr/closeforyou/servicetest/PatternModeRunner;" in driver, "Two-mode observation runner missing")
     require("Lkr/closeforyou/servicetest/PatternModeComparison;" in driver, "Strict final two-mode comparison missing")
     require("Lkr/closeforyou/servicetest/SyntheticDialogGeometryTest;" in driver, "Synthetic Dialog geometry instrumentation missing")

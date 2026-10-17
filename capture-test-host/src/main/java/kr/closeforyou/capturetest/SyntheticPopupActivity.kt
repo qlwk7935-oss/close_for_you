@@ -5,7 +5,10 @@ import android.app.Dialog
 import android.os.Bundle
 import android.view.View
 import android.view.ViewGroup
-import kr.closeforyou.synthetictest.PatternRenderHint
+import kr.closeforyou.synthetictest.*
+import android.graphics.Color
+import android.graphics.drawable.GradientDrawable
+import android.view.ViewOutlineProvider
 import android.widget.Button
 import android.widget.ImageView
 import android.widget.LinearLayout
@@ -17,6 +20,12 @@ class SyntheticPopupActivity : Activity() {
     internal var patternArmCode: String = "NOT_ARMED"
         private set
     internal var patternRendering: Set<PatternRenderHint> = emptySet()
+        private set
+    internal var patternControlConfiguration = ControlConfiguration.NOT_REQUESTED
+        private set
+    internal var patternControlIssue = ControlIssue.NONE
+        private set
+    internal var patternLayout: PatternLayoutSignature? = null
         private set
     private var image: android.graphics.Bitmap? = null
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -50,11 +59,25 @@ class SyntheticPopupActivity : Activity() {
 
     private fun showPatternDialog(session: String) {
         val pattern = SyntheticPatternView(this)
+        val requested = intent.getStringExtra("renderControl")
+        val control = if (requested == null) SyntheticDialogControl.NONE else
+            SyntheticDialogControl.entries.firstOrNull { it.name == requested }
+        if (control == null) { patternArmCode = "CONTROL_INVALID"; return }
+        val controlledBackground = if (control == SyntheticDialogControl.NONE) null else GradientDrawable().apply {
+            shape = GradientDrawable.RECTANGLE
+            setColor(Color.WHITE)
+            cornerRadius = control.radius
+        }
         val owned = Dialog(this).apply {
             setTitle("합성 이미지 창")
             setContentView(pattern)
             window?.setWindowAnimations(0)
-            if (intent.getBooleanExtra("zeroElevation", false)) {
+            if (controlledBackground != null) {
+                window?.setBackgroundDrawable(controlledBackground)
+                window?.setClipToOutline(control.clipped)
+                window?.decorView?.outlineProvider = ViewOutlineProvider.BACKGROUND
+            }
+            if (intent.getBooleanExtra("zeroElevation", false) || controlledBackground != null) {
                 // Fresh Dialog before its first show: do not reuse a surface with preserved insets.
                 window?.decorView?.apply { elevation = 0f; translationZ = 0f }
             }
@@ -82,6 +105,12 @@ class SyntheticPopupActivity : Activity() {
                     pattern.viewTreeObserver.removeOnPreDrawListener(this)
                     previousGeometry = null
                     patternRendering = renderingHints(pattern, decor)
+                    patternLayout = PatternLayoutSignature.from(PatternPlan(node.windowId,
+                        PatternRect(geometry[1], geometry[2], geometry[3], geometry[4]),
+                        PatternRect(geometry[5], geometry[6], geometry[7], geometry[8]), decor.z > 0f))
+                    patternControlIssue = if (controlledBackground == null) ControlIssue.NONE else controlIssue(pattern, decor, controlledBackground, control)
+                    patternControlConfiguration = if (controlledBackground == null) ControlConfiguration.NOT_REQUESTED else
+                        if (patternControlIssue == ControlIssue.NONE) ControlConfiguration.VERIFIED else ControlConfiguration.UNVERIFIED
                     val extras = Bundle().apply {
                         // Ephemeral private IPC only. Never attach this Bundle to status/assertions/logs.
                         putIntArray("ownedGeometry", geometry)
@@ -97,6 +126,27 @@ class SyntheticPopupActivity : Activity() {
         })
         owned.show()
         owned.window?.setLayout(minOf(resources.displayMetrics.widthPixels - 80, 1200), 420)
+    }
+
+    /** Verify requested public properties at ARM; never disable other parent clipping or resize. */
+    private fun controlIssue(content: View, decor: View, background: GradientDrawable,
+        control: SyntheticDialogControl): ControlIssue {
+        if (decor.background !== background) return ControlIssue.BACKGROUND_IDENTITY
+        if (background.shape != GradientDrawable.RECTANGLE) return ControlIssue.BACKGROUND_SHAPE
+        if (background.color?.defaultColor != Color.WHITE || background.alpha != 255 ||
+            background.colors != null || background.colorFilter != null) return ControlIssue.BACKGROUND_OPACITY
+        if (background.cornerRadius != control.radius) return ControlIssue.CORNER_RADIUS
+        if (decor.clipToOutline != control.clipped) return ControlIssue.DECOR_OUTLINE
+        if (decor.outlineProvider !== ViewOutlineProvider.BACKGROUND) return ControlIssue.OUTLINE_PROVIDER
+        if (decor.z != 0f) return ControlIssue.ELEVATION
+        if (content.clipToOutline) return ControlIssue.CONTENT_OUTLINE
+        var parent = content.parent
+        var depth = 0
+        while (parent is View && parent !== decor && depth++ < 30) {
+            if (parent.clipToOutline) return ControlIssue.ANCESTOR_OUTLINE
+            parent = parent.parent
+        }
+        return if (parent === decor) ControlIssue.NONE else ControlIssue.ANCESTOR_UNCONFIRMED
     }
 
     /** Read-only, owned-view hints at ARM. These do not prove which drawing step changed a pixel. */

@@ -1,5 +1,7 @@
 # PR #6: 합성 콘텐츠 불일치 진단과 두 모드 관측
 
+최신 후속: [사각형·라운드 배경과 outline clipping 통제 실험](SYNTHETIC_RENDER_CONTROLS.md). 기존 DEFAULT/ZERO의 실패는 보존하고 통제 성공과 분리합니다.
+
 기존 `fix/dialog-capture-coordinates` / PR #6에서 계속 작업합니다. [버퍼 좌표 대응 계측](SYNTHETIC_BUFFER_MAPPING.md)의 후속이며 프로덕션 캡처 정책 변경이나 main 병합이 아닙니다.
 
 ## 실제 결과로 확인한 범위

@@ -157,4 +157,23 @@ class PatternMappingTest {
         assertTrue(report.mismatches.isEmpty())
     }
 
+    @Test fun alignedDecorRelationIsDiagnosticEvenWhenCornerContentFails() {
+        val report = inspect { x, y, p -> if (x == 30 && y == 40) 0x80ffffff.toInt() else p }
+        assertEquals(LandmarkCheck.ALIGNED, report.landmarks)
+        assertEquals(DecorBufferRelation.INSET_ALL, report.anchorDecor)
+        assertEquals(DecorBufferRelation.UNKNOWN, report.decorBuffer)
+        assertEquals(PatternCode.CONTENT_NOT_SYNTHETIC, report.code)
+    }
+    @Test fun fullValidationAgreesWithAnchorRelationWithoutChangingIt() {
+        val report = inspect()
+        assertEquals(PatternCode.TRANSLATION_VERIFIED, report.code)
+        assertEquals(report.decorBuffer, report.anchorDecor)
+    }
+    @Test fun unalignedOrOutsideDecorDoesNotPublishAnchorRelation() {
+        assertEquals(DecorBufferRelation.UNKNOWN, inspect { _, _, p ->
+            if (p == PatternMapping.colors[0]) PatternMapping.WHITE else p
+        }.anchorDecor)
+        assertEquals(DecorBufferRelation.UNKNOWN, inspect(240, 180, -1, -1).anchorDecor)
+    }
+
 }

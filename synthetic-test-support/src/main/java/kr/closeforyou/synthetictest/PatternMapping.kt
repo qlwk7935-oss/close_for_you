@@ -33,6 +33,8 @@ enum class ContentMismatch {
 }
 data class PatternReport(val code: PatternCode, val decorBuffer: DecorBufferRelation = DecorBufferRelation.UNKNOWN,
     val outer: OuterPixels = OuterPixels.UNKNOWN,
+    /** Provisional relation from aligned landmarks only; never authorizes a crop. */
+    val anchorDecor: DecorBufferRelation = DecorBufferRelation.UNKNOWN,
     val landmarks: LandmarkCheck = LandmarkCheck.NOT_VERIFIED,
     val contentScan: ContentScan = ContentScan.NOT_RUN,
     val mismatches: Set<ContentMismatch> = emptySet(),
@@ -105,12 +107,17 @@ object PatternMapping {
         val decor = plan.decor.shifted(dx, dy)
         val content = plan.content.shifted(dx, dy)
         if (!PatternRect(0, 0, width, height).contains(decor)) return PatternReport(PatternCode.DECOR_OUTSIDE_BUFFER, landmarks = LandmarkCheck.ALIGNED)
+        val relation = when {
+            decor.left == 0 && decor.top == 0 && decor.right == width && decor.bottom == height -> DecorBufferRelation.EXACT
+            decor.left > 0 && decor.top > 0 && decor.right < width && decor.bottom < height -> DecorBufferRelation.INSET_ALL
+            else -> DecorBufferRelation.INSET_SOME
+        }
         // Inspect all known content pixels within the existing deadline; do not stop at the first
         // mismatch or allocate per-pixel diagnostic objects. Even one mismatch still rejects it.
         var mismatchMask = 0
         for (y in 0 until content.height) {
             if (!stillValid()) return PatternReport(PatternCode.INSPECTION_INTERRUPTED,
-                landmarks = LandmarkCheck.ALIGNED, contentScan = ContentScan.INTERRUPTED,
+                anchorDecor = relation, landmarks = LandmarkCheck.ALIGNED, contentScan = ContentScan.INTERRUPTED,
                 mismatches = mismatchCodes(mismatchMask))
             for (x in 0 until content.width) {
                 val index = markers.indexOfFirst { x >= it.left && x < it.right && y >= it.top && y < it.bottom }
@@ -122,17 +129,12 @@ object PatternMapping {
             }
         }
         if (mismatchMask != 0) return PatternReport(PatternCode.CONTENT_NOT_SYNTHETIC,
-            landmarks = LandmarkCheck.ALIGNED, contentScan = ContentScan.COMPLETE,
+            anchorDecor = relation, landmarks = LandmarkCheck.ALIGNED, contentScan = ContentScan.COMPLETE,
             mismatches = mismatchCodes(mismatchMask))
-        val relation = when {
-            decor.left == 0 && decor.top == 0 && decor.right == width && decor.bottom == height -> DecorBufferRelation.EXACT
-            decor.left > 0 && decor.top > 0 && decor.right < width && decor.bottom < height -> DecorBufferRelation.INSET_ALL
-            else -> DecorBufferRelation.INSET_SOME
-        }
         var transparent = false; var opaque = false
         for (y in 0 until height) {
             if (!stillValid()) return PatternReport(PatternCode.INSPECTION_INTERRUPTED,
-                landmarks = LandmarkCheck.ALIGNED, contentScan = ContentScan.COMPLETE)
+                anchorDecor = relation, landmarks = LandmarkCheck.ALIGNED, contentScan = ContentScan.COMPLETE)
             for (x in 0 until width) {
                 if (x >= decor.left && x < decor.right && y >= decor.top && y < decor.bottom) continue
                 if (pixel(x, y) ushr 24 == 0) transparent = true else opaque = true
@@ -141,6 +143,6 @@ object PatternMapping {
         val outer = when { transparent && opaque -> OuterPixels.MIXED; transparent -> OuterPixels.TRANSPARENT
             opaque -> OuterPixels.NONTRANSPARENT; else -> OuterPixels.NONE }
         return PatternReport(PatternCode.TRANSLATION_VERIFIED, relation, outer,
-            landmarks = LandmarkCheck.ALIGNED, contentScan = ContentScan.COMPLETE)
+            anchorDecor = relation, landmarks = LandmarkCheck.ALIGNED, contentScan = ContentScan.COMPLETE)
     }
 }
