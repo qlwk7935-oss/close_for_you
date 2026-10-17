@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- C(ui/voice) 디버그 빌드 전용 문장. 배포용(release) 앱에는 들어가지 않는다. -->
+<resources>
+    <string name="ui_debug_preview_label">닫아줄게 C 미리보기</string>
+    <string name="ui_debug_preview_title">선택 창 미리보기 (개발용, 가짜 데이터)</string>
+    <string name="ui_debug_section_scenario">가짜 팝업 고르기</string>
+    <string name="ui_debug_section_prompt">선택 창</string>
+    <string name="ui_debug_section_result">만들어진 선택 (UserChoice)</string>
+    <string name="ui_debug_result_none">아직 누른 버튼이 없어요.</string>
+    <string name="ui_debug_result">종류 %1$s · 버튼 ID %2$s · 의미 확인 %3$s · 반복 허락 %4$s</string>
+    <string name="ui_debug_none">없음</string>
+    <string name="ui_debug_scenario_advertisement">광고</string>
+    <string name="ui_debug_scenario_notice">공지</string>
+    <string name="ui_debug_scenario_changed_notice">날짜 바뀐 공지</string>
+    <string name="ui_debug_scenario_decision">중요 결정 (결제 동의)</string>
+    <string name="ui_debug_scenario_unlabeled">라벨 없는 버튼</string>
+    <string name="ui_debug_scenario_video">영상 (광고 여부 미확인)</string>
+</resources>

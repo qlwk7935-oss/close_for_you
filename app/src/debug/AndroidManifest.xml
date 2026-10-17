@@ -10,5 +10,15 @@
             android:authorities="${applicationId}.syntheticcapturetest"
             android:exported="true"
             android:permission="kr.closeforyou.permission.SYNTHETIC_CAPTURE_TEST" />
+        <!-- C(ui/voice): debug-only "닫을까요?" prompt preview with synthetic fixtures. No real screen data or actions. -->
+        <activity
+            android:name="kr.closeforyou.ui.voice.debug.ChoicePreviewActivity"
+            android:exported="true"
+            android:label="@string/ui_debug_preview_label">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
     </application>
 </manifest>
