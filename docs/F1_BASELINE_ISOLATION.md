@@ -2,6 +2,14 @@
 
 현재 작업은 `feature/f1-popup-detection` / 기존 PR #7입니다. F1 정확도 검증 완료나 baseline 복구를 보고하는 문서가 아닙니다.
 
+## 2b407da 사용자 실제 실행 결과
+
+독립 ServiceBaselineIsolationOptInTest는 **OK (1 test)**였습니다. ORIGINAL_SCROLL 안정 구간은 MALFORMED_ONLY이며 REVERSED_Y/NOT_VISIBLE/SCROLL_ANCESTOR/DESCENDANT가 OLDER에서도 지속됐습니다. MINIMAL 시작 구간은 READY_ONLY/FRAME=MIXED(LEFT 초과 후 VALID/BASELINE_ONLY), 안정 구간은 READY_ONLY/VALID_ONLY/NO_POPUP/ORDINARY_CONTENT_CHANGE였습니다. 최소 화면의 SCROLLER/CLIPPED_DESCENDANT/MALFORMED_NATIVE는 NO였습니다.
+
+실제 비교 결과는 MALFORMED_ISOLATED_TO_SCROLL / SCROLL_FRAME=UNOBSERVED / MINIMAL_FRAME=VALID_ONLY입니다. 다른 시점의 UiAutomation 창/논리 화면 일치는 서비스 실패를 정상으로 바꾸지 않습니다. 원래 14개 회귀는 **FAILURES / UNOBSERVED=14 / DETECTION_SUCCESS=0 / OCR=NOT_TESTED / ACTIONS=NONE**입니다. 별도 시도의 TIME_LIMIT/TARGET_MISSING도 있습니다.
+
+이는 사용자 제공 실측이며 개발 환경에서 재실행한 결과가 아닙니다. 아래의 이전 f79ad2d 조사와 새 계측 설명은 당시 기록입니다. [보호/geometry 계약 검토](F1_PROTECTION_GEOMETRY_CONTRACT_REVIEW.md)에 새 실측의 확정 범위, 운영 차단을 유지하는 구체적 이유, A 내부 모델/팀 합의/필수 회귀 및 별개 창/한도 문제를 정리했습니다. 문서 변경만으로 반복 재시험을 요구하지 않습니다.
+
 ## 사용자 API 37 실측과 남은 질문
 
 `f79ad2d` 실측은 SERVICE_CONNECTION_READY 이후 14개 시나리오가 BASELINE_BLOCKED/UNOBSERVED=14입니다. 실제 서비스에서 REVERSED_Y / NOT_VISIBLE / SCROLL_ANCESTOR / DESCENDANT의 MALFORMED_NODE_BOUNDS가 반복됐고, 별도 native View에서도 안정된 ScrollView의 보이지 않는 자식에 REVERSED_Y가 관측됐습니다. 이는 이전 [AOSP clipping 조사](F1_BOUNDS_INVESTIGATION.md)와 일치하는 실제 합성 fixture 근거입니다.

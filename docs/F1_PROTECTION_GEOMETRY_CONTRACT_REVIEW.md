@@ -1,0 +1,136 @@
+# PR #7: 보호 검사와 geometry 완전성 계약 검토
+
+결론: **현재 운영 차단을 유지합니다.** 이번 변경은 문서뿐입니다. 새로운 부분 수집 경로, 진단 패치, 모델/게이트/시간 제한/14개 시험 변경은 없습니다. 아래 타입과 게이트는 합의를 위한 설계안이며 구현된 API가 아닙니다.
+
+## 1. 이번 실제 API 37 결과가 확인한 것
+
+사용자 제공 `2b407da` 실측이며 개발 환경에서 직접 재실행한 결과가 아닙니다.
+
+| 시험/구간 | 실제 결과 | 해석 한계 |
+|---|---|---|
+| 독립 비교 전체 | OK (1 test) | 대조 관측 완료. F1 정확도/운영 수집 복구 아님 |
+| ORIGINAL_SCROLL / OBSERVED_STABLE | MALFORMED_ONLY, REVERSED_Y/NOT_VISIBLE/SCROLL_ANCESTOR/DESCENDANT, bounds age OLDER | 역전 노드 거부는 시작 직후에만 생기는 현상이 아님 |
+| MINIMAL / LAUNCH_WINDOW | READY_ONLY, FRAME=MIXED. LEFT 초과 후 VALID/BASELINE_ONLY | 같은 fixture에서도 시도별 창 관계가 달랐음. 애니메이션 원인 확정 아님 |
+| MINIMAL / OBSERVED_STABLE | READY_ONLY, VALID_ONLY, NO_POPUP/ORDINARY_CONTENT_CHANGE | 이 대조 화면/구간의 완전 수집 및 비후보 관측. 일반 앱 보증 아님 |
+| MINIMAL native | SCROLLER=NO, CLIPPED_DESCENDANT=NO, MALFORMED_NATIVE=NO | 대조 화면이 의도한 조건을 충족함 |
+| 독립 UiAutomation | 두 fixture 모두 관측 시 창/논리 화면 일치 | 실제 서비스와 다른 샘플. 서비스 실패를 취소하거나 그 시도가 정상이라고 해석할 수 없음 |
+| 독립 비교 결론 | MALFORMED_ISOLATED_TO_SCROLL, SCROLL_FRAME=UNOBSERVED, MINIMAL_FRAME=VALID_ONLY | Scroll의 안정 구간은 snapshot 거부로 F1 frame 판정까지 못 갔음. UNOBSERVED는 VALID가 아님 |
+| 원래 F1 14개 | FAILURES, UNOBSERVED=14, DETECTION_SUCCESS=0, OCR=NOT_TESTED/ACTIONS=NONE | baseline에서 멈춰 감지율/미탐/오탐 평가 불가 |
+
+원래 시험의 지속적인 malformed, 다른 시도의 WINDOW_OUTSIDE_FRAME(RIGHT 또는 RIGHT,BOTTOM), 일부 TIME_LIMIT 및 TARGET_MISSING은 각각 별도 사실입니다. LEFT와 RIGHT/BOTTOM을 한 화면의 이동량/변환으로 합치지 않습니다.
+
+## 2. 현재 코드에서 정확히 막힌 위치
+
+- `core/model/PopupModels.kt`: `ScreenBounds`는 성분 순서를 요구합니다. `NodeSnapshot.bounds`는 필수이며 `SnapshotCompleteness`에는 COMPLETE/TRUNCATED만 있습니다. '트리는 모두 읽었지만 특정 geometry를 표현할 수 없음'을 담을 필드가 없습니다.
+- `AndroidSnapshotCollector`: 전체 보호 pass를 먼저 수행하고 snapshot pass의 해당 노드도 다시 inspect합니다. 이후 malformed Rect에서 전체 결과를 거부합니다. 따라서 이 실패가 전체 보호 순회를 건너뛰었다는 뜻은 아니지만, 두 pass가 같은 순간의 원자적 화면이라는 뜻도 아닙니다.
+- `CollectionResult.Ready`는 `PopupSnapshot`과 `DetectionFrame`을 함께 요구합니다. malformed를 그대로 보존한 NodeSnapshot을 현재 생성할 수 없습니다.
+- `PopupCandidateDetector`: 구조 지문, 원래 path/조상, scrollable 조상, 의미 있는 Dialog/pane와 underlay를 사용합니다. 현재 frame에는 '제외된 geometry가 있음'이라는 coverage가 없고, bounded-window 분기는 outline 평가보다 먼저 후보를 만들 수 있습니다. 부분 frame을 그대로 넣으면 안전한 불확실성 처리가 보장되지 않습니다.
+- `CloseForYouAccessibilityService`: Ready의 평가가 후보이면 Runtime.begin 후 pipeline을 호출하고, 완료 결과를 공통 Candidate로 발행합니다. 보호 전용 결과를 Ready로 위장하면 이 기존 연결 경로에 들어갑니다.
+- `EvidencePolicy`는 COMPLETE가 아니면 거부합니다. 그러나 `CaptureOcrPipeline.partial()`도 접근성 노드 정보로 Ready 분석을 만들 수 있으므로, 'TRUNCATED/INCOMPLETE_EVIDENCE를 붙여 넘기면 모든 downstream이 알아서 막는다'는 설계는 충분하지 않습니다. 불완전 관측은 기존 pipeline **호출 이전**에 차단해야 합니다.
+- 원래 14개 baseline은 실제 collection 결과를 요구하고, 하나라도 block이면 실패합니다. 현재 관측 bridge는 full Ready 이후의 assessed만 기록합니다. 부분 결과를 새 assessed로 세어 기존 baseline을 통과시키는 것은 기존 의미를 바꾸므로 이번에는 하지 않습니다.
+
+숨김 노드를 삭제하면 원래 childCount와 DTO 목록/경로/지문이 어긋날 수 있고, 부모 geometry가 잘못됐어도 자식 버튼/팝업 의미가 존재할 수 있습니다. 경계를 정렬하거나 0 크기로 채우는 것은 원시 증거를 바꿉니다. 현재 화면·기존 COMPLETE·노드 보존·geometry 불완전 시 비승격을 모두 유지하면서 이 Scroll baseline을 기존 Ready로 만드는 수정은 입증되지 않았습니다.
+
+## 3. A 내부 분리 설계안 — 공개 계약 변경 없이 가능한 범위
+
+다음은 **미구현 설계**입니다. 운영 사용 이득 없이 처리량/상태만 늘리지 않도록, 합의·회귀 전에 collector에 연결하지 않았습니다.
+
+```text
+PrivateObservation  // A만 소유. PopupSnapshot/PopupAnalysis/ActionRequest 타입이 아님
+  epoch, originalTarget, transientLifetime
+  treeCoverage: COMPLETE | INCOMPLETE
+  protectionChecks: COMPLETED_WITHOUT_BLOCK | INCOMPLETE
+  geometryCoverage: COMPLETE | INCOMPLETE
+  nodes: 모든 NodeRecord, 원래 순서 그대로
+  privateStructureDigest, privateContentDigest, fingerprintSchema
+
+NodeRecord
+  originalPath, parentPath, siblingOrdinal, originalChildCount
+  viewId/class, clickable/enabled, 원래 action/팝업 의미/가시성/scroll 근거
+  원래 text/description (A의 짧은 RAM 수명, 외부 전달/저장/출력 금지)
+  geometry: Valid(ScreenBounds) | Unusable(originalRawRect, axisShape)
+```
+
+RawRect는 순서 제약을 강요하지 않는 A 전용 불변 네 성분입니다. 화면 원문·원시 좌표·private digest·실제 ID를 진단/IPC/파일/DB에 전달하지 않습니다. Android node는 원래 순회 수명 안에서 해제합니다. geometry unusable 노드도 NodeRecord에서 삭제하지 않고 모든 자식을 계속 보호 검사해야 합니다. 패스워드/입력/민감/불확실 텍스트를 발견하거나 필드/자식/시간·개수 제한 검사에 실패하면 전체 폐기하며 '보호 완료'를 발급하지 않습니다. 가시성은 geometry의 사용 근거 중 하나일 뿐 보호 검사 면제가 아닙니다.
+
+COMPLETED_WITHOUT_BLOCK은 검사들이 완료됐다는 뜻이며 개인정보 없음의 보증/실행 권한이 아닙니다. 화면 변경/터치/만료/미확인 자식/수집 실패 시 전체 관측·지문·파생 결과를 폐기합니다. 같은 앱 배경 트리의 보호도 그대로 포함합니다.
+
+### identity·지문 호환
+
+- 현재 사용 중인 collection-local path/viewId/class 기반 identity와 원래 부모·자식 순서/childCount를 그대로 보존합니다. 삭제·재번호 매김·잘못된 부모 경계를 이유로 자식 생략을 허용하지 않습니다. identity가 전역적으로 안정됐다고 주장하지 않습니다.
+- V1으로 변환 가능한 완전 관측에서는 구조/본문 지문의 필드 순서·null/length 인코딩·salt·본문 기여를 기존과 동일하게 유지하고 byte-level 동등성을 시험해야 합니다.
+- unusable 원시 성분을 해시할 때도 버리거나 정렬하지 않습니다. V1이 만들 수 없던 관측에 기존과 호환되는 지문이 있다고 주장하지 않습니다. 별도 schema/namespace가 필요한지 합의하고, 그 private 지문으로 D 규칙을 조회/저장하거나 B의 동일 팝업 검증을 통과시키지 않습니다.
+
+### 변환·분석 게이트
+
+| 경계 | 허용 조건/실패 동작 |
+|---|---|
+| PrivateObservation → V1 PopupSnapshot | 전체 노드/보호 검사/geometry가 모두 완전하고 현재 세대·대상·창 검증을 통과한 경우만. 기존 V1을 그대로 생성. 그 외 기존 Blocked 유지 |
+| PrivateObservation → F1 내부 분석 | tree/protection incomplete이면 분석 금지. geometry incomplete이면 bounded-window/pane/underlay 분기 **이전**에 불확실로 종료하고 baseline 폐기. confirmed popup/NO_POPUP 확정 금지 |
+| 불완전 관측 → B/C/D | 노드·원문·버튼 후보·지문·실행 가능한 토큰 전달 금지. 합의된 고정 상태 코드만 검토 가능 |
+| 불완전 관측 → capture/OCR/pipeline | 호출 금지. F0-A 완료만으로 F0-B/ROI/버퍼 좌표/동의 검증을 대체하지 않음 |
+| 불완전 관측 → 사용자 명령/규칙/실행 | 모두 금지. B의 선택/기억 결과로 승격할 수 없고 A의 최종 실제 화면 재검증도 그대로 필요 |
+
+이 분리는 정보를 잃지 않고 거부 이유를 표현하는 설계입니다. **geometry가 여전히 불완전한 Scroll 화면을 팝업 탐지/정상 baseline으로 지원 완료하는 해법은 아닙니다.** 새 관측 상태를 기존 baseline의 성공으로 해석하지 않습니다.
+
+## 4. 팀 합의 항목 — 이번에는 적용하지 않음
+
+| 항목 | 구체적인 합의 내용/담당 영향 |
+|---|---|
+| A 내부 중간 표현 | NodeRecord/Unusable 원시 경계/coverage/짧은 수명·폐기, V1 adapter의 필수 조건. public V1을 유지하면 BCD 코드 변경 없이 내부에만 둘 수 있음 |
+| 비공개 F1 coverage | 부분 geometry를 항상 불확실로 끝내고 Candidate로 발행하지 않는 상태 모델. 현재 DetectionFrame/Assessment에는 이를 표현하는 필드/사유가 없으므로 A 내부 변경과 회귀 필요 |
+| C의 고정 불확실 상태 | 필요하다면 기존 PARTIAL_INFORMATION/token 없음 경로를 재사용할 수 있는지 C와 합의. 원문/부분 snapshot을 보내거나 음성 UI를 A가 대신 구현하지 않음 |
+| D 진단/지문 | 보호 차단과 geometry 미확인을 구분할 고정 코드가 필요하면 SafeDiagnostics enum 변경을 D와 합의. private 지문은 저장/규칙 조회하지 않음. 기존 RuleKey 호환성을 임의로 변경하지 않음 |
+| B의 입력 계약 | 현재 incomplete observation은 아예 전달하지 않는 안을 우선함. 향후 별도 read-only 타입이 필요해도 Candidate/CloseCandidate와 혼용 금지 및 미확인 시 deny를 B와 합의. NodeSnapshot.bounds를 nullable로 바꾸는 단독 변경은 금지 |
+| QA 관측/완전성 | protection-complete/geometry-incomplete의 별도 관측 지표가 필요하면 A/D가 버전·실패 의미 합의. 원래 14개 시험을 이 상태로 통과시키지 않음. 기존 COMPLETE/정답 정의 변경은 이 작업의 승인 범위가 아님 |
+
+공통 모델/계약 변경 없이 가능한 비공개 분리와, 공개 상태/지문/수집 완전성 의미를 바꾸는 합의 사항을 구별합니다. 이 문서의 예시 이름을 새 enum/API가 이미 추가됐다는 뜻으로 사용하지 않습니다.
+
+## 5. 구현 전 필요한 회귀와 허용 기준
+
+| 시험 | 반드시 유지할 결과 |
+|---|---|
+| 숨긴 암호/입력/민감 텍스트 + 역전 경계 | geometry 분석보다 보호 검사. 전체 거부, 원문/IR/분석 외부 전달 없음 |
+| malformed 부모 + 유효한 자식 버튼 / 가려진 팝업 의미 노드 | 자식·action·의미·토폴로지 보존. partial geometry이면 F1 불확실 및 모든 downstream 금지 |
+| 정상 Dialog와 malformed 노드 동시 존재 | 정상 Dialog를 놓치지 않았다고 주장하거나 window shortcut으로 popup 확정하지 않음. 전체 incomplete를 명시 |
+| 모든 geometry 유효한 V1 fixture | 기존 snapshot/구조·본문 지문 필드 byte 동등성, 기존 분류/후보·규칙/토큰 계약 보존 |
+| hidden/visible flag 변화, path 재사용, 순회 중 자식/본문/창 변경 | 원래 identity·세대/본문 검증 유지, 불일치 폐기. 재시도/좌표 fallback 없음 |
+| missing child/getter 실패/node·depth·time 한도 | protection incomplete, 전체 폐기. 임계값 확대 없음 |
+| incomplete IR에 사용자 명령/기억 규칙 적용 | Candidate/B 후보·캡처/OCR·실행 호출 횟수0. 단순 NO_POPUP으로 승격하지 않음 |
+| 취소/터치/설정 철회/연결 해제/만료 | private 원문/원시 경계·모든 파생 참조 폐기, stale 결과 발행 없음 |
+
+합성 JVM에서 순서·보존·게이트를 확인한 뒤 실제 Android API35/37의 원격 노드·가상 자식·민감 필드(합성)·창 전환·한도/취소 회귀가 필요합니다. 현재 실측은 native clipping 현상과 안전 거부를 확인했지만, 위 새 중간 표현/adapter/게이트는 구현·시험하지 않았습니다.
+
+## 6. 별개 창 geometry: 같은 시도와 같은 시점은 다름
+
+현재 collector의 읽기 순서는 root → service.windows/WindowSnapshot → window metadata → AndroidScreenGeometry.read → 두 tree pass → DetectionFrame 구성입니다. WindowSnapshot과 frame은 한 capture 호출에 속하지만 Android가 원자적 화면 한 장으로 묶어 제공한 값은 아닙니다. ScreenGeometry.read의 before/after logical size/rotation 교차 검사는 그 frame 읽기 자체의 일관성만 검사하며, 앞에서 얻은 window bounds의 시점까지 보증하지 않습니다.
+
+UiAutomation/host 샘플은 다른 연결·시점입니다. MINIMAL 시작 시도의 LEFT 초과와 안정 구간의 유효성, Scroll의 별도 RIGHT/RIGHT,BOTTOM 초과는 실제로 달랐던 관측입니다. 이 차이는 읽기 시점/창 상태/캐시·region/좌표 변환 경로 중 어디에서든 발생할 가능성이 있지만 **현재 코드와 출력만으로 어느 원인인지 확정하지 못합니다**. 나중 샘플이 일치했다는 이유로 서비스의 이전 좌표를 정상이라고 취소할 수 없습니다. 마지막 bounds 변경 timestamp도 진행 중 animation을 증명하지 않습니다.
+
+필요한 후속은 같은 서비스 capture 안에서의 bounded 전후 일관성 조사입니다. 재시도 없이 동일 대상/동일 display의 window/frame을 다시 읽고, 기존 package/system/가림/화면 세대 검사를 함께 유지해야 합니다. 값이 다르면 현재 시도를 폐기해야 합니다. 고정 코드는 WINDOW_READ_CHANGED/UNCHANGED/UNAVAILABLE, FRAME_READ_CHANGED/UNCHANGED/UNAVAILABLE, TARGET_CHANGED/SAME/UNAVAILABLE처럼 관계만 후보로 삼습니다. UNCHANGED도 원자성/ROI/픽셀 대응 보증은 아닙니다. 이는 **미구현 진단 설계**이며 추가 framework 호출 비용까지 기존 시간 예산 안에서 검증하기 전 패치하지 않습니다.
+
+동일 시도에서 변동이 입증돼도 '기다렸다가 괜찮아짐'을 운영 승인 조건으로 바꾸지 않습니다. 반복해서 같은 outside가 관측되면 여전히 미지원 관계입니다. tolerance/clamp/좌표 이동/전체 화면 캡처 우회/PR #6 버퍼 거부 해제는 허용하지 않습니다.
+
+## 7. TIME_LIMIT와 TARGET_MISSING
+
+- TIME_LIMIT는 TraversalBudget.visit가 두 pass에 공유되는 기존 100ms deadline을 넘은 별도 수집입니다. 같은 앱 배경 보호 순회도 예산을 사용합니다. 노드 수2400/깊이60/자식1200 상한 및 기존 검사 순서도 그대로입니다. 이 코드만으로 특정 getter·hash·Rect가 시간을 소모한 원인이라고 말할 수 없습니다. 초과 시 partial 결과를 성공 처리하지 않습니다.
+- TARGET_MISSING은 root의 창 ID가 그때의 service.windows 목록에 없는 별도 창 목록 거부입니다. malformed/성능 문제의 원인으로 합치지 않습니다. 재시도나 다른 창 대체를 추가하지 않습니다.
+- 후속 회귀는 fake monotonic clock으로 원래 `>` 임계 경계/두 pass 누적/상한 순서를 검증하고, 독립 합성 Android 시험에서 같은 시도의 STEP/OP/CAUSE로 한도 초과와 목록 불일치를 관측하는 방식입니다. 새로운 clock/collector 구현을 이번에 추가하거나 한도를 늘리지 않았습니다.
+
+## 8. 현재 실행·미검증 범위
+
+사용자의 독립 비교 OK와 14개 회귀 실패를 모두 사실로 보존합니다. 개발 환경에 연결 Android 기기는 없고 이번에는 문서만 변경하므로 새 기기 결과나 추가 운영 개선을 주장하지 않습니다. 같은 바이너리를 반복 실행하면 해결될 것이라는 재시험을 요구하지 않습니다.
+
+필요할 때 기존 결과를 최소 재현할 Windows 명령(프로젝트 터미널, 빌드/3개 APK 설치 절차는 F1_BASELINE_ISOLATION.md):
+
+```powershell
+git switch feature/f1-popup-detection
+git pull --ff-only origin feature/f1-popup-detection
+$adbPath = "$env:LOCALAPPDATA\Android\Sdk\platform-tools\adb.exe"
+$serial = "emulator-5554" # 실제 API37 대상
+# UI: 실제 서비스/수집 동의/host 단독 허용/분석 시작, 캡처 동의 OFF/캡처 목록 없음
+& $adbPath -s $serial shell am instrument -w -e class kr.closeforyou.servicetest.ServiceBaselineIsolationOptInTest -e f1Isolation true -e captureOcrService true kr.closeforyou.capturetest.test/androidx.test.runner.AndroidJUnitRunner
+& $adbPath -s $serial shell am instrument -w -e class kr.closeforyou.servicetest.ServiceDetectionScenariosOptInTest -e f1Detection true -e captureOcrService true kr.closeforyou.capturetest.test/androidx.test.runner.AndroidJUnitRunner
+```
+
+독립 probe는 관측 완료, 원래14개는 원래 정답/실패를 계속 의미합니다. TIME_LIMIT/TARGET_MISSING/노드/창 관계는 CASE/PHASE/ATTEMPT별로 따로 해석합니다. 전체 Logcat·이미지·실제 좌표·사용자 화면은 필요하지 않습니다. 두 문제가 해결되기 전 F1 정확도 검증 완료를 보고하지 않습니다.

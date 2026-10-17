@@ -365,3 +365,16 @@ python3 -B tools/verify_capture_test_apks.py --release-apk app/build/outputs/apk
 ```
 
 **BUILD SUCCESSFUL (34초, 196 tasks: 9 executed / 187 up-to-date)**. JVM **210개**(앱137/호스트73), 실패/오류/건너뜀0. 양쪽 debug Lint 이슈0, Kotlin 컴파일 경고0. Debug/Release·계측 APK 및 실제 DEX의 독립 최소 Activity/새 isolation driver·reader/evidence 포함, Kotlin 런타임/driver 격리/release debug·합성 probe 부재 패키징 검사 통과입니다. app 소스가 변경되지 않아 관련 작업은 대부분 up-to-date이며 기기 실행을 뜻하지 않습니다. 최초 새 fixture 빌드의 View 상수 미지정 컴파일 오류는 `View.IMPORTANT_FOR_ACCESSIBILITY_YES`로 수정했고 후속 전체 검증을 통과했습니다. CI는 기존 PR #7의 이번 커밋 Checks에서 별도 확인합니다.
+
+
+## PR #7 후속: 2b407da 실측 및 운영 변경 보류 근거
+
+사용자 Windows API37 실측: 독립 baseline 비교 OK (1 test), 안정 Scroll은 OLDER에서도 MALFORMED_ONLY/REVERSED_Y/NOT_VISIBLE/SCROLL_ANCESTOR/DESCENDANT 지속. 최소 화면은 시작 시 LEFT 초과 후 VALID, 안정 구간 READY_ONLY/VALID_ONLY/NO_POPUP/ORDINARY_CONTENT_CHANGE이며 native 대조 조건도 충족했습니다. NODE_CONTRAST=MALFORMED_ISOLATED_TO_SCROLL, SCROLL_FRAME=UNOBSERVED, MINIMAL_FRAME=VALID_ONLY입니다. 독립 UiAutomation의 다른 시점 일치는 실제 서비스 시도의 거부를 취소하지 않습니다. 원래14개는 FAILURES/UNOBSERVED=14/DETECTION_SUCCESS=0/OCR=NOT_TESTED/ACTIONS=NONE이며, 일부 TIME_LIMIT와 TARGET_MISSING은 별도 시도입니다.
+
+**이번에는 문서만 변경했습니다.** 운영 안전성을 입증하지 못한 부분 수집/geometry 제외를 강행하지 않았습니다. NodeSnapshot 필수 bounds, Ready(snapshot+frame), coverage가 없는 DetectionFrame, Candidate/pipeline 연결, 지문/토폴로지 및 기존 baseline 의미를 함께 검토했습니다. [구체적 계약 검토안](F1_PROTECTION_GEOMETRY_CONTRACT_REVIEW.md)에 A-private NodeRecord/Valid·Unusable geometry/보호·tree·geometry coverage, V1 변환·F1 shortcut 이전 거부·downstream 호출 금지 게이트, 지문 byte 호환/namespace 및 BCD와 합의할 범위를 명시했습니다. 이는 미구현 설계이며 공통 모델/계약을 독단적으로 수정하지 않았습니다. 이 분리를 해도 incomplete geometry를 기존 baseline 성공으로 승격할 수는 없습니다.
+
+창 관계는 코드상 windows snapshot→frame read→tree passes 순서이며 동일 capture도 원자적 동시 읽기는 아닙니다. 현재 출력만으로 animation/cache/region/변환 중 실제 원인을 확정하지 못합니다. 같은 서비스 시도 안의 bounded 전후 관계 조사와 비용 검증이 후속이며 추가 진단 패치를 이번에 넣지 않았습니다. TIME_LIMIT의 두 pass 공유100ms/상한 순서와 TARGET_MISSING 목록 거부도 유지하며, clock/목록 회귀가 필요한 범위를 별도로 기록했습니다.
+
+F0-A/F0-B·숨김 입력/암호/민감 정보·전체 자식 검사·창/시스템/가림·동의/허용·ROI/PR6 버퍼 거부·시간/메모리/해제·자동 행동 금지·원래14개 화면/자극/정답을 모두 유지합니다. 앱·테스트 소스 변경과 새 JVM 회귀는 없습니다. 개발 환경 기기0대로 새 API37 실행·운영 개선·F1 정확도 완료·캡처/OCR 성공을 주장하지 않습니다. 설계안이 구현/검증됐다는 주장도 하지 않습니다. Windows 최소 재현 명령은 계약 검토 문서에 있고, 문서-only 커밋 설치/반복 실행으로 해결될 것으로 안내하지 않습니다. 기존 PR #7에서만 진행하며 새 PR/자동 병합은 하지 않습니다.
+
+이번 문서 커밋의 로컬 재검증(JDK17): 위와 동일한 전체 Gradle 명령 **BUILD SUCCESSFUL (14초, 196 tasks: 5 executed / 191 up-to-date)**. 기존 JVM **210개**(앱137/호스트73), 실패/오류/건너뜀0, 양쪽 debug Lint 이슈0. Debug/Release·계측 APK 및 `verify_capture_test_apks.py --release-apk ...` 패키징 검사 통과입니다. 문서만 변경해 대부분 up-to-date이며 새 회귀를 추가하거나 기기 시험을 실행한 결과가 아닙니다. CI는 이번 커밋의 기존 PR #7 Checks에서 별도 확인합니다.

@@ -2,6 +2,10 @@
 
 기준: PR #6 병합 후 `main`의 `db63c83`, 새 브랜치 `feature/f1-popup-detection`. A의 감지·보호 및 독립 합성 fixture 범위입니다. B 분류/행동, C 안내/음성, D Room을 구현하지 않습니다. **후보 감지 ≠ 광고 판정 ≠ 자동 실행 허가**입니다. 캡처/OCR 보호와 PR #6의 불일치 버퍼 거부를 유지합니다.
 
+## 최신 판정: 운영 차단 유지와 계약 합의 항목
+
+사용자 `2b407da` API37 실측에서 독립 baseline 비교는 OK였고 원래14개는 UNOBSERVED=14/FAILURES입니다. [보호 검사·geometry 완전성 계약 검토](F1_PROTECTION_GEOMETRY_CONTRACT_REVIEW.md)에 노드 보존과 현재 V1 계약의 충돌, 미구현 A 내부 분리안·게이트·팀 합의 항목·필수 회귀를 구체화했습니다. 이번은 문서만 갱신하며 추가 운영 구현/공통 계약/기존 시험 변경을 하지 않습니다. 새 F1 성공이나 노드 제외의 안전성이 입증된 것으로 해석하지 않습니다.
+
 ## 최신 baseline 분리 실험
 
 `f79ad2d` 사용자 API 37 실측은 안정된 ScrollView의 숨겨진 자식에서 malformed를, 다른 완전 수집에서는 RIGHT/RIGHT,BOTTOM의 창 초과를 확인했습니다. [F1_BASELINE_ISOLATION.md](F1_BASELINE_ISOLATION.md)에 원래 ScrollView/별도 최소 화면과 시작/관측 안정 구간을 비교하는 독립 시험, geometry 제외의 필수 불변식과 현재 차단 유지 이유, Windows 실행 순서를 정리했습니다. 원래 14개 baseline/자극/정답은 그대로입니다. 새 probe의 관측 완료와 F1 정확도 성공을 구분합니다.
