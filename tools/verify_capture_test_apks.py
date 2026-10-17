@@ -78,8 +78,10 @@ def main():
                 name + " unexpectedly contains the standalone host")
     require("Lkr/closeforyou/accessibility/capture/BundledKoreanOcrTest;" in tests, "OCR instrumentation tests missing")
     require("Lkr/closeforyou/accessibility/capture/SyntheticHostLaunchTest;" in tests, "Independent-process smoke test missing")
+    require("Lkr/closeforyou/accessibility/capture/ScreenGeometryInstrumentedTest;" in tests, "Window-context geometry instrumentation missing")
     driver, driver_refs = dex_classes(args.driver_apk)
     require("Lkr/closeforyou/servicetest/ServiceCaptureOptInTest;" in driver, "External service driver missing")
+    require("Lkr/closeforyou/servicetest/SyntheticDialogGeometryTest;" in driver, "Synthetic Dialog geometry instrumentation missing")
     require(not any(t.startswith(("Lkr/closeforyou/accessibility/", "Lkr/closeforyou/app/", "Lkr/closeforyou/core/")) for t in driver_refs),
             "External driver must not read target-app process-local singletons")
     require("Lkr/closeforyou/accessibility/capture/ServiceCaptureOptInTest;" not in tests,

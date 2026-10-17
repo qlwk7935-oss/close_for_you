@@ -1,5 +1,7 @@
 # API 37 캡처·OCR 실패: 세션별 진단과 재시험
 
+> PR #5의 OUTSIDE/REGION_NO_BOUNDED_DIALOG 후속 조사·수정과 최신 API 35/37 명령은 [Dialog 좌표 문서](DIALOG_CAPTURE_COORDINATES.md)를 우선합니다.
+
 기준: PR #4 병합 `main` cf52770 → `fix/capture-session-diagnostics`. 이 문서는 기기 성공 보고서가 아니라 코드 조사와 재시험 절차입니다.
 
 ## 확인한 사실과 아직 모르는 원인

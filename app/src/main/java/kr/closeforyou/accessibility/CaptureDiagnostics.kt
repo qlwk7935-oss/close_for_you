@@ -3,6 +3,8 @@ package kr.closeforyou.accessibility
 import kr.closeforyou.accessibility.capture.EvidenceIssue
 import kr.closeforyou.core.model.PrivacyBlockReason
 import kr.closeforyou.core.model.WindowType
+import kr.closeforyou.core.model.ScreenBounds
+import kr.closeforyou.accessibility.capture.PopupRegionResolver
 
 /** A-internal, opt-in, ephemeral diagnostics. No nodes, text, bounds, digests or image references. */
 internal enum class CaptureStage {
@@ -16,6 +18,7 @@ internal enum class CaptureDetail {
     SCREEN_CHANGED, MAGNIFIED, REGION_REVALIDATION, BUFFER_GEOMETRY, FRAME_GEOMETRY,
     REGION_TRUNCATED, REGION_TARGET_MISSING, REGION_TARGET_NOT_APPLICATION, REGION_TARGET_INACTIVE,
     REGION_NO_BOUNDED_DIALOG, REGION_MULTIPLE_DIALOGS, REGION_OUTSIDE, REGION_OCCLUDED,
+    DISPLAY_GEOMETRY_UNCERTAIN, REGION_WINDOW_OUTSIDE, REGION_DIALOG_OUTSIDE, REGION_DIALOG_NOT_BOUNDED,
     REGION_WINDOW_BOUNDED, REGION_DIALOG_BOUNDED, PIPELINE_FAILED,
 }
 internal enum class CaptureApi { NONE, WINDOW, DISPLAY }
@@ -32,6 +35,13 @@ internal data class CaptureAttemptDiagnostic(
     val relatedType: WindowType? = null,
     val geometry: RegionGeometry = RegionGeometry.UNKNOWN,
     val api: CaptureApi = CaptureApi.NONE,
+    val frameStatus: ScreenFrameStatus = ScreenFrameStatus.UNAVAILABLE,
+    val legacyFrame: FrameRelation = FrameRelation.UNKNOWN,
+    val windowOutside: Set<OutsideEdge> = emptySet(),
+    val legacyOutside: Set<OutsideEdge> = emptySet(),
+    val rootWithinWindow: Boolean? = null,
+    val dialogClassPresent: Boolean? = null,
+    val syntheticRole: SyntheticWindowRole = SyntheticWindowRole.UNKNOWN,
     val eventWindow: EventWindowRelation = EventWindowRelation.UNKNOWN,
 )
 
@@ -95,6 +105,22 @@ internal class CaptureTrace(
     fun api(api: CaptureApi) = update { it.copy(api = api) }
     fun detail(detail: CaptureDetail, relatedType: WindowType? = null) = update {
         it.copy(detail = detail, relatedType = relatedType)
+    }
+    fun frameStatus(status: ScreenFrameStatus) = update { it.copy(frameStatus = status) }
+    fun coordinates(window: ScreenBounds, frame: ScreenBounds,
+        root: ScreenBounds, legacy: () -> ScreenBounds?) {
+        if (generation == null || ended) return
+        val old = legacy()
+        update { it.copy(legacyFrame = ScreenFramePolicy.compare(old, frame),
+            windowOutside = ScreenFramePolicy.outside(window, frame),
+            legacyOutside = old?.let { bounds -> ScreenFramePolicy.outside(window, bounds) }.orEmpty(),
+            rootWithinWindow = PopupRegionResolver.contains(window, root)) }
+    }
+    fun nodeClasses(dialogClassPresent: Boolean) = update { it.copy(dialogClassPresent = dialogClassPresent) }
+    fun syntheticWindow(title: () -> CharSequence?) {
+        if (generation == null || ended) return
+        val role = ScreenFramePolicy.syntheticRole(title())
+        update { it.copy(syntheticRole = role) }
     }
     fun target(type: WindowType) = update { it.copy(targetType = type) }
     fun block(reason: PrivacyBlockReason) = update { it.copy(block = reason) }

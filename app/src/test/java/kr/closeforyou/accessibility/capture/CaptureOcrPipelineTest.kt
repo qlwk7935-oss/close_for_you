@@ -94,6 +94,28 @@ class CaptureOcrPipelineTest {
         assertFalse(CaptureStage.REGION in session.snapshot()!!.reached)
     }
 
+    @Test fun incorrectServiceFrameStopsBeforeCaptureButVerifiedFrameUsesOriginalWindow() = runTest {
+        val s = imagePopup()
+        val bad = s.copy(screenBounds = ScreenBounds(0, 0, 0, 0))
+        val blockedShots = Shots()
+        val (diagnostics, trace) = diagnosticTrace(bad)
+        val partial = CaptureOcrPipeline(blockedShots, OcrPort { error("No OCR") }, { true }, { null })
+            .analyze(bad, trace) as EvidenceOutcome.Ready
+        assertEquals(EvidenceIssue.REGION_UNCERTAIN, partial.issue)
+        assertEquals(CaptureDetail.REGION_WINDOW_OUTSIDE, diagnostics.snapshot()!!.detail)
+        assertEquals(0, blockedShots.calls)
+        assertFalse(CaptureStage.CAPTURE_REQUEST in diagnostics.snapshot()!!.reached)
+        // Synthetic DTO regression only: AndroidScreenGeometry must supply the real verified frame.
+        val shots = Shots()
+        val corrected = bad.copy(screenBounds = s.screenBounds)
+        val result = CaptureOcrPipeline(shots, OcrPort { listOf(OcrLine("점검 공지", box)) }, { true }, { null })
+            .analyze(corrected) as EvidenceOutcome.Ready
+        assertEquals(EvidenceIssue.NONE, result.issue)
+        assertEquals(1, shots.calls)
+        assertEquals(s.windows.first().bounds, shots.frame!!.bounds)
+        assertTrue(shots.frame!!.closed)
+    }
+
     @Test fun koreanNoticeDatesTimesAndAmountsRemainUnknownEvidence() = runTest {
         for (text in listOf("점검 공지", "2026년 10월 18일 02시부터 04시까지 점검", "행사 가격 10,000원")) {
             val shots = Shots()

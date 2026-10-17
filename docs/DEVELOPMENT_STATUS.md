@@ -134,3 +134,17 @@ C02~C06·C09·C10·C12~C14 및 G2~G5는 관련 구현 뒤 시행합니다. C07�
 - 결과: **BUILD SUCCESSFUL in 28s**, 196 tasks(15 실행, 181 up-to-date). JVM **78개**(본 앱 71, 호스트 7), 실패/오류/건너뜀 0. 새 회귀 시험 13개 포함. 본 앱/호스트 debug Lint 오류·경고 0. 본 앱 debug/release·독립 호스트·계측 APK 2개 빌드/컴파일 확인. DEX 패키징 검사 통과 및 release 매니페스트에서 debug provider/시험 권한 부재 확인.
 - 한계: adb 연결 0대, emulator/KVM 없음. 계측 실행 0개. API 37에서 실제 어떤 창/영역이 차단됐는지는 미확정이며 캡처·OCR 성공 주장 없음. 보호를 추측으로 완화하거나 타임아웃을 늘리지 않음.
 - 재시험: [CAPTURE_SESSION_DIAGNOSTICS.md](CAPTURE_SESSION_DIAGNOSTICS.md)의 Windows 설치 4개 APK·연결·전체 시험 명령 및 고정 코드 해석. 합성 앱만 사용하고 실제 개인정보 화면은 제외.
+
+## Dialog OCR 영역과 화면 좌표 출처 수정 (2026-10-17)
+
+- 기준: PR #5 병합 main f72fd0f에서 `fix/dialog-capture-coordinates` 생성.
+- 사용자 보고: API 37에서 후보/F0-A 통과, REGION_NO_BOUNDED_DIALOG·OUTSIDE·API=NONE. 실제 캡처 API/OCR/F0-B 이전의 영역 결정 실패로 확인. 이전 screen bounds가 빈 값인지/회전·컨텍스트 크기 차이인지, 실제 창이 이탈했는지는 좌표/역할 자료가 없어 미확정.
+- 확인한 코드 결함: 일반 Service 컨텍스트의 maximumWindowMetrics를 다른 앱 접근성 screen 좌표의 전체 화면으로 가정. 이 API는 Context의 UI Configuration 기반이고 전체 논리 화면을 보장하지 않음. 기본 Dialog의 이벤트 클래스명과 노드 클래스도 구분해야 함.
+- 수정: 기본 디스플레이를 명시한 WindowContext에서 화면 경계를 읽고 논리 디스플레이 크기/0 원점/읽기 전후 회전을 교차 확인. 불일치는 차단하며 원본 창/노드 경계를 자르거나 이동하지 않음. API 30 생성 경로와 API 31+ 생성 경로 분리. 서비스/화면 구성 변경 때 캐시 초기화. 화면 밖 창은 Dialog 노드로 우회하지 않고 REGION_WINDOW_OUTSIDE로 차단.
+- 진단: 예전 서비스 metrics와 새 경계의 관계, 벗어난 방향, root/창 포함 관계, Dialog 클래스 존재 여부, 고정 합성 Dialog/배경 역할을 같은 시도에서 코드로만 제공. 호스트는 제목만 추가하고 이미지/버튼/창 크기 유지. 제목에 OCR 정답 단어를 넣지 않음. 전체 시험 성공 시 FRAME=VERIFIED 및 실제 합성 Dialog 역할도 검사.
+- 회귀: JVM 9개 추가. API 35/37에서 실제 실행할 화면 출처 검사와 독립 Dialog 기하 검사 계측 2개 추가. 모달 Dialog로 배경 창이 getWindows에 안 나와도 호스트 자신의 decor 노드 ID와 비교하므로 목록 존재를 강제하지 않음. DEX 검사도 새 계측 클래스 2개의 실제 포함 확인.
+- 실행: JDK 17에서 `./gradlew --no-daemon :app:assembleDebug :app:assembleDebugAndroidTest :app:testDebugUnitTest :capture-test-host:testDebugUnitTest :app:lintDebug :capture-test-host:lintDebug :app:assembleRelease`.
+- 결과: 최종 **BUILD SUCCESSFUL in 28s**, 196 tasks(9 실행, 187 up-to-date). JVM **87개**(본 앱 80, 호스트 7), 실패/오류/건너뜀 0. 단위 소스 검증은 이전 동일 명령 실행에서 수행했고 마지막 계측 보강 실행은 변경 없는 unit 결과 재사용. 양쪽 debug Lint 오류·경고 0. 본 앱 debug/release·호스트 및 계측 APK 2개 컴파일 성공. 새 geometry 계측을 포함한 DEX 패키징 검사 통과. release 매니페스트에 debug provider/시험 권한/일반 overlay 권한 없음.
+- 보호 유지: 개인정보 보호/시스템·외부 앱·가림/보안 창/확대/버퍼 크기/동의·앱별 허용/빈도·메모리·타임아웃 유지. 전체 화면 fallback이나 Mock OCR 주입 없음. B·C·D 공통 모델/포트 및 기능 변경 없음.
+- 미검증: adb 연결 0대, emulator/KVM 없음. 신규 계측 2개 포함 전체 계측 8개는 컴파일/패키징만 확인, 기기 실행 0개. API 35/37의 창 실제 경계·캡처 버퍼/이미지·OCR 성공은 주장하지 않음. 파티션/호환 모드/원점·크기 불일치는 임의 변환하지 않고 지원 제한으로 차단.
+- 재시험: [DIALOG_CAPTURE_COORDINATES.md](DIALOG_CAPTURE_COORDINATES.md)에 좌표계 공식 근거, 수정 전후, 고정 진단 해석, API 35/37 Windows 명령을 기록. geometry 계측을 먼저 실행한 후 서비스 재확인 및 사용자 UI 동의를 거쳐 외부 연결/캡처 시험 진행. 합성 화면만 사용.

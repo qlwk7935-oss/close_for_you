@@ -14,6 +14,7 @@ class SyntheticPopupActivity : Activity() {
     private var image: android.graphics.Bitmap? = null
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        title = "합성 배경 창"
         setContentView(TextView(this).apply { text = "합성 팝업 시험 화면" })
         val pixels = syntheticNotice().also { image = it }
         val content = LinearLayout(this).apply {
@@ -28,6 +29,7 @@ class SyntheticPopupActivity : Activity() {
             })
         }
         dialog = Dialog(this).apply {
+            setTitle("합성 이미지 창")
             setContentView(content)
             show()
             window?.setLayout(minOf(resources.displayMetrics.widthPixels - 80, 1200), 420)

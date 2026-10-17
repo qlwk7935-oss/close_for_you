@@ -84,6 +84,8 @@ class ServiceCaptureOptInTest {
             instrumentation.sendStatus(0, Bundle().apply { putString("stream", "CAPTURE_RESULT:$diagnostic\n") })
             assertEquals("SYNTHETIC_OCR_NOT_CONFIRMED", "OCR_MATCH", safeCode(result.getString("code")))
             assertTrue("OCR_EVIDENCE_EMPTY", result.getInt("ocrCount") > 0)
+            assertEquals("SCREEN_FRAME_NOT_VERIFIED", "VERIFIED", safeCode(result.getString("frameStatus")))
+            assertEquals("SYNTHETIC_WINDOW_NOT_CONFIRMED", "SYNTHETIC_DIALOG", safeCode(result.getString("syntheticRole")))
         } finally {
             withContext(NonCancellable) { session?.let { call("END", it) } }
         }
@@ -97,6 +99,13 @@ class ServiceCaptureOptInTest {
         "EVIDENCE=${safeCode(result.getString("evidence"))}",
         "DETAIL=${safeCode(result.getString("detail"))}",
         "GEOMETRY=${safeCode(result.getString("geometry"))}",
+        "FRAME=${safeCode(result.getString("frameStatus"))}",
+        "LEGACY_FRAME=${safeCode(result.getString("legacyFrame"))}",
+        "WINDOW_OUTSIDE=${result.getStringArrayList("windowOutside").orEmpty().take(4).joinToString(",") { safeCode(it) }.ifEmpty { "NONE" }}",
+        "LEGACY_OUTSIDE=${result.getStringArrayList("legacyOutside").orEmpty().take(4).joinToString(",") { safeCode(it) }.ifEmpty { "NONE" }}",
+        "ROOT_WITHIN_WINDOW=${safeCode(result.getString("rootWithinWindow"))}",
+        "DIALOG_CLASS=${safeCode(result.getString("dialogClass"))}",
+        "ROLE=${safeCode(result.getString("syntheticRole"))}",
         "API=${safeCode(result.getString("api"))}",
         "TARGET=${safeCode(result.getString("targetType"))}",
         "RELATED=${safeCode(result.getString("relatedType"))}",

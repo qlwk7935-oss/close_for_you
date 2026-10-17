@@ -25,6 +25,8 @@ internal sealed interface CollectionResult {
  * A failure anywhere discards the entire result, including any partially collected text.
  */
 internal class AndroidSnapshotCollector {
+    private var geometry: AndroidScreenGeometry? = null
+    fun resetGeometry() { geometry?.reset() }
     private val salt = ByteArray(32).also(SecureRandom()::nextBytes)
 
     fun capture(
@@ -64,6 +66,11 @@ internal class AndroidSnapshotCollector {
             val targetWindow = windows.firstOrNull { it.id == root.windowId }
                 ?: return blocked(PrivacyBlockReason.UNREADABLE_TREE, CaptureDetail.TARGET_MISSING)
             trace.target(targetWindow.type)
+            val frameworkTarget = androidWindows.single { it.id == root.windowId }
+            if (frameworkTarget.displayId != Display.DEFAULT_DISPLAY) {
+                return blocked(PrivacyBlockReason.SYSTEM_WINDOW, CaptureDetail.SECONDARY_DISPLAY)
+            }
+            trace.syntheticWindow { frameworkTarget.title }
             if (targetWindow.type != WindowType.APPLICATION) {
                 return blocked(PrivacyBlockReason.SYSTEM_WINDOW, CaptureDetail.TARGET_NOT_APPLICATION)
             }
@@ -83,6 +90,13 @@ internal class AndroidSnapshotCollector {
                 }
             }
 
+            val geometryRead = (geometry ?: AndroidScreenGeometry(service).also { geometry = it }).read()
+            trace.frameStatus(geometryRead.status)
+            val screen = geometryRead.frame ?: return blocked(PrivacyBlockReason.UNREADABLE_TREE, CaptureDetail.DISPLAY_GEOMETRY_UNCERTAIN)
+            trace.coordinates(targetWindow.bounds, screen, root.bounds()) {
+                try { service.getSystemService(WindowManager::class.java).maximumWindowMetrics.bounds.toScreenBounds() }
+                catch (_: Exception) { null }
+            }
             val budget = TraversalBudget()
             // Inspect all trees of this application, including its obscured background window.
             for (candidateRoot in roots) {
@@ -124,7 +138,7 @@ internal class AndroidSnapshotCollector {
                         !node.paneTitle.isNullOrEmpty(),
                 )
             }
-            val screen = service.getSystemService(WindowManager::class.java).maximumWindowMetrics.bounds.toScreenBounds()
+            trace.nodeClasses(nodes.any { it.className?.contains("dialog", ignoreCase = true) == true })
             val structureDigest = structure.digest().hex()
             val token = SnapshotToken(epoch, root.windowId, packageName, UUID.randomUUID().toString(),
                 structureDigest, content.digest().hex(), epoch)
