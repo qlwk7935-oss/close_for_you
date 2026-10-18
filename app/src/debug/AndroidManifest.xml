@@ -16,7 +16,8 @@
         <activity
             android:name="kr.closeforyou.ui.voice.debug.ChoicePreviewActivity"
             android:exported="true"
-            android:label="@string/ui_debug_preview_label">
+            android:label="@string/ui_debug_preview_label"
+            android:launchMode="singleTop">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />

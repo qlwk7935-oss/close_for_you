@@ -4,6 +4,7 @@ import android.Manifest
 import android.content.Intent
 import android.os.Bundle
 import android.provider.Settings
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -49,7 +50,10 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import kotlinx.collections.immutable.persistentListOf
 import kr.closeforyou.R
+import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import kr.closeforyou.core.contract.AnnouncementKind
 import kr.closeforyou.core.contract.AnnouncementRequest
 import kr.closeforyou.core.contract.VoiceAvailability
@@ -68,6 +72,7 @@ import kr.closeforyou.ui.voice.command.VoiceAction
 import kr.closeforyou.ui.voice.command.VoiceChoiceMapper
 import kr.closeforyou.ui.voice.TtsPopupAnnouncer
 import kr.closeforyou.ui.voice.settings.UiVoiceSettingsRoute
+import kr.closeforyou.ui.voice.overlay.PromptAnnouncementListener
 import kr.closeforyou.ui.voice.overlay.PromptSpeech
 
 /**
@@ -91,20 +96,35 @@ class ChoicePreviewActivity : ComponentActivity() {
     /**
      * adb test hook (debug only): `am start -n kr.closeforyou/.ui.voice.debug.ChoicePreviewActivity
      * --ei ui_debug_overlay_scenario <0..6>` shows that fixture above the next app after 5 seconds.
+     * singleTop (debug manifest) delivers the extra even when this screen is already in front, and a
+     * freshly started process waits briefly for the test service to connect.
+     * Optional `--el ui_debug_tts_delay_ms <ms>` changes when our own TTS speaks (default 700).
      */
     private fun scheduleOverlayFromIntent(intent: Intent?) {
         val index = intent?.getIntExtra(EXTRA_OVERLAY_SCENARIO, -1) ?: -1
-        val scenario = scenarios.getOrNull(index) ?: return
-        val fixture = scenario.fixture
-        ChoiceOverlayTestService.scheduleShow(
-            ChoicePromptPlanner.plan(fixture.analysis, fixture.expectedDisplayClassification),
-            PromptSpeech.content(this, fixture.analysis),
-            OVERLAY_DELAY_MILLIS,
-        )
+        val fixture = scenarios.getOrNull(index)?.fixture ?: return
+        val ttsDelay = intent?.getLongExtra(EXTRA_TTS_DELAY_MS, -1L)?.takeIf { it in 0..MAX_TTS_DELAY_MILLIS }
+            ?: PromptAnnouncementListener.DEFAULT_TTS_DELAY_MILLIS
+        // Consume the extras so a configuration change does not show the prompt again.
+        intent?.removeExtra(EXTRA_OVERLAY_SCENARIO)
+        intent?.removeExtra(EXTRA_TTS_DELAY_MS)
+        val prompt = ChoicePromptPlanner.plan(fixture.analysis, fixture.expectedDisplayClassification)
+        val content = PromptSpeech.content(this, fixture.analysis)
+        lifecycleScope.launch {
+            val connected = withTimeoutOrNull(SERVICE_WAIT_MILLIS) {
+                ChoiceOverlayTestService.connected.first { it }
+            } == true
+            if (!connected || !ChoiceOverlayTestService.scheduleShow(prompt, content, OVERLAY_DELAY_MILLIS, ttsDelay)) {
+                Toast.makeText(this@ChoicePreviewActivity, R.string.ui_debug_overlay_service_off, Toast.LENGTH_LONG).show()
+            }
+        }
     }
 
     private companion object {
         const val EXTRA_OVERLAY_SCENARIO = "ui_debug_overlay_scenario"
+        const val SERVICE_WAIT_MILLIS = 3_000L
+        const val EXTRA_TTS_DELAY_MS = "ui_debug_tts_delay_ms"
+        const val MAX_TTS_DELAY_MILLIS = 10_000L
         /** adb: `--ez ui_debug_open_settings true` opens the settings page directly. */
         const val EXTRA_OPEN_SETTINGS = "ui_debug_open_settings"
     }

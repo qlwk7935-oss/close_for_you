@@ -33,12 +33,7 @@ class ChoiceOverlayTestService : AccessibilityService() {
     private var announcer: TtsPopupAnnouncer? = null
 
     override fun onServiceConnected() {
-        val tts = TtsPopupAnnouncer.create(this)
-        announcer = tts
-        overlay = AccessibilityChoiceOverlay(
-            this,
-            PromptAnnouncementListener(this, tts, scope, mode = { UiVoicePreferences.get(this).current().promptAnnounceMode }),
-        )
+        announcer = TtsPopupAnnouncer.create(this)
         current = WeakReference(this)
         mutableConnected.value = true
     }
@@ -59,10 +54,22 @@ class ChoiceOverlayTestService : AccessibilityService() {
         super.onDestroy()
     }
 
-    private fun showLater(prompt: ChoicePrompt, content: String, delayMillis: Long) {
+    private fun showLater(prompt: ChoicePrompt, content: String, delayMillis: Long, ttsDelayMillis: Long) {
         handler.removeCallbacksAndMessages(null)
         handler.postDelayed({
-            overlay?.show(prompt) { choice ->
+            val tts = announcer ?: return@postDelayed
+            overlay?.dismiss()
+            // A new overlay per show so each test can use its own announcement delay.
+            val next = AccessibilityChoiceOverlay(
+                this,
+                PromptAnnouncementListener(
+                    this, tts, scope,
+                    mode = { UiVoicePreferences.get(this).current().promptAnnounceMode },
+                    ttsDelayMillis = ttsDelayMillis,
+                ),
+            )
+            overlay = next
+            next.show(prompt) { choice ->
                 mutableLastChoice.value = choice
                 if (choice.kind == ChoiceKind.READ_CONTENT) readContent(choice, content)
             }
@@ -84,10 +91,15 @@ class ChoiceOverlayTestService : AccessibilityService() {
         val lastChoice: StateFlow<UserChoice?> = mutableLastChoice.asStateFlow()
 
         /** Main thread only. False when the test service is not turned on. */
-        fun scheduleShow(prompt: ChoicePrompt, content: String, delayMillis: Long): Boolean {
+        fun scheduleShow(
+            prompt: ChoicePrompt,
+            content: String,
+            delayMillis: Long,
+            ttsDelayMillis: Long = PromptAnnouncementListener.DEFAULT_TTS_DELAY_MILLIS,
+        ): Boolean {
             val service = current?.get() ?: return false
             mutableLastChoice.value = null
-            service.showLater(prompt, content, delayMillis)
+            service.showLater(prompt, content, delayMillis, ttsDelayMillis)
             return true
         }
     }
