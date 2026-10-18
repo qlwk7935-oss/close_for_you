@@ -34,8 +34,9 @@ internal object CollectionProjectionLimits {
 /** Not CollectionResult.Ready, not a public Candidate and not a runtime authorization. */
 internal sealed interface ProjectionOutcome {
     data class Rejected(val reason: ProjectionRejection) : ProjectionOutcome
-    class Complete(val snapshot: PopupSnapshot, val frame: DetectionFrame) : ProjectionOutcome {
-        override fun toString(): String = "ProjectionOutcome.Complete(redacted)"
+    class StructuralMatch(val snapshot: PopupSnapshot, val frame: DetectionFrame) : ProjectionOutcome {
+        val productionReady: Boolean get() = false
+        override fun toString(): String = "ProjectionOutcome.StructuralMatch(redacted)"
     }
 }
 
@@ -46,35 +47,36 @@ internal object CollectionProjection {
     fun project(evidence: CollectedTreeEvidence, metadata: CollectionProjectionMetadata): ProjectionOutcome {
         fun reject(reason: ProjectionRejection) = ProjectionOutcome.Rejected(reason)
         val roots = evidence.roots
+        val target = evidence.target
         // Check cardinalities before any input-sized scans, derived collections or DTO allocation.
         if (roots.size > CollectionProjectionLimits.MAX_WINDOWS ||
             evidence.expectedProtectionWindowIds.size > CollectionProjectionLimits.MAX_WINDOWS ||
             metadata.windows.size > CollectionProjectionLimits.MAX_WINDOWS)
             return reject(ProjectionRejection.WINDOW_COUNT_LIMIT)
-        var retainedNodes = 0
-        for (root in roots) {
-            if (root.nodes.size > CollectionProjectionLimits.MAX_RETAINED_NODES - retainedNodes)
-                return reject(ProjectionRejection.NODE_COUNT_LIMIT)
-            retainedNodes += root.nodes.size
-        }
-        // Protection takes priority, including every retained hidden/background node.
+        if (target.nodes.size > CollectionProjectionLimits.MAX_RETAINED_NODES)
+            return reject(ProjectionRejection.NODE_COUNT_LIMIT)
+        // Claimed protection is checked independently for every root and every retained target node.
+        // Background flags are untrusted inputs, not a substitute for a future owner-issued receipt.
         if (evidence.protection != ProtectionCompletion.COMPLETED_WITHOUT_BLOCK || roots.any { root ->
-                root.protection != ProtectionCompletion.COMPLETED_WITHOUT_BLOCK ||
-                    root.nodes.any { it.protection != ProtectionCompletion.COMPLETED_WITHOUT_BLOCK }
-            }) return reject(ProjectionRejection.PROTECTION_NOT_COMPLETE)
-        if (evidence.traversal != TreeCompletion.COMPLETE || roots.any { it.traversal != TreeCompletion.COMPLETE })
+                root.protection != ProtectionCompletion.COMPLETED_WITHOUT_BLOCK
+            } || target.protection != ProtectionCompletion.COMPLETED_WITHOUT_BLOCK ||
+            target.nodes.any { it.protection != ProtectionCompletion.COMPLETED_WITHOUT_BLOCK })
+            return reject(ProjectionRejection.PROTECTION_NOT_COMPLETE)
+        if (evidence.traversal != TreeCompletion.COMPLETE || roots.any { it.traversal != TreeCompletion.COMPLETE } ||
+            target.traversal != TreeCompletion.COMPLETE)
             return reject(ProjectionRejection.TREE_NOT_COMPLETE)
         val rootIds = roots.map { it.windowId }
-        val target = roots.singleOrNull { it.role == EvidenceTreeRole.TARGET }
+        val protectedTarget = roots.singleOrNull { it.role == EvidenceTreeRole.TARGET }
         if (roots.isEmpty() || rootIds.toSet().size != rootIds.size ||
-            rootIds.toSet() != evidence.expectedProtectionWindowIds || target == null ||
+            rootIds.toSet() != evidence.expectedProtectionWindowIds || protectedTarget == null ||
+            target.role != EvidenceTreeRole.TARGET || target.windowId != protectedTarget.windowId ||
             target.windowId != metadata.token.windowId)
             return reject(ProjectionRejection.ROOT_COVERAGE_INVALID)
-        if (roots.any { root -> root.nodes.any { it.readCompletion != NodeReadCompletion.COMPLETE } })
+        if (target.nodes.any { it.readCompletion != NodeReadCompletion.COMPLETE })
             return reject(ProjectionRejection.NODE_READ_INCOMPLETE)
         // Only four existing protected text fields are retained here; the reader must check the rest.
         var targetTextCharacters = 0L
-        for (root in roots) for (node in root.nodes) {
+        for (node in target.nodes) {
             if ((node.text?.length ?: 0) > CollectionProjectionLimits.MAX_FIELD_CHARACTERS ||
                 (node.contentDescription?.length ?: 0) > CollectionProjectionLimits.MAX_FIELD_CHARACTERS ||
                 (node.viewId?.length ?: 0) > CollectionProjectionLimits.MAX_FIELD_CHARACTERS ||
@@ -85,13 +87,11 @@ internal object CollectionProjection {
                 return reject(ProjectionRejection.PATH_LENGTH_LIMIT)
             if (node.childCount > CollectionProjectionLimits.MAX_CHILDREN)
                 return reject(ProjectionRejection.CHILD_COUNT_LIMIT)
-            if (root.role == EvidenceTreeRole.TARGET) {
-                targetTextCharacters += (node.text?.length ?: 0).toLong() + (node.contentDescription?.length ?: 0)
-                if (targetTextCharacters > CollectionProjectionLimits.MAX_TARGET_TEXT_CHARACTERS)
-                    return reject(ProjectionRejection.TEXT_LENGTH_LIMIT)
-            }
+            targetTextCharacters += (node.text?.length ?: 0).toLong() + (node.contentDescription?.length ?: 0)
+            if (targetTextCharacters > CollectionProjectionLimits.MAX_TARGET_TEXT_CHARACTERS)
+                return reject(ProjectionRejection.TEXT_LENGTH_LIMIT)
         }
-        for (root in roots) completePreorder(root.nodes)?.let { return reject(it) }
+        completePreorder(target.nodes)?.let { return reject(it) }
         if (evidence.geometry != GeometryCompletion.COMPLETE)
             return reject(ProjectionRejection.GEOMETRY_NOT_COMPLETE)
 
@@ -104,7 +104,7 @@ internal object CollectionProjection {
             metadata.capturedAtUptimeMillis < 0 || metadata.applicationDigest.isBlank() ||
             metadata.token.packageName.isBlank() || metadata.token.popupInstanceId.isBlank() ||
             metadata.token.structureDigest.isBlank() || metadata.token.contentDigest.isBlank() ||
-            roots.any { root -> root.nodes.any { it.outlineFingerprint.isBlank() } })
+            target.nodes.any { it.outlineFingerprint.isBlank() })
             return reject(ProjectionRejection.METADATA_INCOMPLETE)
         if (!metadata.screenRect.dtoCompatible || windows.any { !it.rect.dtoCompatible })
             return reject(ProjectionRejection.WINDOW_GEOMETRY_INVALID)
@@ -137,7 +137,7 @@ internal object CollectionProjection {
         val frame = DetectionFrame(metadata.applicationDigest, target.windowId,
             applicationIds.build(), metadata.token.structureDigest, screen, outlines.build(), metadata.trigger,
             windowBounds, metadata.windowAge)
-        return ProjectionOutcome.Complete(snapshot, frame)
+        return ProjectionOutcome.StructuralMatch(snapshot, frame)
     }
 
     /** Exact original preorder and child counts. O(depth) pending parents, no child-path expansion.

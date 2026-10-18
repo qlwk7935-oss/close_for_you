@@ -2,6 +2,12 @@
 
 결론: **현재 운영 차단을 유지합니다.** 독립 증거·projection·지문 codec은 Android 수집기에 연결하지 않았습니다. `9922c80` 이후 승인된 최소 수정은 아래 0-C의 **기존 보호 pass root 소유권 검사**뿐입니다. CollectionAttempt/receipt 연결·새 반환 경로·부분 F1 관측은 여전히 후속 설계이며, 두 pass·예산·지문 규격·F1/원래14개 정답은 유지합니다. 이후 절의 독립 모델 구현 기록은 당시 범위를 설명합니다.
 
+## 0-D. CollectionAttempt 합성 계약과 배경/대상 분리 — 00c7223 이후
+
+[CollectionAttempt 계약](F1_COLLECTION_ATTEMPT.md)을 구현했습니다. owner의 private 일반 receipt/완료 handle, 정방향 상태·동일 owner·1회 소비·최초 실패·폐기를 JVM에서 검증합니다. 유일한 factory는 합성 검토용이고 모든 상태에서 productionReady=false이며 소비는 고정 enum만 반환합니다. 실제 Android reader/보호 완료/현재성/세션/TTL은 미연결입니다.
+
+보호 root의 미인증 관측과 target 전체 노드 기록을 분리했습니다. 배경 geometry/actions/outline/body는 요구하지 않습니다. 순수 projection의 Complete는 StructuralMatch로 바꿔 실제 완료와 구별합니다. 이전0/0-A절의 모든 root 노드 보존·배경 geometry 검사·Complete 명칭은 **이전 prototype 기록**이며 현재 계약은 연결된 문서를 따릅니다. 창/root32·보존 target2400·깊이/자식/필드/본문/경로 상한은 유지하지만 배경 실제 F0 검사·방문 예산은 미래 reader가 증명해야 합니다. 이는 운영 보호 완화가 아니며 기존 collector/service/Runtime·F0/F1·원래14개는00c7223에서 미변경입니다.
+
 ## 0-C. 등록한 보호 root의 검사 생략 방지 — 9922c80 이후
 
 기존 `roots`는 해제 소유 목록이었으며 정책상 제외 가능한 타사 root도 포함했습니다. 보호 pass는 package를 다시 읽어 대상 package와 같을 때만 walk하므로, 최초 동일 앱이던 root가 null/다른 package로 읽히면 검사를 건너뛸 수 있었습니다. 이를 실제 기기에서 재현했다고 주장하지 않습니다.

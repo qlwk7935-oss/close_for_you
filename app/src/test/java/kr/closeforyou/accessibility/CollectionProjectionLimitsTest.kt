@@ -15,13 +15,13 @@ class CollectionProjectionLimitsTest {
     private val metadata = ProjectionFixture.metadata()
 
     @Test fun retainedNodeCeilingDoesNotAssertTwoPassVisitBudget() {
-        val result = project(forest(1200, 1200), backgroundMetadata())
-        assertTrue(result is ProjectionOutcome.Complete)
-        assertEquals(1200, (result as ProjectionOutcome.Complete).snapshot.nodes.size)
+        val result = project(forest(2400), backgroundMetadata())
+        assertTrue(result is ProjectionOutcome.StructuralMatch)
+        assertEquals(2400, (result as ProjectionOutcome.StructuralMatch).snapshot.nodes.size)
     }
 
-    @Test fun retainedNodeCeilingPlusOneDeniesAcrossRoots() =
-        reject(forest(1200, 1201), ProjectionRejection.NODE_COUNT_LIMIT, backgroundMetadata())
+    @Test fun targetRetainedNodeCeilingPlusOneDenies() =
+        reject(forest(2401), ProjectionRejection.NODE_COUNT_LIMIT, backgroundMetadata())
 
     @Test fun nodeLimitCheckedBeforeLargeTopologyExpansion() = reject(
         ProjectionFixture.evidence(flat(1201).addAll(flat(1200))), ProjectionRejection.NODE_COUNT_LIMIT)
@@ -31,11 +31,11 @@ class CollectionProjectionLimitsTest {
         val roots = (0 until 32).map { root.copy(windowId = it,
             role = if (it == 7) EvidenceTreeRole.TARGET else EvidenceTreeRole.SAME_APP_BACKGROUND) }
         assertTrue(project(CollectedTreeEvidence(persistentSetOf<Int>().addAll((0 until 32).toList()),
-            persistentListOf<CollectedRootEvidence>().addAll(roots),
+            persistentListOf<ProtectionRootEvidence>().addAll(roots), ProjectionFixture.evidence().target,
             ProtectionCompletion.COMPLETED_WITHOUT_BLOCK, TreeCompletion.COMPLETE),
             metadata.copy(windows = persistentListOf<CollectedWindowEvidence>().addAll((0 until 32).map {
                 metadata.windows[0].copy(id = it, active = it == 7)
-            }))) is ProjectionOutcome.Complete)
+            }))) is ProjectionOutcome.StructuralMatch)
     }
 
     @Test fun windowCount33Denies() = reject(ProjectionFixture.evidence(), ProjectionRejection.WINDOW_COUNT_LIMIT,
@@ -49,20 +49,20 @@ class CollectionProjectionLimitsTest {
 
     @Test fun suppliedRoots33DenyBeforeScanningNodes() {
         val root = ProjectionFixture.evidence().roots.single()
-        reject(ProjectionFixture.evidence().copy(roots = persistentListOf<CollectedRootEvidence>().addAll(
+        reject(ProjectionFixture.evidence().copy(roots = persistentListOf<ProtectionRootEvidence>().addAll(
             (0 until 33).map { root.copy(windowId = it) })), ProjectionRejection.WINDOW_COUNT_LIMIT)
     }
 
     @Test fun rootDepthZeroAndMaximumDepth60AreAllowed() {
-        assertTrue(project(ProjectionFixture.evidence(chain(0))) is ProjectionOutcome.Complete)
-        assertTrue(project(ProjectionFixture.evidence(chain(60))) is ProjectionOutcome.Complete)
+        assertTrue(project(ProjectionFixture.evidence(chain(0))) is ProjectionOutcome.StructuralMatch)
+        assertTrue(project(ProjectionFixture.evidence(chain(60))) is ProjectionOutcome.StructuralMatch)
     }
 
     @Test fun depth61DeniesEvenWithCompleteFlags() =
         reject(ProjectionFixture.evidence(chain(61)), ProjectionRejection.DEPTH_LIMIT)
 
     @Test fun childCount1200AndFourDigitOrdinalArePreserved() {
-        val result = project(ProjectionFixture.evidence(flat(1201))) as ProjectionOutcome.Complete
+        val result = project(ProjectionFixture.evidence(flat(1201))) as ProjectionOutcome.StructuralMatch
         assertEquals("0/1199", result.snapshot.nodes.last().path)
         assertEquals(1200, result.frame.outlines.first().childCount)
     }
@@ -91,7 +91,7 @@ class CollectionProjectionLimitsTest {
         val child = nodes[1].copy(childCount = 1)
         val grandchild = nodes[1].copy(path = "0/0/0", parentPath = "0/0")
         val input = persistentListOf(nodes[0], child, grandchild, nodes[2])
-        val result = project(ProjectionFixture.evidence(input)) as ProjectionOutcome.Complete
+        val result = project(ProjectionFixture.evidence(input)) as ProjectionOutcome.StructuralMatch
         assertEquals(input.map { it.path }, result.snapshot.nodes.map { it.path })
         assertEquals(input.map { it.childCount }, result.frame.outlines.map { it.childCount })
     }
@@ -108,7 +108,7 @@ class CollectionProjectionLimitsTest {
     @Test fun fourRetainedProtectedFieldsAllow4096CharactersEach() {
         val value = "합".repeat(4096)
         val node = ProjectionFixture.node().copy(text = value, contentDescription = value, viewId = value, className = value)
-        val result = project(ProjectionFixture.evidence(persistentListOf(node))) as ProjectionOutcome.Complete
+        val result = project(ProjectionFixture.evidence(persistentListOf(node))) as ProjectionOutcome.StructuralMatch
         assertSame(value, result.snapshot.nodes[0].text)
         assertSame(value, result.snapshot.nodes[0].viewId)
         assertSame(value, result.snapshot.nodes[0].className)
@@ -123,19 +123,18 @@ class CollectionProjectionLimitsTest {
             reject(ProjectionFixture.evidence(persistentListOf(modified)), ProjectionRejection.FIELD_LENGTH_LIMIT)
     }
 
-    @Test fun hiddenBackgroundFieldLengthIsAlsoChecked() {
-        val evidence = forest(1, 1)
-        val background = evidence.roots[1].copy(nodes = persistentListOf(ProjectionFixture.node().copy(
-            visible = false, text = "합".repeat(4097))))
-        reject(evidence.copy(roots = evidence.roots.toPersistentList().set(1, background)), ProjectionRejection.FIELD_LENGTH_LIMIT,
-            backgroundMetadata())
+    @Test fun incompleteBackgroundProtectionStillDeniesWithoutNodePayload() {
+        val evidence = forest(1)
+        val background = evidence.roots[1].copy(protection = ProtectionCompletion.INCOMPLETE)
+        reject(evidence.copy(roots = evidence.roots.toPersistentList().set(1, background)),
+            ProjectionRejection.PROTECTION_NOT_COMPLETE, backgroundMetadata())
     }
 
     @Test fun targetTextAndDescriptionAllow32768Characters() {
         val value = "합".repeat(4096)
         val input = flat(4).map { it.copy(text = value, contentDescription = value) }
         assertTrue(project(ProjectionFixture.evidence(persistentListOf<CollectedNodeEvidence>().addAll(input)))
-            is ProjectionOutcome.Complete)
+            is ProjectionOutcome.StructuralMatch)
     }
 
     @Test fun targetCombinedText32769Denies() {
@@ -146,17 +145,19 @@ class CollectionProjectionLimitsTest {
             ProjectionRejection.TEXT_LENGTH_LIMIT)
     }
 
-    @Test fun targetTextLimitIsNotInventedForBackgroundAggregate() {
-        val evidence = forest(1, 9)
-        val background = evidence.roots[1].copy(nodes = persistentListOf<CollectedNodeEvidence>().addAll(
-            flat(9).map { it.copy(text = "합".repeat(4096)) }))
-        assertTrue(project(evidence.copy(roots = evidence.roots.toPersistentList().set(1, background)), backgroundMetadata())
-            is ProjectionOutcome.Complete)
+    @Test fun backgroundRequiresNoInventedBodyGeometryActionsOrOutline() {
+        val evidence = forest(1)
+        assertTrue(project(evidence, backgroundMetadata()) is ProjectionOutcome.StructuralMatch)
+        assertEquals(setOf("windowId", "role", "protection", "traversal"),
+            ProtectionRootEvidence::class.java.declaredFields.filterNot {
+                java.lang.reflect.Modifier.isStatic(it.modifiers)
+            }.map { it.name }.toSet())
+        // Only window/role/protection/traversal observations; no background node data is supplied.
     }
 
     @Test fun nullAndEmptyFieldsRemainDistinct() {
         val node = ProjectionFixture.node().copy(text = null, contentDescription = "", viewId = "", className = null)
-        val result = project(ProjectionFixture.evidence(persistentListOf(node))) as ProjectionOutcome.Complete
+        val result = project(ProjectionFixture.evidence(persistentListOf(node))) as ProjectionOutcome.StructuralMatch
         assertNull(result.snapshot.nodes[0].text)
         assertEquals("", result.snapshot.nodes[0].contentDescription)
         assertEquals("", result.snapshot.nodes[0].viewId)
@@ -165,7 +166,7 @@ class CollectionProjectionLimitsTest {
 
     @Test fun allNormalFixtureDtoFieldsRemainExactlyEqual() {
         val input = ProjectionFixture.dialogNodes()
-        val result = project(ProjectionFixture.evidence(input)) as ProjectionOutcome.Complete
+        val result = project(ProjectionFixture.evidence(input)) as ProjectionOutcome.StructuralMatch
         val expectedNodes = input.map { n -> NodeSnapshot(n.path, n.viewId, n.className, n.text,
             n.contentDescription, n.clickable, n.enabled, n.rect!!.let { ScreenBounds(it.left, it.top, it.right, it.bottom) }, n.actions) }
         assertEquals(PopupSnapshot(metadata.token, metadata.capturedAtUptimeMillis,
@@ -181,11 +182,11 @@ class CollectionProjectionLimitsTest {
 
     @Test fun geometryAggregationKeepsIncompletePriorityWithoutFlattening() {
         val node = ProjectionFixture.node()
-        val root = ProjectionFixture.evidence().roots[0]
-        val roots = persistentListOf(root.copy(nodes = persistentListOf()), root.copy(windowId = 8,
-            nodes = persistentListOf(node.copy(rect = null), node.copy(rect = CollectedRect(2, 0, 1, 2)))))
-        assertEquals(GeometryCompletion.INCOMPLETE, ProjectionFixture.evidence().copy(roots = roots).geometry)
-        assertEquals(GeometryCompletion.UNKNOWN, ProjectionFixture.evidence().copy(roots = roots.removeAt(1)).geometry)
+        val e = ProjectionFixture.evidence()
+        val target = e.target.copy(nodes = persistentListOf(node.copy(rect = null),
+            node.copy(rect = CollectedRect(2, 0, 1, 2))))
+        assertEquals(GeometryCompletion.INCOMPLETE, e.copy(target = target).geometry)
+        assertEquals(GeometryCompletion.UNKNOWN, e.copy(target = target.copy(nodes = persistentListOf())).geometry)
     }
 
     @Test fun projectionAndValueStringsDoNotLogOrThrowSensitiveInput() {
@@ -203,9 +204,9 @@ class CollectionProjectionLimitsTest {
             System.setOut(stream)
             System.setErr(stream)
             val complete = project(evidence, secretMetadata)
-            val oversizedRoot = evidence.roots[0].copy(nodes = persistentListOf(node.copy(text = "PRIVATE_BODY".repeat(500))))
-            val rejected = project(evidence.copy(roots = persistentListOf(oversizedRoot)), secretMetadata)
-            assertTrue(complete is ProjectionOutcome.Complete)
+            val oversizedRoot = evidence.target.copy(nodes = persistentListOf(node.copy(text = "PRIVATE_BODY".repeat(500))))
+            val rejected = project(evidence.copy(target = oversizedRoot), secretMetadata)
+            assertTrue(complete is ProjectionOutcome.StructuralMatch)
             assertEquals(ProjectionOutcome.Rejected(ProjectionRejection.FIELD_LENGTH_LIMIT), rejected)
             val printable = listOf(node.rect, node, evidence.roots[0], evidence, secretMetadata,
                 secretMetadata.windows[0], complete, rejected).joinToString()
@@ -239,10 +240,19 @@ class CollectionProjectionLimitsTest {
         }
         return nodes.build()
     }
-    private fun forest(target: Int, background: Int): CollectedTreeEvidence {
-        val e = ProjectionFixture.evidence(flat(target))
+    private fun forest(target: Int): CollectedTreeEvidence {
+        // A bounded two-level target tree reaches 2400 without violating 1200 children/depth60.
+        val nodes = if (target <= 1201) flat(target) else {
+            val first = flat(1201)
+            val last = first.last().copy(childCount = target - 1201)
+            first.set(first.lastIndex, last).addAll((0 until target - 1201).map { i ->
+                ProjectionFixture.node().copy(path = "0/1199/$i", parentPath = "0/1199", siblingOrdinal = i,
+                    text = null, contentDescription = null)
+            })
+        }
+        val e = ProjectionFixture.evidence(nodes)
         return e.copy(expectedProtectionWindowIds = persistentSetOf(7, 8), roots = persistentListOf(
-            e.roots[0], e.roots[0].copy(windowId = 8, role = EvidenceTreeRole.SAME_APP_BACKGROUND, nodes = flat(background))))
+            e.roots[0], e.roots[0].copy(windowId = 8, role = EvidenceTreeRole.SAME_APP_BACKGROUND)))
     }
     private fun backgroundMetadata() = metadata.copy(windows = persistentListOf(
         metadata.windows[0], metadata.windows[0].copy(id = 8, active = false)))

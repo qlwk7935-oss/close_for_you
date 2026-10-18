@@ -497,3 +497,34 @@ python3 -B tools/verify_capture_test_apks.py --release-apk app/build/outputs/apk
 python3 -B tools/verify_capture_test_apks.py --release-apk app/build/outputs/apk/release/app-release-unsigned.apk
 ```
 BUILD SUCCESSFUL (1분31초, 196 tasks: 31 executed/165 up-to-date). JVM331개(앱257/host74), 실패·오류·건너뜀0. 앱/host Debug Lint 이슈0. Debug/Release·계측 APK 및 독립 호스트 Kotlin 런타임/driver 격리/release probe 부재 패키징 검사를 통과했습니다. 기준9922c80과 기존 파일을 비교해 허용한 collector/진단/host formatter·시험 외 app/host/synthetic-support 파일 변경0, collector의 walk/예산/지문/최종 DTO·Ready/catch/finally와 타사 창 차단식 동일을 확인했습니다. 새 순수 지문/증거/projection과 서비스/Runtime은 미변경입니다. 실제 계측 실행 결과는 아닙니다.
+
+## PR #7 후속: 합성 CollectionAttempt 소유권·계약 분리 — 00c7223 이후
+
+원격과 동일한 `feature/f1-popup-detection` / `00c7223` 및 깨끗한 작업 트리를 확인하고 시작했습니다. **실제 Android reader 연결은 하지 않습니다.** 상세 계약·상태 전이·한계는 [F1_COLLECTION_ATTEMPT.md](F1_COLLECTION_ATTEMPT.md)에 있습니다.
+
+- 신규 CollectionAttempt는 private 생성자와 syntheticReview factory만 제공합니다. STARTED → SCOPE_FIXED → PROTECTION_REVIEWED → TARGET_RECORDED → FINAL_REVIEWED → CONSUMED 또는 DISCARDED로 진행하며 역행/재시작을 거부합니다. 최초 실패 보존, monitor 동기화, 다른 owner receipt/완료 handle 거부,1회 소비, 취소·무효화·입력 실패 후 참조 해제를 구현했습니다.
+- receipt와 완료 handle의 실제 구현은 owner 내부 private 일반 클래스입니다. copy/UUID/임의 상태 인자로 생성하지 못하며 owner identity와 발급한 객체 동일성을 확인합니다. 모든 결과는 합성 검토이고 productionReady=false입니다. 소비는 고정 enum만 반환하며 DTO/Ready/행동 권한을 내보내지 않습니다.
+- 배경은 ProtectionRootEvidence의 보호·순회 관측만 보존합니다. 실제 F0 증거가 아닌 미인증 합성 입력입니다. 대상 root만 전체 노드/본문/actions/geometry/outline 기록을 갖습니다. 배경에 geometry getter나 가짜 노드를 요구하지 않습니다. 기존 prototype의 배경 개별 노드 검사는 후속 실제 reader 책임으로 분리했고, 이번에 그 검사가 수행됐다고 주장하지 않습니다.
+- 독립 projection의 Complete를 StructuralMatch로 명확히 이름 변경했습니다. target 노드 보호/순회/topology/원시 geometry·상한, 모든 보호 root의 관측·coverage 관계 검사와 정상 DTO 필드 보존은 유지합니다. 배경 불완전과 target geometry 불완전은 서로 대신할 수 없습니다. 최대2400은 이제 보존 target 기록 수이고 실제2T+B 방문/100ms를 증명하지 않습니다.
+- 민감 데이터는 로그/파일/DB에 출력하지 않습니다. wrapper/handle은 redacted이며 입력 실패는 고정 코드입니다. 입력 CancellationException은 폐기 후 고정 메시지의 새 취소 예외로 전파하고 원본 메시지/cause/suppressed를 전달하지 않습니다. 이미 호출자가 소유한 raw fixture나 JVM heap의 물리적 소거를 보장하지 않습니다.
+
+신규 JVM **44개**(CollectionAttemptTest40 + CollectionProjectionTest4)를 추가했고 기존 evidence9/projection31/limits27 회귀를 계약 분리에 맞게 갱신했습니다. 순서·누락/중복/변경·다른 attempt·동시/재소비·모든 미소비 단계 취소/무효화·최초 실패·배경/target 독립성·hidden 보호·malformed·필드/상한·제한된 입력 복사·재진입·예외 비노출·참조 해제를 검사합니다. 최초 targeted 실행의 reflection 시험은 컴파일러 정적 필드를 잘못 포함한 실패를 instance 필드 검사로 수정했습니다. 실제 보호 규칙을 완화한 수정이 아닙니다.
+
+기준00c7223과 허용된 prototype/시험 경로 외 기존 app/host/synthetic-support 추적 파일을 바이트 비교해 변경0개를 확인했습니다. Collector, root guard, 서비스/Runtime, F0/F1, 두 pass/예산/지문/진단, 공통 계약/BCD, PR10, 원래14개 시나리오는 그대로입니다. 신규 모델/attempt/projection의 운영 호출 지점0개를 소스로 확인했습니다. 실제 Android 실행의 동등성을 계측으로 입증한 것은 아닙니다.
+
+**미해결 P1:** 실제 전체 F0/숨김·배경 coverage, 실제 Android getter 값과 같은 시도의 token/salt/구조·본문·outline 지문 결합, 정책 revision/서비스 session/무효화/TTL/취소, root/windows/frame 읽기 시점 불일치는 해결하지 않았습니다. supplied COMPLETE/raw fixture는 인증이 아니며 같은 raw 입력을 다른 attempt에 재제출하는 것을 실제 화면 출처로 식별하지 못합니다. 실제 reader의 생성 권한·두 pass 안의 값 결박·비용/최초 진단/DTO·지문 동등성·실패 시 downstream 호출0을 별도 승인 후 검증해야 합니다. 세 번째 Android 전체 순회는 추가하지 않습니다.
+
+실제 API35/37 계측 미실시입니다. Scroll MALFORMED_NODE_BOUNDS와 별도 WINDOW_OUTSIDE_FRAME, TIME_LIMIT/TARGET_MISSING, 원래14개 UNOBSERVED=14는 그대로 미해결입니다. 이번 합성 계약 통과는 F0 완료·수집 복구·F1 정확도·일반 앱 OCR 성공이 아닙니다. PR #7과 Draft PR #10을 미병합으로 유지합니다.
+
+최종 로컬 검증(JDK17):
+```sh
+./gradlew --no-daemon :app:assembleDebug :app:assembleRelease :app:assembleDebugAndroidTest :app:testDebugUnitTest :capture-test-host:testDebugUnitTest :app:lintDebug :capture-test-host:lintDebug
+python3 -B tools/verify_capture_test_apks.py --release-apk app/build/outputs/apk/release/app-release-unsigned.apk
+```
+**BUILD SUCCESSFUL (1분20초, 196 tasks: 24 executed / 172 up-to-date)**. JVM **375개**(앱301/호스트74), 실패·오류·건너뜀0. 앱·호스트 Debug Lint 이슈0. Debug/Release·계측 APK와 독립 호스트 Kotlin 런타임/driver 격리/release probe 부재 패키징 검사 통과입니다. CI는 push한 동일 커밋의 기존 PR #7 Checks에서 별도로 확인합니다.
+
+Windows에서 이번 순수 합성 계약 회귀만 실행하려면:
+```powershell
+.\gradlew.bat --no-daemon :app:testDebugUnitTest --tests "kr.closeforyou.accessibility.CollectionAttemptTest" --tests "kr.closeforyou.accessibility.CollectedTreeEvidenceTest" --tests "kr.closeforyou.accessibility.CollectionProjectionTest" --tests "kr.closeforyou.accessibility.CollectionProjectionLimitsTest"
+```
+기대 결과는 합성111개 통과입니다. 실제 서비스 F0·14개 시나리오의 baseline 성공을 뜻하지 않습니다.

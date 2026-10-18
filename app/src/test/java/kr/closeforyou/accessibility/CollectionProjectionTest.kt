@@ -9,12 +9,31 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class CollectionProjectionTest {
+    @Test fun structuralMatchIsExplicitlyNotProductionReady() {
+        assertFalse(complete(ProjectionFixture.evidence()).productionReady)
+    }
+    @Test fun targetRecordsMustBelongToDeclaredTargetRatherThanBackground() {
+        val e = withBackground()
+        reject(e.copy(target = e.target.copy(windowId = 8)), ProjectionRejection.ROOT_COVERAGE_INVALID, backgroundMetadata())
+        reject(e.copy(target = e.target.copy(role = EvidenceTreeRole.SAME_APP_BACKGROUND)),
+            ProjectionRejection.ROOT_COVERAGE_INVALID, backgroundMetadata())
+    }
+    @Test fun backgroundTraversalFailureIsIndependentOfValidTargetGeometry() {
+        val e = withBackground()
+        assertEquals(GeometryCompletion.COMPLETE, e.geometry)
+        reject(e.copy(roots = e.roots.toPersistentList().set(1, e.roots[1].copy(traversal = TreeCompletion.MISSING_CHILD))),
+            ProjectionRejection.TREE_NOT_COMPLETE, backgroundMetadata())
+    }
+    @Test fun targetTraversalCannotBeOverriddenByCompleteRootObservations() {
+        val e = ProjectionFixture.evidence()
+        reject(e.copy(target = e.target.copy(traversal = TreeCompletion.TIME_LIMIT)), ProjectionRejection.TREE_NOT_COMPLETE)
+    }
     @Test fun completeSyntheticTreePreservesSnapshotAndFrameFields() {
         val evidence = ProjectionFixture.evidence()
         val metadata = ProjectionFixture.metadata()
         val result = complete(evidence, metadata)
         val actual = result.snapshot
-        val original = evidence.roots.single().nodes.single()
+        val original = evidence.target.nodes.single()
         assertSame(metadata.token, actual.token)
         assertEquals(79L, actual.capturedAtUptimeMillis)
         assertEquals(SnapshotCompleteness.COMPLETE, actual.completeness)
@@ -135,8 +154,7 @@ class CollectionProjectionTest {
 
     @Test fun backgroundProtectionMustBeCompleteEvenWithCompleteTarget() {
         val evidence = withBackground()
-        val background = evidence.roots[1].copy(nodes = persistentListOf(
-            ProjectionFixture.node().copy(visible = false, protection = ProtectionCompletion.BLOCKED)))
+        val background = evidence.roots[1].copy(protection = ProtectionCompletion.BLOCKED)
         reject(evidence.copy(roots = evidence.roots.toPersistentList().set(1, background)), ProjectionRejection.PROTECTION_NOT_COMPLETE,
             backgroundMetadata())
     }
@@ -215,7 +233,7 @@ class CollectionProjectionTest {
 
     @Test fun resultRepresentationsNeverPrintDtoContentsAndBadInputDoesNotThrow() {
         val result = complete(ProjectionFixture.evidence())
-        assertEquals("ProjectionOutcome.Complete(redacted)", result.toString())
+        assertEquals("ProjectionOutcome.StructuralMatch(redacted)", result.toString())
         val outcome = CollectionProjection.project(ProjectionFixture.evidence(persistentListOf(
             ProjectionFixture.node().copy(path = "PRIVATE_PATH", text = "PRIVATE_BODY",
                 rect = CollectedRect(184763, 284763, 3, 4)))), ProjectionFixture.metadata())
@@ -233,7 +251,7 @@ class CollectionProjectionTest {
         return metadata.copy(windows = metadata.windows.toPersistentList().add(metadata.windows.single().copy(id = 8, active = false)))
     }
     private fun complete(evidence: CollectedTreeEvidence, metadata: CollectionProjectionMetadata = ProjectionFixture.metadata()) =
-        CollectionProjection.project(evidence, metadata).also { assertTrue(it is ProjectionOutcome.Complete) } as ProjectionOutcome.Complete
+        CollectionProjection.project(evidence, metadata).also { assertTrue(it is ProjectionOutcome.StructuralMatch) } as ProjectionOutcome.StructuralMatch
     private fun reject(evidence: CollectedTreeEvidence, reason: ProjectionRejection,
         metadata: CollectionProjectionMetadata = ProjectionFixture.metadata()) {
         assertEquals(ProjectionOutcome.Rejected(reason), CollectionProjection.project(evidence, metadata))
@@ -251,8 +269,10 @@ internal object ProjectionFixture {
             text = "닫기", clickable = true, rect = CollectedRect(100, 200, 200, 250),
             outlineFingerprint = "child-secret", actions = persistentSetOf(NodeAction.DISMISS, NodeAction.CLICK)))
     fun evidence(nodes: ImmutableList<CollectedNodeEvidence> = persistentListOf(node())) = CollectedTreeEvidence(
-        persistentSetOf(7), persistentListOf(CollectedRootEvidence(7, EvidenceTreeRole.TARGET, nodes,
+        persistentSetOf(7), persistentListOf(ProtectionRootEvidence(7, EvidenceTreeRole.TARGET,
             ProtectionCompletion.COMPLETED_WITHOUT_BLOCK, TreeCompletion.COMPLETE)),
+        CollectedRootEvidence(7, EvidenceTreeRole.TARGET, nodes,
+            ProtectionCompletion.COMPLETED_WITHOUT_BLOCK, TreeCompletion.COMPLETE),
         ProtectionCompletion.COMPLETED_WITHOUT_BLOCK, TreeCompletion.COMPLETE)
     fun metadata() = CollectionProjectionMetadata(
         SnapshotToken(1, 7, "synthetic.test", "synthetic-popup", "structure-secret", "content-secret", 1), 79,

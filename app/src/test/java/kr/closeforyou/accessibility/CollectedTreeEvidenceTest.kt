@@ -39,8 +39,8 @@ class CollectedTreeEvidenceTest {
         val fixture = ProjectionFixture.evidence()
         assertEquals(GeometryCompletion.COMPLETE, fixture.copy(
             protection = ProtectionCompletion.UNKNOWN, traversal = TreeCompletion.TIME_LIMIT).geometry)
-        val malformed = fixture.copy(roots = persistentListOf(fixture.roots.single().copy(
-            nodes = persistentListOf(ProjectionFixture.node().copy(rect = CollectedRect(2, 0, 1, 1))))))
+        val malformed = fixture.copy(target = fixture.target.copy(
+            nodes = persistentListOf(ProjectionFixture.node().copy(rect = CollectedRect(2, 0, 1, 1)))))
         assertEquals(ProtectionCompletion.COMPLETED_WITHOUT_BLOCK, malformed.protection)
         assertEquals(TreeCompletion.COMPLETE, malformed.traversal)
         assertEquals(GeometryCompletion.INCOMPLETE, malformed.geometry)
@@ -48,9 +48,7 @@ class CollectedTreeEvidenceTest {
 
     @Test fun missingRectOrEmptyTreeCannotClaimGeometryComplete() {
         val fixture = ProjectionFixture.evidence()
-        assertEquals(GeometryCompletion.UNKNOWN, fixture.copy(roots = persistentListOf()).geometry)
-        assertEquals(GeometryCompletion.UNKNOWN, fixture.copy(roots = persistentListOf(
-            fixture.roots.single().copy(nodes = persistentListOf()))).geometry)
+        assertEquals(GeometryCompletion.UNKNOWN, fixture.copy(target = fixture.target.copy(nodes = persistentListOf())).geometry)
         assertEquals(GeometryCompletion.UNKNOWN, ProjectionFixture.node().copy(rect = null).geometry)
     }
 
@@ -66,8 +64,8 @@ class CollectedTreeEvidenceTest {
         val nodes = ProjectionFixture.dialogNodes()
         val parent = nodes.first().copy(rect = CollectedRect(9, 0, 2, 8))
         val evidence = ProjectionFixture.evidence(persistentListOf(parent, nodes[1]))
-        assertEquals(2, evidence.roots.single().nodes.size)
-        val child = evidence.roots.single().nodes[1]
+        assertEquals(2, evidence.target.nodes.size)
+        val child = evidence.target.nodes[1]
         assertEquals("0/0", child.path)
         assertEquals("0", child.parentPath)
         assertEquals(0, child.siblingOrdinal)
@@ -84,7 +82,7 @@ class CollectedTreeEvidenceTest {
             rect = CollectedRect(184763, 284763, 384763, 484763))
         val evidence = ProjectionFixture.evidence(persistentListOf(node))
         val metadata = ProjectionFixture.metadata()
-        val values = listOf(node.rect, node, evidence.roots.single(), evidence, metadata,
+        val values = listOf(node.rect, node, evidence.target, evidence.roots.single(), evidence, metadata,
             metadata.windows.single(), metadata.screenRect)
         values.forEach { assertTrue(it.toString().endsWith("(redacted)")) }
         val printable = values.joinToString()

@@ -55,7 +55,7 @@ internal data class CollectedNodeEvidence(
     override fun toString(): String = "CollectedNodeEvidence(redacted)"
 }
 
-/** Each declared same-app protection root must be retained, even when its tree is incomplete. */
+/** Target snapshot records only. Background protection has no node geometry/outline payload. */
 internal data class CollectedRootEvidence(
     val windowId: Int,
     val role: EvidenceTreeRole,
@@ -66,25 +66,33 @@ internal data class CollectedRootEvidence(
     override fun toString(): String = "CollectedRootEvidence(redacted)"
 }
 
-/** Completion claims are independent; none is inferred from visibility or another pass's success.
- * A future trusted reader must establish coverage/currentness, not merely populate these enums.
- * This phase neither reads Android nor attests that F0 actually ran on a real screen.
+/** Untrusted observation/fixture input, NOT an owner-issued receipt. No background node payload.
+ * A future Android reader must actually inspect all fields/children before issuing private proof.
  */
-internal data class CollectedTreeEvidence(
-    val expectedProtectionWindowIds: ImmutableSet<Int>,
-    val roots: ImmutableList<CollectedRootEvidence>,
+internal data class ProtectionRootEvidence(
+    val windowId: Int,
+    val role: EvidenceTreeRole,
     val protection: ProtectionCompletion = ProtectionCompletion.UNKNOWN,
     val traversal: TreeCompletion = TreeCompletion.UNKNOWN,
 ) {
+    override fun toString(): String = "ProtectionRootEvidence(redacted)"
+}
+
+/** Pure structural input. Supplied flags/roster are not proof of Android F0 or actual coverage. */
+internal data class CollectedTreeEvidence(
+    val expectedProtectionWindowIds: ImmutableSet<Int>,
+    val roots: ImmutableList<ProtectionRootEvidence>,
+    val target: CollectedRootEvidence,
+    val protection: ProtectionCompletion = ProtectionCompletion.UNKNOWN,
+    val traversal: TreeCompletion = TreeCompletion.UNKNOWN,
+) {
+    // Only the target has geometry records. Background F0 remains an independent requirement.
     val geometry: GeometryCompletion get() {
-        var unknown = roots.isEmpty()
-        for (root in roots) {
-            if (root.nodes.isEmpty()) unknown = true
-            for (node in root.nodes) when (node.geometry) {
-                GeometryCompletion.INCOMPLETE -> return GeometryCompletion.INCOMPLETE
-                GeometryCompletion.UNKNOWN -> unknown = true
-                GeometryCompletion.COMPLETE -> Unit
-            }
+        var unknown = target.nodes.isEmpty()
+        for (node in target.nodes) when (node.geometry) {
+            GeometryCompletion.INCOMPLETE -> return GeometryCompletion.INCOMPLETE
+            GeometryCompletion.UNKNOWN -> unknown = true
+            GeometryCompletion.COMPLETE -> Unit
         }
         return if (unknown) GeometryCompletion.UNKNOWN else GeometryCompletion.COMPLETE
     }
