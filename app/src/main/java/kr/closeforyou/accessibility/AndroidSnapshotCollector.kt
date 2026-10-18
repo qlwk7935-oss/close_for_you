@@ -41,7 +41,8 @@ internal class AndroidSnapshotCollector {
     ): CollectionResult {
         val roots = mutableListOf<AccessibilityNodeInfo>()
         // Separate release ownership from the protection scope fixed during enumeration.
-        val rootGuards = mutableListOf<Pair<AccessibilityNodeInfo, ProtectionRootGuard>>()
+        val rootGuards = mutableListOf<Triple<AccessibilityNodeInfo, ProtectionRootGuard, ProtectionRootTicket?>>()
+        val protectionObservation = ObservedProtectionPass()
         val androidWindows = mutableListOf<AccessibilityWindowInfo>()
         var targetPackage: String? = null
         var targetId = -1
@@ -77,7 +78,8 @@ internal class AndroidSnapshotCollector {
                 ?: return blocked(PrivacyBlockReason.UNREADABLE_TREE, CaptureDetail.ROOT_PACKAGE_UNAVAILABLE)
             targetPackage = packageName
             targetId = progress.at(CollectionOperation.ROOT_METADATA) { root.windowId }
-            rootGuards += root to ProtectionRootGuard(packageName, packageName, targetId)
+            rootGuards += Triple(root, ProtectionRootGuard(packageName, packageName, targetId),
+                protectionObservation.registerRoot(targetId, ProtectionRootRole.TARGET))
             trace.root(packageName, root.windowId)
             phase = CollectionPhase.PACKAGE_GATE
             packageGate(packageName)?.let { return blocked(it, CaptureDetail.PACKAGE_GATE) }
@@ -95,6 +97,8 @@ internal class AndroidSnapshotCollector {
                         window.isActive, window.isFocused, window.layer)
                 }
             }
+            // Only previously read DTO scalars; no additional framework getters or tree traversal.
+            windows.forEach { if (it.type == WindowType.APPLICATION) protectionObservation.observeWindow(it.id) }
             val targetWindow = windows.firstOrNull { it.id == targetId }
                 ?: return blocked(PrivacyBlockReason.UNREADABLE_TREE, CaptureDetail.TARGET_MISSING)
             trace.target(targetWindow.type)
@@ -124,8 +128,12 @@ internal class AndroidSnapshotCollector {
                 if (otherPackage != packageName && (requireCaptureIsolation || window.isActive || window.isFocused)) {
                     return blocked(PrivacyBlockReason.SYSTEM_WINDOW, CaptureDetail.FOREIGN_APPLICATION, WindowType.APPLICATION)
                 }
-                rootGuards += other to ProtectionRootGuard(otherPackage, packageName, window.id)
+                val registeredWindowId = window.id // Same getter, at the original registration point.
+                rootGuards += Triple(other, ProtectionRootGuard(otherPackage, packageName, registeredWindowId),
+                    protectionObservation.registerRoot(registeredWindowId, if (otherPackage == packageName)
+                        ProtectionRootRole.SAME_APP_BACKGROUND else ProtectionRootRole.EXCLUDED_FOREIGN))
             }
+            protectionObservation.freezeScope()
 
             phase = CollectionPhase.GEOMETRY
             val geometryRead = progress.at(CollectionOperation.SCREEN_GEOMETRY) {
@@ -141,14 +149,18 @@ internal class AndroidSnapshotCollector {
             val budget = TraversalBudget()
             phase = CollectionPhase.PROTECTION_PASS
             // Inspect all trees of this application, including its obscured background window.
-            for ((candidateRoot, guard) in rootGuards) {
+            for ((candidateRoot, guard, ticket) in rootGuards) {
                 tree = if (candidateRoot === root) CollectionTree.TARGET else CollectionTree.SAME_APP_BACKGROUND
                 guard.inspect(progress, { candidateRoot.packageName?.toString() }, { candidateRoot.windowId }) {
                     walk(candidateRoot, budget, progress) { node, path, _ ->
                         inspect(node, packageName, progress, isRoot = path == "0"); false
                     }
+                    // Only a real protection walk returning normally records this root.
+                    // An excluded foreign guard never invokes this callback.
+                    protectionObservation.traversalReturned(ticket)
                 }
             }
+            protectionObservation.finishPass()
 
             phase = CollectionPhase.SNAPSHOT_PASS
             tree = CollectionTree.TARGET
@@ -234,9 +246,88 @@ internal class AndroidSnapshotCollector {
             // This may be our code or a getter. Classify the boundary/type, never the message or stack.
             blocked(PrivacyBlockReason.UNREADABLE_TREE, CaptureDetail.COLLECTION_FAILED, exception = exception)
         } finally {
+            // Clear even on early return/cancellation, BEFORE framework cleanup can itself throw.
+            // No observation escapes this capture, including when the existing result is Ready.
+            protectionObservation.discard()
             roots.forEach { it.release() }
             androidWindows.forEach { it.release() }
         }
+    }
+
+    private enum class ProtectionRootRole { TARGET, SAME_APP_BACKGROUND, EXCLUDED_FOREIGN }
+
+    /** Empty, identity-only tickets. Never carry a node/window, text, coordinates or token. */
+    private class ProtectionRootTicket {
+        override fun toString(): String = "ProtectionRootTicket(redacted)"
+    }
+    private class ObservedF0Completion {
+        override fun toString(): String = "ObservedF0Completion(redacted)"
+    }
+
+    /** Capture-local bookkeeping of OBSERVED traversal returns only, NOT whole-screen F0 proof.
+     * No external factory, synthetic input, timer, callback or Android object is accepted/retained.
+     * Recording rejection discards THIS observation only; it cannot change Ready/Blocked or gates.
+     * Sole-thread owner: created/used/discarded synchronously inside capture, never published.
+     */
+    private class ObservedProtectionPass {
+        private enum class State { REGISTERING, SCOPE_FIXED, PASS_RECORDED, DISCARDED }
+        private class Entry(val windowId: Int, val role: ProtectionRootRole,
+            val ticket: ProtectionRootTicket, var returned: Boolean = false) {
+            override fun toString(): String = "ProtectionEntry(redacted)"
+        }
+        private var state = State.REGISTERING
+        private val observedWindows = mutableSetOf<Int>()
+        private val entries = mutableListOf<Entry>()
+        private var completion: ObservedF0Completion? = null
+
+        fun observeWindow(windowId: Int) {
+            if (state != State.REGISTERING || observedWindows.size >= MAX_WINDOWS ||
+                !observedWindows.add(windowId)) discard()
+        }
+
+        fun registerRoot(windowId: Int, role: ProtectionRootRole): ProtectionRootTicket? {
+            if (state != State.REGISTERING || entries.size >= MAX_WINDOWS ||
+                entries.any { it.windowId == windowId }) {
+                discard(); return null
+            }
+            return ProtectionRootTicket().also { entries += Entry(windowId, role, it) }
+        }
+
+        fun freezeScope() {
+            if (state != State.REGISTERING || observedWindows.isEmpty() ||
+                entries.count { it.role == ProtectionRootRole.TARGET } != 1 ||
+                entries.mapTo(mutableSetOf()) { it.windowId } != observedWindows) {
+                discard(); return
+            }
+            state = State.SCOPE_FIXED
+        }
+
+        fun traversalReturned(ticket: ProtectionRootTicket?) {
+            if (state != State.SCOPE_FIXED) { discard(); return }
+            val entry = entries.singleOrNull { it.ticket === ticket }
+            if (entry == null || entry.role == ProtectionRootRole.EXCLUDED_FOREIGN || entry.returned) {
+                discard(); return
+            }
+            entry.returned = true
+        }
+
+        fun finishPass() {
+            if (state != State.SCOPE_FIXED ||
+                entries.any { it.role != ProtectionRootRole.EXCLUDED_FOREIGN && !it.returned }) {
+                discard(); return
+            }
+            completion = ObservedF0Completion()
+            state = State.PASS_RECORDED
+        }
+
+        fun discard() {
+            completion = null
+            entries.clear()
+            observedWindows.clear()
+            state = State.DISCARDED
+        }
+
+        override fun toString(): String = "ObservedProtectionPass(redacted)"
     }
 
     private fun inspect(node: AccessibilityNodeInfo, expectedPackage: String, progress: CollectionProgress, isRoot: Boolean) {

@@ -1,6 +1,12 @@
 # PR #7: 보호 검사와 geometry 완전성 계약 검토
 
-결론: **현재 운영 차단을 유지합니다.** 독립 증거·projection·지문 codec은 Android 수집기에 연결하지 않았습니다. `9922c80` 이후 승인된 최소 수정은 아래 0-C의 **기존 보호 pass root 소유권 검사**뿐입니다. CollectionAttempt/receipt 연결·새 반환 경로·부분 F1 관측은 여전히 후속 설계이며, 두 pass·예산·지문 규격·F1/원래14개 정답은 유지합니다. 이후 절의 독립 모델 구현 기록은 당시 범위를 설명합니다.
+결론: **현재 운영 차단을 유지합니다.** 독립 증거·projection·지문 codec은 Android 수집기에 연결하지 않았습니다. `9922c80` 이후 기존 보호 pass root 소유권 검사(0-C)와 `e6b1a91` 이후 collector 지역 관측 기록(0-F)을 적용합니다. 기록은 기존 반환 경로와 독립적입니다. CollectionAttempt/receipt 연결·새 반환 경로·부분 F1 관측은 여전히 후속 설계이며, 두 pass·예산·지문 규격·F1/원래14개 정답은 유지합니다. 이후 절의 독립 모델 구현 기록은 당시 범위를 설명합니다.
+
+## 0-F. collector 지역 관측 F0 순회 기록 — e6b1a91 이후
+
+[관측 보호 순회 기록](F1_OBSERVED_PROTECTION_PASS.md)을 추가합니다. capture마다 private owner가 실제 window/root 열거에서 target/동일 앱 배경/제외 타사를 등록하며, 보호 callback의 실제 walk 정상 반환 직후에만 root 완료를 기록합니다. 제외 guard의 정상 반환은 완료가 아닙니다. 전체 보호 root가 정확히1회 완료된 경우 private pass 기록을 만들고, 정상 종료를 포함한 모든 finally에서 framework 해제 전에 폐기합니다.
+
+추가 getter·deadline 검사·세 번째 Android 전체 순회 없이 기존 snapshot/DTO/지문/Ready/Blocked/catch/진단/해제 순서를 유지합니다. 새 기록의 실패는 기존 수집 결과와 독립적이며, 합성 CollectionAttempt/projection/행동/캡처/OCR로 연결하지 않습니다. 전체 F0/현재성/TTL/최종 클릭 안전성의 증명이 아닙니다. 취소 예외를 일반 Blocked로 처리하는 기존 동작과 실제 Job 취소 관측 문제는 후속으로 남깁니다.
 
 ## 0-E. 미연결 합성 코드 P2 보강 — a341dd6 이후
 
