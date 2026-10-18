@@ -94,6 +94,42 @@ class ChoicePromptPlannerTest {
         assertEquals(fixture.snapshot.token, choice.token)
     }
 
+    @Test fun pressingSkipCandidateProducesSkipOnceNotCloseOnce() {
+        val analysis = MockPopupFixtures.notice().analysis.copy(
+            closeCandidates = persistentListOf(candidate(id = "skip", label = "건너뛰기", role = ButtonRole.SKIP)),
+        )
+        val prompt = ChoicePromptPlanner.plan(analysis, PopupClassification.ADVERTISEMENT)
+        val option = pressOptions(prompt).single()
+        assertEquals("건너뛰기", option.buttonLabel)
+        val choice = ChoicePromptPlanner.toUserChoice(prompt, option)
+        assertEquals(ChoiceKind.SKIP_ONCE, choice.kind)
+        assertEquals("skip", choice.candidateId)
+        assertTrue(choice.buttonMeaningConfirmed)
+        assertFalse(choice.repeatAutomationExplicitlyAllowed)
+    }
+
+    @Test fun closeAndSkipCandidatesTogetherEachMapToTheirOwnKind() {
+        val analysis = MockPopupFixtures.notice().analysis.copy(
+            closeCandidates = persistentListOf(
+                candidate(id = "close", label = "닫기", role = ButtonRole.CLOSE),
+                candidate(id = "skip", label = "건너뛰기", role = ButtonRole.SKIP),
+            ),
+        )
+        val prompt = ChoicePromptPlanner.plan(analysis, PopupClassification.ADVERTISEMENT)
+        val kinds = pressOptions(prompt).associate {
+            it.candidateId to ChoicePromptPlanner.toUserChoice(prompt, it).kind
+        }
+        assertEquals(mapOf("close" to ChoiceKind.CLOSE_ONCE, "skip" to ChoiceKind.SKIP_ONCE), kinds)
+    }
+
+    @Test fun pressOptionsCarryCandidateRoleAndOthersDoNot() {
+        val prompt = ChoicePromptPlanner.plan(MockPopupFixtures.advertisement().analysis, PopupClassification.ADVERTISEMENT)
+        prompt.options.forEach {
+            if (it.kind == PromptOptionKind.PRESS_CANDIDATE) assertEquals(ButtonRole.CLOSE, it.candidateRole)
+            else assertNull(it.candidateRole)
+        }
+    }
+
     @Test fun readAndKeepChoicesCarryNoTargetOrPermission() {
         val prompt = ChoicePromptPlanner.plan(MockPopupFixtures.advertisement().analysis, PopupClassification.ADVERTISEMENT)
         val byKind = prompt.options.associateBy { it.kind }

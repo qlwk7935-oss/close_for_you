@@ -19,6 +19,8 @@ enum class PromptOptionKind { PRESS_CANDIDATE, READ_CONTENT, KEEP_OPEN }
 data class PromptOption(
     val kind: PromptOptionKind,
     val candidateId: String? = null,
+    /** B's role for the candidate; decides CLOSE_ONCE vs SKIP_ONCE. Null for non-press options. */
+    val candidateRole: ButtonRole? = null,
     /** Screen text: shown and spoken, never logged. */
     val buttonLabel: String? = null,
 ) {
@@ -53,7 +55,12 @@ object ChoicePromptPlanner {
             analysis.closeCandidates.filter(::isPressable).distinctBy { it.id }
         }
         val options = pressable.map {
-            PromptOption(PromptOptionKind.PRESS_CANDIDATE, candidateId = it.id, buttonLabel = it.label?.trim())
+            PromptOption(
+                PromptOptionKind.PRESS_CANDIDATE,
+                candidateId = it.id,
+                candidateRole = it.role,
+                buttonLabel = it.label?.trim(),
+            )
         } + PromptOption(PromptOptionKind.READ_CONTENT) + PromptOption(PromptOptionKind.KEEP_OPEN)
         return ChoicePrompt(
             token = analysis.token,
@@ -69,7 +76,7 @@ object ChoicePromptPlanner {
         return when (option.kind) {
             PromptOptionKind.PRESS_CANDIDATE -> UserChoice(
                 token = prompt.token,
-                kind = ChoiceKind.CLOSE_ONCE,
+                kind = pressChoiceKind(requireNotNull(option.candidateRole)),
                 candidateId = requireNotNull(option.candidateId),
                 buttonMeaningConfirmed = true,
                 repeatAutomationExplicitlyAllowed = false,
@@ -77,6 +84,13 @@ object ChoicePromptPlanner {
             PromptOptionKind.READ_CONTENT -> UserChoice(prompt.token, ChoiceKind.READ_CONTENT)
             PromptOptionKind.KEEP_OPEN -> UserChoice(prompt.token, ChoiceKind.KEEP_OPEN)
         }
+    }
+
+    /** Only CLOSE/SKIP are ever offered (see [isPressable]); anything else is a programming error. */
+    private fun pressChoiceKind(role: ButtonRole): ChoiceKind = when (role) {
+        ButtonRole.CLOSE -> ChoiceKind.CLOSE_ONCE
+        ButtonRole.SKIP -> ChoiceKind.SKIP_ONCE
+        else -> throw IllegalArgumentException("Role $role cannot be pressed for the user")
     }
 
     private fun isPressable(candidate: CloseCandidate): Boolean =
