@@ -145,7 +145,7 @@ class DecisionCloseCandidateFinderTest {
         assertEquals(ActionAuthorization.NEEDS_CONFIRMATION, ask.authorization)
         assertEquals("node:1", ask.candidateId)
 
-        val choice = UserChoice(analysis.token, ChoiceKind.CLOSE_ONCE, "node:1")
+        val choice = UserChoice(analysis.token, ChoiceKind.CLOSE_ONCE, "node:1", buttonMeaningConfirmed = true)
         val allowed = policy.decide(analysis, DecisionContext(analysis.token, choice, null, false, true))
         assertEquals(ActionAuthorization.ALLOW_ONCE, allowed.authorization)
         assertEquals("node:1", allowed.candidateId)

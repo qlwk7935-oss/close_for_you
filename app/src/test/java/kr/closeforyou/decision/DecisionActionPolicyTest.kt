@@ -55,7 +55,7 @@ class DecisionActionPolicyTest {
     @Test fun staleScreensAndOldChoicesAreDenied() = runBlocking {
         assertDenied(decide(ad, choice = choose(ad), currentToken = notice.token), STALE_SCREEN)
         assertDenied(decide(ad, choice = choose(ad), currentToken = null), STALE_SCREEN)
-        val oldChoice = UserChoice(notice.token, ChoiceKind.CLOSE_ONCE, "fixture-button")
+        val oldChoice = UserChoice(notice.token, ChoiceKind.CLOSE_ONCE, "fixture-button", buttonMeaningConfirmed = true)
         assertDenied(decide(ad, choice = oldChoice), STALE_SCREEN)
     }
 
@@ -63,13 +63,14 @@ class DecisionActionPolicyTest {
         assertDenied(decide(ad, choice = choose(ad), interacting = true), USER_INTERACTION)
     }
 
-    @Test fun pixelOnlyAndUnconfirmedIconButtonsAreNotPressed() = runBlocking {
+    @Test fun pixelOnlyAndIconButtonsAreNotPressed() = runBlocking {
         val pixelOnly = withCandidate(ad) { it.copy(evidence = EvidenceLevel.E4_VISUAL_ONLY, label = null) }
-        assertDenied(decide(pixelOnly, choice = choose(pixelOnly, confirmed = true)), UNVERIFIED_TARGET)
+        assertDenied(decide(pixelOnly, choice = choose(pixelOnly)), UNVERIFIED_TARGET)
 
+        // A's gate (PR #10) supports E1/E2 only, so even a confirmed icon (E3) is not requested.
         val icon = withCandidate(ad) { it.copy(evidence = EvidenceLevel.E3_USER_BOUND_NODE, label = null) }
         assertDenied(decide(icon, choice = choose(icon, confirmed = false)), UNVERIFIED_TARGET)
-        assertEquals(ALLOW_ONCE, decide(icon, choice = choose(icon, confirmed = true)).authorization)
+        assertDenied(decide(icon, choice = choose(icon)), UNVERIFIED_TARGET)
         assertDenied(decide(MockPopupFixtures.unlabeledButton().analysis), FIRST_SEEN, UNVERIFIED_TARGET)
     }
 
@@ -99,6 +100,12 @@ class DecisionActionPolicyTest {
         assertEquals(ALLOW_ONCE, decide(ad.copy(limitations = realLimitations), choice = choose(ad)).authorization)
     }
 
+    @Test fun unconfirmedTapAsksAgainAboutTheSameButton() = runBlocking {
+        val decision = decide(ad, choice = choose(ad, confirmed = false))
+        assertConfirm(decision, EXPLICIT_PERMISSION_REQUIRED)
+        assertEquals("fixture-button", decision.candidateId)
+    }
+
     @Test fun skipCommandNeedsASkipButton() = runBlocking {
         assertDenied(decide(ad, choice = choose(ad, kind = ChoiceKind.SKIP_ONCE)), UNVERIFIED_TARGET)
         val skip = withCandidate(ad) { it.copy(label = "건너뛰기", role = ButtonRole.SKIP) }
@@ -107,7 +114,8 @@ class DecisionActionPolicyTest {
     }
 
     @Test fun choicesThatDoNotPressAnythingAreDenied() = runBlocking {
-        for (kind in listOf(ChoiceKind.KEEP_OPEN, ChoiceKind.READ_CONTENT, ChoiceKind.STOP_ASKING, ChoiceKind.REVOKE_RULE)) {
+        // Remembering a popup is D's rule, not a press on this screen (A's gate accepts only CLOSE_ONCE / SKIP_ONCE).
+        for (kind in listOf(ChoiceKind.KEEP_OPEN, ChoiceKind.READ_CONTENT, ChoiceKind.STOP_ASKING, ChoiceKind.REVOKE_RULE, ChoiceKind.REMEMBER_EXACT_POPUP)) {
             val decision = decide(ad, choice = UserChoice(ad.token, kind))
             assertDenied(decision, EXPLICIT_PERMISSION_REQUIRED)
             assertNull(decision.candidateId)
@@ -169,7 +177,8 @@ class DecisionActionPolicyTest {
         currentToken: SnapshotToken? = analysis.token,
     ) = policy.decide(analysis, DecisionContext(currentToken, choice, rule, interacting, announcement))
 
-    private fun choose(analysis: PopupAnalysis, kind: ChoiceKind = ChoiceKind.CLOSE_ONCE, confirmed: Boolean = false) =
+    // Mirrors C's choice planner: a tap on a named button confirms that button's meaning.
+    private fun choose(analysis: PopupAnalysis, kind: ChoiceKind = ChoiceKind.CLOSE_ONCE, confirmed: Boolean = true) =
         UserChoice(analysis.token, kind, analysis.closeCandidates.single().id, buttonMeaningConfirmed = confirmed)
 
     private fun withCandidate(analysis: PopupAnalysis, change: (CloseCandidate) -> CloseCandidate) =
