@@ -55,6 +55,16 @@ class DecisionCloseCandidateFinderTest {
         }
     }
 
+    @Test fun labelIsKeptVerbatimForTheGate() {
+        // A's gate compares the candidate label with the node text exactly, so trimming here would
+        // make it refuse a button B and C offered.
+        val padded = find(node("0", text = " 닫기 ")).single()
+        assertEquals(" 닫기 ", padded.label)
+        assertEquals(ButtonRole.CLOSE, padded.role)
+        assertEquals("닫기", find(node("0", text = "닫기", description = " 닫기")).single().label)
+        assertTrue(find(node("0", text = "   ")).isEmpty())
+    }
+
     @Test fun textAndDescriptionMustAgree() {
         assertTrue(find(node("0", text = "X", description = "앱 설치")).isEmpty())
         assertTrue(find(node("0", text = "닫기", description = "가상 상품 보기")).isEmpty())

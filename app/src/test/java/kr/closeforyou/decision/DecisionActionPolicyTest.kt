@@ -98,6 +98,9 @@ class DecisionActionPolicyTest {
         assertTrue(decision.reasons.isEmpty())
         // A command is not automation, so A's incomplete-evidence marker does not block it.
         assertEquals(ALLOW_ONCE, decide(ad.copy(limitations = realLimitations), choice = choose(ad)).authorization)
+        // A verbatim label with surrounding spaces still says CLOSE.
+        val padded = withCandidate(ad) { it.copy(label = " 닫기 ") }
+        assertEquals(ALLOW_ONCE, decide(padded, choice = choose(padded)).authorization)
     }
 
     @Test fun unconfirmedTapAsksAgainAboutTheSameButton() = runBlocking {

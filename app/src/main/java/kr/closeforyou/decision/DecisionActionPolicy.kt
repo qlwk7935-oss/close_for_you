@@ -72,7 +72,6 @@ class DecisionActionPolicy : ActionPolicy {
         )
     }
 
-    /** The person's current choice. Only close or skip choices ask for a press. */
     /**
      * The person's current choice. Only CLOSE_ONCE / SKIP_ONCE ask for a press, matching A's gate
      * (PR #10): remembering a popup is D's rule, not a press request on this screen.
