@@ -15,4 +15,30 @@
     <string name="ui_debug_scenario_decision">중요 결정 (결제 동의)</string>
     <string name="ui_debug_scenario_unlabeled">라벨 없는 버튼</string>
     <string name="ui_debug_scenario_video">영상 (광고 여부 미확인)</string>
+    <string name="ui_debug_scenario_close_and_skip">광고 (닫기·건너뛰기 버튼 둘 다)</string>
+
+    <!-- 다른 앱 위 오버레이 시험 (C 시험용 접근성 서비스) -->
+    <string name="ui_debug_overlay_service_label">닫아줄게 C 선택 창 시험</string>
+    <string name="ui_debug_overlay_service_description">개발용입니다. 가짜 팝업으로 \'닫을까요?\' 선택 창을 다른 앱 위에 띄워 봅니다. 화면 내용은 읽지 않고, 아무것도 대신 누르지 않습니다.</string>
+    <string name="ui_debug_section_overlay">다른 앱 위에 띄우기</string>
+    <string name="ui_debug_overlay_schedule">5초 뒤 다른 앱 위에 띄우기</string>
+    <string name="ui_debug_overlay_service_on">시험 서비스: 켜짐. 버튼을 누르고 5초 안에 다른 앱으로 가세요.</string>
+    <string name="ui_debug_overlay_service_off">시험 서비스: 꺼짐. 접근성 설정에서 \'닫아줄게 C 선택 창 시험\'을 켜 주세요.</string>
+    <string name="ui_debug_overlay_open_settings">접근성 설정 열기</string>
+    <string name="ui_debug_overlay_scheduled">5초 뒤에 선택 창이 떠요.</string>
+    <string name="ui_debug_overlay_result">다른 앱 위 선택 창 결과: %1$s</string>
+    <string name="ui_debug_open_settings">설정 화면 보기 (가짜 기억 목록)</string>
+    <string name="ui_debug_back_to_preview">미리보기로 돌아가기</string>
+
+    <!-- 음성 명령 시험 (말하기 버튼을 누를 때만, 기기 안 인식) -->
+    <string name="ui_debug_section_voice">음성 명령 시험</string>
+    <string name="ui_debug_voice_speak">말하기</string>
+    <string name="ui_debug_voice_ready">말하기 버튼을 누르고 \'닫아\', \'건너뛰어\', \'다시 읽어줘\', \'그대로 둬\'처럼 말해 보세요.</string>
+    <string name="ui_debug_voice_need_permission">마이크 권한이 필요해요. 말하기 버튼을 누르면 권한을 물어봐요.</string>
+    <string name="ui_debug_voice_unavailable">이 기기에서는 기기 안 음성 인식을 쓸 수 없어요.</string>
+    <string name="ui_debug_voice_listening">듣고 있어요…</string>
+    <string name="ui_debug_voice_recognized">알아들은 명령: %1$s</string>
+    <string name="ui_debug_voice_not_understood">명령을 알아듣지 못했어요. 다시 눌러 말해 주세요.</string>
+    <string name="ui_debug_voice_cannot_press">이 팝업은 대신 누를 버튼이 없어요. (명령 %1$s)</string>
+    <string name="ui_debug_voice_not_here">%1$s 명령은 아직 C 화면에서 처리하지 않아요.</string>
 </resources>

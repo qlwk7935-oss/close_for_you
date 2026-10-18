@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- C 시험용(debug 전용). 화면 내용을 읽지 않는다: canRetrieveWindowContent=false, 우리 앱 이벤트만 받음. -->
+<accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
+    android:accessibilityEventTypes="typeAnnouncement"
+    android:accessibilityFeedbackType="feedbackGeneric"
+    android:canPerformGestures="false"
+    android:canRetrieveWindowContent="false"
+    android:description="@string/ui_debug_overlay_service_description"
+    android:notificationTimeout="100"
+    android:packageNames="kr.closeforyou"
+    android:settingsActivity="kr.closeforyou.ui.voice.debug.ChoicePreviewActivity" />

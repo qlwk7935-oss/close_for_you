@@ -3,6 +3,8 @@
     <permission
         android:name="kr.closeforyou.permission.SYNTHETIC_CAPTURE_TEST"
         android:protectionLevel="signature" />
+    <!-- C(ui/voice) debug only: push-to-talk voice command test on the preview screen (on-device recognizer). -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <application>
         <!-- Only debug builds. No image/text IPC, no service activation or arbitrary app selection. -->
         <provider
@@ -20,5 +22,19 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+        <!-- C(ui/voice): debug-only test service that shows the real "닫을까요?" overlay above other apps.
+             Reads no screen content (canRetrieveWindowContent=false), receives only this app's events, performs no actions. -->
+        <service
+            android:name="kr.closeforyou.ui.voice.debug.ChoiceOverlayTestService"
+            android:exported="true"
+            android:label="@string/ui_debug_overlay_service_label"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/ui_voice_overlay_test_service" />
+        </service>
     </application>
 </manifest>
