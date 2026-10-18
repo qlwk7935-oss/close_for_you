@@ -1,6 +1,34 @@
 # PR #7: 보호 검사와 geometry 완전성 계약 검토
 
-결론: **현재 운영 차단을 유지합니다.** `b8d8aab`의 문서 검토 이후, 승인된 **1단계: A 내부 증거 표현과 순수 Kotlin DTO 변환 게이트**만 구현했습니다. Android 수집기에는 연결하지 않았으며 기존 Ready/Blocked 생성, 두 pass·예산·진단·F1/14개 계측은 변경하지 않았습니다. 아래 0절은 이번 구현이고, 이후 절의 collector 연결·수명 관리·지문 동등성·부분 F1 관측은 여전히 후속 설계입니다.
+결론: **현재 운영 차단을 유지합니다.** 독립 증거·projection·지문 codec은 Android 수집기에 연결하지 않았습니다. `9922c80` 이후 승인된 최소 수정은 아래 0-C의 **기존 보호 pass root 소유권 검사**뿐입니다. CollectionAttempt/receipt 연결·새 반환 경로·부분 F1 관측은 여전히 후속 설계이며, 두 pass·예산·지문 규격·F1/원래14개 정답은 유지합니다. 이후 절의 독립 모델 구현 기록은 당시 범위를 설명합니다.
+
+## 0-C. 등록한 보호 root의 검사 생략 방지 — 9922c80 이후
+
+기존 `roots`는 해제 소유 목록이었으며 정책상 제외 가능한 타사 root도 포함했습니다. 보호 pass는 package를 다시 읽어 대상 package와 같을 때만 walk하므로, 최초 동일 앱이던 root가 null/다른 package로 읽히면 검사를 건너뛸 수 있었습니다. 이를 실제 기기에서 재현했다고 주장하지 않습니다.
+
+`ProtectionRootGuard`는 열거 당시의 보호 대상 여부와 기대 window를 이번 capture 호출 안에서만 기록합니다. **F0 완료 receipt·CollectionAttempt·현재성 인증이 아닙니다.** Android 객체나 콜백을 보유하지 않고, collector의 지역 목록이 기존 root 참조와 guard를 묶습니다. 모든 root/window는 기존 소유 목록과 finally에서 해제합니다.
+
+| 경우 | 처리 |
+|---|---|
+| 대상 root | 최초 package와 window ID에 고정. 창 선택/대상 창 제외에도 최초 ID 사용. 다른 root/창으로 대체하지 않음 |
+| 최초 동일 앱 배경 root | 보호 대상으로 고정. 재조회 package null/불일치는 UNREADABLE_TREE / PACKAGE_MISMATCH로 전체 거부 |
+| 보호 root window 소속 불일치 | UNREADABLE_TREE / ROOT_WINDOW_MISMATCH / ROOT_WINDOW_READ로 거부 |
+| 보호/제외 root package getter 실패 | 기존 generic 예외 처리로 UNREADABLE_TREE / COLLECTION_FAILED. NODE_PACKAGE_READ와 고정 예외 종류만 보존 |
+| 보호 root window getter 실패 | 같은 예외 처리, ROOT_WINDOW_READ로 구분 |
+| 비활성·비포커스 타사 앱 + capture isolation 꺼짐 | 기존 열거 조건 그대로 제외 가능. 같은 타사/null/다른 타사로 재조회되면 기존 skip 유지. 이 제외는 보호 완료 인증이 아님 |
+| 타사 앱 + active/focused 또는 capture isolation 켜짐 | 기존 FOREIGN_APPLICATION 차단 그대로. 새 guard 등록 전에 종료 |
+| 제외했던 root가 보호 pass에서 대상 package로 변경 | 보호 범위 변경이므로 PROTECTION_SCOPE_CHANGED로 전체 거부. 추가·대체·정상 완료하지 않음 |
+| 보호 root의 walk 내부 package 재조회가 null | 보호/snapshot 두 pass 모두 PACKAGE_MISMATCH로 거부. 비root 자식의 기존 package-null 정책은 바꾸지 않음 |
+
+기존 최초 실패의 phase/tree/field/operation·reason을 유지하며 새 finding 2개와 operation 1개만 추가했습니다. host의 고정 코드 allowlist도 이 enum만 허용하도록 확장했습니다. package·window ID·좌표·본문·지문·salt·예외 메시지를 진단으로 보내지 않습니다. 기존 CollectionResult.Blocked 처리로 종료하므로 실패한 시도는 snapshot 생성/Ready와 F1 assess에 도달하지 않습니다. Ready/Blocked 타입이나 서비스 분기는 바꾸지 않았습니다.
+
+전체 보호 pass와 대상 snapshot pass, 공유2400 방문/100ms·나머지 상수, 숨김/배경의 모든 자식과 모든 기존 F0 필드 검사는 유지합니다. 기존 walk/예산/지문 계산/DTO 생성/해제 코드와 외부 앱 열거 차단식은 그대로입니다. 새 root window getter 비용은 기존 공유 시간 예산 안에 들어가며 예산을 재설정하지 않습니다. 검사 추가가 실제100ms 이하 실행이나 원자적 화면을 보장하지는 않습니다.
+
+**JVM 범위:** 신규 guard 시험19개는 정상 대상/배경, package 변경/null/예외, window 변경/예외, 제외 root 유지/범위 변경, root의 두 번째 package 읽기, 합성 숨김 민감 자식에 대한 기존 F0 실패 전파, 최초 진단·후속 단계 중단·고정 출력 표현을 검사합니다. host formatter 시험1개를 추가했습니다. scalar getter/순회 callback 시험이며 실제 Android collector, CollectionResult.Ready 미발행, framework 객체 recycle 또는 F1 이벤트 발행을 기기에서 검증한 것은 아닙니다. 실제 서비스의 실패→Blocked→detector.clear 경로는 소스 검토로 확인했습니다.
+
+**Android 계측 미검증:** 동일 앱 background/target의 소유권 변경·package null·getter 오류, 실제 root/window 해제 및 후보 미발행은 추가 기기 시험이 필요합니다. 공개 API로 결정론적 package 변경을 만들 수 없는 경우에는 해당 fault를 합성 reader 시험으로만 표시하고 기기 재현으로 보고하지 않습니다. 기존 Scroll/MINIMAL 비교와14개 F1 시험은 계속 별도로 실행하며, baseline 차단이나 UNOBSERVED를 성공으로 바꾸지 않습니다. 이 수정으로 Scroll 역전 Rect/Window-frame 문제 또는 F1 정확도를 해결했다고 주장하지 않습니다.
+
+**남은 신뢰 경계:** root 재조회 사이의 변경·배경 내용 변경·새 창 등장, snapshot 보호 후 다시 읽은 본문/childCount, 토큰/지문/세션/TTL 결합·취소는 이번 범위 밖입니다. 실제 CollectionAttempt/보호 receipt, 신규 projection/codec 연결은 하지 않았습니다. 보호 완료 플래그를 채워 이 문제를 대신하지 않습니다.
 
 ## 0-A. 독립 게이트 상한·할당 보강 — 8496608 이후
 

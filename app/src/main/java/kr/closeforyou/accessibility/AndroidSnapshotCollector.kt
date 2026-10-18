@@ -40,6 +40,8 @@ internal class AndroidSnapshotCollector {
         trace: CaptureTrace = CaptureTrace(null),
     ): CollectionResult {
         val roots = mutableListOf<AccessibilityNodeInfo>()
+        // Separate release ownership from the protection scope fixed during enumeration.
+        val rootGuards = mutableListOf<Pair<AccessibilityNodeInfo, ProtectionRootGuard>>()
         val androidWindows = mutableListOf<AccessibilityWindowInfo>()
         var targetPackage: String? = null
         var targetId = -1
@@ -75,6 +77,7 @@ internal class AndroidSnapshotCollector {
                 ?: return blocked(PrivacyBlockReason.UNREADABLE_TREE, CaptureDetail.ROOT_PACKAGE_UNAVAILABLE)
             targetPackage = packageName
             targetId = progress.at(CollectionOperation.ROOT_METADATA) { root.windowId }
+            rootGuards += root to ProtectionRootGuard(packageName, packageName, targetId)
             trace.root(packageName, root.windowId)
             phase = CollectionPhase.PACKAGE_GATE
             packageGate(packageName)?.let { return blocked(it, CaptureDetail.PACKAGE_GATE) }
@@ -92,10 +95,10 @@ internal class AndroidSnapshotCollector {
                         window.isActive, window.isFocused, window.layer)
                 }
             }
-            val targetWindow = windows.firstOrNull { it.id == root.windowId }
+            val targetWindow = windows.firstOrNull { it.id == targetId }
                 ?: return blocked(PrivacyBlockReason.UNREADABLE_TREE, CaptureDetail.TARGET_MISSING)
             trace.target(targetWindow.type)
-            val frameworkTarget = androidWindows.single { it.id == root.windowId }
+            val frameworkTarget = androidWindows.single { it.id == targetId }
             if (frameworkTarget.displayId != Display.DEFAULT_DISPLAY) {
                 return blocked(PrivacyBlockReason.SYSTEM_WINDOW, CaptureDetail.SECONDARY_DISPLAY)
             }
@@ -112,7 +115,7 @@ internal class AndroidSnapshotCollector {
             }
 
             for (window in androidWindows) {
-                if (window.type != AccessibilityWindowInfo.TYPE_APPLICATION || window.id == root.windowId) continue
+                if (window.type != AccessibilityWindowInfo.TYPE_APPLICATION || window.id == targetId) continue
                 val other = progress.at(CollectionOperation.WINDOW_ROOT_READ) { window.root }
                     ?: return blocked(PrivacyBlockReason.UNREADABLE_TREE, CaptureDetail.WINDOW_LIST_UNAVAILABLE)
                 roots += other
@@ -121,6 +124,7 @@ internal class AndroidSnapshotCollector {
                 if (otherPackage != packageName && (requireCaptureIsolation || window.isActive || window.isFocused)) {
                     return blocked(PrivacyBlockReason.SYSTEM_WINDOW, CaptureDetail.FOREIGN_APPLICATION, WindowType.APPLICATION)
                 }
+                rootGuards += other to ProtectionRootGuard(otherPackage, packageName, window.id)
             }
 
             phase = CollectionPhase.GEOMETRY
@@ -137,10 +141,12 @@ internal class AndroidSnapshotCollector {
             val budget = TraversalBudget()
             phase = CollectionPhase.PROTECTION_PASS
             // Inspect all trees of this application, including its obscured background window.
-            for (candidateRoot in roots) {
+            for ((candidateRoot, guard) in rootGuards) {
                 tree = if (candidateRoot === root) CollectionTree.TARGET else CollectionTree.SAME_APP_BACKGROUND
-                if (progress.at(CollectionOperation.NODE_PACKAGE_READ, CollectionField.NODE_PACKAGE) { candidateRoot.packageName?.toString() } == packageName) {
-                    walk(candidateRoot, budget, progress) { node, _, _ -> inspect(node, packageName, progress); false }
+                guard.inspect(progress, { candidateRoot.packageName?.toString() }, { candidateRoot.windowId }) {
+                    walk(candidateRoot, budget, progress) { node, path, _ ->
+                        inspect(node, packageName, progress, isRoot = path == "0"); false
+                    }
                 }
             }
 
@@ -152,7 +158,7 @@ internal class AndroidSnapshotCollector {
             val content = progress.at(CollectionOperation.DIGEST_INITIALIZE) { MessageDigest.getInstance("SHA-256").apply { update(salt) } }
             var textCharacters = 0
             walk(root, budget, progress) { node, path, underScrollAncestor ->
-                inspect(node, packageName, progress)
+                inspect(node, packageName, progress, isRoot = path == "0")
                 val text = progress.at(CollectionOperation.NODE_TEXT_READ, CollectionField.TEXT) { node.text?.toString() }
                 val description = progress.at(CollectionOperation.NODE_TEXT_READ, CollectionField.CONTENT_DESCRIPTION) { node.contentDescription?.toString() }
                 progress.at(CollectionOperation.TEXT_BUDGET) {
@@ -233,10 +239,11 @@ internal class AndroidSnapshotCollector {
         }
     }
 
-    private fun inspect(node: AccessibilityNodeInfo, expectedPackage: String, progress: CollectionProgress) {
+    private fun inspect(node: AccessibilityNodeInfo, expectedPackage: String, progress: CollectionProgress, isRoot: Boolean) {
         progress.at(CollectionOperation.NODE_PACKAGE_READ, CollectionField.NODE_PACKAGE) {
             val packageName = node.packageName?.toString()
-            if (packageName != null && packageName != expectedPackage) {
+            if (isRoot) ProtectionRootGuard.requirePackage(packageName, expectedPackage)
+            else if (packageName != null && packageName != expectedPackage) {
                 throw CollectionGuardFailure(PrivacyBlockReason.UNREADABLE_TREE, CollectionField.NODE_PACKAGE, CollectionFinding.PACKAGE_MISMATCH)
             }
         }

@@ -473,3 +473,27 @@ python3 -B tools/verify_capture_test_apks.py --release-apk app/build/outputs/apk
 ```
 
 **BUILD SUCCESSFUL (1분16초, 196 tasks: 22 executed / 174 up-to-date)**. JVM **311개**(앱238/호스트73), 실패/오류/건너뜀0, 앱·호스트 debug Lint 이슈0. Debug/Release·계측 APK 및 기존 패키징 검사를 통과했고 golden 리소스가 앱 Debug/Release·계측 APK에 포함되지 않음을 확인했습니다. codec만 추가한 상태로 기존 app/host/synthetic-support 추적 파일을07d2eda와 바이트 비교해 변경0개, 운영 코드의 codec 참조0개를 확인했습니다. 이 성공은 실제 Android 수집 동등성이나 F1 baseline 복구가 아닙니다. CI 상태는 이번 커밋의 기존 PR #7 Checks에서 별도로 확인합니다. 새 PR/자동 병합은 하지 않습니다.
+
+
+## PR #7 후속: 기존 F0 보호 root 범위 고정 — 9922c80 이후
+
+깨끗한 feature/f1-popup-detection에서 시작했고 로컬/원격 기준9922c80 일치를 확인했습니다. 이번에는 승인된 **기존 collector의 root 검사 생략 방지**만 운영 경로에 적용합니다. CollectionAttempt·보호 완료 receipt·독립 evidence/projection/codec은 연결하지 않습니다.
+
+- AndroidSnapshotCollector의 해제 소유 roots 목록은 그대로 유지하고, 열거 당시 대상/동일 앱/정책상 제외 root 여부와 기대 창을 capture 지역 guard에 기록합니다. 최초 target 창 ID를 선택 기준으로 사용해 나중 root ID로 다른 창을 선택하지 않습니다.
+- 보호 대상 root의 package null/불일치는 PACKAGE_MISMATCH, 창 소속 불일치는 ROOT_WINDOW_MISMATCH로 UNREADABLE_TREE 차단합니다. getter 실패는 기존 COLLECTION_FAILED와 고정 operation/exception 코드로 처리합니다. 실제 root의 재검사에서도 두 pass 모두 null package를 거부하며 자식의 기존 package-null 정책은 유지합니다.
+- 비활성·비포커스 타사 창의 기존 제외 조건과 active/focused/capture isolation 타사 차단식은 그대로입니다. 제외 root가 이후 대상 앱으로 읽히면 PROTECTION_SCOPE_CHANGED로 거부하며 보호 범위를 정상 완료로 확장하지 않습니다.
+- 최초 실패 진단·기존 catch/finally, 모든 자식 F0 검사·두 pass·공유2400 방문/100ms·기존 지문/DTO/Ready 생성은 유지합니다. 새 root getter는 예산을 늘리지 않습니다. 원본14개 fixture/계측/정답·서비스/Runtime·공통 계약/BCD·PR10·자동 행동 경로는 변경하지 않았습니다.
+- 새 finding2개/operation1개는 host의 고정 진단 allowlist에만 추가합니다. 화면 원문·package·실제 창 ID·좌표·지문·salt·예외 메시지 로그를 추가하지 않습니다.
+
+신규 JVM20개(guard19 + host formatter1)를 추가했습니다. 정상 대상/배경, package 변경/null/실패, window 변경/실패, 타사 제외 유지와 범위 변경, 두 번째 root package 읽기, 숨김 합성 민감 자식의 F0 실패 전파, 최초 진단/후속 단계 중단/문자열 비노출을 검사합니다. guard의 합성 scalar getter와 callback 시험이며 실제 Android root 변경·framework 객체 해제·서비스 후보 미발행을 재현한 시험이 아닙니다. 서비스의 Blocked→detector.clear 및 Ready 분기 미진입은 소스로 확인했습니다.
+
+상세 추가 거부 조건·유지한 제외 정책·미검증 범위는 [계약 검토 0-C](F1_PROTECTION_GEOMETRY_CONTRACT_REVIEW.md#0-c-등록한-보호-root의-검사-생략-방지--9922c80-이후)에 있습니다. 기기에서는 [Windows API37 기존 절차](F1_BASELINE_ISOLATION.md#windows-api-37-실행-순서)로 본 앱/host/host 계측 APK 세 개를 설치하고, 서비스·수집 동의·host 단독 허용·분석 시작 및 캡처 OFF 상태에서 독립 baseline과 원래14개 회귀를 구분해 확인합니다. 기존 Scroll/Window 차단이 없어지거나14개가 통과할 것으로 기대하는 수정은 아닙니다.
+
+실제 Android 계측은 미실시입니다. root 읽기 사이의 변경, 새 창/배경 내용 변화, snapshot 보호 후 값 재조회, 세션/정책/토큰/지문/취소·TTL 결합은 후속입니다. Scroll malformed, WINDOW_OUTSIDE_FRAME, TIME_LIMIT/TARGET_MISSING과 원래14개 UNOBSERVED는 미해결이며 F1 정확도·캡처/OCR 성공을 주장하지 않습니다.
+
+검증(JDK17):
+```sh
+./gradlew --no-daemon :app:assembleDebug :app:assembleRelease :app:assembleDebugAndroidTest :app:testDebugUnitTest :capture-test-host:testDebugUnitTest :app:lintDebug :capture-test-host:lintDebug
+python3 -B tools/verify_capture_test_apks.py --release-apk app/build/outputs/apk/release/app-release-unsigned.apk
+```
+BUILD SUCCESSFUL (1분31초, 196 tasks: 31 executed/165 up-to-date). JVM331개(앱257/host74), 실패·오류·건너뜀0. 앱/host Debug Lint 이슈0. Debug/Release·계측 APK 및 독립 호스트 Kotlin 런타임/driver 격리/release probe 부재 패키징 검사를 통과했습니다. 기준9922c80과 기존 파일을 비교해 허용한 collector/진단/host formatter·시험 외 app/host/synthetic-support 파일 변경0, collector의 walk/예산/지문/최종 DTO·Ready/catch/finally와 타사 창 차단식 동일을 확인했습니다. 새 순수 지문/증거/projection과 서비스/Runtime은 미변경입니다. 실제 계측 실행 결과는 아닙니다.
