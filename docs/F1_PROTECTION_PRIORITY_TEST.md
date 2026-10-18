@@ -1,6 +1,6 @@
 # F1 독립 F0 보호 우선순위 계측
 
-기준: `feature/f1-popup-detection` / `094dc09`. 이 변경은 testOnly `capture-test-host`와 JVM/Android 시험 및 이 문서만 추가합니다. 운영 collector/service/provider/F0/F1/DTO/지문/예산과 원래 14개 화면·정답을 변경하지 않습니다. 커밋·푸시는 하지 않습니다.
+계측 개발 기준은 `feature/f1-popup-detection` / `094dc09`이며, 구현은 `6ae8b7803eb2918581b3c01091f304dd4086d1cc`로 커밋·푸시되어 기존 PR #7에 반영되었습니다. 추가 범위는 testOnly `capture-test-host`와 JVM/Android 시험 및 이 문서입니다. 운영 collector/service/provider/F0/F1/DTO/지문/예산과 원래 14개 화면·정답은 변경하지 않았습니다. PR #7은 미병합, PR #10은 Draft 상태를 유지합니다.
 
 ## 질문과 네 조건
 
@@ -60,12 +60,42 @@ UI에서 서비스 활성화, 수집 동의, host `kr.closeforyou.capturetest` �
 
 기대 출력: SERVICE_CONNECTION_READY, fixture별 분리된 SAMPLE/ATTEMPT/CASE와 네 EXPECTED_BLOCK, SUMMARY=OBSERVATIONS_COMPLETE 및 OK (1 test). 실패 fixture·정리 실패가 하나라도 있으면 FAILURES입니다. 이 OK는 시험 범위의 보호 우선순위 관측이며 F0 완전성/F1 정확도/TTL/행동 안전성/캡처/OCR 성공이 아닙니다.
 
+## 2026-10-18 사용자 API 37 실측 결과
+
+출처는 **사용자가 Windows Android Studio의 API 37 에뮬레이터에서 실행해 제공한 결과**입니다. 검증 대상 구현 커밋은 `6ae8b7803eb2918581b3c01091f304dd4086d1cc`, 계측 클래스는 `ServiceProtectionPriorityOptInTest`입니다. Codex 개발 환경에서 직접 재실행한 결과가 아닙니다.
+
+- SERVICE_CONNECTION_READY
+- Time: 12.498 / OK (1 test)
+- F0_PRIORITY_SUMMARY;RESULT=OBSERVATIONS_COMPLETE
+- ATOMIC_BINDING=NONE;F0_COMPLETENESS=NOT_PROVEN;F1_ACCURACY=NOT_TESTED;ACTIONS=NONE
+
+12.498초는 네 조건을 포함한 계측 전체 실행 시간이며, 개별 F0 순회의 지연이나 collector의 100ms 예산 충족 시간으로 해석하지 않습니다.
+
+| fixture | 세션 내부 ATTEMPT | BLOCK | STEP | FIELD | CAUSE | OP |
+|---|---|---|---|---|---|---|
+| CONTROL | 2 | UNREADABLE_TREE | SNAPSHOT_PASS | — | MALFORMED_NODE_BOUNDS | NODE_BOUNDS_VALIDATE |
+| PASSWORD | 2 | PASSWORD | PROTECTION_PASS | PASSWORD_FLAG | PASSWORD_FLAG | NODE_FIELD_CHECK |
+| EDITABLE | 2 | EDITABLE_FIELD | PROTECTION_PASS | EDITABLE_FLAG | EDITABLE_FLAG | NODE_FIELD_CHECK |
+| SENSITIVE_TEXT | 2 | SENSITIVE_CONTENT | PROTECTION_PASS | TEXT | SENSITIVE_TEXT | NODE_TEXT_CHECK |
+
+각 fixture는 별도 관측 세션입니다. 동일한 ATTEMPT=2 표기는 서로 다른 세션의 순번이며, 네 조건을 하나의 수집 시도로 결합하지 않습니다. CONTROL의 같은 서비스 시도에는 NODE_RECT=REVERSED_Y, NODE_VISIBILITY=NOT_VISIBLE, NODE_ANCESTRY=SCROLL_ANCESTOR, NODE_ROLE=DESCENDANT가 보고되었습니다.
+
+네 fixture 모두 native와 UiAutomation의 BEFORE/AFTER 별도 관측 조건을 통과했고, 실제 서비스 결과는 FRAME=VERIFIED, F0_PRIORITY_CASE;RESULT=EXPECTED_BLOCK, CUTOFF=FINAL_RESULT_SNAPSHOT이었습니다. 정리 실패 보고 없이 최종 JUnit이 성공했습니다. 이는 이 실행에서 정리 실패가 보고되지 않았다는 관측이며, framework 자원의 완전한 반환을 별도로 증명한 것은 아닙니다. FRAME=VERIFIED도 논리 frame 검증 코드이며 모든 window/node geometry가 유효하다는 뜻은 아닙니다.
+
+이 실측은 일반 Scroll 대조군의 snapshot geometry 거부와, 각 숨김 민감 fixture의 protection pass 차단을 시험 범위에서 확인했습니다. 다음 한계는 그대로 유지합니다.
+
+- native/UiAutomation 별도 샘플과 실제 서비스 ATTEMPT는 원자적으로 결합되지 않습니다. 민감 fixture의 그 서비스 시도에서 앞선 일반 노드의 역전 Rect까지 직접 관측한 것은 아닙니다.
+- 최종 RESULT와 END도 원자적이지 않습니다. 최종 RESULT 이후의 새 시도나 진행 중인 수집 완료까지 포함하지 않습니다.
+- 전체 F0 완전성·화면 현재성·TTL·F1 정확도·OCR·행동 안전성은 입증되지 않았습니다.
+- 원본 F1 14개는 이 독립 시험의 대상이 아니며, 기존 UNOBSERVED=14 상태를 성공으로 바꾸지 않습니다. Window/frame 불일치와 Scroll geometry 문제는 미해결입니다.
+- PR #7은 미병합이고 PR #10은 Draft를 유지합니다.
+
 ## 미검증과 기존 위험
 
-앞선 구현의 로컬 검증은 신규 JVM15개 포함 전체485개(앱396/호스트89) 통과였습니다. P2 최소 수정은 JVM12개를 추가해 최종 조회와 해제 격리의 순수 Kotlin 경계를 검사합니다. Android에서 실제 Binder RESULT 호출 순서·노드 recycle·Activity 종료를 JVM에서 실행하는 시험은 아닙니다. 이번 전체 빌드/테스트 결과는 검증 완료 후 아래에 구분해 기록합니다. Release 재빌드·GitHub Actions·실제 계측 실행 결과를 뜻하지 않습니다.
+앞선 구현의 로컬 검증은 신규 JVM15개 포함 전체485개(앱396/호스트89) 통과였습니다. P2 최소 수정은 JVM12개를 추가해 최종 조회와 해제 격리의 순수 Kotlin 경계를 검사했습니다. Android에서 실제 Binder RESULT 호출 순서·노드 recycle·Activity 종료를 JVM에서 실행한 시험은 아닙니다. 다음은 당시 로컬 빌드/테스트 기록이며, 위 사용자 API 37 실측과 구분합니다. Release 재빌드·GitHub Actions·실제 계측 실행 결과를 뜻하지 않습니다.
 
-P2 최종 로컬 검증: 요청한 Gradle 작업 모두 성공 후 양쪽 JVM을 `--rerun`으로 재실행했습니다. 전체497개(앱396/호스트101), 해당 회귀27개(기존15+추가12), 실패·오류·skip0입니다. 앱/호스트 Debug·호스트 AndroidTest APK, 양쪽 debug Lint(이슈0), 기존 패키징 검사와 새 driver/cleanup DEX 정의·운영 앱 격리, `git diff --check` 통과입니다. 최종 BUILD SUCCESSFUL(44초), 경고 출력 없음. 운영 소스·원본 시나리오91개와 기존 fixture/Manifest/ID 리소스 보존을 확인했습니다. 연결 기기가 없어 Android 계측은 실행하지 않았고 커밋·푸시도 하지 않았습니다.
+P2 최종 로컬 검증: 요청한 Gradle 작업 모두 성공 후 양쪽 JVM을 `--rerun`으로 재실행했습니다. 전체497개(앱396/호스트101), 해당 회귀27개(기존15+추가12), 실패·오류·skip0입니다. 앱/호스트 Debug·호스트 AndroidTest APK, 양쪽 debug Lint(이슈0), 기존 패키징 검사와 새 driver/cleanup DEX 정의·운영 앱 격리, `git diff --check` 통과입니다. 최종 BUILD SUCCESSFUL(44초), 경고 출력 없음. 운영 소스·원본 시나리오91개와 기존 fixture/Manifest/ID 리소스 보존을 확인했습니다. **이 로컬 검증 당시에는** 연결 기기가 없어 Android 계측을 실행하지 않았고 구현도 미커밋이었습니다. 이후 위 구현 커밋으로 커밋·푸시했으며, 사용자 API 37 실측은 앞 절에 별도로 기록했습니다.
 
-실제 Android 계측은 개발 환경에서 실행하지 않았습니다. 원격 숨김 노드 노출, 실제 순서·필드값, password transformation의 서비스 표현, 이벤트·가림·시간 한도·정리 동작은 API37 실측이 필요합니다. API35 결과도 별도 검증 대상입니다. 처음 미관측 후 재실행 통과한 이전 MINIMAL 결과를 타이밍 원인 확정으로 해석하지 않습니다.
+Codex 개발 환경에서는 실제 Android 계측을 실행하지 않았습니다. 사용자 API 37 실행의 네 fixture에서는 위 노드 관측 조건과 기대 서비스 차단이 확인됐지만, 다른 기기·상태의 노드 노출·필드 표현·이벤트·가림·시간 한도·취소·정리 실패 주입까지 검증한 것은 아닙니다. API35 결과도 별도 검증 대상입니다. 처음 미관측 후 재실행 통과한 이전 MINIMAL 결과를 타이밍 원인 확정으로 해석하지 않습니다.
 
 기존 P1 세 건(전체 F0 coverage/변경 탐지, 검사값·salt·token·지문의 동일 시도 결합, 서비스 세션·정책·Job 취소·현재성·TTL)은 미해결입니다. 기존 framework 정리 예외의 원래 오류 가림 P2와 취소 전파도 미해결입니다. 새 시험 역시 별도 샘플과 서비스 시도 사이의 TOCTOU 한계를 갖고 있으므로 원자성 증명에 사용하면 안 됩니다. Scroll 역전 Rect·Window/frame 불일치·TIME_LIMIT·TARGET_MISSING 및 원래14개 UNOBSERVED=14/F1_ACCURACY=NOT_TESTED 상태를 바꾸지 않습니다.
