@@ -65,7 +65,8 @@ class DecisionCloseCandidateFinder {
         // Role matching already ignores whitespace, and C trims it for display.
         val label = labels.firstOrNull()
         return when {
-            NodeAction.DISMISS in node.actions && (labels.isEmpty() || labeledRole == ButtonRole.CLOSE) ->
+            // An unlabeled DISMISS is not offered: A's gate refuses it (agreed after PR #11).
+            NodeAction.DISMISS in node.actions && labeledRole == ButtonRole.CLOSE ->
                 create(node, label, EvidenceLevel.E1_DISMISS, ButtonRole.CLOSE)
             node.clickable && NodeAction.CLICK in node.actions && label != null &&
                 (labeledRole == ButtonRole.CLOSE || labeledRole == ButtonRole.SKIP) ->

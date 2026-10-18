@@ -78,7 +78,7 @@ class DecisionActionPolicyTest {
         // Candidates built elsewhere claim role CLOSE; the policy must not trust that role alone.
         for (label in listOf(
             "닫기 전 저장", "설치", "자세히 보기", "오늘 하루 보지 않기", "오늘 하루 닫기", "7일간 보지 않기",
-            "확인", "취소", "나중에", "OK", "Install", "Learn more", "건너뛰기",
+            "확인", "취소", "나중에", "OK", "Install", "Learn more", "건너뛰기", "X", "×",
         )) {
             val fake = withCandidate(ad) { it.copy(label = label) }
             assertDenied(decide(fake, choice = choose(fake)), UNVERIFIED_TARGET)
@@ -153,10 +153,14 @@ class DecisionActionPolicyTest {
         assertNull(decision.candidateId)
     }
 
-    @Test fun unlabeledDismissActionIsAVerifiedTarget() = runBlocking {
-        val dismiss = withCandidate(notice) { it.copy(evidence = EvidenceLevel.E1_DISMISS, label = null) }
-        assertEquals(ALLOW_ONCE, decide(dismiss, choice = choose(dismiss)).authorization)
-        assertConfirm(decide(dismiss, rule = rule()), EXPLICIT_PERMISSION_REQUIRED)
+    @Test fun onlyALabeledDismissActionIsPressed() = runBlocking {
+        val labeled = withCandidate(notice) { it.copy(evidence = EvidenceLevel.E1_DISMISS) }
+        assertEquals(ALLOW_ONCE, decide(labeled, choice = choose(labeled)).authorization)
+        assertConfirm(decide(labeled, rule = rule()), EXPLICIT_PERMISSION_REQUIRED)
+        // A's gate refuses an unlabeled DISMISS, so B does not request it either.
+        val unlabeled = withCandidate(notice) { it.copy(evidence = EvidenceLevel.E1_DISMISS, label = null) }
+        assertDenied(decide(unlabeled, choice = choose(unlabeled)), UNVERIFIED_TARGET)
+        assertDenied(decide(unlabeled, rule = rule()), UNVERIFIED_TARGET, EXPLICIT_PERMISSION_REQUIRED)
     }
 
     @Test fun stopAskingRuleNeitherClosesNorAsksAgain() = runBlocking {

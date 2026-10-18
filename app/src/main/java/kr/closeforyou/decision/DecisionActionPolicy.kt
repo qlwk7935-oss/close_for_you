@@ -138,20 +138,17 @@ class DecisionActionPolicy : ActionPolicy {
     }
 
     /**
-     * Close or skip buttons with tree evidence (E1/E2). Icon (E3) and pixel-only (E4) targets are
-     * not pressed: A's gate (PR #10) supports neither yet. A supplied role is not trusted on its
-     * own: a label must itself say that role, so `CLOSE` + "닫기 전 저장" or a grade D/K/P/O label
-     * is refused whoever built the candidate.
+     * Labeled close or skip buttons with tree evidence (E1/E2), as A's gate requires. Icon (E3) and
+     * pixel-only (E4) targets and an unlabeled DISMISS are not pressed. A supplied role is not
+     * trusted on its own: the label must itself say that role, so `CLOSE` + "닫기 전 저장", a bare
+     * "X", or a grade D/K/P/O label is refused whoever built the candidate.
      */
     private fun isVerifiedTarget(candidate: CloseCandidate): Boolean {
-        val label = candidate.label?.takeIf { it.isNotBlank() }
-        val evidenceVerified = when (candidate.evidence) {
-            EvidenceLevel.E1_DISMISS -> true
-            EvidenceLevel.E2_LABELED_NODE -> label != null
-            EvidenceLevel.E3_USER_BOUND_NODE, EvidenceLevel.E4_VISUAL_ONLY -> false
-        }
-        return evidenceVerified &&
+        val label = candidate.label?.takeIf { it.isNotBlank() } ?: return false
+        val treeEvidence = candidate.evidence == EvidenceLevel.E1_DISMISS ||
+            candidate.evidence == EvidenceLevel.E2_LABELED_NODE
+        return treeEvidence &&
             (candidate.role == ButtonRole.CLOSE || candidate.role == ButtonRole.SKIP) &&
-            (label == null || DecisionKeywords.buttonRoleOf(label) == candidate.role)
+            DecisionKeywords.buttonRoleOf(label) == candidate.role
     }
 }
