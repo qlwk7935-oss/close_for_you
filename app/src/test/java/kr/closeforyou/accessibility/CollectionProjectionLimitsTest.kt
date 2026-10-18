@@ -2,6 +2,7 @@ package kr.closeforyou.accessibility
 
 import java.io.ByteArrayOutputStream
 import java.io.PrintStream
+import java.util.Properties
 import kotlinx.collections.immutable.PersistentList
 import kotlinx.collections.immutable.persistentListOf
 import kotlinx.collections.immutable.persistentSetOf
@@ -219,6 +220,111 @@ class CollectionProjectionLimitsTest {
             System.setErr(previousErr)
             stream.close()
         }
+    }
+
+    @Test fun allIdentityFieldsAcceptAndPreserveTheirConservativeLengthBoundary() {
+        assertEquals(128, CollectionProjectionLimits.MAX_DIGEST_CHARACTERS)
+        assertEquals(256, CollectionProjectionLimits.MAX_PACKAGE_CHARACTERS)
+        assertEquals(128, CollectionProjectionLimits.MAX_POPUP_INSTANCE_CHARACTERS)
+        for (field in IdentityField.entries) {
+            val value = "x".repeat(identityLimit(field))
+            val (e, m) = withIdentity(field, value)
+            val result = project(e, m) as ProjectionOutcome.StructuralMatch
+            assertEquals(value, projectedIdentity(result, field))
+            assertFalse(result.productionReady)
+        }
+    }
+    @Test fun everyIdentityFieldRejectsOneCharacterAboveItsBoundary() {
+        for (field in IdentityField.entries) {
+            val (e, m) = withIdentity(field, "x".repeat(identityLimit(field) + 1))
+            reject(e, ProjectionRejection.IDENTITY_LENGTH_LIMIT, m)
+        }
+    }
+    @Test fun veryLongWhitespaceWithFinalNonblankCannotBypassAnyIdentityCeiling() {
+        val value = " ".repeat(65_536) + "x"
+        for (field in IdentityField.entries) {
+            val (e, m) = withIdentity(field, value)
+            reject(e, ProjectionRejection.IDENTITY_LENGTH_LIMIT, m)
+        }
+    }
+    @Test fun oversizedBlankIdentityIsLengthRejectedBeforeBlankClassification() {
+        for (field in IdentityField.entries) {
+            val (e, m) = withIdentity(field, " ".repeat(identityLimit(field) + 1))
+            reject(e, ProjectionRejection.IDENTITY_LENGTH_LIMIT, m)
+        }
+    }
+    @Test fun boundedBlankIdentityStillFailsExistingContentValidation() {
+        for (field in IdentityField.entries) for (value in listOf("", " ".repeat(identityLimit(field)))) {
+            val (e, m) = withIdentity(field, value)
+            reject(e, ProjectionRejection.METADATA_INCOMPLETE, m)
+        }
+    }
+    @Test fun independentV1GoldenHexValuesArePreservedByProjectionWithoutAuthentication() {
+        val goldens = Properties().apply {
+            requireNotNull(CollectionProjectionLimitsTest::class.java.getResourceAsStream(
+                "/snapshot_fingerprint_v1_golden.properties")).use(::load)
+        }
+        val e = ProjectionFixture.evidence()
+        val outline = goldens.getProperty("outline.node0.sha256")
+        val m = metadata.copy(applicationDigest = goldens.getProperty("application.sha256"),
+            token = metadata.token.copy(structureDigest = goldens.getProperty("structure.tree.sha256"),
+                contentDigest = goldens.getProperty("content.tree.sha256")))
+        val result = project(e.copy(target = e.target.copy(nodes = persistentListOf(
+            e.target.nodes[0].copy(outlineFingerprint = outline)))), m) as ProjectionOutcome.StructuralMatch
+        assertEquals(m.applicationDigest, result.frame.applicationDigest)
+        assertEquals(m.token, result.snapshot.token)
+        assertEquals(outline, result.frame.outlines[0].fingerprint)
+        assertEquals(64, outline.length)
+        assertFalse(result.productionReady) // Transporting a golden does not authenticate this tree.
+    }
+    @Test fun existingSyntheticLabelsRemainAcceptedVerbatim() {
+        val e = ProjectionFixture.evidence()
+        val result = project(e) as ProjectionOutcome.StructuralMatch
+        assertEquals(metadata.token, result.snapshot.token)
+        assertEquals(metadata.applicationDigest, result.frame.applicationDigest)
+        assertEquals(e.target.nodes[0].outlineFingerprint, result.frame.outlines[0].fingerprint)
+    }
+    @Test fun oversizedIdentitiesNeverAppearInOutputExceptionsOrResultStrings() {
+        val output = ByteArrayOutputStream(); val stream = PrintStream(output)
+        val previousOut = System.out; val previousErr = System.err
+        try {
+            System.setOut(stream); System.setErr(stream)
+            for (field in IdentityField.entries) {
+                val (e, m) = withIdentity(field, "PRIVATE_BODY_TOKEN_PATH_DIGEST".repeat(1024))
+                val result = project(e, m)
+                assertEquals(ProjectionOutcome.Rejected(ProjectionRejection.IDENTITY_LENGTH_LIMIT), result)
+                assertFalse(listOf(e, m, result).joinToString().contains("PRIVATE_"))
+            }
+            assertEquals("", output.toString())
+        } finally { System.setOut(previousOut); System.setErr(previousErr); stream.close() }
+    }
+
+    private enum class IdentityField { APPLICATION, STRUCTURE, CONTENT, OUTLINE, PACKAGE, POPUP_INSTANCE }
+    private fun identityLimit(field: IdentityField): Int = when (field) {
+        IdentityField.APPLICATION, IdentityField.STRUCTURE, IdentityField.CONTENT, IdentityField.OUTLINE ->
+            CollectionProjectionLimits.MAX_DIGEST_CHARACTERS
+        IdentityField.PACKAGE -> CollectionProjectionLimits.MAX_PACKAGE_CHARACTERS
+        IdentityField.POPUP_INSTANCE -> CollectionProjectionLimits.MAX_POPUP_INSTANCE_CHARACTERS
+    }
+    private fun withIdentity(field: IdentityField, value: String): Pair<CollectedTreeEvidence, CollectionProjectionMetadata> {
+        val e = ProjectionFixture.evidence()
+        return when (field) {
+            IdentityField.APPLICATION -> e to metadata.copy(applicationDigest = value)
+            IdentityField.STRUCTURE -> e to metadata.copy(token = metadata.token.copy(structureDigest = value))
+            IdentityField.CONTENT -> e to metadata.copy(token = metadata.token.copy(contentDigest = value))
+            IdentityField.OUTLINE -> e.copy(target = e.target.copy(nodes = persistentListOf(
+                e.target.nodes[0].copy(outlineFingerprint = value)))) to metadata
+            IdentityField.PACKAGE -> e to metadata.copy(token = metadata.token.copy(packageName = value))
+            IdentityField.POPUP_INSTANCE -> e to metadata.copy(token = metadata.token.copy(popupInstanceId = value))
+        }
+    }
+    private fun projectedIdentity(result: ProjectionOutcome.StructuralMatch, field: IdentityField): String = when (field) {
+        IdentityField.APPLICATION -> result.frame.applicationDigest
+        IdentityField.STRUCTURE -> result.snapshot.token.structureDigest
+        IdentityField.CONTENT -> result.snapshot.token.contentDigest
+        IdentityField.OUTLINE -> result.frame.outlines[0].fingerprint
+        IdentityField.PACKAGE -> result.snapshot.token.packageName
+        IdentityField.POPUP_INSTANCE -> result.snapshot.token.popupInstanceId
     }
 
     private fun project(e: CollectedTreeEvidence, m: CollectionProjectionMetadata = metadata) = CollectionProjection.project(e, m)

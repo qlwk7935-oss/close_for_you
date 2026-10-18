@@ -30,6 +30,22 @@
 
 `cancel()`/`invalidate()`는 합성 driver가 호출하는 상태 전이입니다. 실제 coroutine Job·접근성 이벤트·서비스 종료를 관측하지 않습니다. 입력 복사/projection에서 CancellationException을 받으면 폐기 후 고정 메시지의 새 CancellationException으로 전파합니다. 입력 예외의 메시지·cause·suppressed는 보존하지 않으며 민감한 원본을 진단에 전달하지 않습니다. Android 이벤트와 상태 변경의 원자성, 실제 화면 현재성, 세션 또는5초 TTL을 보장하지 않습니다.
 
+## 합성 코드 P2 보강 — a341dd6 이후
+
+`recordSyntheticTarget()`의 상태 순서 확인 후 입력 조회(`nodes.isEmpty()` 포함), 대상 검증, evidence 생성, projection/DTO 구성과 결과 기록을 같은 `Exception` 경계로 보호합니다. 일반 예외는 REVIEW_FAILED로 폐기하고, 취소 예외는 CANCELLED로 폐기 후 기존 고정 메시지의 새 CancellationException으로 전파합니다. 최초 실패는 보존하며 이후 정상 입력 재제출/최종 완료는 거부합니다. 입력 예외의 메시지/cause/suppressed는 전달하지 않습니다. Error 등 Throwable 전체를 잡는 처리는 추가하지 않습니다.
+
+독립 projection의 모든 identity 문자열은 내용 검사 전에 `String.length`(UTF-16 코드 단위, O(1))로 검사합니다.
+
+| 필드 | 상한 | 근거 |
+|---|---|---|
+| application/structure/content digest, outline fingerprint | 각각128 | 실제 V1 SHA-256 hex64자와 기존 합성 label을 수용하는 보수적 상한 |
+| packageName | 256 | 실제 정상 앱 이름과 기존 합성 fixture를 수용하는 내부 입력 상한 |
+| popupInstanceId | 128 | 기존 UUID36자와 합성 label을 수용하는 내부 입력 상한 |
+
+하나라도 초과하면 DTO를 반환하지 않고 고정 `IDENTITY_LENGTH_LIMIT`로 전체 거부합니다. metadata identity 길이는 cardinality 검사 후, outline 길이는 기존 target 필드 길이 검사와 함께 확인하며 모든 해당 길이 검사가 끝난 값에만 `isBlank()`가 실행됩니다. 기존 blank 검사는 유지합니다. 상한 통과는 hex 형식/패키지 실재성/토큰 출처의 인증이 아니며 합성 label도 그대로 허용합니다. 실제 V1 인코딩/collector/codec/golden은 수정하지 않습니다. 입력을 만들기 전의 할당 비용, 실제100ms 예산 또는 Android 취소를 보장하지 않습니다.
+
+회귀는 isEmpty/노드 수·순회/창 수·순회/DTO 구성 중 actions 조회의 일반·취소 예외, 폐기 후 재완료 거부, 최초 실패, 예외 비노출과 Error 비포획을 검사합니다. 각 문자열의 상한/상한+1/긴 공백+비공백/긴 blank/상한 내 blank, 기존 label과 독립 golden64자리 보존, 출력 비노출도 검사합니다. 이는 합성 fault 주입이며 실제 Android 장애 재현이나 F0 성공이 아닙니다.
+
 ## 배경 보호와 대상 기록 분리
 
 `CollectedTreeEvidence`는 보호 root 관측 목록과 `target: CollectedRootEvidence`를 따로 보관합니다.

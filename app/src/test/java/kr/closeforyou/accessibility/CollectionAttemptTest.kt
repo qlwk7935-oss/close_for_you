@@ -6,6 +6,9 @@ import java.lang.reflect.Modifier
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
+import kotlinx.collections.immutable.ImmutableList
+import kotlinx.collections.immutable.ImmutableSet
+import kr.closeforyou.core.model.NodeAction
 import kotlinx.collections.immutable.persistentListOf
 import org.junit.Assert.*
 import org.junit.Test
@@ -297,6 +300,122 @@ class CollectionAttemptTest {
             a.consumeSyntheticReview(c)
             assertEquals("", output.toString())
         } finally { System.setOut(oldOut); System.setErr(oldErr); stream.close() }
+    }
+
+    @Test fun targetIsEmptyExceptionDiscardsAndCannotBeRetried() {
+        val a = protected()
+        val (target, metadata) = failingTargetInput(TargetFaultPoint.EMPTY) { error("SYNTHETIC_PRIVATE") }
+        assertFalse(a.recordSyntheticTarget(target, metadata))
+        assertRecordFailureTerminal(a, AttemptFailure.REVIEW_FAILED)
+    }
+    @Test fun targetIsEmptyCancellationDiscardsAndRethrowsOnlyFixedMessage() {
+        val a = protected()
+        val original = java.util.concurrent.CancellationException("SYNTHETIC_PRIVATE")
+        val (target, metadata) = failingTargetInput(TargetFaultPoint.EMPTY) { throw original }
+        assertSanitizedCancellation(original) { a.recordSyntheticTarget(target, metadata) }
+        assertRecordFailureTerminal(a, AttemptFailure.CANCELLED)
+    }
+    @Test fun projectionInputAndLateDtoFailuresDiscardWithoutRetry() {
+        for (point in TargetFaultPoint.entries.filter { it != TargetFaultPoint.EMPTY }) {
+            val a = protected()
+            val (target, metadata) = failingTargetInput(point) { error("SYNTHETIC_PRIVATE") }
+            assertFalse(a.recordSyntheticTarget(target, metadata))
+            assertRecordFailureTerminal(a, AttemptFailure.REVIEW_FAILED)
+        }
+    }
+    @Test fun projectionInputAndLateDtoCancellationsAreSanitizedAndTerminal() {
+        for (point in TargetFaultPoint.entries.filter { it != TargetFaultPoint.EMPTY }) {
+            val a = protected()
+            val original = java.util.concurrent.CancellationException("SYNTHETIC_PRIVATE")
+            val (target, metadata) = failingTargetInput(point) { throw original }
+            assertSanitizedCancellation(original) { a.recordSyntheticTarget(target, metadata) }
+            assertRecordFailureTerminal(a, AttemptFailure.CANCELLED)
+        }
+    }
+    @Test fun invalidationBeforeInputExceptionKeepsFirstFailure() {
+        val a = protected()
+        val (target, metadata) = failingTargetInput(TargetFaultPoint.EMPTY) {
+            a.invalidate(); error("SYNTHETIC_PRIVATE")
+        }
+        assertFalse(a.recordSyntheticTarget(target, metadata))
+        assertRecordFailureTerminal(a, AttemptFailure.INVALIDATED)
+    }
+    @Test fun priorDiscardBeforeInputCancellationKeepsFirstFailureAndPropagatesCancellation() {
+        val a = protected()
+        val original = java.util.concurrent.CancellationException("SYNTHETIC_PRIVATE")
+        val (target, metadata) = failingTargetInput(TargetFaultPoint.EMPTY) { a.discard(); throw original }
+        assertSanitizedCancellation(original) { a.recordSyntheticTarget(target, metadata) }
+        assertRecordFailureTerminal(a, AttemptFailure.DISCARDED)
+    }
+    @Test fun targetBoundaryDoesNotSwallowErrorsAsOrdinaryReviewFailures() {
+        val a = protected()
+        val original = AssertionError("SYNTHETIC_FAULT")
+        val (target, metadata) = failingTargetInput(TargetFaultPoint.EMPTY) { throw original }
+        assertSame(original, assertThrows(AssertionError::class.java) { a.recordSyntheticTarget(target, metadata) })
+        // Fatal Errors are deliberately outside the Exception boundary; the driver must abandon it.
+        a.discard()
+    }
+    @Test fun targetFaultDiagnosticsAndCancellationNeverOutputSensitiveSentinels() {
+        val output = ByteArrayOutputStream(); val stream = PrintStream(output)
+        val oldOut = System.out; val oldErr = System.err
+        try {
+            System.setOut(stream); System.setErr(stream)
+            for (point in TargetFaultPoint.entries) {
+                val a = protected()
+                val (target, metadata) = failingTargetInput(point) { error("PRIVATE_BODY_TOKEN_PATH_DIGEST") }
+                assertFalse(a.recordSyntheticTarget(target, metadata))
+                assertFalse(listOf(a, a.firstFailure, a.firstProjectionFailure).joinToString().contains("PRIVATE_"))
+                assertRecordFailureTerminal(a, AttemptFailure.REVIEW_FAILED)
+            }
+            assertEquals("", output.toString())
+        } finally { System.setOut(oldOut); System.setErr(oldErr); stream.close() }
+    }
+
+    @Test fun oversizedIdentityProjectionRejectionDiscardsOwnerAndKeepsFixedFirstReason() {
+        val a = protected()
+        val m = ProjectionFixture.metadata().copy(applicationDigest = "PRIVATE_DIGEST".repeat(1000))
+        assertFalse(a.recordSyntheticTarget(ProjectionFixture.evidence().target, m))
+        assertRecordFailureTerminal(a, AttemptFailure.PROJECTION_REJECTED)
+        assertEquals(ProjectionRejection.IDENTITY_LENGTH_LIMIT, a.firstProjectionFailure)
+        assertFalse(a.firstProjectionFailure.toString().contains("PRIVATE"))
+    }
+
+    private enum class TargetFaultPoint { EMPTY, NODE_COUNT, NODE_ITERATION, WINDOW_COUNT, WINDOW_ITERATION, ACTION_MEMBERSHIP }
+    /** Fault injection at real collection accesses; no production injection/factory is added. */
+    private fun failingTargetInput(point: TargetFaultPoint, fail: () -> Nothing): Pair<CollectedRootEvidence, CollectionProjectionMetadata> {
+        val target = ProjectionFixture.evidence().target
+        val metadata = ProjectionFixture.metadata()
+        val nodes = object : ImmutableList<CollectedNodeEvidence> by target.nodes {
+            override fun isEmpty(): Boolean = if (point == TargetFaultPoint.EMPTY) fail() else target.nodes.isEmpty()
+            override val size: Int get() = if (point == TargetFaultPoint.NODE_COUNT) fail() else target.nodes.size
+            override fun iterator(): Iterator<CollectedNodeEvidence> =
+                if (point == TargetFaultPoint.NODE_ITERATION) fail() else target.nodes.iterator()
+        }
+        val windows = object : ImmutableList<CollectedWindowEvidence> by metadata.windows {
+            override val size: Int get() = if (point == TargetFaultPoint.WINDOW_COUNT) fail() else metadata.windows.size
+            override fun iterator(): Iterator<CollectedWindowEvidence> =
+                if (point == TargetFaultPoint.WINDOW_ITERATION) fail() else metadata.windows.iterator()
+        }
+        val actions = object : ImmutableSet<NodeAction> by target.nodes[0].actions {
+            override fun contains(element: NodeAction): Boolean = fail()
+        }
+        return target.copy(nodes = if (point == TargetFaultPoint.ACTION_MEMBERSHIP)
+            persistentListOf(target.nodes[0].copy(actions = actions)) else nodes) to metadata.copy(windows = windows)
+    }
+    private fun assertSanitizedCancellation(original: java.util.concurrent.CancellationException, call: () -> Unit) {
+        val failure = assertThrows(java.util.concurrent.CancellationException::class.java, call)
+        assertNotSame(original, failure)
+        assertEquals("COLLECTION_REVIEW_CANCELLED", failure.message)
+        assertNull(failure.cause); assertTrue(failure.suppressed.isEmpty())
+        assertFalse(failure.toString().contains("PRIVATE"))
+    }
+    private fun assertRecordFailureTerminal(a: CollectionAttempt, reason: AttemptFailure) {
+        rejected(a, reason)
+        assertCleared(a)
+        assertFalse(a.recordSyntheticTarget(ProjectionFixture.evidence().target, ProjectionFixture.metadata()))
+        assertNull(a.finishSyntheticReview())
+        a.cancel(); a.invalidate(); a.discard()
+        rejected(a, reason)
     }
 
     private fun terminalAtEveryPhase(stop: (CollectionAttempt) -> Unit) {

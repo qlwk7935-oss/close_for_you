@@ -14,7 +14,7 @@ internal enum class ProjectionRejection {
     PROTECTION_NOT_COMPLETE, TREE_NOT_COMPLETE, ROOT_COVERAGE_INVALID, TOPOLOGY_INCOMPLETE,
     NODE_READ_INCOMPLETE, GEOMETRY_NOT_COMPLETE, METADATA_INCOMPLETE, WINDOW_GEOMETRY_INVALID,
     NODE_COUNT_LIMIT, DEPTH_LIMIT, CHILD_COUNT_LIMIT, FIELD_LENGTH_LIMIT, TEXT_LENGTH_LIMIT,
-    WINDOW_COUNT_LIMIT, PATH_LENGTH_LIMIT,
+    WINDOW_COUNT_LIMIT, PATH_LENGTH_LIMIT, IDENTITY_LENGTH_LIMIT,
 }
 
 /** Mirrors only bounds applicable to retained records, not Android's shared visit/time budget.
@@ -27,6 +27,10 @@ internal object CollectionProjectionLimits {
     const val MAX_WINDOWS = 32
     const val MAX_FIELD_CHARACTERS = 4_096
     const val MAX_TARGET_TEXT_CHARACTERS = 32_768
+    // Actual V1 SHA-256 hex is 64 chars. Synthetic labels remain permitted, not authenticated.
+    const val MAX_DIGEST_CHARACTERS = 128
+    const val MAX_PACKAGE_CHARACTERS = 256
+    const val MAX_POPUP_INSTANCE_CHARACTERS = 128
     // Root "0", then at most 60 slash + four-digit ordinals (0..1199).
     const val MAX_PATH_CHARACTERS = 1 + MAX_DEPTH * 5
 }
@@ -55,6 +59,14 @@ internal object CollectionProjection {
             return reject(ProjectionRejection.WINDOW_COUNT_LIMIT)
         if (target.nodes.size > CollectionProjectionLimits.MAX_RETAINED_NODES)
             return reject(ProjectionRejection.NODE_COUNT_LIMIT)
+        // String.length is O(1). Bound every identity string before any isBlank/content scan.
+        // These are synthetic input ceilings, not V1 hash-format or token-provenance validation.
+        if (metadata.applicationDigest.length > CollectionProjectionLimits.MAX_DIGEST_CHARACTERS ||
+            metadata.token.structureDigest.length > CollectionProjectionLimits.MAX_DIGEST_CHARACTERS ||
+            metadata.token.contentDigest.length > CollectionProjectionLimits.MAX_DIGEST_CHARACTERS ||
+            metadata.token.packageName.length > CollectionProjectionLimits.MAX_PACKAGE_CHARACTERS ||
+            metadata.token.popupInstanceId.length > CollectionProjectionLimits.MAX_POPUP_INSTANCE_CHARACTERS)
+            return reject(ProjectionRejection.IDENTITY_LENGTH_LIMIT)
         // Claimed protection is checked independently for every root and every retained target node.
         // Background flags are untrusted inputs, not a substitute for a future owner-issued receipt.
         if (evidence.protection != ProtectionCompletion.COMPLETED_WITHOUT_BLOCK || roots.any { root ->
@@ -77,6 +89,8 @@ internal object CollectionProjection {
         // Only four existing protected text fields are retained here; the reader must check the rest.
         var targetTextCharacters = 0L
         for (node in target.nodes) {
+            if (node.outlineFingerprint.length > CollectionProjectionLimits.MAX_DIGEST_CHARACTERS)
+                return reject(ProjectionRejection.IDENTITY_LENGTH_LIMIT)
             if ((node.text?.length ?: 0) > CollectionProjectionLimits.MAX_FIELD_CHARACTERS ||
                 (node.contentDescription?.length ?: 0) > CollectionProjectionLimits.MAX_FIELD_CHARACTERS ||
                 (node.viewId?.length ?: 0) > CollectionProjectionLimits.MAX_FIELD_CHARACTERS ||

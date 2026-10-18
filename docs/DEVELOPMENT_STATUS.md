@@ -528,3 +528,26 @@ Windows에서 이번 순수 합성 계약 회귀만 실행하려면:
 .\gradlew.bat --no-daemon :app:testDebugUnitTest --tests "kr.closeforyou.accessibility.CollectionAttemptTest" --tests "kr.closeforyou.accessibility.CollectedTreeEvidenceTest" --tests "kr.closeforyou.accessibility.CollectionProjectionTest" --tests "kr.closeforyou.accessibility.CollectionProjectionLimitsTest"
 ```
 기대 결과는 합성111개 통과입니다. 실제 서비스 F0·14개 시나리오의 baseline 성공을 뜻하지 않습니다.
+
+## PR #7 후속: 미연결 합성 코드 P2 두 건 보강 — a341dd6 이후
+
+정확한 feature/f1-popup-detection, 로컬/원격 기준a341dd6 및 깨끗한 작업 트리를 확인하고 시작했습니다. [합성 계약 P2 보강](F1_COLLECTION_ATTEMPT.md#합성-코드-p2-보강--a341dd6-이후)에 한도·예외 경계와 한계를 기록했습니다.
+
+1. CollectionAttempt.recordSyntheticTarget의 입력 조회/대상 검증/evidence 생성/projection/결과 기록을 하나의 Exception 경계로 묶었습니다. 일반 예외는 REVIEW_FAILED로 폐기, 취소는 CANCELLED로 폐기 후 COLLECTION_REVIEW_CANCELLED 고정 메시지로 전파합니다. 최초 실패 보존·참조 해제·재완료 금지는 유지하며 원본 메시지/cause/suppressed는 전달하지 않습니다. Throwable/Error 전체 포획은 추가하지 않았습니다.
+2. application/structure/content/outline 지문 각각128자, packageName256자, popupInstanceId128자 상한을 적용합니다. 각 길이를 O(1)로 먼저 확인하며 초과하면 IDENTITY_LENGTH_LIMIT로 전체 거부합니다. 상한 통과 후 기존 isBlank 검사를 수행합니다. 실제 V1 SHA-256 hex64자·UUID36자와 기존 합성 label은 그대로 수용합니다. 형식/출처 인증이나 실제 시간 예산 검증이 아닙니다.
+
+신규 JVM **17개**(CollectionAttemptTest9 + CollectionProjectionLimitsTest8)입니다. isEmpty 일반·취소 예외, 노드 수/순회·창 수/순회·late DTO actions 조회 fault, 재완료 거부·최초 실패·참조 해제·원본 메시지 비노출·Error 비포획, 모든6개 문자열의 경계/경계+1/긴 공백+비공백/긴 blank/상한 내 blank, 기존 label·독립 golden64자리 보존과 출력 비노출을 검사합니다. 수정 전 isEmpty 회귀2개가 예상대로 실패했고 수정 후 통과했습니다. Android framework 재현이 아닌 합성 collection fault 주입입니다. 기존 codec/golden 파일은 수정하지 않았고 Python read-only 재계산도 SYNTHETIC_GOLDENS_MATCH입니다.
+
+허용한 신규 모델2개와 대응 시험2개 외 app/host/synthetic-support의 기존 추적 파일을a341dd6과 바이트 비교하여 변경0개, 신규 모델의 운영 호출 지점0개를 확인했습니다. AndroidSnapshotCollector/ProtectionRootGuard/서비스/Runtime·F0/F1·두 pass/예산/지문/진단·공통 계약/BCD·PR10·원래14개·클릭/캡처/OCR 경로를 수정하거나 연결하지 않았습니다. 이번 수정은 미연결 합성 코드의 P2 두 건만 처리합니다.
+
+**P1 세 건은 미해결:** (1) 실제 전체 F0·숨김/동일 앱 배경 coverage와 실제 reader의 receipt 발급 권한, (2) 검사한 scalar/대상 기록과 동일 시도의 salt/토큰/구조·본문·outline 지문 결합, (3) 실제 서비스 세션·정책 철회·취소·화면 현재성·TTL. 순수 projection과 기존 collector의 DTO/최초 진단/거부 단계 동등성 및 비용 검증도 후속입니다. 합성 완료를 실제 F0 증명이나 운영 Ready로 사용하지 않습니다.
+
+실제 API35/37 계측 미실시입니다. Scroll 역전 Rect, Window/frame 불일치, 별도 TIME_LIMIT/TARGET_MISSING과 원래14개 UNOBSERVED=14는 그대로 미해결입니다. F1 감지 정확도·일반 앱 OCR 성공을 주장하지 않습니다. PR #7 및 Draft PR #10은 미병합으로 유지합니다.
+
+최종 로컬 검증(JDK17):
+```sh
+python3 -B tools/generate_snapshot_fingerprint_goldens.py
+./gradlew --no-daemon :app:assembleDebug :app:assembleRelease :app:assembleDebugAndroidTest :app:testDebugUnitTest :capture-test-host:testDebugUnitTest :app:lintDebug :capture-test-host:lintDebug
+python3 -B tools/verify_capture_test_apks.py --release-apk app/build/outputs/apk/release/app-release-unsigned.apk
+```
+**BUILD SUCCESSFUL (1분20초, 196 tasks: 22 executed / 174 up-to-date)**. JVM **392개**(앱318/호스트74), 실패·오류·건너뜀0. 앱·호스트 Debug Lint 이슈0. Debug/Release·계측 APK와 독립 호스트 Kotlin 런타임/driver 격리/release probe 부재 패키징 검사 통과입니다. push한 동일 커밋의 CI는 기존 PR #7 Checks에서 별도로 확인합니다.

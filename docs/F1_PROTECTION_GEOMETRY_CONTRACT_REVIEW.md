@@ -2,6 +2,12 @@
 
 결론: **현재 운영 차단을 유지합니다.** 독립 증거·projection·지문 codec은 Android 수집기에 연결하지 않았습니다. `9922c80` 이후 승인된 최소 수정은 아래 0-C의 **기존 보호 pass root 소유권 검사**뿐입니다. CollectionAttempt/receipt 연결·새 반환 경로·부분 F1 관측은 여전히 후속 설계이며, 두 pass·예산·지문 규격·F1/원래14개 정답은 유지합니다. 이후 절의 독립 모델 구현 기록은 당시 범위를 설명합니다.
 
+## 0-E. 미연결 합성 코드 P2 보강 — a341dd6 이후
+
+[합성 계약의 P2 보강](F1_COLLECTION_ATTEMPT.md#합성-코드-p2-보강--a341dd6-이후)만 적용합니다. target 입력 조회부터 projection/상태 기록까지 동일 예외 경계로 보호하고 실패·취소는 폐기합니다. identity 문자열은 내용 검사 전에 지문128/package256/popup128자 상한으로 검사하며 초과 시 IDENTITY_LENGTH_LIMIT로 전체 거부합니다. 실제 V1 지문64자리와 기존 합성 label은 그대로 보존합니다.
+
+실제 F0/배경 coverage, 같은 시도의 검사 값·토큰/salt/지문 결합, 세션/정책/취소/현재성/TTL의 P1은 미해결입니다. AndroidSnapshotCollector/서비스/Runtime/운영 F0/F1·두 pass/예산/진단·공통 계약/BCD/PR10·원래14개·캡처/OCR/클릭 경로는 수정하거나 연결하지 않습니다. 새로운 projection의 거부/진단을 운영 collector와 동등하다고 주장하지 않습니다.
+
 ## 0-D. CollectionAttempt 합성 계약과 배경/대상 분리 — 00c7223 이후
 
 [CollectionAttempt 계약](F1_COLLECTION_ATTEMPT.md)을 구현했습니다. owner의 private 일반 receipt/완료 handle, 정방향 상태·동일 owner·1회 소비·최초 실패·폐기를 JVM에서 검증합니다. 유일한 factory는 합성 검토용이고 모든 상태에서 productionReady=false이며 소비는 고정 enum만 반환합니다. 실제 Android reader/보호 완료/현재성/세션/TTL은 미연결입니다.

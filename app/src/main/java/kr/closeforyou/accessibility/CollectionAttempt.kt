@@ -93,32 +93,34 @@ internal class CollectionAttempt private constructor() {
 
     @Synchronized fun recordSyntheticTarget(target: CollectedRootEvidence, metadata: CollectionProjectionMetadata): Boolean {
         if (!at(AttemptState.PROTECTION_REVIEWED)) return false
-        val expected = scope.single { it.role == EvidenceTreeRole.TARGET }
-        if (target.role != EvidenceTreeRole.TARGET || target.windowId != expected.windowId ||
-            target.traversal != TreeCompletion.COMPLETE || target.nodes.isEmpty())
-            return reject(AttemptFailure.TARGET_INCOMPLETE)
-        // Data is immutable; receipts/roster come from this owner, never supplied alongside the target.
-        // The flags here summarize accepted SYNTHETIC observations only; no real proof is minted.
-        val evidence = CollectedTreeEvidence(scope.map { it.windowId }.toPersistentSet(),
-            scope.map { issued.getValue(it.windowId).observation }.toPersistentList(), target,
-            ProtectionCompletion.COMPLETED_WITHOUT_BLOCK, TreeCompletion.COMPLETE)
-        val result = try {
-            CollectionProjection.project(evidence, metadata)
-        } catch (cancelled: CancellationException) {
+        // Include every caller-owned input access, validation and DTO construction in this
+        // Exception boundary. A failing collection getter must terminate the attempt too.
+        return try {
+            val expected = scope.single { it.role == EvidenceTreeRole.TARGET }
+            if (target.role != EvidenceTreeRole.TARGET || target.windowId != expected.windowId ||
+                target.traversal != TreeCompletion.COMPLETE || target.nodes.isEmpty())
+                return reject(AttemptFailure.TARGET_INCOMPLETE)
+            // Data is immutable; receipts/roster come from this owner, never supplied alongside the target.
+            // The flags here summarize accepted SYNTHETIC observations only; no real proof is minted.
+            val evidence = CollectedTreeEvidence(scope.map { it.windowId }.toPersistentSet(),
+                scope.map { issued.getValue(it.windowId).observation }.toPersistentList(), target,
+                ProtectionCompletion.COMPLETED_WITHOUT_BLOCK, TreeCompletion.COMPLETE)
+            val result = CollectionProjection.project(evidence, metadata)
+            if (!at(AttemptState.PROTECTION_REVIEWED)) return false
+            if (result is ProjectionOutcome.Rejected) {
+                if (projectionFailure == null) projectionFailure = result.reason
+                return reject(AttemptFailure.PROJECTION_REJECTED)
+            }
+            projected = result as ProjectionOutcome.StructuralMatch
+            phase = AttemptState.TARGET_RECORDED
+            true
+        } catch (_: CancellationException) {
             reject(AttemptFailure.CANCELLED)
             throw CancellationException("COLLECTION_REVIEW_CANCELLED")
         } catch (_: Exception) {
             reject(AttemptFailure.REVIEW_FAILED)
-            return false
+            false
         }
-        if (!at(AttemptState.PROTECTION_REVIEWED)) return false
-        if (result is ProjectionOutcome.Rejected) {
-            if (projectionFailure == null) projectionFailure = result.reason
-            return reject(AttemptFailure.PROJECTION_REJECTED)
-        }
-        projected = result as ProjectionOutcome.StructuralMatch
-        phase = AttemptState.TARGET_RECORDED
-        return true
     }
 
     @Synchronized fun finishSyntheticReview(): SyntheticReviewCompletion? {
