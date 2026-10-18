@@ -448,3 +448,28 @@ git pull --ff-only origin feature/f1-popup-detection
 ```
 
 기대 결과는 신규 합성27개 통과이며 전체 검증은 위 전체 Gradle 명령을 Windows의 `.\gradlew.bat`으로 실행합니다.
+
+
+## PR #7 후속: V1 지문 codec 독립 검증 — 운영 미연결
+
+기준 `07d2eda`, 깨끗하고 원격과 일치하는 feature/f1-popup-detection에서 시작했습니다. 신규 A 내부 `SnapshotFingerprintCodec.kt`만 구현하고 AndroidSnapshotCollector에는 연결하지 않았습니다. 기존 collector/service/Runtime·F0/F1·두 pass/예산/진단·evidence/projection·BCD/공통 계약·PR #10·원래14개 시나리오는 변경하지 않았습니다.
+
+codec은 caller가 공급하는 기존 방식의32바이트 salt를 복사하여 각 새 SHA-256의 맨 앞에 넣습니다. UTF-8 바이트 수의4바이트 big-endian 길이, null=-1/빈 값=0, 원래 노드/구조 필드 순서, CLICK→DISMISS의 정확한 `CLICK,DISMISS` 직렬화, 본문의 path/text/description, outline의 path/viewId/className, application의 package 규격을 유지합니다. 기존에 없는 domain tag·보호 증거·geometry 필드를 추가하지 않습니다. salt를 생성하거나 token·완료 플래그를 발급하지 않습니다.
+
+[독립 생성 방법과 전체 규격](SNAPSHOT_FINGERPRINT_V1.md)에 기존 코드 대응과 한계를 기록했습니다. `tools/generate_snapshot_fingerprint_goldens.py`가 별도로 선언한 고정 합성 노드·테스트 전용 salt에 Python `struct.pack(">i", ...)`·UTF-8·`hashlib.sha256`을 적용하여22개 vector의 raw stream과 예상 hash를 JVM test resource에 사전 계산합니다. Kotlin codec 호출·소스 파싱·실제 사용자 입력은 없습니다. JVM 시험은 정적 예상32바이트와 `assertArrayEquals`로 비교하며 codec을 expected 생성기로 사용하지 않습니다. Python 기본 명령의 재계산 비교도 통과했습니다. 콘솔에는 고정 합성 상태 코드만 출력합니다.
+
+신규 JVM **34개**는 네 지문 종류의 독립 golden, null/빈 값·한글/emoji·255바이트 초과 길이·고립 surrogate·정규화 부재, 필드/노드 순서, actions 네 조합/역순 set, 포함/제외 필드, 고정 salt 재현성·변경·방어적 복사, 반환 bytes 복사·새 hash 상태·hex·redacted/no-output 및 salt 오류의 고정 메시지를 검사합니다. 최초 시험의 test resource 조회를 Properties 클래스 기준으로 수행한 오류는 테스트 클래스 기준 조회로 수정했고, 후속 신규34개를 통과했습니다. 운영 codec 지문 규격을 바꿔서 테스트를 맞춘 변경은 아닙니다.
+
+codec·노드 wrapper·digest wrapper는 redacted이며 로그/파일/DB/네트워크 출력이 없습니다. 명시적으로 꺼낸 bytes/hex도 민감 데이터이므로 출력·저장해서는 안 됩니다. 독립 생성기·golden resource·모든 시험 입력은 합성 전용입니다.
+
+**남은 P1/다음 단계:** 실제 F0 전체 검사·배경 coverage, 같은 수집 시도의 token/구조·본문·outline 지문 결합, 서비스 세션·무효화·TTL은 미해결입니다. golden 통과는 Android getter/다중 childCount 읽기/두 pass 사이 변경·collector 전체 DTO/진단/성능/100ms/취소의 동등성을 증명하지 않습니다. 다음 승인 단계는 A 소유 보호 증거와 대상 노드 기록을 분리하고 기존 두 pass 안의 실제 값에 결합하는 설계이며, 세 번째 Android 전체 순회·가짜 지문에 의한 통과·부분 Ready는 금지입니다. Scroll malformed/Window-frame/원래14개 UNOBSERVED는 그대로이며 실제 API35/37 계측을 실행하지 않았습니다.
+
+최종 로컬 검증(JDK17):
+
+```sh
+python3 -B tools/generate_snapshot_fingerprint_goldens.py
+./gradlew --no-daemon :app:assembleDebug :app:assembleDebugAndroidTest :app:testDebugUnitTest :capture-test-host:testDebugUnitTest :app:lintDebug :capture-test-host:lintDebug :app:assembleRelease
+python3 -B tools/verify_capture_test_apks.py --release-apk app/build/outputs/apk/release/app-release-unsigned.apk
+```
+
+**BUILD SUCCESSFUL (1분16초, 196 tasks: 22 executed / 174 up-to-date)**. JVM **311개**(앱238/호스트73), 실패/오류/건너뜀0, 앱·호스트 debug Lint 이슈0. Debug/Release·계측 APK 및 기존 패키징 검사를 통과했고 golden 리소스가 앱 Debug/Release·계측 APK에 포함되지 않음을 확인했습니다. codec만 추가한 상태로 기존 app/host/synthetic-support 추적 파일을07d2eda와 바이트 비교해 변경0개, 운영 코드의 codec 참조0개를 확인했습니다. 이 성공은 실제 Android 수집 동등성이나 F1 baseline 복구가 아닙니다. CI 상태는 이번 커밋의 기존 PR #7 Checks에서 별도로 확인합니다. 새 PR/자동 병합은 하지 않습니다.
