@@ -57,10 +57,12 @@ class DecisionCloseCandidateFinder {
     }
 
     private fun candidate(node: NodeSnapshot): CloseCandidate? {
-        val labels = listOfNotNull(node.text, node.contentDescription).map { it.trim() }.filter { it.isNotEmpty() }
+        val labels = listOfNotNull(node.text, node.contentDescription).filter { it.isNotBlank() }
         val roles = labels.map(DecisionKeywords::buttonRoleOf).toSet()
         // Every label on the node must say the same close/skip thing; a conflict is not a candidate.
         val labeledRole = roles.singleOrNull()
+        // Kept verbatim, not trimmed: A's gate (PR #10) compares it with the node's text exactly.
+        // Role matching already ignores whitespace, and C trims it for display.
         val label = labels.firstOrNull()
         return when {
             NodeAction.DISMISS in node.actions && (labels.isEmpty() || labeledRole == ButtonRole.CLOSE) ->
