@@ -3,6 +3,11 @@
 <resources>
     <string name="ui_announce_nothing_to_repeat">다시 들을 안내가 없어요.</string>
 
+    <!-- 묶음 안내: 2초 안에 처리된 결과를 한 문장으로. "닫았어요"는 버튼을 눌렀다는 뜻일 뿐이다. -->
+    <string name="ui_announce_batch_closed">팝업 %1$d개를 닫았어요.</string>
+    <string name="ui_announce_batch_skipped">팝업 %1$d개를 건너뛰었어요.</string>
+    <string name="ui_announce_batch_not_confirmed">팝업 %1$d개는 닫혔는지 확인하지 못했어요.</string>
+
     <!-- "닫을까요?" 선택 창. 분류는 틀릴 수 있으므로 단정하지 않는다. -->
     <string name="ui_choice_pane_title">팝업 안내</string>
     <string name="ui_choice_summary_ad">광고로 보이는 팝업이에요.</string>
@@ -13,4 +18,37 @@
     <string name="ui_choice_press_candidate">\'%1$s\' 버튼 눌러 주기</string>
     <string name="ui_choice_read_content">내용 다시 읽기</string>
     <string name="ui_choice_keep_open">그대로 두기</string>
+    <!-- 선택 창이 새로 뜰 때 자체 음성으로 한 번 읽는 끝맺음. 포커스는 옮기지 않으므로 위치만 알려 준다. -->
+    <string name="ui_choice_where">화면 아래 선택 창에서 고를 수 있어요.</string>
+    <string name="ui_content_none">읽을 수 있는 글자가 없어요.</string>
+
+    <!-- 설정 화면 (C). 자동 닫기는 앱별·기본 꺼짐. 처음 보는 팝업은 항상 묻는다. -->
+    <string name="ui_settings_title">안내·음성 설정</string>
+    <string name="ui_settings_section_status">지금 상태</string>
+    <string name="ui_settings_status_running">팝업 살펴보기가 켜져 있어요.</string>
+    <string name="ui_settings_status_paused">팝업 살펴보기가 일시정지되어 있어요.</string>
+    <string name="ui_settings_status_where">일시정지와 허용할 앱은 첫 화면의 기본 설정에서 바꿀 수 있어요.</string>
+    <string name="ui_settings_section_auto_close">앱별 자동 닫기</string>
+    <string name="ui_settings_auto_close_help">켜 두면 그 앱에서 \'앞으로 항상 닫기\'로 기억한 똑같은 팝업만 묻지 않고 닫아요. 처음 보는 팝업과 결제·동의 같은 중요한 팝업은 항상 물어봐요.</string>
+    <string name="ui_settings_auto_close_no_apps">허용한 앱이 없어요. 먼저 기본 설정에서 앱을 허용해 주세요.</string>
+    <string name="ui_settings_auto_close_app">%1$s 에서 자동 닫기</string>
+    <string name="ui_settings_section_announce">안내</string>
+    <string name="ui_settings_detail_label">안내 길이</string>
+    <string name="ui_settings_detail_short">짧게</string>
+    <string name="ui_settings_detail_detailed">자세히</string>
+    <string name="ui_settings_prompt_tts">선택 창이 뜰 때 음성으로도 알리기</string>
+    <string name="ui_settings_section_rules">기억한 팝업</string>
+    <string name="ui_settings_rules_empty">기억한 팝업이 없어요.</string>
+    <string name="ui_settings_rule_summary">%1$s · %2$s · %3$s 저장</string>
+    <string name="ui_settings_rule_always_close">앞으로 항상 닫기</string>
+    <string name="ui_settings_rule_stop_asking">다시 묻지 않기</string>
+    <string name="ui_settings_rule_other">기억한 선택</string>
+    <string name="ui_settings_rule_revoke">해제</string>
+    <string name="ui_settings_rule_revoke_description">해제: %1$s</string>
+    <string name="ui_settings_rule_revoked">해제됨</string>
+    <string name="ui_settings_rules_delete_all">기억 전체 삭제</string>
+    <string name="ui_settings_rules_delete_all_title">기억한 팝업을 모두 지울까요?</string>
+    <string name="ui_settings_rules_delete_all_body">지우면 되돌릴 수 없어요. 다음부터는 같은 팝업도 다시 물어봐요.</string>
+    <string name="ui_settings_rules_delete_all_confirm">모두 지우기</string>
+    <string name="ui_settings_cancel">취소</string>
 </resources>

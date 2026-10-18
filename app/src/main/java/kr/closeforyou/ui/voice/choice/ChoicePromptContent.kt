@@ -62,7 +62,7 @@ fun ChoicePromptContent(
     }
 }
 
-private fun PromptSummary.textRes(): Int = when (this) {
+internal fun PromptSummary.textRes(): Int = when (this) {
     PromptSummary.LIKELY_AD -> R.string.ui_choice_summary_ad
     PromptSummary.LIKELY_NOTICE -> R.string.ui_choice_summary_notice
     PromptSummary.NEEDS_REVIEW -> R.string.ui_choice_summary_review
