@@ -1,8 +1,11 @@
 package kr.closeforyou.ui.voice.integration
 
 import kotlin.coroutines.resume
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.withContext
+import kr.closeforyou.R
 import kr.closeforyou.core.contract.AnnouncementKind
 import kr.closeforyou.core.contract.AnnouncementRequest
 import kr.closeforyou.core.contract.EvidenceExtractor
@@ -11,8 +14,10 @@ import kr.closeforyou.core.contract.PopupClassifier
 import kr.closeforyou.core.contract.PopupEvent
 import kr.closeforyou.core.contract.SnapshotSource
 import kr.closeforyou.core.model.ActionResult
+import kr.closeforyou.core.model.ButtonRole
 import kr.closeforyou.core.model.ChoiceKind
 import kr.closeforyou.core.model.PopupAnalysis
+import kr.closeforyou.core.model.PopupSnapshot
 import kr.closeforyou.core.model.UserChoice
 import kr.closeforyou.ui.voice.AnnouncementBatcher
 import kr.closeforyou.ui.voice.PressResultSpeech
@@ -23,12 +28,15 @@ import kr.closeforyou.ui.voice.choice.MoveToButtonFeature
 import kr.closeforyou.ui.voice.choice.MoveToButtonRequest
 import kr.closeforyou.ui.voice.choice.PressableLabelPolicy
 import kr.closeforyou.ui.voice.choice.PromptOptionKind
+import kr.closeforyou.ui.voice.choice.RememberChoiceFeature
+import kr.closeforyou.ui.voice.choice.RememberChoiceSpeech
 import kr.closeforyou.ui.voice.overlay.ChoicePromptPresenter
 
 /**
  * A (or B) hands C's choice to the safety path: B's ActionPolicy, then A's single action gate.
  * C never calls ActionExecutor itself. Return the gate's [ActionResult] for CLOSE_ONCE/SKIP_ONCE,
- * or null for choices that press nothing (KEEP_OPEN).
+ * or null for choices that press nothing (KEEP_OPEN). It never receives REMEMBER_EXACT_POPUP:
+ * [PopupChoiceFlow] sends that as this popup's one-time press first (see [PopupChoiceFlow]).
  */
 fun interface ChoiceHandler {
     suspend fun handle(choice: UserChoice, analysis: PopupAnalysis): ActionResult?
@@ -50,6 +58,11 @@ fun interface UiText {
  * - [내용 다시 읽기] speaks the popup text and keeps the prompt open.
  * - A press that did not succeed is announced at once with the next choices; a success is
  *   counted by [batcher]. Nothing is retried (AGENTS 6-6).
+ * - [앞으로 항상 닫기] (REMEMBER_EXACT_POPUP, team decision 10/20 (가)): B's policy does not press
+ *   for REMEMBER_EXACT_POPUP, so [handler] gets the same token and candidate as CLOSE_ONCE (SKIP_ONCE
+ *   for a skip button, as B checks the role). Only MECHANICAL_SUCCESS saves the rule to
+ *   [rememberStore], once; any other result saves nothing and is spoken like a one-time press.
+ *   The handler is still called at most once per tap.
  *
  * Call [run] from a main-thread coroutine owned by the service; cancel it when the service stops.
  */
@@ -66,6 +79,10 @@ class PopupChoiceFlow(
     private val onMoveToButton: (MoveToButtonRequest) -> Unit = {},
     private val labelPolicy: PressableLabelPolicy = AGateLabelPolicy,
     private val moveToButtonEnabled: Boolean = MoveToButtonFeature.enabled,
+    private val rememberChoicesEnabled: Boolean = RememberChoiceFeature.enabled,
+    private val rememberStore: RememberedPopupStore = RememberedPopupStore.NONE,
+    /** C's per-app auto close setting (default off); decides the sentence after remembering. */
+    private val autoCloseEnabledForApp: (packageName: String) -> Boolean = { false },
 ) {
     suspend fun run() {
         source.events.collectLatest { event ->
@@ -91,30 +108,38 @@ class PopupChoiceFlow(
         if (source.currentToken() != token) return
 
         var prompt: ChoicePrompt? =
-            ChoicePromptPlanner.plan(analysis, classification, labelPolicy, moveToButtonEnabled)
+            ChoicePromptPlanner.plan(analysis, classification, labelPolicy, moveToButtonEnabled, rememberChoicesEnabled)
         while (prompt != null) {
             prompt = when (val answer = awaitAnswer(prompt)) {
                 is Answer.Move -> {
                     onMoveToButton(answer.request)
                     null
                 }
-                is Answer.Picked -> afterChoice(prompt, answer.choice, analysis)
+                is Answer.Picked -> afterChoice(prompt, answer.choice, event.snapshot, analysis)
             }
             if (source.currentToken() != token) return
         }
     }
 
     /** Returns the prompt to show next, or null when this popup is done. */
-    private suspend fun afterChoice(prompt: ChoicePrompt, choice: UserChoice, analysis: PopupAnalysis): ChoicePrompt? {
+    private suspend fun afterChoice(
+        prompt: ChoicePrompt,
+        choice: UserChoice,
+        snapshot: PopupSnapshot,
+        analysis: PopupAnalysis,
+    ): ChoicePrompt? {
         if (choice.kind == ChoiceKind.READ_CONTENT) {
             announcer.announce(AnnouncementRequest(choice.token, AnnouncementKind.CONTENT, contentText(analysis)))
             return prompt // still on screen; wait for the next tap
         }
-        val result = handler.handle(choice, analysis) ?: return null
-        if (!PressResultSpeech.isPressChoice(choice.kind)) return null
+        val remember = choice.kind == ChoiceKind.REMEMBER_EXACT_POPUP
+        val sent = if (remember) oneTimePressFor(choice, analysis) ?: return null else choice
+        val result = handler.handle(sent, analysis) ?: return null
+        if (!PressResultSpeech.isPressChoice(sent.kind)) return null
         val failure = PressResultSpeech.failureOf(result)
         if (failure == null) {
-            AnnouncementBatcher.outcomeOf(result, choice.kind)?.let(batcher::add)
+            AnnouncementBatcher.outcomeOf(result, sent.kind)?.let(batcher::add)
+            if (remember && result.token == choice.token) rememberAfterSuccess(choice, snapshot, analysis)
             return null
         }
         val followUp = if (source.currentToken() == choice.token) {
@@ -128,6 +153,43 @@ class PopupChoiceFlow(
         val sentence = PressResultSpeech.sentence(failure, hasMove, text::get)
         announcer.announce(AnnouncementRequest(choice.token, AnnouncementKind.ACTION_RESULT, sentence))
         return followUp
+    }
+
+    /**
+     * [앞으로 항상 닫기] → this popup's one-time press on the same button. B checks that the kind
+     * matches the button's role, so a skip button becomes SKIP_ONCE. Null when the button is not
+     * in this analysis (nothing is sent).
+     */
+    private fun oneTimePressFor(choice: UserChoice, analysis: PopupAnalysis): UserChoice? {
+        val role = analysis.closeCandidates.firstOrNull { it.id == choice.candidateId }?.role ?: return null
+        val kind = when (role) {
+            ButtonRole.CLOSE -> ChoiceKind.CLOSE_ONCE
+            ButtonRole.SKIP -> ChoiceKind.SKIP_ONCE
+            else -> return null
+        }
+        return UserChoice(
+            token = choice.token,
+            kind = kind,
+            candidateId = choice.candidateId,
+            buttonMeaningConfirmed = choice.buttonMeaningConfirmed,
+            repeatAutomationExplicitlyAllowed = false,
+        )
+    }
+
+    /**
+     * Saves once and says what happened. The popup is gone by now, so A's next event may cancel
+     * this popup's work; the short local save the person asked for still finishes.
+     * The close itself is counted by [batcher]; this adds only the remember sentence.
+     */
+    private suspend fun rememberAfterSuccess(choice: UserChoice, snapshot: PopupSnapshot, analysis: PopupAnalysis) {
+        val saved = withContext(NonCancellable) { rememberStore.save(choice, snapshot, analysis) }
+        val sentence = if (saved) {
+            text.get(R.string.ui_remember_saved) + " " +
+                text.get(RememberChoiceSpeech.afterRememberRes(autoCloseEnabledForApp(choice.token.packageName)))
+        } else {
+            text.get(R.string.ui_remember_not_saved)
+        }
+        announcer.announce(AnnouncementRequest(choice.token, AnnouncementKind.ACTION_RESULT, sentence))
     }
 
     private sealed interface Answer {

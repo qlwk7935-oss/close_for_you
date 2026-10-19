@@ -1,5 +1,6 @@
 package kr.closeforyou.ui.voice.choice
 
+import kr.closeforyou.ui.voice.UiVoiceTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -76,15 +77,17 @@ internal fun PromptSummary.textRes(): Int = when (this) {
 @Composable
 private fun PromptOption.label(): String = when (kind) {
     PromptOptionKind.PRESS_CANDIDATE -> stringResource(R.string.ui_choice_press_candidate, buttonLabel.orEmpty())
+    PromptOptionKind.REMEMBER_ALWAYS -> stringResource(R.string.ui_choice_remember_always, buttonLabel.orEmpty())
     PromptOptionKind.MOVE_TO_BUTTON -> stringResource(R.string.ui_choice_move_to_button, buttonLabel.orEmpty())
     PromptOptionKind.READ_CONTENT -> stringResource(R.string.ui_choice_read_content)
     PromptOptionKind.KEEP_OPEN -> stringResource(R.string.ui_choice_keep_open)
+    PromptOptionKind.STOP_ASKING -> stringResource(R.string.ui_choice_stop_asking)
 }
 
 /** Previews use the fixture's expected answer as a stand-in for B's classifier. */
 @Composable
 private fun FixturePreview(fixture: MockPopupFixture) {
-    MaterialTheme {
+    UiVoiceTheme {
         ChoicePromptContent(
             prompt = ChoicePromptPlanner.plan(fixture.analysis, fixture.expectedDisplayClassification),
             onOption = {},

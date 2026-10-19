@@ -2,6 +2,7 @@ package kr.closeforyou.ui.voice.choice
 
 import kotlinx.collections.immutable.ImmutableList
 import kotlinx.collections.immutable.toImmutableList
+import kr.closeforyou.R
 import kr.closeforyou.core.model.ButtonRole
 import kr.closeforyou.core.model.ChoiceKind
 import kr.closeforyou.core.model.CloseCandidate
@@ -16,8 +17,22 @@ import kr.closeforyou.ui.voice.PressResultSpeech
 /** Hedged summary: a display classification can be wrong, so the sentence never asserts it. */
 enum class PromptSummary { LIKELY_AD, LIKELY_NOTICE, NEEDS_REVIEW, UNKNOWN }
 
-/** MOVE_TO_BUTTON appears only while [MoveToButtonFeature.enabled]; it never presses anything. */
-enum class PromptOptionKind { PRESS_CANDIDATE, MOVE_TO_BUTTON, READ_CONTENT, KEEP_OPEN }
+/**
+ * MOVE_TO_BUTTON appears only while [MoveToButtonFeature.enabled]; it never presses anything.
+ * REMEMBER_ALWAYS / STOP_ASKING appear only while [RememberChoiceFeature.enabled].
+ */
+enum class PromptOptionKind { PRESS_CANDIDATE, REMEMBER_ALWAYS, MOVE_TO_BUTTON, READ_CONTENT, KEEP_OPEN, STOP_ASKING }
+
+/**
+ * [앞으로 항상 닫기] / [다시 묻지 않기]. Off: D's rule storage is not connected (Mock only).
+ * B's policy does not press for REMEMBER_EXACT_POPUP, so `PopupChoiceFlow` sends this popup's
+ * one-time press first and saves the rule only after it succeeded (team decision 10/20 (가)).
+ * Remembering is never authorization: every later auto close re-checks B's policy, A's gate and
+ * the exact popup (AGENTS 6-4), and only in apps whose auto close setting is on.
+ */
+object RememberChoiceFeature {
+    val enabled: Boolean get() = false
+}
 
 data class PromptOption(
     val kind: PromptOptionKind,
@@ -47,7 +62,7 @@ data class ChoicePrompt(
  * C: decides what the "닫을까요?" prompt offers and turns a tap into the contract's [UserChoice].
  *
  * Offering a button is not an authorization. B's ActionPolicy and A's gate re-check everything.
- * Not offered yet: REMEMBER_EXACT_POPUP / STOP_ASKING (no contract for repeat automation).
+ * REMEMBER_EXACT_POPUP / STOP_ASKING are prepared behind [RememberChoiceFeature] (off).
  * [버튼으로 이동] is prepared behind [MoveToButtonFeature] (off: no contract value yet).
  */
 object ChoicePromptPlanner {
@@ -63,6 +78,7 @@ object ChoicePromptPlanner {
         classification: PopupClassification,
         labelPolicy: PressableLabelPolicy = AGateLabelPolicy,
         moveToButtonEnabled: Boolean = MoveToButtonFeature.enabled,
+        rememberChoicesEnabled: Boolean = RememberChoiceFeature.enabled,
     ): ChoicePrompt {
         val pressable = if (classification == PopupClassification.USER_DECISION) {
             emptyList()
@@ -83,8 +99,19 @@ object ChoicePromptPlanner {
         } else {
             emptyList()
         }
-        val all = options + movable.map(::moveOption) +
-            PromptOption(PromptOptionKind.READ_CONTENT) + PromptOption(PromptOptionKind.KEEP_OPEN)
+        // "Always" only for the exact buttons offered for a one-time press, and it names the button.
+        val remember = if (rememberChoicesEnabled) {
+            options.map { it.copy(kind = PromptOptionKind.REMEMBER_ALWAYS) }
+        } else {
+            emptyList()
+        }
+        val stopAsking = if (rememberChoicesEnabled && classification != PopupClassification.USER_DECISION) {
+            listOf(PromptOption(PromptOptionKind.STOP_ASKING))
+        } else {
+            emptyList()
+        }
+        val all = options + remember + movable.map(::moveOption) +
+            PromptOption(PromptOptionKind.READ_CONTENT) + PromptOption(PromptOptionKind.KEEP_OPEN) + stopAsking
         return ChoicePrompt(
             token = analysis.token,
             summary = summaryOf(classification),
@@ -107,6 +134,7 @@ object ChoicePromptPlanner {
         // A pressed button becomes "move there" when that is available, so the person can try it.
         val options = prompt.options.mapNotNull {
             when {
+                it.kind == PromptOptionKind.REMEMBER_ALWAYS -> null // also a press: no retry
                 it.kind != PromptOptionKind.PRESS_CANDIDATE -> it
                 moveToButtonEnabled -> it.copy(kind = PromptOptionKind.MOVE_TO_BUTTON)
                 else -> null
@@ -135,6 +163,15 @@ object ChoicePromptPlanner {
                 buttonMeaningConfirmed = true,
                 repeatAutomationExplicitlyAllowed = false,
             )
+            // The tap names the button (confirmed meaning) and says "always" (explicit repeat permission).
+            PromptOptionKind.REMEMBER_ALWAYS -> UserChoice(
+                token = prompt.token,
+                kind = ChoiceKind.REMEMBER_EXACT_POPUP,
+                candidateId = requireNotNull(option.candidateId),
+                buttonMeaningConfirmed = true,
+                repeatAutomationExplicitlyAllowed = true,
+            )
+            PromptOptionKind.STOP_ASKING -> UserChoice(prompt.token, ChoiceKind.STOP_ASKING)
             PromptOptionKind.READ_CONTENT -> UserChoice(prompt.token, ChoiceKind.READ_CONTENT)
             PromptOptionKind.KEEP_OPEN -> UserChoice(prompt.token, ChoiceKind.KEEP_OPEN)
             PromptOptionKind.MOVE_TO_BUTTON ->
@@ -173,4 +210,11 @@ object ChoicePromptPlanner {
         PopupClassification.USER_DECISION -> PromptSummary.NEEDS_REVIEW
         PopupClassification.UNKNOWN -> PromptSummary.UNKNOWN
     }
+}
+
+/** C: what to say right after [앞으로 항상 닫기]. Saving is D's (Mock today); this is wording only. */
+object RememberChoiceSpeech {
+    /** [autoCloseEnabledForApp]: C's per-app setting (default off). Off means "we will ask again". */
+    fun afterRememberRes(autoCloseEnabledForApp: Boolean): Int =
+        if (autoCloseEnabledForApp) R.string.ui_remember_auto_close_on else R.string.ui_remember_auto_close_off
 }
