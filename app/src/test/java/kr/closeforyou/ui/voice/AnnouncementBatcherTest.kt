@@ -80,10 +80,20 @@ class AnnouncementBatcherTest {
             when (res) {
                 R.string.ui_announce_batch_closed -> "closed$count"
                 R.string.ui_announce_batch_skipped -> "skipped$count"
+                R.string.ui_announce_batch_total -> "total$count"
                 else -> "unknown$count"
             }
         }
-        assertEquals("closed3", BatchSentence.build(BatchSummary(3, 0, 0), text))
-        assertEquals("closed1 skipped2 unknown1", BatchSentence.build(BatchSummary(1, 2, 1), text))
+        assertEquals("closed3", BatchSentence.build(BatchSummary(3, 0, 0), text = text))
+        assertEquals("closed1 skipped2 unknown1", BatchSentence.build(BatchSummary(1, 2, 1), text = text))
+    }
+
+    @Test fun detailedAddsTotalOnlyWhenKindsAreMixed() {
+        val text = { res: Int, count: Int ->
+            if (res == R.string.ui_announce_batch_total) "total$count" else "part$count"
+        }
+        assertEquals("part3", BatchSentence.build(BatchSummary(3, 0, 0), detailed = true, text = text))
+        assertEquals("part1 part2 total3", BatchSentence.build(BatchSummary(1, 2, 0), detailed = true, text = text))
+        assertEquals("part1 part2", BatchSentence.build(BatchSummary(1, 2, 0), detailed = false, text = text))
     }
 }

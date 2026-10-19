@@ -14,7 +14,7 @@ sealed interface VoiceAction {
     /** No single verified close/skip button: say "대신 닫을 수 없어요" and offer [버튼으로 이동]. */
     data object CannotPressForUser : VoiceAction
 
-    /** Not C's to execute (Back, focus move, image description belong to A/B or are not built yet). */
+    /** Not C's to execute (Back, image description; focus move while the feature is off or ambiguous). */
     data class NotHandledHere(val command: VoiceCommand) : VoiceAction
 }
 
@@ -29,14 +29,22 @@ object VoiceChoiceMapper {
         VoiceCommand.SKIP -> pressByRole(prompt, ButtonRole.SKIP)
         VoiceCommand.READ_CONTENT -> option(prompt, PromptOptionKind.READ_CONTENT)
         VoiceCommand.KEEP_OPEN -> option(prompt, PromptOptionKind.KEEP_OPEN)
-        VoiceCommand.GO_BACK, VoiceCommand.MOVE_TO_BUTTON, VoiceCommand.DESCRIBE_IMAGE ->
-            VoiceAction.NotHandledHere(command)
+        VoiceCommand.MOVE_TO_BUTTON -> moveToButton(prompt, command)
+        VoiceCommand.GO_BACK, VoiceCommand.DESCRIBE_IMAGE -> VoiceAction.NotHandledHere(command)
     }
 
     private fun pressByRole(prompt: ChoicePrompt, role: ButtonRole): VoiceAction {
         val matches = prompt.options.filter { it.kind == PromptOptionKind.PRESS_CANDIDATE && it.candidateRole == role }
         return matches.singleOrNull()?.let { VoiceAction.Choose(it) } ?: VoiceAction.CannotPressForUser
     }
+
+    /**
+     * Only when the prompt offers exactly one [PromptOptionKind.MOVE_TO_BUTTON] (feature on). With
+     * several buttons the voice cannot say which one, so the person picks on screen.
+     */
+    private fun moveToButton(prompt: ChoicePrompt, command: VoiceCommand): VoiceAction =
+        prompt.options.singleOrNull { it.kind == PromptOptionKind.MOVE_TO_BUTTON }
+            ?.let { VoiceAction.Choose(it) } ?: VoiceAction.NotHandledHere(command)
 
     private fun option(prompt: ChoicePrompt, kind: PromptOptionKind): VoiceAction =
         VoiceAction.Choose(prompt.options.first { it.kind == kind })

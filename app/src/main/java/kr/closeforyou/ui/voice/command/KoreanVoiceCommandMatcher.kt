@@ -13,12 +13,19 @@ object KoreanVoiceCommandMatcher {
     /** Longer utterances are more likely background speech than a command (normalized length). */
     const val MAX_COMMAND_LENGTH = 16
 
-    // Phrases are compared after removing spaces and punctuation.
+    // Phrases are compared after removing spaces and punctuation. Variants are listed whole words
+    // (honorific "-세요", casual "-어/-라", 10/19) rather than bare stems like "닫", so ordinary
+    // sentences ("문 닫는 시간") stay unmatched.
     private val phrases: Map<VoiceCommand, List<String>> = mapOf(
-        VoiceCommand.CLOSE to listOf("닫아", "닫기", "닫자"),
-        VoiceCommand.SKIP to listOf("건너뛰어", "건너뛰기", "건너뛸래", "넘겨", "스킵"),
-        VoiceCommand.READ_CONTENT to listOf("다시읽어", "읽어줘", "읽어봐", "읽어주세요", "내용읽", "뭐라고써"),
-        VoiceCommand.KEEP_OPEN to listOf("그대로둬", "그대로놔", "그냥둬", "그냥놔둬", "놔둬", "닫지마", "닫지말"),
+        VoiceCommand.CLOSE to listOf("닫아", "닫기", "닫자", "닫어", "닫으세요", "닫을래"),
+        VoiceCommand.SKIP to listOf("건너뛰어", "건너뛰기", "건너뛸래", "건너뛰세요", "건너뛸게", "넘겨", "넘어가", "스킵"),
+        VoiceCommand.READ_CONTENT to listOf(
+            "다시읽어", "읽어줘", "읽어봐", "읽어주세요", "읽어주라", "읽어줄래", "내용읽", "뭐라고써",
+        ),
+        VoiceCommand.KEEP_OPEN to listOf(
+            "그대로둬", "그대로놔", "그대로두세요", "그냥둬", "그냥두세요", "그냥놔둬", "놔둬", "놔두세요", "냅둬", "내비둬",
+            "닫지마", "닫지말",
+        ),
         VoiceCommand.GO_BACK to listOf("돌아가", "뒤로가", "뒤로"),
         VoiceCommand.MOVE_TO_BUTTON to listOf("버튼으로이동", "버튼으로가", "버튼찾아", "버튼위치"),
         VoiceCommand.DESCRIBE_IMAGE to listOf("무슨그림", "그림설명", "무슨사진", "사진설명", "이미지설명", "무슨이미지"),

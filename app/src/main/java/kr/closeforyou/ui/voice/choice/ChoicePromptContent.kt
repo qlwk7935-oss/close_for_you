@@ -21,6 +21,7 @@ import androidx.compose.ui.unit.dp
 import kr.closeforyou.R
 import kr.closeforyou.testing.mock.MockPopupFixture
 import kr.closeforyou.testing.mock.MockPopupFixtures
+import kr.closeforyou.ui.voice.PressResultSpeech
 
 /**
  * "닫을까요?" prompt body, reusable inside the future accessibility overlay.
@@ -49,6 +50,9 @@ fun ChoicePromptContent(
             if (prompt.cannotPressForUser) {
                 Text(text = stringResource(R.string.ui_choice_cannot_press))
             }
+            prompt.pressFailure?.let { failure ->
+                Text(text = stringResource(PressResultSpeech.reasonRes(failure)))
+            }
             prompt.options.forEach { option ->
                 val label = option.label()
                 val buttonModifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)
@@ -72,6 +76,7 @@ internal fun PromptSummary.textRes(): Int = when (this) {
 @Composable
 private fun PromptOption.label(): String = when (kind) {
     PromptOptionKind.PRESS_CANDIDATE -> stringResource(R.string.ui_choice_press_candidate, buttonLabel.orEmpty())
+    PromptOptionKind.MOVE_TO_BUTTON -> stringResource(R.string.ui_choice_move_to_button, buttonLabel.orEmpty())
     PromptOptionKind.READ_CONTENT -> stringResource(R.string.ui_choice_read_content)
     PromptOptionKind.KEEP_OPEN -> stringResource(R.string.ui_choice_keep_open)
 }

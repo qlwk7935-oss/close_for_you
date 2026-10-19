@@ -7,6 +7,17 @@
     <string name="ui_announce_batch_closed">팝업 %1$d개를 닫았어요.</string>
     <string name="ui_announce_batch_skipped">팝업 %1$d개를 건너뛰었어요.</string>
     <string name="ui_announce_batch_not_confirmed">팝업 %1$d개는 닫혔는지 확인하지 못했어요.</string>
+    <!-- 안내 길이 "자세히": 결과 종류가 둘 이상일 때만 전체 개수를 덧붙인다. -->
+    <string name="ui_announce_batch_total">모두 %1$d개예요.</string>
+
+    <!-- 사용자가 고른 누르기의 결과가 성공이 아닐 때. "닫았어요"라고 말하지 않는다. 다시 누르기는 권하지 않는다(재시도 금지). -->
+    <string name="ui_result_not_pressed">안전 확인을 통과하지 못해서 누르지 않았어요.</string>
+    <string name="ui_result_screen_changed">화면이 바뀌어서 누르지 않았어요.</string>
+    <string name="ui_result_press_failed">버튼을 누르지 못했어요.</string>
+    <string name="ui_result_not_confirmed">팝업이 닫혔는지 확인하지 못했어요.</string>
+    <string name="ui_result_next">내용 다시 읽기나 그대로 두기를 고를 수 있어요.</string>
+    <string name="ui_result_next_with_move">내용 다시 읽기, 그대로 두기, 버튼으로 이동 중에서 고를 수 있어요.</string>
+    <string name="ui_result_next_check_screen">지금 화면을 직접 확인해 주세요.</string>
 
     <!-- "닫을까요?" 선택 창. 분류는 틀릴 수 있으므로 단정하지 않는다. -->
     <string name="ui_choice_pane_title">팝업 안내</string>
@@ -16,10 +27,16 @@
     <string name="ui_choice_summary_unknown">팝업이 떴어요.</string>
     <string name="ui_choice_cannot_press">이 팝업은 대신 닫을 수 없어요.</string>
     <string name="ui_choice_press_candidate">\'%1$s\' 버튼 눌러 주기</string>
+    <!-- [버튼으로 이동]: 포커스만 옮긴다. 누르지 않는다 (계약 전이라 기능 플래그로 꺼 둠). -->
+    <string name="ui_choice_move_to_button">\'%1$s\' 버튼으로 이동</string>
     <string name="ui_choice_read_content">내용 다시 읽기</string>
     <string name="ui_choice_keep_open">그대로 두기</string>
     <!-- 선택 창이 새로 뜰 때 자체 음성으로 한 번 읽는 끝맺음. 포커스는 옮기지 않으므로 위치만 알려 준다. -->
     <string name="ui_choice_where">화면 아래 선택 창에서 고를 수 있어요.</string>
+    <!-- 안내 길이 "자세히": 확인된 정보만 덧붙인다 (버튼 이름, 선택지 개수). 분류 근거나 단정은 넣지 않는다. -->
+    <string name="ui_choice_detail_press_buttons">대신 누를 수 있는 버튼: %1$s.</string>
+    <string name="ui_choice_detail_move_buttons">직접 찾아갈 수 있는 버튼: %1$s.</string>
+    <string name="ui_choice_detail_option_count">선택지는 %1$d개예요.</string>
     <string name="ui_content_none">읽을 수 있는 글자가 없어요.</string>
 
     <!-- 설정 화면 (C). 자동 닫기는 앱별·기본 꺼짐. 처음 보는 팝업은 항상 묻는다. -->
@@ -36,9 +53,13 @@
     <string name="ui_settings_detail_label">안내 길이</string>
     <string name="ui_settings_detail_short">짧게</string>
     <string name="ui_settings_detail_detailed">자세히</string>
+    <string name="ui_settings_detail_short_help">어떤 팝업인지와 고를 수 있다는 것만 말해요.</string>
+    <string name="ui_settings_detail_detailed_help">대신 누를 수 있는 버튼 이름과 선택지 개수도 함께 말해요.</string>
     <string name="ui_settings_prompt_tts">선택 창이 뜰 때 음성으로도 알리기</string>
+    <string name="ui_settings_prompt_tts_help">끄면 창만 뜨고 말하지 않아요. TalkBack이 새 창을 스스로 읽지 않는 기기가 있어서 켜 두기를 권해요.</string>
     <string name="ui_settings_section_rules">기억한 팝업</string>
     <string name="ui_settings_rules_empty">기억한 팝업이 없어요.</string>
+    <string name="ui_settings_rules_empty_help">기억한 팝업이 생기면 여기에서 하나씩 해제하거나 모두 지울 수 있어요.</string>
     <string name="ui_settings_rule_summary">%1$s · %2$s · %3$s 저장</string>
     <string name="ui_settings_rule_always_close">앞으로 항상 닫기</string>
     <string name="ui_settings_rule_stop_asking">다시 묻지 않기</string>

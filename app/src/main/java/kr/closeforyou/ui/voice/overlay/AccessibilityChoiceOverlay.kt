@@ -6,6 +6,9 @@ import android.view.Gravity
 import android.view.WindowManager
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.ComposeView
@@ -16,6 +19,8 @@ import kr.closeforyou.core.model.UserChoice
 import kr.closeforyou.ui.voice.choice.ChoicePrompt
 import kr.closeforyou.ui.voice.choice.ChoicePromptContent
 import kr.closeforyou.ui.voice.choice.ChoicePromptPlanner
+import kr.closeforyou.ui.voice.choice.MoveToButtonRequest
+import kr.closeforyou.ui.voice.choice.PromptSelection
 
 /**
  * Shows [ChoicePromptContent] above other apps as a TYPE_ACCESSIBILITY_OVERLAY window.
@@ -34,7 +39,11 @@ class AccessibilityChoiceOverlay(
 
     override val isShowing: Boolean get() = view != null
 
-    override fun show(prompt: ChoicePrompt, onChoice: (UserChoice) -> Unit) {
+    override fun show(
+        prompt: ChoicePrompt,
+        onMoveToButton: (MoveToButtonRequest) -> Unit,
+        onChoice: (UserChoice) -> Unit,
+    ) {
         dismiss()
         val lifecycleOwner = OverlayLifecycleOwner()
         val composeView = ComposeView(service).apply {
@@ -43,11 +52,27 @@ class AccessibilityChoiceOverlay(
                     ChoicePromptContent(
                         prompt = prompt,
                         onOption = { option ->
-                            val choice = ChoicePromptPlanner.toUserChoice(prompt, option)
-                            if (choice.kind != ChoiceKind.READ_CONTENT) dismiss()
-                            onChoice(choice)
+                            when (val selection = ChoicePromptPlanner.select(prompt, option)) {
+                                is PromptSelection.Choice -> {
+                                    if (selection.choice.kind != ChoiceKind.READ_CONTENT) dismiss()
+                                    onChoice(selection.choice)
+                                }
+                                is PromptSelection.MoveToButton -> {
+                                    // Close first so the moved focus lands on the app, not on us.
+                                    dismiss()
+                                    onMoveToButton(selection.request)
+                                }
+                            }
                         },
-                        modifier = Modifier.navigationBarsPadding().padding(16.dp),
+                        // Scrolls when large fonts make the prompt taller than the screen
+                        // (the window is WRAP_CONTENT, so its height is capped by the display).
+                        // statusBarsPadding: a full-height prompt stays below the status bar
+                        // (inset behaviour of overlay windows is not yet checked on a device).
+                        modifier = Modifier
+                            .statusBarsPadding()
+                            .navigationBarsPadding()
+                            .padding(16.dp)
+                            .verticalScroll(rememberScrollState()),
                     )
                 }
             }

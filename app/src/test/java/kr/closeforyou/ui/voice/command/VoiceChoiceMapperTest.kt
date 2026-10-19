@@ -47,7 +47,7 @@ class VoiceChoiceMapperTest {
     }
 
     @Test fun twoCloseButtonsAreAmbiguousByVoice() {
-        val p = prompt(candidate("a", "닫기", ButtonRole.CLOSE), candidate("b", "X 닫기", ButtonRole.CLOSE))
+        val p = prompt(candidate("a", "닫기", ButtonRole.CLOSE), candidate("b", "창 닫기", ButtonRole.CLOSE))
         assertEquals(VoiceAction.CannotPressForUser, VoiceChoiceMapper.map(VoiceCommand.CLOSE, p))
     }
 

@@ -1,0 +1,218 @@
+package kr.closeforyou.ui.voice.integration
+
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.TestScope
+import kotlinx.coroutines.test.advanceTimeBy
+import kotlinx.coroutines.test.runCurrent
+import kotlinx.coroutines.test.runTest
+import kr.closeforyou.core.contract.AnnouncementKind
+import kr.closeforyou.core.contract.AnnouncementReceipt
+import kr.closeforyou.core.contract.AnnouncementRequest
+import kr.closeforyou.core.contract.AnnouncementState
+import kr.closeforyou.core.contract.EvidenceExtractor
+import kr.closeforyou.core.contract.PopupAnnouncer
+import kr.closeforyou.core.contract.PopupClassifier
+import kr.closeforyou.core.model.ActionResult
+import kr.closeforyou.core.model.ActionStatus
+import kr.closeforyou.core.model.ChoiceKind
+import kr.closeforyou.core.model.PopupAnalysis
+import kr.closeforyou.core.model.PopupSnapshot
+import kr.closeforyou.core.model.UserChoice
+import kr.closeforyou.testing.mock.MockPopupFixture
+import kr.closeforyou.testing.mock.MockPopupFixtures
+import kr.closeforyou.testing.mock.MockSnapshotSource
+import kr.closeforyou.ui.voice.AnnouncementBatcher
+import kr.closeforyou.ui.voice.BatchSummary
+import kr.closeforyou.ui.voice.PressFailure
+import kr.closeforyou.ui.voice.choice.ChoicePrompt
+import kr.closeforyou.ui.voice.choice.ChoicePromptPlanner
+import kr.closeforyou.ui.voice.choice.MoveToButtonRequest
+import kr.closeforyou.ui.voice.choice.PromptOptionKind
+import kr.closeforyou.ui.voice.choice.PromptSelection
+import kr.closeforyou.ui.voice.overlay.ChoicePromptPresenter
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
+import org.junit.Test
+
+@OptIn(ExperimentalCoroutinesApi::class)
+class PopupChoiceFlowTest {
+    /** Behaves like AccessibilityChoiceOverlay: press/keep close the prompt, read keeps it. */
+    private class FakePresenter : ChoicePromptPresenter {
+        var prompt: ChoicePrompt? = null
+        var shows = 0
+        private var onChoice: ((UserChoice) -> Unit)? = null
+        private var onMove: ((MoveToButtonRequest) -> Unit)? = null
+        override val isShowing: Boolean get() = prompt != null
+
+        override fun show(prompt: ChoicePrompt, onMoveToButton: (MoveToButtonRequest) -> Unit, onChoice: (UserChoice) -> Unit) {
+            this.prompt = prompt
+            this.onChoice = onChoice
+            this.onMove = onMoveToButton
+            shows++
+        }
+
+        override fun dismiss() {
+            prompt = null
+        }
+
+        fun tap(kind: PromptOptionKind) {
+            val p = requireNotNull(prompt)
+            when (val s = ChoicePromptPlanner.select(p, p.options.first { it.kind == kind })) {
+                is PromptSelection.Choice -> {
+                    if (s.choice.kind != ChoiceKind.READ_CONTENT) dismiss()
+                    onChoice?.invoke(s.choice)
+                }
+                is PromptSelection.MoveToButton -> {
+                    dismiss()
+                    onMove?.invoke(s.request)
+                }
+            }
+        }
+    }
+
+    private class FakeAnnouncer : PopupAnnouncer {
+        val said = mutableListOf<AnnouncementRequest>()
+        var stops = 0
+        override suspend fun announce(request: AnnouncementRequest): AnnouncementReceipt {
+            said += request
+            return AnnouncementReceipt(AnnouncementState.TTS_COMPLETED)
+        }
+        override suspend fun repeatLast() = AnnouncementReceipt(AnnouncementState.NOT_IMPLEMENTED)
+        override fun stop() {
+            stops++
+        }
+    }
+
+    private class Harness(scope: TestScope, private val status: ActionStatus) {
+        val source = MockSnapshotSource()
+        val presenter = FakePresenter()
+        val announcer = FakeAnnouncer()
+        val handled = mutableListOf<UserChoice>()
+        val flushed = mutableListOf<BatchSummary>()
+        private var fixture: MockPopupFixture = MockPopupFixtures.advertisement()
+        val flow = PopupChoiceFlow(
+            source = source,
+            extractor = object : EvidenceExtractor {
+                override suspend fun extract(snapshot: PopupSnapshot): PopupAnalysis = fixture.analysis
+            },
+            classifier = object : PopupClassifier {
+                override suspend fun classify(analysis: PopupAnalysis) = fixture.expectedDisplayClassification
+            },
+            presenter = presenter,
+            announcer = announcer,
+            batcher = AnnouncementBatcher(scope.backgroundScope, onFlush = { flushed += it }),
+            handler = ChoiceHandler { choice, _ ->
+                handled += choice
+                if (choice.kind == ChoiceKind.KEEP_OPEN) null else ActionResult(choice.token, status, reason = null)
+            },
+            text = UiText { "res$it" },
+            contentText = { "content" },
+        )
+
+        suspend fun emit(f: MockPopupFixture) {
+            fixture = f
+            source.emitFixture(f)
+        }
+    }
+
+    private fun TestScope.start(status: ActionStatus = ActionStatus.MECHANICAL_SUCCESS): Harness {
+        val h = Harness(this, status)
+        backgroundScope.launch { h.flow.run() }
+        runCurrent()
+        return h
+    }
+
+    @Test fun candidateShowsPromptAndSuccessIsBatched() = runTest {
+        val h = start()
+        h.emit(MockPopupFixtures.advertisement())
+        runCurrent()
+        assertEquals(PromptOptionKind.PRESS_CANDIDATE, h.presenter.prompt!!.options.first().kind)
+
+        h.presenter.tap(PromptOptionKind.PRESS_CANDIDATE)
+        runCurrent()
+        assertEquals(ChoiceKind.CLOSE_ONCE, h.handled.single().kind)
+        assertFalse(h.presenter.isShowing)
+        assertTrue(h.announcer.said.none { it.kind == AnnouncementKind.ACTION_RESULT })
+        advanceTimeBy(AnnouncementBatcher.DEFAULT_WINDOW_MILLIS + 1)
+        assertEquals(listOf(BatchSummary(closed = 1, skipped = 0, notConfirmed = 0)), h.flushed)
+    }
+
+    @Test fun blockedPressIsSpokenAndFollowUpHasNoPressButton() = runTest {
+        val h = start(ActionStatus.BLOCKED)
+        h.emit(MockPopupFixtures.advertisement())
+        runCurrent()
+        h.presenter.tap(PromptOptionKind.PRESS_CANDIDATE)
+        runCurrent()
+
+        assertEquals(AnnouncementKind.ACTION_RESULT, h.announcer.said.single().kind)
+        val followUp = h.presenter.prompt!!
+        assertEquals(PressFailure.NOT_PRESSED, followUp.pressFailure)
+        assertTrue(followUp.options.none { it.kind == PromptOptionKind.PRESS_CANDIDATE })
+        advanceTimeBy(AnnouncementBatcher.DEFAULT_WINDOW_MILLIS + 1)
+        assertTrue("A failure is never counted as closed", h.flushed.isEmpty())
+
+        h.presenter.tap(PromptOptionKind.KEEP_OPEN)
+        runCurrent()
+        assertEquals(listOf(ChoiceKind.CLOSE_ONCE, ChoiceKind.KEEP_OPEN), h.handled.map { it.kind })
+        assertFalse(h.presenter.isShowing)
+    }
+
+    @Test fun staleResultIsSpokenWithoutFollowUp() = runTest {
+        val h = start(ActionStatus.STALE)
+        h.emit(MockPopupFixtures.advertisement())
+        runCurrent()
+        h.presenter.tap(PromptOptionKind.PRESS_CANDIDATE)
+        runCurrent()
+        assertEquals(1, h.announcer.said.size)
+        assertNull(h.presenter.prompt)
+        assertEquals(1, h.presenter.shows)
+    }
+
+    @Test fun readContentKeepsPromptAndWaitsForNextTap() = runTest {
+        val h = start()
+        h.emit(MockPopupFixtures.notice())
+        runCurrent()
+        h.presenter.tap(PromptOptionKind.READ_CONTENT)
+        runCurrent()
+        assertEquals(AnnouncementKind.CONTENT, h.announcer.said.single().kind)
+        assertTrue(h.presenter.isShowing)
+        assertEquals("READ_CONTENT does not go to B/A", 0, h.handled.size)
+
+        h.presenter.tap(PromptOptionKind.KEEP_OPEN)
+        runCurrent()
+        assertEquals(ChoiceKind.KEEP_OPEN, h.handled.single().kind)
+        assertEquals(1, h.presenter.shows)
+    }
+
+    @Test fun invalidationClosesPromptAndStopsSpeech() = runTest {
+        val h = start()
+        h.emit(MockPopupFixtures.advertisement())
+        runCurrent()
+        assertTrue(h.presenter.isShowing)
+        h.source.invalidate(screenVersion = 99)
+        runCurrent()
+        assertFalse(h.presenter.isShowing)
+        assertTrue(h.announcer.stops > 0)
+        // A late tap on the old prompt goes nowhere.
+        assertTrue(h.handled.isEmpty())
+    }
+
+    @Test fun blockedEventClosesPrompt() = runTest {
+        val h = start()
+        h.emit(MockPopupFixtures.advertisement())
+        runCurrent()
+        h.source.emitBlocked(screenVersion = 5)
+        runCurrent()
+        assertFalse(h.presenter.isShowing)
+    }
+
+    @Test fun decisionPopupNeverOffersPress() = runTest {
+        val h = start()
+        h.emit(MockPopupFixtures.decision())
+        runCurrent()
+        assertTrue(h.presenter.prompt!!.options.none { it.kind == PromptOptionKind.PRESS_CANDIDATE })
+    }
+}

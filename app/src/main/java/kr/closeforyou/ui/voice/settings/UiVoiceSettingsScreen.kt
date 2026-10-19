@@ -131,6 +131,7 @@ fun UiVoiceSettingsScreen(
             AnnouncementDetail.entries.forEach { detail ->
                 RadioRow(
                     label = stringResource(detail.labelRes()),
+                    description = stringResource(detail.descriptionRes()),
                     selected = settings.detail == detail,
                     onClick = { onDetailChange(detail) },
                 )
@@ -138,6 +139,7 @@ fun UiVoiceSettingsScreen(
         }
         SwitchRow(
             label = stringResource(R.string.ui_settings_prompt_tts),
+            description = stringResource(R.string.ui_settings_prompt_tts_help),
             checked = settings.promptAnnounceMode == PromptAnnounceMode.PANE_TITLE_AND_TTS,
             onCheckedChange = {
                 onPromptModeChange(if (it) PromptAnnounceMode.PANE_TITLE_AND_TTS else PromptAnnounceMode.PANE_TITLE_ONLY)
@@ -148,6 +150,7 @@ fun UiVoiceSettingsScreen(
         Heading(R.string.ui_settings_section_rules)
         if (rules.isEmpty()) {
             Text(stringResource(R.string.ui_settings_rules_empty))
+            Text(stringResource(R.string.ui_settings_rules_empty_help), style = MaterialTheme.typography.bodySmall)
         } else {
             rules.forEach { rule -> RuleRow(rule, onRevoke) }
             OutlinedButton(
@@ -203,8 +206,14 @@ private fun Heading(textRes: Int, style: androidx.compose.ui.text.TextStyle = Ma
     Text(stringResource(textRes), style = style, modifier = Modifier.semantics { heading() })
 }
 
+/** [description] sits inside the toggleable row, so TalkBack reads it with the label and state. */
 @Composable
-private fun SwitchRow(label: String, checked: Boolean, onCheckedChange: (Boolean) -> Unit) {
+private fun SwitchRow(
+    label: String,
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit,
+    description: String? = null,
+) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -212,13 +221,13 @@ private fun SwitchRow(label: String, checked: Boolean, onCheckedChange: (Boolean
             .toggleable(value = checked, role = Role.Switch, onValueChange = onCheckedChange),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text(label, modifier = Modifier.weight(1f))
+        LabelWithDescription(label, description, Modifier.weight(1f).padding(end = 8.dp))
         Switch(checked = checked, onCheckedChange = null)
     }
 }
 
 @Composable
-private fun RadioRow(label: String, selected: Boolean, onClick: () -> Unit) {
+private fun RadioRow(label: String, description: String?, selected: Boolean, onClick: () -> Unit) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -227,8 +236,21 @@ private fun RadioRow(label: String, selected: Boolean, onClick: () -> Unit) {
         verticalAlignment = Alignment.CenterVertically,
     ) {
         RadioButton(selected = selected, onClick = null)
-        Text(label, modifier = Modifier.padding(start = 8.dp))
+        LabelWithDescription(label, description, Modifier.padding(start = 8.dp))
     }
+}
+
+@Composable
+private fun LabelWithDescription(label: String, description: String?, modifier: Modifier = Modifier) {
+    Column(modifier.padding(vertical = 4.dp)) {
+        Text(label)
+        if (description != null) Text(description, style = MaterialTheme.typography.bodySmall)
+    }
+}
+
+private fun AnnouncementDetail.descriptionRes() = when (this) {
+    AnnouncementDetail.SHORT -> R.string.ui_settings_detail_short_help
+    AnnouncementDetail.DETAILED -> R.string.ui_settings_detail_detailed_help
 }
 
 private fun AnnouncementDetail.labelRes() = when (this) {

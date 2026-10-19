@@ -81,13 +81,22 @@ class AnnouncementBatcher(
     }
 }
 
-/** Builds the spoken sentence; [text] resolves a string resource with one count argument. */
+/**
+ * Builds the spoken sentence; [text] resolves a string resource with one count argument.
+ * [detailed] (안내 길이 "자세히") adds the total only when two or more kinds are mixed — a count C
+ * actually has, nothing inferred.
+ */
 object BatchSentence {
-    fun build(summary: BatchSummary, text: (resId: Int, count: Int) -> String): String = buildList {
+    fun build(
+        summary: BatchSummary,
+        detailed: Boolean = false,
+        text: (resId: Int, count: Int) -> String,
+    ): String = buildList {
         if (summary.closed > 0) add(text(R.string.ui_announce_batch_closed, summary.closed))
         if (summary.skipped > 0) add(text(R.string.ui_announce_batch_skipped, summary.skipped))
         if (summary.notConfirmed > 0) {
             add(text(R.string.ui_announce_batch_not_confirmed, summary.notConfirmed))
         }
+        if (detailed && size > 1) add(text(R.string.ui_announce_batch_total, summary.total))
     }.joinToString(" ")
 }

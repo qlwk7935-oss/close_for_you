@@ -41,6 +41,30 @@ class KoreanVoiceCommandMatcherTest {
 
     @Test fun consentOrPaymentWordsAreNeverCommands() = assertIgnored("동의", "동의해줘", "결제해", "구독해 줘", "확인 눌러", "로그인")
 
+    @Test fun honorificAndCasualVariants() {
+        assertMatches(VoiceCommand.CLOSE, "닫으세요", "닫을래", "닫어", "닫아라")
+        assertMatches(VoiceCommand.SKIP, "건너뛰세요", "건너뛸게요", "넘어가", "넘겨 주세요")
+        assertMatches(VoiceCommand.READ_CONTENT, "읽어 주라", "읽어 줄래요?")
+        assertMatches(VoiceCommand.KEEP_OPEN, "그냥 두세요", "그대로 두세요", "놔두세요", "냅둬", "내비 둬")
+    }
+
+    /** Sound-alike or everyday sentences that must not become commands. */
+    @Test fun nearMissesAreIgnored() = assertIgnored(
+        "단어", "다다음 주", "문 닫는 시간", "넘어졌어", "읽는 중", "건너편", "스키 타러 가",
+        "닫으면 안 돼", "넘어가지 마", "냅다 뛰어",
+    )
+
+    /** Length limit counts the normalized text: 16 is still a command, 17 is not. */
+    @Test fun lengthLimitBoundary() {
+        val filler = "가나다라마바사아자차카타파하거너더러"
+        val sixteen = filler.take(KoreanVoiceCommandMatcher.MAX_COMMAND_LENGTH - 2) + "닫아"
+        val seventeen = filler.take(KoreanVoiceCommandMatcher.MAX_COMMAND_LENGTH - 1) + "닫아"
+        assertEquals(VoiceCommand.CLOSE, KoreanVoiceCommandMatcher.match(sixteen))
+        assertNull(KoreanVoiceCommandMatcher.match(seventeen))
+        // Spaces and punctuation do not count toward the limit.
+        assertEquals(VoiceCommand.CLOSE, KoreanVoiceCommandMatcher.match("  ${sixteen.chunked(2).joinToString(" ")}!  "))
+    }
+
     @Test fun normalizeRemovesSpacesAndPunctuation() {
         assertEquals("닫아줘", KoreanVoiceCommandMatcher.normalize(" 닫아, 줘! "))
     }

@@ -3,6 +3,7 @@ package kr.closeforyou.ui.voice.overlay
 import android.view.accessibility.AccessibilityWindowInfo
 import kr.closeforyou.core.model.UserChoice
 import kr.closeforyou.ui.voice.choice.ChoicePrompt
+import kr.closeforyou.ui.voice.choice.MoveToButtonRequest
 
 /**
  * C → A proposal (not yet in core/contract): the one call A's service makes to show "닫을까요?".
@@ -17,9 +18,15 @@ interface ChoicePromptPresenter {
     /**
      * Shows [prompt], replacing any prompt already on screen. [onChoice] runs once per tap.
      * Press and keep choices close the prompt first; READ_CONTENT keeps it open so the person
-     * can still choose after listening.
+     * can still choose after listening. [onMoveToButton] (feature off for now) closes the prompt
+     * and asks A's ButtonFocusMover to move focus; it never reaches the action gate.
      */
-    fun show(prompt: ChoicePrompt, onChoice: (UserChoice) -> Unit)
+    fun show(
+        prompt: ChoicePrompt,
+        // Before onChoice so `show(prompt) { choice -> }` still binds the trailing lambda to onChoice.
+        onMoveToButton: (MoveToButtonRequest) -> Unit = {},
+        onChoice: (UserChoice) -> Unit,
+    )
 
     /** A calls this when the token is invalidated or the popup disappears. Safe to call twice. */
     fun dismiss()
