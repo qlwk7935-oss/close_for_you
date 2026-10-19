@@ -1,6 +1,6 @@
 # F1 PREPARATION → 엄격 BASELINE → 실제 Android Dialog 독립 시험
 
-기준 브랜치 `feature/f1-popup-detection`, HEAD `a326099a68973ac39a5c4306be1ebc941ae8bffa`. 커밋·푸시·병합하지 않은 검토용 구현입니다. PR #7 미병합, PR #10 Draft를 유지합니다. 기존 두 최소 계측과 원래 F1 14개·운영 코드·Manifest·정책·동의·수집 예산은 변경하지 않습니다.
+현재 기록 기준은 브랜치 `feature/f1-popup-detection`, HEAD `cb26baa76cb47b7b860a84a5153cd3a6e9fbedc9`입니다. 초기 구현은 `a326099`에서 시작해 `fdc328f`로 커밋·푸시했고, 초기 미관측 대기 수정은 `cb26baa`로 커밋·푸시했습니다. 아래 로컬 검증 기록과 이후 사용자 제공 API37 실측을 시간순으로 구분합니다. PR #7 미병합, PR #10 Draft를 유지합니다. 기존 두 최소 계측과 원래 F1 14개·운영 코드·Manifest·정책·동의·수집 예산은 변경하지 않습니다.
 
 ## 질문과 기존 사용자 실측의 위치
 
@@ -99,7 +99,7 @@ $serial = "emulator-5554" # 실제 API37 대상 확인
 
 기대하는 정상 흐름은 SERVICE_CONNECTION_READY → PREPARATION_RECORDED → OBSERVED_NON_POPUP_BASELINE → BOUNDED_WINDOW_CANDIDATE → SUMMARY/OBSERVED, 마지막 OK(1 test)입니다. 실제로 이 출력이 나온다고 보장하지 않습니다. 다른 결과는 고정 문제/정리/해제 코드와 실패로 남깁니다. 전체 Logcat이나 화면을 수집하지 않습니다.
 
-## 검증 상태
+## 초기 구현 로컬 검증 이력 — fdc328f 커밋 전
 
 P2/P3 보강 **이전** 구현의 검증 기록은 신규42개 포함 JVM619개(앱396/호스트223), 실패·오류·skip0입니다. 이 기록을 이번 보강 결과로 재사용하지 않습니다. 당시 첫 전체 실행에서는 TIME_LIMIT/TARGET_MISSING 회귀의 Dialog 선행 입력을 바로잡았으며 운영/판정 정책은 완화하지 않았습니다.
 
@@ -111,7 +111,7 @@ P2/P3 보강 **이전** 구현의 검증 기록은 신규42개 포함 JVM619개(
 
 기존 추적 파일181개는 작업 시작 시 SHA-256과 동일합니다. git diff --check와 신규5개 파일의 trailing whitespace/최종 newline 검사 통과, index는 비어 있고 신규파일은 미추적 상태입니다. Release/CI·커밋·푸시·병합은 이번에 수행하지 않았습니다.
 
-실제 Android API37 계측은 실행하지 않았습니다(adb 연결 기기 없음). 합성 IPC/해제/취소 callback의 JVM 통과는 실제 framework recycle 실패·서비스 F0 완료·실기기 Job 취소를 재현한 것이 아닙니다. 실제 이벤트 전달·enabled 반영·최소 트리 장식 노드·Dialog 별도 창·창/노드 경계 포함·layer·안정성·수명·정리는 API37에서 확인해야 합니다.
+이 로컬 검증 당시 Codex는 실제 Android API37 계측을 실행하지 않았습니다(adb 연결 기기 없음). 합성 IPC/해제/취소 callback의 JVM 통과는 실제 framework recycle 실패·서비스 F0 완료·실기기 Job 취소를 재현한 것이 아닙니다. 당시 미확인이었던 실제 이벤트 전달·enabled 반영·최소 트리 장식 노드·Dialog 별도 창·창/노드 경계 포함·layer·안정성·수명·정리에 대해서는 아래 사용자 제공 실측의 제한된 관측 범위와 일반적인 보장을 구분해야 합니다.
 
 운영 연결/새 권한/보호 우회는 없습니다. 남는 P1은 전체 F0 coverage, 실제 검사 값·salt/토큰/지문의 동일 시도 결합, 세션·화면 현재성·TTL입니다. P2 한계는 비협력적 호출 강제 중단 불가, RESULT/RESET/END·출처의 비원자성, 기존 운영 collector 정리 예외입니다. P3 한계는 미관측 ABA와 제한된 합성 fixture/표본의 일반화입니다. 새 엄격 helper가 실제 Android 장식·배경 창 조건을 만족하지 못하면 결과는 INCONCLUSIVE로 남겨야 하며 시험 통과를 위해 조건을 보정하지 않습니다.
 
@@ -121,6 +121,32 @@ P2/P3 보강 **이전** 구현의 검증 기록은 신규42개 포함 JVM619개(
 
 위 검증 상태는 fdc328f 커밋 전 기록입니다. 이후 사용자가 제공한 실제 API37 실행은 SERVICE_CONNECTION_READY, PREPARATION의 INVALID_GEOMETRY/WINDOW_OUTSIDE_FRAME 및 VALID/NO_POPUP/BASELINE_ONLY·ORDINARY_CONTENT_CHANGE 행, PREPARATION_RECORDED까지 관측했습니다. BASELINE/BEFORE 뒤 첫 UNOBSERVED를 즉시 거부하여 INCONCLUSIVE/JUnit 실패(5.715초)였고 Dialog는 표시하지 않았습니다. 이 기록을 Dialog 후보 감지 성공으로 해석하지 않습니다.
 
-코드로 확인된 조기 거부는 await와 progress.assess 두 경계의 초기 UNOBSERVED 처리입니다. 이번 변경은 그 두 테스트 전용 경계에만 적용하며 서비스 이벤트를 추가 발생시키거나 값을 주입하지 않습니다. TextView 변경이 실제 접근성 이벤트를 발생시켰는지, Android에서 미관측이 발생한 원인, 3초 안에 유효 서비스 행이 도착할지는 미확정입니다. 지속 미관측은 끝까지 INCONCLUSIVE/JUnit 실패이며 운영 보호·detector·provider·동의·행동 정책은 변경하지 않습니다.
+코드로 확인된 조기 거부는 await와 progress.assess 두 경계의 초기 UNOBSERVED 처리입니다. `cb26baa`의 대기 수정은 그 두 테스트 전용 경계에만 적용하며 서비스 이벤트를 추가 발생시키거나 값을 주입하지 않습니다. 수정 당시 TextView 변경의 실제 접근성 이벤트 발생 여부, Android에서 미관측이 발생한 원인, 3초 안의 유효 서비스 행 도착은 미확정이었습니다. 이후 두 실행에서 유효 행이 도착한 사실은 아래에 기록하지만 TextView 자극과 특정 ATTEMPT의 직접 인과관계나 항상 도착한다는 보장은 입증하지 않습니다. 지속 미관측은 끝까지 INCONCLUSIVE/JUnit 실패이며 운영 보호·detector·provider·동의·행동 정책은 변경하지 않습니다.
 
-이번 보강은 공유 관측 루프/phase 계약에 연결된 결정론적 JVM13개를 추가했습니다. 대상82개 및 앱396개/호스트263개, 전체659개가 실패·오류·skip0으로 통과했습니다. 전체 빌드에서 앱 테스트가 캐시로 처리되어 앱 JVM은 별도 --rerun으로 실제 실행했고, 호스트 전체 JVM도 실행했습니다. 양쪽 Debug/AndroidTest APK, 양쪽 Lint(이슈0), 기존 패키징 검사와 Prepared 계약/reader의 driver 전용 DEX 정의 격리 검사를 통과했습니다. 첫 대상 실행은 별도 Gradle 캐시 지정으로 배포본 다운로드 중 DNS 오류였으며, 프로젝트 변경 없이 기본 캐시/JDK17로 재실행해 통과했습니다. 수정 후 API37 재시험은 하지 않았습니다. 커밋·푸시·병합하지 않은 로컬 검증입니다.
+이 대기 수정의 로컬 검증에서는 공유 관측 루프/phase 계약에 연결된 결정론적 JVM13개를 추가했습니다. 대상82개 및 앱396개/호스트263개, 전체659개가 실패·오류·skip0으로 통과했습니다. 전체 빌드에서 앱 테스트가 캐시로 처리되어 앱 JVM은 별도 --rerun으로 실제 실행했고, 호스트 전체 JVM도 실행했습니다. 양쪽 Debug/AndroidTest APK, 양쪽 Lint(이슈0), 기존 패키징 검사와 Prepared 계약/reader의 driver 전용 DEX 정의 격리 검사를 통과했습니다. 첫 대상 실행은 별도 Gradle 캐시 지정으로 배포본 다운로드 중 DNS 오류였으며, 프로젝트 변경 없이 기본 캐시/JDK17로 재실행해 통과했습니다. 이는 `cb26baa` 커밋 전 로컬 검증 기록이며 당시 Codex는 API37 재시험을 하지 않았습니다. 이후 커밋·푸시와 사용자 실측은 이 로컬 검증 이력과 구분합니다.
+
+## cb26baa 이후 사용자 Windows API37 실측 — 2회 연속 성공
+
+출처는 사용자가 제공한 실제 `ServicePreparedMinimalDialogOptInTest` instrumentation 로그입니다. Codex가 Android 계측을 직접 재실행하거나 새 JVM·빌드 검증을 수행한 결과가 아닙니다. 관측 범위는 **Windows Android API37 에뮬레이터 한 대, 최소 합성 Dialog 시나리오 한 건, 연속 실행 두 번**으로 한정합니다.
+
+| 실행 | Time(초) | 최종 summary | JUnit |
+|---|---|---|---|
+| 첫 번째 | 13.271 | `SUMMARY;RESULT=OBSERVED` | `OK (1 test)` |
+| 두 번째 | 13.397 | `SUMMARY;RESULT=OBSERVED` | `OK (1 test)` |
+
+두 실행 모두 사용자 로그에서 다음 결과가 관측됐습니다.
+
+| 단계 | 실제 관측 |
+|---|---|
+| 서비스 연결 | `SERVICE_CONNECTION_READY` |
+| PREPARATION | 초기 `INVALID_GEOMETRY / WINDOW_OUTSIDE_FRAME / RIGHT,BOTTOM` 이후 유효한 일반 화면 판정. 이 준비 증거는 엄격 BASELINE으로 승계하지 않음 |
+| 엄격 BASELINE | `ATTEMPT=4`, `NO_POPUP / ORDINARY_CONTENT_CHANGE / VALID` |
+| 실제 DIALOG | `ATTEMPT=5`, `POPUP_CANDIDATE / BOUNDED_WINDOW / VALID` |
+| 최종 결과 | `RESULT=OBSERVED`, `OK (1 test)` |
+| 실행 범위 표시 | `ACTIONS=NONE`, `OCR=NOT_TESTED`, `PRODUCTION_POLICY=UNCHANGED` |
+
+최초 `fdc328f` 실행의 BASELINE/UNOBSERVED/INCONCLUSIVE 실패, `cb26baa`의 초기 빈 응답 대기 수정, 이후 두 번의 성공은 별개 이력입니다. 이번 두 실행에서는 엄격 BASELINE과 실제 합성 Dialog 후보가 관측됐으며, 준비 단계의 거부 geometry를 정상으로 바꾸거나 준비 결과로 baseline을 대체한 성공으로 기록하지 않습니다.
+
+**`ATOMIC_BINDING=NONE`, `SERVICE_FRAME_BINDING=UNAVAILABLE`를 유지합니다.** native/UiAutomation 표본과 실제 서비스 ATTEMPT는 원자적으로 결합되지 않으며, 최종 RESULT와 RESET/END도 원자적이지 않습니다. 초기 `WINDOW_OUTSIDE_FRAME`의 출처·원인은 여전히 미해결입니다. 이후 유효한 일반 화면과 후보를 관측한 사실은 운영 frame 확대·좌표 보정·geometry 거부 완화를 정당화하지 않습니다.
+
+이번 성공은 한 합성 Dialog의 제한된 반복 관측입니다. 전체 F0 완전성·화면 현재성·TTL·토큰/지문 결합, 원본 F1 14개 시나리오의 정확도, 일반 타사 앱의 감지 정확도, 클릭·행동 안전성·OCR은 입증하지 않았습니다. 원본 14개 `UNOBSERVED=14`, Scroll 역전 Rect, Window/frame 문제는 미해결이며, PR #7 미병합·PR #10 Draft 상태를 유지합니다. 이 문서 갱신에서 운영 코드·테스트 코드·보안 정책은 변경하지 않습니다.
