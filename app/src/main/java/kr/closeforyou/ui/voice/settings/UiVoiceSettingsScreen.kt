@@ -1,5 +1,6 @@
 package kr.closeforyou.ui.voice.settings
 
+import kr.closeforyou.ui.voice.UiVoiceTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -63,12 +64,16 @@ fun UiVoiceSettingsRoute(repository: PopupRuleRepository, modifier: Modifier = M
     val coreSettings by core.state.collectAsState()
     val rules by repository.observeRules().collectAsState(initial = persistentListOf())
     val scope = rememberCoroutineScope()
+    val labelSource = remember { PackageManagerAppLabelSource(context.packageManager) }
+    val packages = coreSettings.allowedPackages + rules.map { it.key.packageName }
+    val appNames = remember(packages) { AppNames.displayNames(packages, labelSource) }
 
     UiVoiceSettingsScreen(
         settings = settings,
         coreAllowedPackages = coreSettings.allowedPackages,
         collectionEnabled = coreSettings.collectionEnabled,
         rules = rules,
+        appName = { appNames[it] ?: it },
         onAutoCloseChange = preferences::setAutoClose,
         onDetailChange = preferences::setDetail,
         onPromptModeChange = preferences::setPromptAnnounceMode,
@@ -85,6 +90,8 @@ fun UiVoiceSettingsScreen(
     coreAllowedPackages: Set<String>,
     collectionEnabled: Boolean,
     rules: ImmutableList<PopupRule>,
+    /** Package name → shown app name (falls back to the package name). */
+    appName: (String) -> String,
     onAutoCloseChange: (String, Boolean) -> Unit,
     onDetailChange: (AnnouncementDetail) -> Unit,
     onPromptModeChange: (PromptAnnounceMode) -> Unit,
@@ -117,7 +124,7 @@ fun UiVoiceSettingsScreen(
         } else {
             coreAllowedPackages.sorted().forEach { packageName ->
                 SwitchRow(
-                    label = stringResource(R.string.ui_settings_auto_close_app, packageName),
+                    label = stringResource(R.string.ui_settings_auto_close_app, appName(packageName)),
                     checked = settings.autoCloseAllowed(packageName, coreAllowedPackages),
                     onCheckedChange = { onAutoCloseChange(packageName, it) },
                 )
@@ -152,7 +159,7 @@ fun UiVoiceSettingsScreen(
             Text(stringResource(R.string.ui_settings_rules_empty))
             Text(stringResource(R.string.ui_settings_rules_empty_help), style = MaterialTheme.typography.bodySmall)
         } else {
-            rules.forEach { rule -> RuleRow(rule, onRevoke) }
+            rules.forEach { rule -> RuleRow(rule, appName(rule.key.packageName), onRevoke) }
             OutlinedButton(
                 onClick = { confirmDeleteAll = true },
                 modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
@@ -179,11 +186,11 @@ fun UiVoiceSettingsScreen(
 }
 
 @Composable
-private fun RuleRow(rule: PopupRule, onRevoke: (String) -> Unit) {
+private fun RuleRow(rule: PopupRule, appName: String, onRevoke: (String) -> Unit) {
     val date = remember(rule.createdAtEpochMillis) {
         DateFormat.getDateInstance(DateFormat.MEDIUM).format(Date(rule.createdAtEpochMillis))
     }
-    val summary = stringResource(R.string.ui_settings_rule_summary, rule.key.packageName, stringResource(rule.choice.ruleLabelRes()), date)
+    val summary = stringResource(R.string.ui_settings_rule_summary, appName, stringResource(rule.choice.ruleLabelRes()), date)
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Text(summary)
         if (rule.enabled) {
@@ -267,7 +274,7 @@ internal fun ChoiceKind.ruleLabelRes() = when (this) {
 @Preview(name = "설정", showBackground = true, heightDp = 1200)
 @Composable
 private fun SettingsPreview() {
-    MaterialTheme {
+    UiVoiceTheme {
         UiVoiceSettingsScreen(
             settings = UiVoiceSettings(autoClosePackages = setOf("kr.example.shop")),
             coreAllowedPackages = setOf("kr.example.shop", "kr.example.news"),
@@ -279,6 +286,7 @@ private fun SettingsPreview() {
                     repeatAutomationExplicitlyAllowed = true, createdAtEpochMillis = 0, expiresAtEpochMillis = null,
                 ),
             ),
+            appName = { if (it == "kr.example.shop") "예시 쇼핑" else it },
             onAutoCloseChange = { _, _ -> }, onDetailChange = {}, onPromptModeChange = {},
             onRevoke = {}, onDeleteAll = {},
         )

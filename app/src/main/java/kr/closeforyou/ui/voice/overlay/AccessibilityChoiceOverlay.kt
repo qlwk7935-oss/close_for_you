@@ -1,5 +1,6 @@
 package kr.closeforyou.ui.voice.overlay
 
+import kr.closeforyou.ui.voice.UiVoiceTheme
 import android.accessibilityservice.AccessibilityService
 import android.graphics.PixelFormat
 import android.view.Gravity
@@ -9,7 +10,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.unit.dp
@@ -48,7 +48,7 @@ class AccessibilityChoiceOverlay(
         val lifecycleOwner = OverlayLifecycleOwner()
         val composeView = ComposeView(service).apply {
             setContent {
-                MaterialTheme {
+                UiVoiceTheme {
                     ChoicePromptContent(
                         prompt = prompt,
                         onOption = { option ->

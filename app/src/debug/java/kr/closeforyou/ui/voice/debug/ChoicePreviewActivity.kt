@@ -1,5 +1,6 @@
 package kr.closeforyou.ui.voice.debug
 
+import kr.closeforyou.ui.voice.UiVoiceTheme
 import android.Manifest
 import android.content.Intent
 import android.os.Bundle
@@ -90,7 +91,7 @@ class ChoicePreviewActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val openSettings = intent?.getBooleanExtra(EXTRA_OPEN_SETTINGS, false) == true
-        setContent { MaterialTheme { ChoicePreviewScreen(openSettings) } }
+        setContent { UiVoiceTheme { ChoicePreviewScreen(openSettings) } }
         if (savedInstanceState == null) scheduleOverlayFromIntent(intent)
     }
 
