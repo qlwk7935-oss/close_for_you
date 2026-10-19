@@ -9,7 +9,6 @@ import kotlinx.collections.immutable.toPersistentList
 import kotlinx.collections.immutable.toPersistentSet
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -36,7 +35,7 @@ class DecisionCloseCandidateFinderTest {
     }
 
     @Test fun closeAndSkipLabelsMatchAsWholeLabels() {
-        for (label in listOf("닫기", "광고 닫기", "[닫기]", "닫기 버튼", "X", "×", "Close", "close ad")) {
+        for (label in listOf("닫기", "광고 닫기", "[닫기]", "닫기 버튼", "Close", "close ad")) {
             assertEquals(label, ButtonRole.CLOSE, find(node("0", text = label)).single().role)
         }
         for (label in listOf("건너뛰기", "광고 건너뛰기", "스킵", "Skip", "Skip Ad")) {
@@ -46,13 +45,25 @@ class DecisionCloseCandidateFinderTest {
     }
 
     @Test fun lookalikeButtonsAreNotCandidates() {
+        // A bare X/× is refused by A's gate until its meaning can be proven, so it is not offered either.
         val lookalikes = listOf(
+            "X", "x", "×", "✕",
             "오늘 하루 닫기", "7일간 보지 않기", "다시 보지 않기", "오늘 그만 보기", "닫기 전 저장",
             "설치", "자세히 보기", "확인", "OK", "취소", "동의", "무료 체험", "Close and install", "Don't show again",
         )
         for (label in lookalikes) {
             assertTrue(label, find(node("0", text = label)).isEmpty())
         }
+    }
+
+    @Test fun labelIsKeptVerbatimForTheGate() {
+        // A's gate compares the candidate label with the node text exactly, so trimming here would
+        // make it refuse a button B and C offered.
+        val padded = find(node("0", text = " 닫기 ")).single()
+        assertEquals(" 닫기 ", padded.label)
+        assertEquals(ButtonRole.CLOSE, padded.role)
+        assertEquals("닫기", find(node("0", text = "닫기", description = " 닫기")).single().label)
+        assertTrue(find(node("0", text = "   ")).isEmpty())
     }
 
     @Test fun textAndDescriptionMustAgree() {
@@ -69,12 +80,13 @@ class DecisionCloseCandidateFinderTest {
         assertTrue(find(node("0", text = "닫기", bounds = ScreenBounds(1000, 440, 1200, 550))).isEmpty())
     }
 
-    @Test fun dismissActionIsE1Evidence() {
-        val unlabeled = find(container("0", actions = setOf(NodeAction.DISMISS))).single()
-        assertEquals(EvidenceLevel.E1_DISMISS, unlabeled.evidence)
-        assertEquals(ButtonRole.CLOSE, unlabeled.role)
-        assertNull(unlabeled.label)
-        assertEquals("광고 닫기", find(container("0", description = "광고 닫기", actions = setOf(NodeAction.DISMISS))).single().label)
+    @Test fun labeledDismissActionIsE1Evidence() {
+        val labeled = find(container("0", description = "광고 닫기", actions = setOf(NodeAction.DISMISS))).single()
+        assertEquals(EvidenceLevel.E1_DISMISS, labeled.evidence)
+        assertEquals(ButtonRole.CLOSE, labeled.role)
+        assertEquals("광고 닫기", labeled.label)
+        // An unlabeled DISMISS is refused by A's gate, so it is not offered as pressable.
+        assertTrue(find(container("0", actions = setOf(NodeAction.DISMISS))).isEmpty())
         assertTrue(find(container("0", description = "가상 공지 본문", actions = setOf(NodeAction.DISMISS))).isEmpty())
         assertTrue(find(container("0", description = "오늘 하루 닫기", actions = setOf(NodeAction.DISMISS))).isEmpty())
     }
@@ -145,7 +157,7 @@ class DecisionCloseCandidateFinderTest {
         assertEquals(ActionAuthorization.NEEDS_CONFIRMATION, ask.authorization)
         assertEquals("node:1", ask.candidateId)
 
-        val choice = UserChoice(analysis.token, ChoiceKind.CLOSE_ONCE, "node:1")
+        val choice = UserChoice(analysis.token, ChoiceKind.CLOSE_ONCE, "node:1", buttonMeaningConfirmed = true)
         val allowed = policy.decide(analysis, DecisionContext(analysis.token, choice, null, false, true))
         assertEquals(ActionAuthorization.ALLOW_ONCE, allowed.authorization)
         assertEquals("node:1", allowed.candidateId)

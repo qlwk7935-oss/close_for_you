@@ -21,8 +21,9 @@ import kotlinx.collections.immutable.toPersistentSet
  * and ALLOW_ONCE needs none of either. The result is only a request: A's ActionExecutor rereads the
  * screen and performs at most one action. No clicks, gestures, focus changes or logging of screen text.
  *
- * Today an action is requested only when the person picks a verified button on this screen
- * (design 3-5 "닫아"). An exact remembered rule is still checked, but automatic repeats wait for the
+ * Today an action is requested only when the person picks a verified E1/E2 button on this screen
+ * with CLOSE_ONCE / SKIP_ONCE and confirms its meaning (design 3-5 "닫아"), the same conditions A's
+ * gate checks (PR #10). An exact remembered rule is still checked, but automatic repeats wait for the
  * contract fields agreed in the PR #8 review. A display classification such as ADVERTISEMENT never
  * requests an action (design 1-2), and INCOMPLETE_EVIDENCE never overrides A's privacy blocking:
  * a blocked screen reaches B only as PopupEvent.Blocked, without an analysis to decide on.
@@ -45,12 +46,12 @@ class DecisionActionPolicy : ActionPolicy {
         // 2. Who asked for an action, and on which verified button.
         val rule = context.matchingRule
         val target = when {
-            choice != null -> userRequestedTarget(analysis, choice, deny)
+            choice != null -> userRequestedTarget(analysis, choice, deny, confirm)
             rule != null -> rememberedRuleTarget(analysis, rule, context.announcementAvailable, deny, confirm)
             else -> {
                 // First seen: read and ask, even when it looks like an advertisement.
                 confirm += SafetyReason.FIRST_SEEN
-                val verified = analysis.closeCandidates.filter { isVerifiedTarget(it, allowBoundIcon = false) }
+                val verified = analysis.closeCandidates.filter(::isVerifiedTarget)
                 if (verified.isEmpty()) deny += SafetyReason.UNVERIFIED_TARGET
                 verified.singleOrNull()
             }
@@ -71,28 +72,33 @@ class DecisionActionPolicy : ActionPolicy {
         )
     }
 
-    /** The person's current choice. Only close or skip choices ask for a press. */
+    /**
+     * The person's current choice. Only CLOSE_ONCE / SKIP_ONCE ask for a press, matching A's gate
+     * (PR #10): remembering a popup is D's rule, not a press request on this screen.
+     */
     private fun userRequestedTarget(
         analysis: PopupAnalysis,
         choice: UserChoice,
         deny: MutableSet<SafetyReason>,
+        confirm: MutableSet<SafetyReason>,
     ): CloseCandidate? {
-        val allowedRoles = when (choice.kind) {
-            ChoiceKind.CLOSE_ONCE -> setOf(ButtonRole.CLOSE)
-            ChoiceKind.SKIP_ONCE -> setOf(ButtonRole.SKIP)
-            ChoiceKind.REMEMBER_EXACT_POPUP -> setOf(ButtonRole.CLOSE, ButtonRole.SKIP)
-            ChoiceKind.READ_CONTENT, ChoiceKind.KEEP_OPEN, ChoiceKind.STOP_ASKING, ChoiceKind.REVOKE_RULE -> {
+        val role = when (choice.kind) {
+            ChoiceKind.CLOSE_ONCE -> ButtonRole.CLOSE
+            ChoiceKind.SKIP_ONCE -> ButtonRole.SKIP
+            ChoiceKind.REMEMBER_EXACT_POPUP, ChoiceKind.READ_CONTENT, ChoiceKind.KEEP_OPEN,
+            ChoiceKind.STOP_ASKING, ChoiceKind.REVOKE_RULE -> {
                 deny += SafetyReason.EXPLICIT_PERMISSION_REQUIRED
                 return null
             }
         }
         val candidate = analysis.closeCandidates.singleOrNull { it.id == choice.candidateId }
-        if (candidate == null || candidate.role !in allowedRoles ||
-            !isVerifiedTarget(candidate, allowBoundIcon = choice.buttonMeaningConfirmed)
-        ) {
+        if (candidate == null || candidate.role != role || !isVerifiedTarget(candidate)) {
             deny += SafetyReason.UNVERIFIED_TARGET
             return null
         }
+        // A tap is a press request only once the person confirmed the named button (A's gate and
+        // PR #8 review #4); otherwise ask again about this same button.
+        if (!choice.buttonMeaningConfirmed) confirm += SafetyReason.EXPLICIT_PERMISSION_REQUIRED
         return candidate
     }
 
@@ -124,7 +130,7 @@ class DecisionActionPolicy : ActionPolicy {
 
         // The rule binds one exact target; anything but a single verified candidate is ambiguous.
         val candidate = analysis.closeCandidates.singleOrNull()
-        if (candidate == null || !isVerifiedTarget(candidate, allowBoundIcon = rule.buttonMeaningConfirmed)) {
+        if (candidate == null || !isVerifiedTarget(candidate)) {
             deny += SafetyReason.UNVERIFIED_TARGET
             return null
         }
@@ -132,21 +138,17 @@ class DecisionActionPolicy : ActionPolicy {
     }
 
     /**
-     * Close or skip buttons with tree evidence (E1/E2), or an icon button whose meaning the person
-     * confirmed (E3). Pixel-only targets (E4) are never pressed. A supplied role is not trusted on
-     * its own: a label must itself say that role, so `CLOSE` + "닫기 전 저장" or a grade D/K/P/O
-     * label is refused whoever built the candidate.
+     * Labeled close or skip buttons with tree evidence (E1/E2), as A's gate requires. Icon (E3) and
+     * pixel-only (E4) targets and an unlabeled DISMISS are not pressed. A supplied role is not
+     * trusted on its own: the label must itself say that role, so `CLOSE` + "닫기 전 저장", a bare
+     * "X", or a grade D/K/P/O label is refused whoever built the candidate.
      */
-    private fun isVerifiedTarget(candidate: CloseCandidate, allowBoundIcon: Boolean): Boolean {
-        val label = candidate.label?.takeIf { it.isNotBlank() }
-        val evidenceVerified = when (candidate.evidence) {
-            EvidenceLevel.E1_DISMISS -> true
-            EvidenceLevel.E2_LABELED_NODE -> label != null
-            EvidenceLevel.E3_USER_BOUND_NODE -> allowBoundIcon
-            EvidenceLevel.E4_VISUAL_ONLY -> false
-        }
-        return evidenceVerified &&
+    private fun isVerifiedTarget(candidate: CloseCandidate): Boolean {
+        val label = candidate.label?.takeIf { it.isNotBlank() } ?: return false
+        val treeEvidence = candidate.evidence == EvidenceLevel.E1_DISMISS ||
+            candidate.evidence == EvidenceLevel.E2_LABELED_NODE
+        return treeEvidence &&
             (candidate.role == ButtonRole.CLOSE || candidate.role == ButtonRole.SKIP) &&
-            (label == null || DecisionKeywords.buttonRoleOf(label) == candidate.role)
+            DecisionKeywords.buttonRoleOf(label) == candidate.role
     }
 }

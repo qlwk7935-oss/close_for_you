@@ -68,9 +68,11 @@ internal object DecisionKeywords {
         }
     }
 
+    // A bare "X"/"×" is not a close label: A's gate keeps refusing it until the button's meaning and
+    // popup membership can be proven (agreed after PR #11), so B must not offer it as pressable.
     private val closeLabels = setOf(
         "닫기", "닫음", "창닫기", "팝업닫기", "광고닫기", "공지닫기", "안내닫기", "닫기버튼",
-        "close", "closead", "closepopup", "closedialog", "closebutton", "dismiss", "x", "×", "✕", "✖", "╳",
+        "close", "closead", "closepopup", "closedialog", "closebutton", "dismiss",
     )
     private val skipLabels = setOf("건너뛰기", "광고건너뛰기", "건너뛰기버튼", "스킵", "광고스킵", "skip", "skipad", "skipads", "skipbutton")
 
