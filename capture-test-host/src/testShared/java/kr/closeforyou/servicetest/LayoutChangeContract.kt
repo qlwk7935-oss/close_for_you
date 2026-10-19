@@ -8,6 +8,86 @@ internal enum class LayoutStage { START, PREPARATION_VERIFIED, BASELINE_VERIFIED
 internal enum class LayoutIssue { FIXTURE_INVALID, LAYOUT_NOT_CHANGED, ENVIRONMENT_CHANGED }
 internal class LayoutFailure(val issue: LayoutIssue) : RuntimeException(issue.name)
 
+internal enum class LayoutWaitPoint { NOT_STARTED, HOST_BEFORE_CHECK, RESULT_RECEIVED, HOST_AFTER_CHECK, ASSESSED }
+internal enum class LayoutWaitReasons { NONE, UNCHANGED_ONLY, BASELINE_ONLY_ONLY, ORDINARY_CONTENT_CHANGE_SEEN, MIXED, OTHER }
+internal enum class LayoutWaitFailure { OBSERVATION_TIMEOUT, ASSESSMENT_REJECTED, HOST_REJECTED, OBSERVATION_FAILED, CANCELLED }
+
+/** One phase, constant-size codes only. No reply, row, callback, exception or clock is retained.
+ * Historical rows/expected flags describe accepted assessments, not the latest unvalidated IPC.
+ * This observer never grants phase completion; the unchanged progress/deadline contracts do that.
+ */
+internal class LayoutWaitDiagnostics(private val phase: LayoutPhase) {
+    var lastPoint = LayoutWaitPoint.NOT_STARTED
+        private set
+    var responseReceived = false
+        private set
+    var rowsSeen = false
+        private set
+    var reasons = LayoutWaitReasons.NONE
+        private set
+    var expectedSeen = false
+        private set
+    var finalReached = false
+        private set
+
+    suspend fun <T> await(now: () -> Long, anchor: () -> Unit, query: suspend () -> T,
+        assess: (T) -> PreparedAssessment, pause: suspend (Long) -> Unit) =
+        PreparedDialogObservation.await(phase.observationPhase, now,
+            { read(anchor, query, assess) }, pause)
+
+    /** The same wrapper is used by Android IPC and deterministic JVM callbacks. */
+    suspend fun <T> read(anchor: () -> Unit, query: suspend () -> T, assess: (T) -> PreparedAssessment): PreparedAssessment {
+        lastPoint = LayoutWaitPoint.HOST_BEFORE_CHECK
+        anchor()
+        val reply = query()
+        received()
+        anchor() // Failure here leaves RESULT_RECEIVED, never ASSESSED.
+        lastPoint = LayoutWaitPoint.HOST_AFTER_CHECK
+        return assessed { assess(reply) }
+    }
+
+    fun beginFinalResult() { finalReached = true }
+    fun received() { responseReceived = true; lastPoint = LayoutWaitPoint.RESULT_RECEIVED }
+
+    fun assessed(check: () -> PreparedAssessment): PreparedAssessment {
+        val result = check() // Rejections/cancellation propagate without promoting this response.
+        lastPoint = LayoutWaitPoint.ASSESSED
+        if (result.rows.isNotEmpty()) rowsSeen = true
+        if (result.verdict == PreparedMinimalDialogContract.expected(phase.observationPhase)) expectedSeen = true
+        var unchanged = false
+        var baseline = false
+        var ordinary = false
+        var other = false
+        // Canonical rows have already passed the real phase parser/validator. Do not retain them.
+        for (row in result.rows.values) when {
+            ";REASON=UNCHANGED;" in row -> unchanged = true
+            ";REASON=BASELINE_ONLY;" in row -> baseline = true
+            ";REASON=ORDINARY_CONTENT_CHANGE;" in row -> ordinary = true
+            else -> other = true
+        }
+        reasons = when {
+            ordinary -> LayoutWaitReasons.ORDINARY_CONTENT_CHANGE_SEEN
+            other -> LayoutWaitReasons.OTHER
+            unchanged && baseline -> LayoutWaitReasons.MIXED
+            unchanged -> LayoutWaitReasons.UNCHANGED_ONLY
+            baseline -> LayoutWaitReasons.BASELINE_ONLY_ONLY
+            else -> LayoutWaitReasons.NONE
+        }
+        return result
+    }
+
+    /** Called once on the failure path, outside polling/final acceptance. Existing cleanup
+     * reporting preserves an unwinding cancellation and defers report-only cancellation.
+     */
+    fun reportFailure(detail: LayoutWaitFailure, cleanup: PreparedDialogCleanup, emit: (String) -> Unit) = cleanup.report {
+        emit("F1_LAYOUT_WAIT;PHASE=${phase.name};LAST_POINT=${lastPoint.name};" +
+            "RESULT_RECEIVED=${if (responseReceived) "YES" else "NO"};ROWS=${if (rowsSeen) "PRESENT" else "NONE"};" +
+            "REASONS=${reasons.name};EXPECTED_SEEN=${if (expectedSeen) "YES" else "NO"};" +
+            "FINAL_RESULT=${if (finalReached) "REACHED" else "NOT_REACHED"};DETAIL=${detail.name}")
+    }
+    override fun toString() = "LayoutWaitDiagnostics(phase=${phase.name},point=${lastPoint.name})"
+}
+
 /** Exact fixture bounds only, not a correction/tolerance for observed Android bounds. */
 internal object LayoutMutation {
     fun changed(before: List<IsolationRect>, after: List<IsolationRect>): Boolean {

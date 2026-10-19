@@ -42,6 +42,245 @@ class LayoutChangeContractTest {
     }
     private suspend fun beforeChange() = ready().also { it.changeAndVerifyHost { } }
 
+    private suspend fun poll(progress: LayoutChangeProgress, scope: LayoutChangeProgress.Scope, trace: LayoutWaitDiagnostics,
+        now: () -> Long, query: suspend () -> List<String>, pause: suspend (Long) -> Unit,
+        anchor: () -> Unit = {}, code: String = "OBSERVED", overflow: Boolean = false) =
+        trace.await(now, anchor, query, { progress.assess(scope, code, it, overflow) }, pause)
+
+    private fun diagnosticTimeout(rows: List<String>, expected: LayoutWaitReasons) = immediately {
+        val progress = beforeChange()
+        val trace = LayoutWaitDiagnostics(LayoutPhase.LAYOUT_CHANGE)
+        var clock = 0L
+        var queries = 0
+        rejects(PreparedVerdict.OBSERVATION_TIMEOUT) {
+            progress.change { scope ->
+                poll(progress, scope, trace, { clock }, { queries++; rows }, { clock += it })
+            }
+        }
+        assertEquals(3_000L, clock)
+        assertEquals(15, queries) // Observer adds no IPC or deadline restart.
+        assertEquals(LayoutWaitPoint.ASSESSED, trace.lastPoint)
+        assertTrue(trace.responseReceived)
+        assertEquals(rows.isNotEmpty(), trace.rowsSeen)
+        assertEquals(expected, trace.reasons)
+        assertFalse(trace.expectedSeen); assertFalse(trace.finalReached)
+        assertEquals(LayoutStage.ABORTED, progress.stage)
+        assertEquals("INCONCLUSIVE", progress.outcome(true, true))
+    }
+
+    private fun diagnosticRejection(rows: List<String>, verdict: PreparedVerdict, overflow: Boolean = false,
+        code: String = "OBSERVED") = immediately {
+        val progress = beforeChange()
+        val trace = LayoutWaitDiagnostics(LayoutPhase.LAYOUT_CHANGE)
+        var pauses = 0
+        rejects(verdict) {
+            progress.change { scope -> poll(progress, scope, trace, { 0L }, { rows }, { pauses++ }, code = code, overflow = overflow) }
+        }
+        assertEquals(0, pauses)
+        assertEquals(LayoutWaitPoint.HOST_AFTER_CHECK, trace.lastPoint)
+        assertTrue(trace.responseReceived); assertFalse(trace.rowsSeen); assertFalse(trace.expectedSeen)
+        assertEquals(LayoutStage.ABORTED, progress.stage)
+    }
+
+    @Test fun diagnosticsEmptyResultsTimeoutWithoutRows() = diagnosticTimeout(emptyList(), LayoutWaitReasons.NONE)
+    @Test fun diagnosticsUnchangedOnlyTimesOut() = diagnosticTimeout(listOf(row(3, "UNCHANGED")), LayoutWaitReasons.UNCHANGED_ONLY)
+    @Test fun diagnosticsBaselineOnlyTimesOut() = diagnosticTimeout(listOf(row(3, "BASELINE_ONLY")), LayoutWaitReasons.BASELINE_ONLY_ONLY)
+
+    @Test fun diagnosticsExpectedSeenBeforeDeadlineStillCannotCompleteLate() = immediately {
+        val progress = beforeChange()
+        val trace = LayoutWaitDiagnostics(LayoutPhase.LAYOUT_CHANGE)
+        var clock = 0L
+        rejects(PreparedVerdict.OBSERVATION_TIMEOUT) {
+            progress.change { scope ->
+                poll(progress, scope, trace, { clock }, { clock = 1_900; listOf(row(3)) }, { clock = 3_100 })
+            }
+        }
+        assertTrue(trace.expectedSeen); assertTrue(trace.rowsSeen)
+        assertEquals(LayoutWaitReasons.ORDINARY_CONTENT_CHANGE_SEEN, trace.reasons)
+        assertFalse(trace.finalReached)
+        assertEquals("INCONCLUSIVE", progress.outcome(true, true))
+    }
+
+    @Test fun diagnosticsPostResponseAnchorFailureIsNotAnAssessment() = immediately {
+        val progress = beforeChange()
+        val trace = LayoutWaitDiagnostics(LayoutPhase.LAYOUT_CHANGE)
+        var anchors = 0
+        val failure = GeometryDiagnosticFailure(GeometryIssue.WINDOW_MISMATCH)
+        try {
+            progress.change { scope -> poll(progress, scope, trace, { 0L }, { listOf(row(3)) }, {}, anchor = {
+                if (++anchors == 2) throw failure
+            }) }
+            fail("ANCHOR_FAILURE_REQUIRED")
+        } catch (actual: GeometryDiagnosticFailure) { assertSame(failure, actual) }
+        assertEquals(LayoutWaitPoint.RESULT_RECEIVED, trace.lastPoint)
+        assertTrue(trace.responseReceived); assertFalse(trace.rowsSeen); assertFalse(trace.expectedSeen)
+        assertEquals(LayoutWaitReasons.NONE, trace.reasons)
+        assertEquals(LayoutStage.ABORTED, progress.stage)
+    }
+
+    @Test fun diagnosticsFirstAnchorFailureDoesNotQuery() = immediately {
+        val trace = LayoutWaitDiagnostics(LayoutPhase.LAYOUT_CHANGE)
+        var queries = 0
+        try {
+            trace.await({ 0L }, { throw LayoutFailure(LayoutIssue.ENVIRONMENT_CHANGED) },
+                { queries++ }, { PreparedAssessment(PreparedVerdict.BASELINE_CONFIRMED) }, {})
+            fail("ANCHOR_FAILURE_REQUIRED")
+        } catch (failure: LayoutFailure) { assertEquals(LayoutIssue.ENVIRONMENT_CHANGED, failure.issue) }
+        assertEquals(0, queries); assertFalse(trace.responseReceived)
+        assertEquals(LayoutWaitPoint.HOST_BEFORE_CHECK, trace.lastPoint)
+    }
+
+    @Test fun diagnosticsQueryExceptionIsPreservedWithoutPayloadRetention() = immediately {
+        val trace = LayoutWaitDiagnostics(LayoutPhase.LAYOUT_CHANGE)
+        val failure = IllegalStateException("PRIVATE_IPC_VALUE")
+        try {
+            trace.read<Unit>({}, { throw failure }, { fail("ASSESSMENT_FORBIDDEN"); error("UNREACHABLE") })
+            fail("IPC_FAILURE_REQUIRED")
+        } catch (actual: IllegalStateException) { assertSame(failure, actual) }
+        assertFalse(trace.responseReceived); assertFalse(trace.rowsSeen)
+        assertFalse(trace.toString().contains("PRIVATE"))
+    }
+
+    @Test fun diagnosticsGeometryRejectionStillImmediate() = diagnosticRejection(listOf(outside(3)), PreparedVerdict.GEOMETRY_REJECTED)
+    @Test fun diagnosticsProtectionBlockStillImmediate() = diagnosticRejection(listOf("3:BLOCKED:PASSWORD:NONE"), PreparedVerdict.COLLECTION_BLOCKED)
+    @Test fun diagnosticsUncertaintyStillImmediate() = diagnosticRejection(
+        listOf("3:ASSESSED:UNCERTAIN:UNCONFIRMED_STRUCTURE:VALID:POSITIVE:POSITIVE:WITHIN_FRAME:NONE:OLDER"), PreparedVerdict.DETECTOR_UNCERTAIN)
+    @Test fun diagnosticsOverflowStillImmediate() = diagnosticRejection(listOf(row(3)), PreparedVerdict.OVERFLOW, overflow = true)
+    @Test fun diagnosticsCandidateStillFalsePositive() {
+        diagnosticRejection(listOf(candidate(3)), PreparedVerdict.BASELINE_FALSE_CANDIDATE)
+        assertEquals("FALSE_POSITIVE", LayoutChangeContract.failureOutcome(PreparedVerdict.BASELINE_FALSE_CANDIDATE))
+    }
+    @Test fun diagnosticsBadCodeAndMalformedRowsStillRejected() {
+        diagnosticRejection(emptyList(), PreparedVerdict.RESPONSE_REJECTED, code = "INVALID_SESSION")
+        diagnosticRejection(listOf("PRIVATE_INVALID"), PreparedVerdict.INVALID_DIAGNOSTIC)
+    }
+
+    @Test fun diagnosticsPhasesDoNotShareExpectedRowsOrFinalMarkers() = immediately {
+        val preparation = LayoutWaitDiagnostics(LayoutPhase.PREPARATION)
+        val baseline = LayoutWaitDiagnostics(LayoutPhase.BASELINE)
+        val change = LayoutWaitDiagnostics(LayoutPhase.LAYOUT_CHANGE)
+        val progress = LayoutChangeProgress()
+        progress.preparation { scope ->
+            preparation.read({}, { listOf(row(1)) }, { progress.assess(scope, "OBSERVED", it, false) })
+            preparation.beginFinalResult()
+            final(progress, scope, listOf(row(1)))
+        }
+        assertTrue(preparation.expectedSeen); assertTrue(preparation.finalReached)
+        for (trace in listOf(baseline, change)) {
+            assertEquals(LayoutWaitPoint.NOT_STARTED, trace.lastPoint)
+            assertFalse(trace.responseReceived); assertFalse(trace.rowsSeen)
+            assertFalse(trace.expectedSeen); assertFalse(trace.finalReached)
+        }
+        var clock = 0L
+        rejects(PreparedVerdict.OBSERVATION_TIMEOUT) {
+            progress.baseline { scope -> poll(progress, scope, baseline, { clock }, { emptyList() }, { clock += it }) }
+        }
+        assertFalse(baseline.expectedSeen); assertFalse(change.responseReceived)
+    }
+
+    @Test fun diagnosticsReportingExceptionDoesNotReplaceOriginalFailure() {
+        val trace = LayoutWaitDiagnostics(LayoutPhase.LAYOUT_CHANGE)
+        val cleanup = PreparedDialogCleanup()
+        val primary = PreparedFailure(PreparedVerdict.OBSERVATION_TIMEOUT)
+        try {
+            try { throw primary }
+            finally { trace.reportFailure(LayoutWaitFailure.OBSERVATION_TIMEOUT, cleanup) { error("PRIVATE_REPORT") } }
+        } catch (actual: PreparedFailure) { assertSame(primary, actual) }
+        assertTrue(cleanup.reportingFailed); assertFalse(cleanup.clean)
+    }
+
+    @Test fun diagnosticsReportingCancellationDoesNotReplaceUnwindingCancellation() {
+        val trace = LayoutWaitDiagnostics(LayoutPhase.LAYOUT_CHANGE)
+        val cleanup = PreparedDialogCleanup()
+        val primary = CancellationException("PRIMARY_SYNTHETIC_CANCEL")
+        try {
+            try { throw primary }
+            finally { trace.reportFailure(LayoutWaitFailure.CANCELLED, cleanup) { throw CancellationException("PRIVATE_REPORT") } }
+        } catch (actual: CancellationException) { assertSame(primary, actual) }
+        assertTrue(cleanup.reportingFailed); assertFalse(cleanup.clean)
+    }
+
+    @Test fun diagnosticsReportOnlyCancellationIsDeferredAndNeverSwallowed() = immediately {
+        val cleanup = PreparedDialogCleanup()
+        val trace = LayoutWaitDiagnostics(LayoutPhase.LAYOUT_CHANGE)
+        trace.reportFailure(LayoutWaitFailure.OBSERVATION_TIMEOUT, cleanup) { throw CancellationException("PRIVATE_REPORT") }
+        var cleaned = 0
+        cleanup.run({ cleaned++ }, { cleaned++ }, { cleaned++ }, { cleaned++ })
+        assertEquals(4, cleaned); assertFalse(cleanup.clean)
+        try { cleanup.propagateCancellation(); fail("CANCEL_REQUIRED") }
+        catch (failure: CancellationException) { assertEquals("PREPARED_CLEANUP_CANCELLED", failure.message) }
+    }
+
+    @Test fun diagnosticsNormalSuccessKeepsSharedPollingFinalAndStageRequirements() = immediately {
+        val progress = beforeChange()
+        val trace = LayoutWaitDiagnostics(LayoutPhase.LAYOUT_CHANGE)
+        var clock = 0L
+        var queries = 0
+        progress.change { scope ->
+            poll(progress, scope, trace, { clock }, { queries++; listOf(row(3)) }, { clock += it })
+            assertEquals(2_000L, clock); assertEquals(11, queries)
+            assertEquals("INCONCLUSIVE", progress.outcome(true, true))
+            trace.beginFinalResult()
+            PreparedDialogObservation.finalSnapshot({ clock }, { listOf(row(3)).also { trace.received() } }) { rows, deadline ->
+                trace.assessed { progress.assess(scope, "OBSERVED", rows, false, final = true, deadline = deadline) }
+            }
+        }
+        assertTrue(trace.finalReached)
+        assertEquals("OBSERVED_NEGATIVE_CONTROL", progress.outcome(true, true))
+    }
+
+    @Test fun diagnosticsMixedAndOtherReasonsUseOnlyCompletedCanonicalAssessments() = immediately {
+        val progress = beforeChange()
+        val trace = LayoutWaitDiagnostics(LayoutPhase.LAYOUT_CHANGE)
+        rejects(PreparedVerdict.FINAL_RESULT_MISSING) {
+            progress.change { scope ->
+                trace.read({}, { listOf(row(3, "UNCHANGED"), row(4, "BASELINE_ONLY")) },
+                    { progress.assess(scope, "OBSERVED", it, false) })
+            }
+        }
+        assertEquals(LayoutWaitReasons.MIXED, trace.reasons); assertFalse(trace.expectedSeen)
+        val preparation = LayoutWaitDiagnostics(LayoutPhase.PREPARATION)
+        val prepProgress = LayoutChangeProgress()
+        prepProgress.preparation { scope ->
+            preparation.read({}, { listOf(outside(1)) }, { prepProgress.assess(scope, "OBSERVED", it, false) })
+            final(prepProgress, scope, listOf(outside(1)))
+        }
+        assertEquals(LayoutWaitReasons.OTHER, preparation.reasons)
+    }
+
+    @Test fun diagnosticsFinalReachedDoesNotCertifyFinalResponseOrCompletion() = immediately {
+        val progress = beforeChange()
+        val trace = LayoutWaitDiagnostics(LayoutPhase.LAYOUT_CHANGE)
+        rejects(PreparedVerdict.SNAPSHOT_REGRESSED) {
+            progress.change { scope ->
+                trace.read({}, { listOf(row(3)) }, { progress.assess(scope, "OBSERVED", it, false) })
+                trace.beginFinalResult()
+                PreparedDialogObservation.finalSnapshot({ 0L }, { emptyList<String>().also { trace.received() } }) { rows, deadline ->
+                    trace.assessed { progress.assess(scope, "OBSERVED", rows, false, final = true, deadline = deadline) }
+                }
+            }
+        }
+        assertTrue(trace.expectedSeen); assertTrue(trace.finalReached)
+        assertEquals("INCONCLUSIVE", progress.outcome(true, true))
+    }
+
+    @Test fun diagnosticsFixedSummaryHasNoPayloadAndStoresOnlyEnumsAndBooleans() = immediately {
+        val trace = LayoutWaitDiagnostics(LayoutPhase.LAYOUT_CHANGE)
+        val progress = beforeChange()
+        rejects(PreparedVerdict.INVALID_DIAGNOSTIC) {
+            progress.change { scope -> trace.read({}, { listOf("PRIVATE_TEXT_COORDINATES_TOKEN_FINGERPRINT") },
+                { progress.assess(scope, "OBSERVED", it, false) }) }
+        }
+        val cleanup = PreparedDialogCleanup()
+        var summary = ""
+        trace.reportFailure(LayoutWaitFailure.ASSESSMENT_REJECTED, cleanup) { summary = it }
+        assertEquals("F1_LAYOUT_WAIT;PHASE=LAYOUT_CHANGE;LAST_POINT=HOST_AFTER_CHECK;RESULT_RECEIVED=YES;ROWS=NONE;" +
+            "REASONS=NONE;EXPECTED_SEEN=NO;FINAL_RESULT=NOT_REACHED;DETAIL=ASSESSMENT_REJECTED", summary)
+        assertFalse(summary.contains("PRIVATE")); assertFalse(trace.toString().contains("PRIVATE"))
+        assertTrue(LayoutWaitDiagnostics::class.java.declaredFields.filterNot { java.lang.reflect.Modifier.isStatic(it.modifiers) }
+            .all { it.type.isEnum || it.type == Boolean::class.javaPrimitiveType })
+    }
+
     @Test fun changeRequiresActualOrdinaryReasonNotBaselineOnlyOrUnchanged() {
         for (reason in listOf("BASELINE_ONLY", "UNCHANGED"))
             assertEquals(PreparedVerdict.BASELINE_INSUFFICIENT, assess(LayoutPhase.LAYOUT_CHANGE, row(3, reason)).verdict)

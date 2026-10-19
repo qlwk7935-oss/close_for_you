@@ -35,10 +35,12 @@ class ServiceLayoutChangeOptInTest {
         val minimal = MinimalGeometryReader()
         val progress = LayoutChangeProgress()
         val cleanup = PreparedDialogCleanup()
+        val waits = LayoutPhase.entries.associateWith(::LayoutWaitDiagnostics)
         var activity: MinimalDialogActivity? = null
         var session: String? = null
         var phase = LayoutPhase.PREPARATION
         var failureOutcome: String? = null
+        var waitFailure: LayoutWaitFailure? = null
         try {
             automation.serviceInfo = automation.serviceInfo.apply {
                 this.flags = this.flags or AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS or
@@ -68,11 +70,11 @@ class ServiceLayoutChangeOptInTest {
                     { it.geometry.coherent && it.geometry.own.layoutReady }, { delay(it) })
                 fun anchor() = reader.anchor(stable, stimulated = false)
                 anchor(); emitHost(phase, "BEFORE")
-                observe(progress, scope, key, stable.geometry.own.window, ::anchor)
+                observe(progress, scope, key, stable.geometry.own.window, waits.getValue(scope.phase), ::anchor)
                 MinimalGeometryPolling.stable(SystemClock::uptimeMillis, ::sample,
                     { it.geometry.coherent && it.geometry.own.layoutReady }, { delay(it) }, anchor = stable)
                 anchor(); emitHost(phase, "AFTER")
-                finalResult(progress, scope, key, stable.geometry.own.window)
+                finalResult(progress, scope, key, stable.geometry.own.window, waits.getValue(scope.phase))
                 baseline = stable
             }
             emit("F1_LAYOUT_STAGE;PHASE=PREPARATION;RESULT=PREPARATION_RECORDED;BASELINE_EVIDENCE=NONE")
@@ -84,12 +86,12 @@ class ServiceLayoutChangeOptInTest {
                 reader.stimulateBaseline()
                 fun anchor() = reader.anchor(base, stimulated = false)
                 anchor(); emitHost(phase, "BEFORE")
-                observe(progress, scope, key, base.geometry.own.window, ::anchor)
+                observe(progress, scope, key, base.geometry.own.window, waits.getValue(scope.phase), ::anchor)
                 MinimalGeometryPolling.stable(SystemClock::uptimeMillis,
                     { minimal.sample(instrumentation, automation, shown) },
                     { it.geometry.coherent && it.geometry.own.layoutReady }, { delay(it) }, anchor = base)
                 reader.anchor(base, stimulated = true); emitHost(phase, "AFTER")
-                finalResult(progress, scope, key, base.geometry.own.window)
+                finalResult(progress, scope, key, base.geometry.own.window, waits.getValue(scope.phase))
             }
             emit("F1_LAYOUT_STAGE;PHASE=BASELINE;RESULT=OBSERVED_NON_POPUP_BASELINE;CUTOFF=FINAL_RESULT_SNAPSHOT")
             phase = LayoutPhase.LAYOUT_CHANGE
@@ -109,24 +111,30 @@ class ServiceLayoutChangeOptInTest {
                     if (reader.afterChange(base) != changed) fail(GeometryIssue.STABLE_GEOMETRY_CHANGED)
                 }
                 anchor(); emitHost(phase, "BEFORE")
-                observe(progress, scope, key, changed.geometry.own.window, ::anchor)
+                observe(progress, scope, key, changed.geometry.own.window, waits.getValue(scope.phase), ::anchor)
                 MinimalGeometryPolling.stable(SystemClock::uptimeMillis, { reader.afterChange(base) },
                     { it.geometry.coherent && it.geometry.own.layoutReady }, { delay(it) }, anchor = changed)
                 anchor(); emitHost(phase, "AFTER")
-                finalResult(progress, scope, key, changed.geometry.own.window)
+                finalResult(progress, scope, key, changed.geometry.own.window, waits.getValue(scope.phase))
             }
         } catch (_: CancellationException) {
+            waitFailure = LayoutWaitFailure.CANCELLED
             progress.abort(); throw CancellationException("LAYOUT_CONTROL_CANCELLED")
         } catch (failure: PreparedFailure) {
+            waitFailure = if (failure.verdict == PreparedVerdict.OBSERVATION_TIMEOUT) LayoutWaitFailure.OBSERVATION_TIMEOUT
+                else LayoutWaitFailure.ASSESSMENT_REJECTED
             progress.abort(); failureOutcome = LayoutChangeContract.failureOutcome(failure.verdict)
             emit("F1_LAYOUT_PROBLEM;PHASE=${phase.name};DETAIL=${failure.verdict.name};RESULT=$failureOutcome")
         } catch (failure: LayoutFailure) {
+            waitFailure = LayoutWaitFailure.HOST_REJECTED
             progress.abort(); failureOutcome = "INCONCLUSIVE"
             emit("F1_LAYOUT_PROBLEM;PHASE=${phase.name};DETAIL=${failure.issue.name};RESULT=INCONCLUSIVE")
         } catch (failure: GeometryDiagnosticFailure) {
+            waitFailure = LayoutWaitFailure.HOST_REJECTED
             progress.abort(); failureOutcome = "INCONCLUSIVE"
             emit("F1_LAYOUT_PROBLEM;PHASE=${phase.name};DETAIL=${failure.issue.name};RESULT=INCONCLUSIVE")
         } catch (_: Exception) {
+            waitFailure = LayoutWaitFailure.OBSERVATION_FAILED
             progress.abort(); failureOutcome = "INCONCLUSIVE"
             emit("F1_LAYOUT_PROBLEM;PHASE=${phase.name};DETAIL=OBSERVATION_FAILED;RESULT=INCONCLUSIVE")
         } finally {
@@ -145,6 +153,7 @@ class ServiceLayoutChangeOptInTest {
                         if (automation.serviceInfo.flags != flags) fail(GeometryIssue.FLAGS_RESTORE_FAILED)
                     })
             }
+            waitFailure?.let { waits.getValue(phase).reportFailure(it, cleanup, ::emit) }
             cleanup.report {
                 cleanup.failures.forEach { emit("F1_LAYOUT_CLEANUP;DETAIL=${it.name}") }
                 minimal.readSafety.failure()?.let {
@@ -160,23 +169,22 @@ class ServiceLayoutChangeOptInTest {
         assertTrue("LAYOUT_CONTROL_NOT_CONFIRMED", result == "OBSERVED_NEGATIVE_CONTROL" && progress.stage == LayoutStage.CHANGE_VERIFIED && cleanup.clean)
     }
     private suspend fun observe(progress: LayoutChangeProgress, scope: LayoutChangeProgress.Scope, key: String,
-        window: Int, anchor: () -> Unit) = PreparedDialogObservation.await(scope.phase.observationPhase, SystemClock::uptimeMillis, {
-        anchor()
-        val reply = call("RESULT", key, Bundle().apply { putInt("ownedWindowId", window) })
-        anchor()
-        assess(progress, scope, reply, final = false)
-    }, { delay(it) })
+        window: Int, diagnostics: LayoutWaitDiagnostics, anchor: () -> Unit) = diagnostics.await(SystemClock::uptimeMillis, anchor,
+        { call("RESULT", key, Bundle().apply { putInt("ownedWindowId", window) }) },
+        { assess(progress, scope, it, final = false) }, { delay(it) })
 
-    private suspend fun finalResult(progress: LayoutChangeProgress, scope: LayoutChangeProgress.Scope, key: String, window: Int) {
+    private suspend fun finalResult(progress: LayoutChangeProgress, scope: LayoutChangeProgress.Scope, key: String, window: Int,
+        diagnostics: LayoutWaitDiagnostics) {
+        diagnostics.beginFinalResult()
         PreparedDialogObservation.finalSnapshot(SystemClock::uptimeMillis, {
-            call("RESULT", key, Bundle().apply { putInt("ownedWindowId", window) })
+            call("RESULT", key, Bundle().apply { putInt("ownedWindowId", window) }).also { diagnostics.received() }
         }) { reply, deadline ->
             val rows = reply.getStringArrayList("attempts").orEmpty()
             if (rows.size <= 256) rows.forEach { row ->
                 val safe = if (row.length <= 2_048) DetectionAttemptOutput.format(row) else "ATTEMPT_DIAGNOSTIC_INVALID"
                 emit("F1_LAYOUT_ATTEMPT;PHASE=${scope.phase.name};SOURCE=REAL_SERVICE;$safe")
             }
-            assess(progress, scope, reply, final = true, deadline = deadline)
+            diagnostics.assessed { assess(progress, scope, reply, final = true, deadline = deadline) }
         }
     }
     private fun assess(progress: LayoutChangeProgress, scope: LayoutChangeProgress.Scope, reply: Bundle, final: Boolean,
