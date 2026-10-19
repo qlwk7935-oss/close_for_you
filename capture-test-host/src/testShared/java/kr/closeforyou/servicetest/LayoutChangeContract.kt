@@ -11,6 +11,7 @@ internal class LayoutFailure(val issue: LayoutIssue) : RuntimeException(issue.na
 internal enum class LayoutWaitPoint { NOT_STARTED, HOST_BEFORE_CHECK, RESULT_RECEIVED, HOST_AFTER_CHECK, ASSESSED }
 internal enum class LayoutWaitReasons { NONE, UNCHANGED_ONLY, BASELINE_ONLY_ONLY, ORDINARY_CONTENT_CHANGE_SEEN, MIXED, OTHER }
 internal enum class LayoutWaitFailure { OBSERVATION_TIMEOUT, ASSESSMENT_REJECTED, HOST_REJECTED, OBSERVATION_FAILED, CANCELLED }
+internal enum class LayoutAttemptCount { NONE, ONE, MULTIPLE }
 
 /** One phase, constant-size codes only. No reply, row, callback, exception or clock is retained.
  * Historical rows/expected flags describe accepted assessments, not the latest unvalidated IPC.
@@ -28,6 +29,10 @@ internal class LayoutWaitDiagnostics(private val phase: LayoutPhase) {
     var expectedSeen = false
         private set
     var finalReached = false
+        private set
+    var ownedAttempts = LayoutAttemptCount.NONE
+        private set
+    var baselineOnlyAttempts = LayoutAttemptCount.NONE
         private set
 
     suspend fun <T> await(now: () -> Long, anchor: () -> Unit, query: suspend () -> T,
@@ -58,10 +63,20 @@ internal class LayoutWaitDiagnostics(private val phase: LayoutPhase) {
         var baseline = false
         var ordinary = false
         var other = false
+        var baselineCount = LayoutAttemptCount.NONE
+        // Recompute from this validated cumulative ordinal map, never from query count.
+        ownedAttempts = when (result.rows.size) {
+            0 -> LayoutAttemptCount.NONE
+            1 -> LayoutAttemptCount.ONE
+            else -> LayoutAttemptCount.MULTIPLE
+        }
         // Canonical rows have already passed the real phase parser/validator. Do not retain them.
         for (row in result.rows.values) when {
             ";REASON=UNCHANGED;" in row -> unchanged = true
-            ";REASON=BASELINE_ONLY;" in row -> baseline = true
+            ";REASON=BASELINE_ONLY;" in row -> {
+                baseline = true
+                baselineCount = if (baselineCount == LayoutAttemptCount.NONE) LayoutAttemptCount.ONE else LayoutAttemptCount.MULTIPLE
+            }
             ";REASON=ORDINARY_CONTENT_CHANGE;" in row -> ordinary = true
             else -> other = true
         }
@@ -73,6 +88,7 @@ internal class LayoutWaitDiagnostics(private val phase: LayoutPhase) {
             baseline -> LayoutWaitReasons.BASELINE_ONLY_ONLY
             else -> LayoutWaitReasons.NONE
         }
+        baselineOnlyAttempts = baselineCount
         return result
     }
 
@@ -82,6 +98,7 @@ internal class LayoutWaitDiagnostics(private val phase: LayoutPhase) {
     fun reportFailure(detail: LayoutWaitFailure, cleanup: PreparedDialogCleanup, emit: (String) -> Unit) = cleanup.report {
         emit("F1_LAYOUT_WAIT;PHASE=${phase.name};LAST_POINT=${lastPoint.name};" +
             "RESULT_RECEIVED=${if (responseReceived) "YES" else "NO"};ROWS=${if (rowsSeen) "PRESENT" else "NONE"};" +
+            "OWNED_ATTEMPTS=${ownedAttempts.name};BASELINE_ONLY_ATTEMPTS=${baselineOnlyAttempts.name};" +
             "REASONS=${reasons.name};EXPECTED_SEEN=${if (expectedSeen) "YES" else "NO"};" +
             "FINAL_RESULT=${if (finalReached) "REACHED" else "NOT_REACHED"};DETAIL=${detail.name}")
     }

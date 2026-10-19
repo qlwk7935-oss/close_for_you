@@ -275,10 +275,179 @@ class LayoutChangeContractTest {
         var summary = ""
         trace.reportFailure(LayoutWaitFailure.ASSESSMENT_REJECTED, cleanup) { summary = it }
         assertEquals("F1_LAYOUT_WAIT;PHASE=LAYOUT_CHANGE;LAST_POINT=HOST_AFTER_CHECK;RESULT_RECEIVED=YES;ROWS=NONE;" +
-            "REASONS=NONE;EXPECTED_SEEN=NO;FINAL_RESULT=NOT_REACHED;DETAIL=ASSESSMENT_REJECTED", summary)
+            "OWNED_ATTEMPTS=NONE;BASELINE_ONLY_ATTEMPTS=NONE;REASONS=NONE;EXPECTED_SEEN=NO;" +
+            "FINAL_RESULT=NOT_REACHED;DETAIL=ASSESSMENT_REJECTED", summary)
         assertFalse(summary.contains("PRIVATE")); assertFalse(trace.toString().contains("PRIVATE"))
         assertTrue(LayoutWaitDiagnostics::class.java.declaredFields.filterNot { java.lang.reflect.Modifier.isStatic(it.modifiers) }
             .all { it.type.isEnum || it.type == Boolean::class.javaPrimitiveType })
+    }
+
+    private fun countedTimeout(snapshots: (Int) -> List<String>, owned: LayoutAttemptCount, baseline: LayoutAttemptCount) = immediately {
+        val progress = beforeChange()
+        val trace = LayoutWaitDiagnostics(LayoutPhase.LAYOUT_CHANGE)
+        var clock = 0L
+        var queries = 0
+        rejects(PreparedVerdict.OBSERVATION_TIMEOUT) {
+            progress.change { scope -> poll(progress, scope, trace, { clock }, { snapshots(++queries) }, { clock += it }) }
+        }
+        assertEquals(3_000L, clock); assertEquals(15, queries)
+        assertEquals(owned, trace.ownedAttempts); assertEquals(baseline, trace.baselineOnlyAttempts)
+        assertEquals(LayoutStage.ABORTED, progress.stage)
+        assertEquals("INCONCLUSIVE", progress.outcome(true, true))
+        var summary = ""
+        trace.reportFailure(LayoutWaitFailure.OBSERVATION_TIMEOUT, PreparedDialogCleanup()) { summary = it }
+        assertTrue(summary.contains(";OWNED_ATTEMPTS=${owned.name};BASELINE_ONLY_ATTEMPTS=${baseline.name};"))
+        assertFalse(summary.contains(";ATTEMPT=")) // No exact count/ordinal is emitted.
+    }
+
+    @Test fun attemptCountsEmptyQueriesRemainNoneAndTimeOut() =
+        countedTimeout({ emptyList() }, LayoutAttemptCount.NONE, LayoutAttemptCount.NONE)
+
+    @Test fun attemptCountsRepeatedSameOrdinalRemainOneAndTimeOut() =
+        countedTimeout({ listOf(row(3, "BASELINE_ONLY")) }, LayoutAttemptCount.ONE, LayoutAttemptCount.ONE)
+
+    @Test fun attemptCountsDistinctBaselineOrdinalsBecomeMultipleAndTimeOut() = countedTimeout({ query ->
+        if (query == 1) listOf(row(3, "BASELINE_ONLY")) else listOf(row(3, "BASELINE_ONLY"), row(4, "BASELINE_ONLY"))
+    }, LayoutAttemptCount.MULTIPLE, LayoutAttemptCount.MULTIPLE)
+
+    @Test fun attemptCountsMixedBaselineAndUnchangedAreMultipleOneAndTimeOut() = countedTimeout({ query ->
+        if (query == 1) listOf(row(3, "BASELINE_ONLY")) else listOf(row(3, "BASELINE_ONLY"), row(4, "UNCHANGED"))
+    }, LayoutAttemptCount.MULTIPLE, LayoutAttemptCount.ONE)
+
+    @Test fun attemptCountsOrdinaryEvidenceDoesNotAllowLateSuccess() = immediately {
+        val progress = beforeChange()
+        val trace = LayoutWaitDiagnostics(LayoutPhase.LAYOUT_CHANGE)
+        var clock = 0L
+        rejects(PreparedVerdict.OBSERVATION_TIMEOUT) {
+            progress.change { scope -> poll(progress, scope, trace, { clock },
+                { clock = 1_900; listOf(row(3), row(4, "BASELINE_ONLY")) }, { clock = 3_100 }) }
+        }
+        assertEquals(LayoutAttemptCount.MULTIPLE, trace.ownedAttempts)
+        assertEquals(LayoutAttemptCount.ONE, trace.baselineOnlyAttempts)
+        assertTrue(trace.expectedSeen); assertFalse(trace.finalReached)
+        assertEquals("INCONCLUSIVE", progress.outcome(true, true))
+    }
+
+    @Test fun attemptCountsRejectedRepliesCannotInflatePreviouslyAcceptedCounts() = immediately {
+        val original = row(3, "BASELINE_ONLY")
+        for (kind in listOf("GEOMETRY", "BLOCKED", "UNCERTAIN", "OVERFLOW", "CANDIDATE", "DUPLICATE", "INVALID", "SESSION", "FLOOR")) {
+            val progress = beforeChange()
+            val trace = LayoutWaitDiagnostics(LayoutPhase.LAYOUT_CHANGE)
+            val rows = when (kind) {
+                "GEOMETRY" -> listOf(original, outside(4))
+                "BLOCKED" -> listOf(original, "4:BLOCKED:PASSWORD:NONE")
+                "UNCERTAIN" -> listOf(original, "4:ASSESSED:UNCERTAIN:UNCONFIRMED_STRUCTURE:VALID:POSITIVE:POSITIVE:WITHIN_FRAME:NONE:OLDER")
+                "CANDIDATE" -> listOf(original, candidate(4))
+                "DUPLICATE" -> listOf(original, original)
+                "INVALID" -> listOf(original, "PRIVATE_INVALID")
+                "FLOOR" -> listOf(original, row(2, "BASELINE_ONLY"))
+                else -> listOf(original, row(4, "BASELINE_ONLY"))
+            }
+            val expected = when (kind) {
+                "GEOMETRY" -> PreparedVerdict.GEOMETRY_REJECTED
+                "BLOCKED" -> PreparedVerdict.COLLECTION_BLOCKED
+                "UNCERTAIN" -> PreparedVerdict.DETECTOR_UNCERTAIN
+                "OVERFLOW" -> PreparedVerdict.OVERFLOW
+                "CANDIDATE" -> PreparedVerdict.BASELINE_FALSE_CANDIDATE
+                "SESSION" -> PreparedVerdict.RESPONSE_REJECTED
+                "FLOOR" -> PreparedVerdict.PHASE_ATTEMPT_REUSED
+                else -> PreparedVerdict.INVALID_DIAGNOSTIC
+            }
+            rejects(expected) {
+                progress.change { scope ->
+                    trace.read({}, { listOf(original) }, { progress.assess(scope, "OBSERVED", it, false) })
+                    trace.read({}, { rows }, { progress.assess(scope,
+                        if (kind == "SESSION") "INVALID_SESSION" else "OBSERVED", it, kind == "OVERFLOW") })
+                }
+            }
+            assertEquals(LayoutAttemptCount.ONE, trace.ownedAttempts)
+            assertEquals(LayoutAttemptCount.ONE, trace.baselineOnlyAttempts)
+            assertEquals(LayoutWaitPoint.HOST_AFTER_CHECK, trace.lastPoint)
+            assertEquals(LayoutStage.ABORTED, progress.stage)
+        }
+    }
+
+    @Test fun attemptCountsRegressedSnapshotsCannotChangeAcceptedCounts() = immediately {
+        for (reply in listOf(emptyList(), listOf(row(3, "UNCHANGED")), listOf(row(4, "BASELINE_ONLY")))) {
+            val progress = beforeChange()
+            val trace = LayoutWaitDiagnostics(LayoutPhase.LAYOUT_CHANGE)
+            rejects(PreparedVerdict.SNAPSHOT_REGRESSED) {
+                progress.change { scope ->
+                    trace.read({}, { listOf(row(3, "BASELINE_ONLY")) }, { progress.assess(scope, "OBSERVED", it, false) })
+                    trace.read({}, { reply }, { progress.assess(scope, "OBSERVED", it, false) })
+                }
+            }
+            assertEquals(LayoutAttemptCount.ONE, trace.ownedAttempts)
+            assertEquals(LayoutAttemptCount.ONE, trace.baselineOnlyAttempts)
+        }
+    }
+
+    @Test fun attemptCountsPostResponseAnchorFailureCannotCountNewRows() = immediately {
+        val progress = beforeChange()
+        val trace = LayoutWaitDiagnostics(LayoutPhase.LAYOUT_CHANGE)
+        var anchors = 0
+        var queries = 0
+        var clock = 0L
+        try {
+            progress.change { scope -> poll(progress, scope, trace, { clock }, {
+                if (++queries == 1) listOf(row(3, "BASELINE_ONLY")) else listOf(row(3, "BASELINE_ONLY"), row(4, "BASELINE_ONLY"))
+            }, { clock += it }, anchor = { if (++anchors == 4) throw GeometryDiagnosticFailure(GeometryIssue.WINDOW_MISMATCH) }) }
+            fail("ANCHOR_REJECTION_REQUIRED")
+        } catch (failure: GeometryDiagnosticFailure) { assertEquals(GeometryIssue.WINDOW_MISMATCH, failure.issue) }
+        assertEquals(LayoutWaitPoint.RESULT_RECEIVED, trace.lastPoint)
+        assertEquals(LayoutAttemptCount.ONE, trace.ownedAttempts)
+        assertEquals(LayoutAttemptCount.ONE, trace.baselineOnlyAttempts)
+        assertEquals(LayoutStage.ABORTED, progress.stage)
+    }
+
+    @Test fun attemptCountsPhasesStayIndependentAndPreparationIsNotValidGeometryProof() = immediately {
+        val progress = LayoutChangeProgress()
+        val preparation = LayoutWaitDiagnostics(LayoutPhase.PREPARATION)
+        val baseline = LayoutWaitDiagnostics(LayoutPhase.BASELINE)
+        val change = LayoutWaitDiagnostics(LayoutPhase.LAYOUT_CHANGE)
+        progress.preparation { scope ->
+            preparation.read({}, { listOf(outside(1)) }, { progress.assess(scope, "OBSERVED", it, false) })
+            final(progress, scope, listOf(outside(1)))
+        }
+        assertEquals(LayoutAttemptCount.ONE, preparation.ownedAttempts)
+        assertEquals(LayoutAttemptCount.NONE, preparation.baselineOnlyAttempts)
+        assertEquals(LayoutWaitReasons.OTHER, preparation.reasons)
+        assertEquals("INCONCLUSIVE", progress.outcome(true, true))
+        progress.baseline { scope ->
+            baseline.read({}, { listOf(row(2, "BASELINE_ONLY"), row(3)) }, { progress.assess(scope, "OBSERVED", it, false) })
+            final(progress, scope, listOf(row(2, "BASELINE_ONLY"), row(3)))
+        }
+        assertEquals(LayoutAttemptCount.MULTIPLE, baseline.ownedAttempts)
+        assertEquals(LayoutAttemptCount.ONE, baseline.baselineOnlyAttempts)
+        assertEquals(LayoutAttemptCount.ONE, preparation.ownedAttempts)
+        assertEquals(LayoutAttemptCount.NONE, change.ownedAttempts)
+        assertEquals(LayoutAttemptCount.NONE, change.baselineOnlyAttempts)
+    }
+
+    @Test fun attemptCountsNormalSuccessAndCandidateFailureKeepOriginalOutcomes() = immediately {
+        val progress = beforeChange()
+        val trace = LayoutWaitDiagnostics(LayoutPhase.LAYOUT_CHANGE)
+        var clock = 0L
+        val rows = listOf(row(3), row(4, "UNCHANGED"))
+        progress.change { scope ->
+            poll(progress, scope, trace, { clock }, { rows }, { clock += it })
+            assertEquals(2_000L, clock)
+            trace.beginFinalResult()
+            PreparedDialogObservation.finalSnapshot({ clock }, { rows.also { trace.received() } }) { reply, deadline ->
+                trace.assessed { progress.assess(scope, "OBSERVED", reply, false, final = true, deadline = deadline) }
+            }
+        }
+        assertEquals(LayoutAttemptCount.MULTIPLE, trace.ownedAttempts)
+        assertEquals(LayoutAttemptCount.NONE, trace.baselineOnlyAttempts)
+        assertEquals("OBSERVED_NEGATIVE_CONTROL", progress.outcome(true, true))
+        val rejected = beforeChange()
+        val rejectedTrace = LayoutWaitDiagnostics(LayoutPhase.LAYOUT_CHANGE)
+        rejects(PreparedVerdict.BASELINE_FALSE_CANDIDATE) {
+            rejected.change { scope -> poll(rejected, scope, rejectedTrace, { 0L }, { listOf(candidate(3)) }, {}) }
+        }
+        assertEquals(LayoutAttemptCount.NONE, rejectedTrace.ownedAttempts)
+        assertEquals(LayoutAttemptCount.NONE, rejectedTrace.baselineOnlyAttempts)
+        assertEquals("FALSE_POSITIVE", LayoutChangeContract.failureOutcome(PreparedVerdict.BASELINE_FALSE_CANDIDATE))
     }
 
     @Test fun changeRequiresActualOrdinaryReasonNotBaselineOnlyOrUnchanged() {
