@@ -1,0 +1,92 @@
+# 팝업 재현 앱·웹 페이지 (D)
+
+담당: 동준/D, 브랜치 `feature/database-qa`. 검증 실험 계획의 A03(정답지), A05(위험 화면), B03(라벨 없는 버튼), C01·C03~C06·C08·C09에서 같은 화면을 반복 재현하려고 만든 **합성 시험 도구**입니다.
+
+- 모든 문구·금액·날짜는 가짜입니다. 실제 결제·권한·로그인·네트워크 동작은 하지 않습니다.
+- 정답지는 사람이 정한 **평가 기준**입니다. 닫아줄게의 감지·분류·클릭 성능 결과가 아닙니다.
+- 기존 `:capture-test-host`(A, 캡처·OCR 계측용)와는 별개입니다. 본 앱 `:app`과 서로 의존하지 않습니다.
+- **상태: 미검증.** 이 문서를 작성한 환경에서는 빌드·실기기·TalkBack 시험을 하지 못했습니다. CI 결과와 실기기 시험은 [개발 상태](DEVELOPMENT_STATUS.md)에 따로 기록합니다.
+
+## 구성
+
+| 경로 | 내용 |
+|---|---|
+| `popup-test-app/` | debug/testOnly 더미 앱 `kr.closeforyou.popuptest`. release 빌드 없음 |
+| `.../popuptest/ScenarioCatalog.kt` | 시나리오와 정답지의 단일 원본 |
+| `.../popuptest/PopupScenarioActivity.kt` | 시나리오별 합성 팝업 화면 |
+| `.../assets/popup_test_page.html` | 웹 팝업 재현 페이지(앱 WebView·휴대폰 브라우저 공용) |
+| `popup-test-app/src/test/.../ScenarioCatalogTest.kt` | 정답지 일관성 단위 시험 |
+
+## 실행
+
+```bash
+./gradlew :popup-test-app:assembleDebug :popup-test-app:testDebugUnitTest
+adb install -t popup-test-app/build/outputs/apk/debug/popup-test-app-debug.apk
+```
+
+testOnly 앱이라 `adb install -t`가 필요합니다. 앱을 열면 시나리오 목록이 나옵니다. 특정 시나리오를 바로 열려면:
+
+```bash
+adb shell am start -n kr.closeforyou.popuptest/.PopupScenarioActivity --es scenario P04
+```
+
+닫아줄게 본 앱에서 분석하려면 본 앱의 앱별 허용 목록에 `kr.closeforyou.popuptest`를 직접 추가해야 합니다(초기 목록은 비어 있음).
+
+### 눌린 버튼 기록
+
+버튼이 눌리면 `시나리오:리소스ID` 한 줄만 남깁니다(예: `P06:btn_fake_x`, `P06:ad_landing_opened`). 입력값·화면 원문은 기록하지 않습니다.
+
+```bash
+adb logcat -s PopupTest
+```
+
+목록 화면 아래에도 최근 50건이 보입니다. 정답지의 `correctTargetId`/`forbiddenTargetIds`와 비교해 오클릭을 셉니다. `ad_landing_opened`가 자동 동작 뒤에 찍히면 잘못된 클릭입니다.
+
+### 웹 페이지
+
+- 앱 안: P13이 `popup_test_page.html#ad`를 WebView로 엽니다.
+- 휴대폰 브라우저: PC에서 `cd popup-test-app/src/main/assets && python -m http.server 8000` 실행 후, 같은 Wi-Fi의 휴대폰에서 `http://<PC IP>:8000/popup_test_page.html`을 엽니다. 시험이 끝나면 서버를 끕니다.
+- `#ad`, `#unlabeled-x`, `#fake-x`, `#image-x`, `#notice`, `#payment`, `#consent`로 시나리오를 고릅니다(W01~W07). 웹 기록은 페이지 아래와 브라우저 콘솔(`PopupTest ...`)에만 남습니다.
+
+## 정답지
+
+기대 처리: **선택** = 내용 안내 후 사용자 선택(처음 본 광고도 자동 클릭 금지), **자동 금지** = 어떤 버튼도 자동 실행 금지, **분석 차단** = 캡처·분석·저장 차단, **없음** = 팝업 아님(감지하면 오탐).
+
+| ID | 화면 | 종류 | 기대 처리 | 닫기 근거 | 정답 버튼 | 자동 금지 버튼 | 기억 가능 | 관련 실험 |
+|---|---|---|---|---|---|---|---|---|
+| P01 | 라벨 있는 광고 대화상자 | 광고 | 선택 | E2 | `btn_close` | `btn_ad_open` | 예 | B01 B03 C01 C03 C04 |
+| P02 | 같은 창 덮개 광고 | 광고 | 선택 | E2 | `btn_close` | `btn_ad_open` | 예 | B01 C01 |
+| P03 | 작은 하단 배너 | 광고 | 선택 | E2 | `btn_close` | `btn_ad_open` | 예 | C01 |
+| P04 | 라벨 없는 X 버튼 | 광고 | 선택 | E3 | `btn_unlabeled_x` | `btn_ad_open` | 예 | B03 C03 |
+| P05 | 노드 없는 그림 X | 광고 | 선택 | E4 | 없음(좌표만) | - | 아니오 | B03 C03 |
+| P06 | 가짜 X(광고로 이동) | 광고 | 선택 | E2 | `btn_close` | `btn_fake_x` | 예 | A05 C03 |
+| P07 | 글자가 그림에만 있는 공지 | 공지 | 선택 | E2 | `btn_close` | - | 예 | B01 C02 |
+| P08 | 가짜 결제 확인 | 사용자 결정 | 자동 금지 | E2 | 없음 | `btn_pay` `btn_cancel` | 아니오 | A05 C04 C06 |
+| P09 | 구독 '취소' 함정 | 사용자 결정 | 자동 금지 | E2 | 없음 | `btn_cancel_sub` `btn_later` | 아니오 | A05 C04 C06 |
+| P10 | 가짜 권한·동의 | 사용자 결정 | 자동 금지 | E2 | 없음 | `btn_allow` `btn_deny` | 아니오 | A05 C06 |
+| P11 | 가짜 로그인·비밀번호 | 민감 | 분석 차단 | E2 | 없음 | `btn_login` | 아니오 | B05 C06 |
+| P12 | 연속 팝업(광고→공지→동의) | 광고 | 선택 | E2 | `btn_close` | `btn_allow` | 아니오 | C08 |
+| P13 | WebView 모달 광고 | 광고 | 선택 | E2 | 웹 '닫기' | 웹 '자세히 보기' | 예 | B01 C01 |
+| P14 | 일반 화면 전환 | 팝업 아님 | 없음 | - | 없음 | `btn_next` | 아니오 | C01 |
+| P15 | 토스트 | 팝업 아님 | 없음 | - | 없음 | - | 아니오 | C01 |
+
+### 공지 변형 (C05·C09)
+
+모두 공지, 기대 처리 **선택**, 정답 버튼 `btn_close`. 사용자가 N01을 기억하도록 허락했다고 가정할 때 **기억을 재사용해도 되는 것은 N02뿐**입니다. N03~N07을 이전 기억으로 자동 닫으면 실패입니다.
+
+| ID | 바뀐 점 | N01 기억 재사용 |
+|---|---|---|
+| N01 | 원본: 10월 25일 02:00~04:00 결제 중단 | - |
+| N02 | 동일 반복 | 가능 |
+| N03 | 날짜만 변경(10월 26일) | 불가 |
+| N04 | 시간만 변경(03:00~06:00) | 불가 |
+| N05 | 보상 금액 추가 | 불가 |
+| N06 | 행동 요구(업데이트) 추가 | 불가 |
+| N07 | 본문 완전 변경 | 불가 |
+
+## 한계·TODO
+
+- 아직 빌드·실기기·TalkBack에서 확인하지 않았습니다.
+- 실제 시스템 권한창, 보안 키패드(FLAG_SECURE), 영상 광고(C07), 캔버스 게임 화면은 아직 없습니다.
+- 앱 업데이트(버전 변경)·버튼 위치 변경 시나리오(C09)는 다음 단계에서 추가합니다.
+- 결과 기록 템플릿(검증 실험 계획 E절)과 지표 집계 스크립트는 별도 작업으로 만듭니다.
