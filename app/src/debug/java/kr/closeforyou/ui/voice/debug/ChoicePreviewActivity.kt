@@ -58,6 +58,8 @@ import kr.closeforyou.core.contract.AnnouncementKind
 import kr.closeforyou.core.contract.AnnouncementRequest
 import kr.closeforyou.core.contract.VoiceAvailability
 import kr.closeforyou.core.contract.VoiceEvent
+import kr.closeforyou.core.model.ActionResult
+import kr.closeforyou.core.model.ActionStatus
 import kr.closeforyou.core.model.ButtonRole
 import kr.closeforyou.core.model.ChoiceKind
 import kr.closeforyou.core.model.UserChoice
@@ -67,9 +69,13 @@ import kr.closeforyou.ui.voice.choice.ChoicePrompt
 import kr.closeforyou.ui.voice.choice.ChoicePromptContent
 import kr.closeforyou.ui.voice.choice.ChoicePromptPlanner
 import kr.closeforyou.ui.voice.choice.PromptOption
+import kr.closeforyou.ui.voice.choice.PromptSelection
 import kr.closeforyou.ui.voice.command.OnDeviceVoiceCommandInput
 import kr.closeforyou.ui.voice.command.VoiceAction
 import kr.closeforyou.ui.voice.command.VoiceChoiceMapper
+import kr.closeforyou.ui.voice.BatchSentence
+import kr.closeforyou.ui.voice.BatchSummary
+import kr.closeforyou.ui.voice.PressResultSpeech
 import kr.closeforyou.ui.voice.TtsPopupAnnouncer
 import kr.closeforyou.ui.voice.settings.UiVoiceSettingsRoute
 import kr.closeforyou.ui.voice.overlay.PromptAnnouncementListener
@@ -170,9 +176,13 @@ private fun ChoicePreviewScreen(openSettings: Boolean) {
     // Same announcer as the service uses; released when the screen leaves composition.
     val announcer = remember { TtsPopupAnnouncer.create(context) }
     DisposableEffect(announcer) { onDispose { announcer.close() } }
-    val prompt = remember(selected) {
+    val basePrompt = remember(selected) {
         ChoicePromptPlanner.plan(selected.fixture.analysis, selected.fixture.expectedDisplayClassification)
     }
+    var simulated by remember { mutableStateOf<ActionStatus?>(null) }
+    // Follow-up prompt after a simulated failed press; reset when another fixture is picked.
+    var followUp by remember(selected) { mutableStateOf<ChoicePrompt?>(null) }
+    val prompt = followUp ?: basePrompt
 
     Scaffold { innerPadding ->
         Column(
@@ -212,10 +222,21 @@ private fun ChoicePreviewScreen(openSettings: Boolean) {
 
             HorizontalDivider()
             SectionTitle(R.string.ui_debug_section_prompt)
-            val handleOption: (PromptOption) -> Unit = { option ->
-                val choice = ChoicePromptPlanner.toUserChoice(prompt, option)
+            val handleOption: (PromptOption) -> Unit = handleOption@{ option ->
+                // MOVE_TO_BUTTON only appears when the feature flag is on; nothing to move here.
+                val choice = (ChoicePromptPlanner.select(prompt, option) as? PromptSelection.Choice)?.choice
+                    ?: return@handleOption
                 lastChoice = choice
-                if (choice.kind == ChoiceKind.READ_CONTENT) {
+                val status = simulated
+                if (status != null && PressResultSpeech.isPressChoice(choice.kind)) {
+                    val speech = simulatedResultSpeech(context, ActionResult(choice.token, status, reason = null), choice.kind)
+                    PressResultSpeech.failureOf(ActionResult(choice.token, status, reason = null))?.let {
+                        followUp = ChoicePromptPlanner.afterFailedPress(basePrompt, it)
+                    }
+                    scope.launch {
+                        announcer.announce(AnnouncementRequest(choice.token, AnnouncementKind.ACTION_RESULT, speech))
+                    }
+                } else if (choice.kind == ChoiceKind.READ_CONTENT) {
                     val content = PromptSpeech.content(context, selected.fixture.analysis)
                     scope.launch {
                         announcer.announce(AnnouncementRequest(choice.token, AnnouncementKind.CONTENT, content))
@@ -224,6 +245,16 @@ private fun ChoicePreviewScreen(openSettings: Boolean) {
             }
             ChoicePromptContent(prompt = prompt, onOption = handleOption)
             VoiceTestSection(prompt, onOption = handleOption)
+
+            HorizontalDivider()
+            SimulateSection(
+                selected = simulated,
+                onSelect = { simulated = it },
+                onReset = {
+                    followUp = null
+                    lastChoice = null
+                },
+            )
 
             HorizontalDivider()
             SectionTitle(R.string.ui_debug_section_result)
@@ -305,6 +336,51 @@ private fun VoiceTestSection(prompt: ChoicePrompt, onOption: (PromptOption) -> U
         modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
     ) { Text(stringResource(R.string.ui_debug_voice_speak)) }
     status?.let { Text(it, modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite }) }
+}
+
+private val simulateOptions = listOf(
+    null to R.string.ui_debug_simulate_off,
+    ActionStatus.MECHANICAL_SUCCESS to R.string.ui_debug_simulate_success,
+    ActionStatus.BLOCKED to R.string.ui_debug_simulate_blocked,
+    ActionStatus.STALE to R.string.ui_debug_simulate_stale,
+    ActionStatus.ATTEMPT_FAILED to R.string.ui_debug_simulate_failed,
+    ActionStatus.OUTCOME_UNKNOWN to R.string.ui_debug_simulate_unknown,
+)
+
+/** Picks a fake ActionResult for the next press. Nothing is pressed; only the speech is tried. */
+@Composable
+private fun SimulateSection(selected: ActionStatus?, onSelect: (ActionStatus?) -> Unit, onReset: () -> Unit) {
+    SectionTitle(R.string.ui_debug_section_simulate)
+    Column(Modifier.selectableGroup()) {
+        simulateOptions.forEach { (status, labelRes) ->
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = 48.dp)
+                    .selectable(selected = status == selected, onClick = { onSelect(status) }, role = Role.RadioButton),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                RadioButton(selected = status == selected, onClick = null)
+                Text(stringResource(labelRes), modifier = Modifier.padding(start = 8.dp))
+            }
+        }
+    }
+    OutlinedButton(onClick = onReset, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) {
+        Text(stringResource(R.string.ui_debug_simulate_reset))
+    }
+}
+
+/** Success uses the batch sentence for one popup; anything else the failure sentence. */
+private fun simulatedResultSpeech(context: android.content.Context, result: ActionResult, choice: ChoiceKind): String {
+    val failure = PressResultSpeech.failureOf(result)
+        ?: return BatchSentence.build(
+            BatchSummary(
+                closed = if (choice == ChoiceKind.SKIP_ONCE) 0 else 1,
+                skipped = if (choice == ChoiceKind.SKIP_ONCE) 1 else 0,
+                notConfirmed = 0,
+            ),
+        ) { res, count -> context.getString(res, count) }
+    return PressResultSpeech.sentence(failure, moveToButtonAvailable = false) { context.getString(it) }
 }
 
 /** C settings with fake remembered rules (in-memory mock, cleared when the process ends). */

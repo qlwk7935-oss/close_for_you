@@ -17,6 +17,16 @@
     <string name="ui_debug_scenario_video">영상 (광고 여부 미확인)</string>
     <string name="ui_debug_scenario_close_and_skip">광고 (닫기·건너뛰기 버튼 둘 다)</string>
 
+    <!-- 누르기 결과 흉내 (가짜 ActionResult). 실제로는 아무것도 누르지 않는다. -->
+    <string name="ui_debug_section_simulate">누르기 결과 흉내</string>
+    <string name="ui_debug_simulate_off">흉내 안 함 (선택만 보여 주기)</string>
+    <string name="ui_debug_simulate_success">눌림 (MECHANICAL_SUCCESS)</string>
+    <string name="ui_debug_simulate_blocked">막힘 (BLOCKED)</string>
+    <string name="ui_debug_simulate_stale">화면 바뀜 (STALE)</string>
+    <string name="ui_debug_simulate_failed">누르기 실패 (ATTEMPT_FAILED)</string>
+    <string name="ui_debug_simulate_unknown">결과 모름 (OUTCOME_UNKNOWN)</string>
+    <string name="ui_debug_simulate_reset">선택 창 처음으로</string>
+
     <!-- 다른 앱 위 오버레이 시험 (C 시험용 접근성 서비스) -->
     <string name="ui_debug_overlay_service_label">닫아줄게 C 선택 창 시험</string>
     <string name="ui_debug_overlay_service_description">개발용입니다. 가짜 팝업으로 \'닫을까요?\' 선택 창을 다른 앱 위에 띄워 봅니다. 화면 내용은 읽지 않고, 아무것도 대신 누르지 않습니다.</string>

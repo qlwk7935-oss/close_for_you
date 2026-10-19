@@ -66,6 +66,7 @@ class ChoiceOverlayTestService : AccessibilityService() {
                     this, tts, scope,
                     mode = { UiVoicePreferences.get(this).current().promptAnnounceMode },
                     ttsDelayMillis = ttsDelayMillis,
+                    detail = { UiVoicePreferences.get(this).current().detail },
                 ),
             )
             overlay = next
