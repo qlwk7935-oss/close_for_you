@@ -140,6 +140,13 @@ internal object PreparedMinimalDialogContract {
         if (verdict != expected(phase)) throw PreparedFailure(verdict)
     }
 
+    /** Only assess()'s valid, non-overflowing empty RESULT may wait for its first row.
+     * The loop/scope must separately reject disappearance of previously observed rows.
+     * This is never phase evidence or an acceptable final RESULT.
+     */
+    fun awaitingFirstAttempt(phase: PreparedPhase, result: PreparedAssessment) =
+        phase != PreparedPhase.PREPARATION && result.verdict == PreparedVerdict.UNOBSERVED && result.rows.isEmpty()
+
     fun failureOutcome(verdict: PreparedVerdict) = when (verdict) {
         PreparedVerdict.BASELINE_FALSE_CANDIDATE, PreparedVerdict.CANDIDATE_NOT_SEEN,
         PreparedVerdict.UNEXPECTED_ASSESSMENT -> "FAILURE"
@@ -164,13 +171,18 @@ internal object PreparedDialogObservation {
     suspend fun await(phase: PreparedPhase, now: () -> Long, read: suspend () -> PreparedAssessment,
         pause: suspend (Long) -> Unit) {
         val start = now()
+        var seenAttempt = false
         while (true) {
             if (now() - start >= 3_000) throw PreparedFailure(PreparedVerdict.OBSERVATION_TIMEOUT)
             val result = read()
             val elapsed = now() - start
             if (elapsed >= 3_000) throw PreparedFailure(PreparedVerdict.OBSERVATION_TIMEOUT)
+            val initialEmpty = PreparedMinimalDialogContract.awaitingFirstAttempt(phase, result)
+            if (initialEmpty && seenAttempt) throw PreparedFailure(PreparedVerdict.SNAPSHOT_REGRESSED)
+            if (result.rows.isNotEmpty()) seenAttempt = true
             if (result.verdict != PreparedMinimalDialogContract.expected(phase) && result.verdict !in setOf(
-                    PreparedVerdict.BASELINE_INSUFFICIENT, PreparedVerdict.CANDIDATE_NOT_SEEN)) throw PreparedFailure(result.verdict)
+                    PreparedVerdict.BASELINE_INSUFFICIENT, PreparedVerdict.CANDIDATE_NOT_SEEN) && !initialEmpty)
+                throw PreparedFailure(result.verdict)
             if (result.verdict == PreparedMinimalDialogContract.expected(phase) && elapsed >= 2_000) return
             pause(200)
         }
@@ -194,8 +206,10 @@ internal class PreparedDialogProgress {
         deadline: PreparedFinalDeadline? = null): PreparedAssessment {
         if (active !== scope || scope.final != null) stop(PreparedVerdict.STAGE_ORDER_INVALID)
         val result = PreparedMinimalDialogContract.assess(scope.phase, code, attempts, overflow, scope.floor)
+        val initialEmpty = PreparedMinimalDialogContract.awaitingFirstAttempt(scope.phase, result)
+        if (initialEmpty && scope.previous.isNotEmpty()) stop(PreparedVerdict.SNAPSHOT_REGRESSED)
         val acceptable = result.verdict in setOf(PreparedMinimalDialogContract.expected(scope.phase),
-            PreparedVerdict.BASELINE_INSUFFICIENT, PreparedVerdict.CANDIDATE_NOT_SEEN)
+            PreparedVerdict.BASELINE_INSUFFICIENT, PreparedVerdict.CANDIDATE_NOT_SEEN) || (!final && initialEmpty)
         if (!acceptable) stop(result.verdict)
         if (acceptable) {
             if (scope.previous.any { (ordinal, row) -> result.rows[ordinal] != row }) stop(PreparedVerdict.SNAPSHOT_REGRESSED)

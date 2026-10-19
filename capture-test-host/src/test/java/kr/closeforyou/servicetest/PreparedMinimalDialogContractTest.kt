@@ -850,4 +850,258 @@ class PreparedMinimalDialogContractTest {
             } else cleanup.propagateCancellation()
         }
     }
+
+    private suspend fun beforeStrictPhase(phase: PreparedPhase): PreparedDialogProgress {
+        val progress = PreparedDialogProgress()
+        preparation(progress)
+        if (phase == PreparedPhase.DIALOG) { baseline(progress); progress.showAndVerifyDialogWindow { } }
+        return progress
+    }
+    private suspend fun verifyStrict(progress: PreparedDialogProgress, phase: PreparedPhase,
+        checks: suspend (PreparedDialogProgress.Scope) -> Unit) {
+        when (phase) {
+            PreparedPhase.BASELINE -> progress.verifyBaseline(checks)
+            PreparedPhase.DIALOG -> progress.verifyDialog(checks)
+            else -> fail("STRICT_PHASE_REQUIRED")
+        }
+    }
+    private fun strictRows(phase: PreparedPhase) =
+        if (phase == PreparedPhase.BASELINE) listOf(plain(2)) else listOf(candidate())
+
+    @Test fun baselineInitialEmptyWaitsForRealRowsMinimumTimeAndFinalSnapshot() = immediately {
+        for (reason in listOf("BASELINE_ONLY", "ORDINARY_CONTENT_CHANGE")) {
+            val progress = beforeStrictPhase(PreparedPhase.BASELINE)
+            var clock = 0L
+            var reads = 0
+            var shows = 0
+            var finalReads = 0
+            progress.verifyBaseline { scope ->
+                PreparedDialogObservation.await(scope.phase, { clock }, {
+                    reads++
+                    assertEquals(PreparedStage.PREPARATION_VERIFIED, progress.stage)
+                    assertNull(scope.final)
+                    assertEquals(0, shows)
+                    val rows = if (reads == 1) emptyList() else listOf(plain(2, reason))
+                    read(progress, scope, rows)
+                }, { clock += it })
+                assertEquals(2_000L, clock)
+                assertEquals(11, reads)
+                assertNull(scope.final)
+                finalBoundary(progress, scope, { clock }, { finalReads++; listOf(plain(2, reason)) })
+            }
+            assertEquals(1, finalReads)
+            assertEquals(PreparedStage.BASELINE_VERIFIED, progress.stage)
+            progress.showAndVerifyDialogWindow { shows++ }
+            assertEquals(1, shows)
+            assertEquals("INCONCLUSIVE", progress.outcome(true, true))
+        }
+    }
+    @Test fun dialogInitialEmptyRequiresSameRowCandidateAndFinalSnapshot() = immediately {
+        val progress = beforeStrictPhase(PreparedPhase.DIALOG)
+        var clock = 0L
+        var reads = 0
+        progress.verifyDialog { scope ->
+            PreparedDialogObservation.await(scope.phase, { clock }, {
+                reads++
+                assertEquals(PreparedStage.DIALOG_WINDOW_VERIFIED, progress.stage)
+                assertEquals("INCONCLUSIVE", progress.outcome(true, true))
+                read(progress, scope, if (reads == 1) emptyList() else listOf(candidate()))
+            }, { clock += it })
+            assertEquals(2_000L, clock)
+            assertNull(scope.final)
+            finalBoundary(progress, scope, { clock }, { listOf(candidate(), plain(4, "UNCHANGED")) })
+        }
+        assertEquals(11, reads)
+        assertEquals(PreparedStage.DIALOG_VERIFIED, progress.stage)
+        assertEquals("OBSERVED", progress.outcome(true, true))
+    }
+    @Test fun continuousInitialEmptyTimesOutWithoutFinalResultOrDialogShow() = immediately {
+        for (phase in listOf(PreparedPhase.BASELINE, PreparedPhase.DIALOG)) {
+            val progress = beforeStrictPhase(phase)
+            var clock = 0L
+            var reads = 0
+            var finals = 0
+            var shows = 0
+            rejected(PreparedVerdict.OBSERVATION_TIMEOUT) {
+                verifyStrict(progress, phase) { scope ->
+                    PreparedDialogObservation.await(phase, { clock }, { reads++; read(progress, scope, emptyList()) }, { clock += it })
+                    finals++; read(progress, scope, strictRows(phase), final = true)
+                }
+                progress.showAndVerifyDialogWindow { shows++ }
+            }
+            assertEquals(3_000L, clock); assertEquals(15, reads)
+            assertEquals(0, finals); assertEquals(0, shows)
+            assertEquals(PreparedStage.ABORTED, progress.stage)
+            assertEquals("INCONCLUSIVE", progress.outcome(true, true))
+        }
+    }
+    @Test fun observedRowDisappearanceAbortsActualPhaseLoop() = immediately {
+        for (phase in listOf(PreparedPhase.BASELINE, PreparedPhase.DIALOG)) {
+            val progress = beforeStrictPhase(phase)
+            var clock = 0L
+            var reads = 0
+            rejected(PreparedVerdict.SNAPSHOT_REGRESSED) {
+                verifyStrict(progress, phase) { scope ->
+                    PreparedDialogObservation.await(phase, { clock }, {
+                        reads++
+                        read(progress, scope, if (reads == 2) strictRows(phase) else emptyList())
+                    }, { clock += it })
+                }
+            }
+            assertEquals(3, reads); assertEquals(400L, clock)
+            assertEquals(PreparedStage.ABORTED, progress.stage)
+        }
+    }
+    @Test fun badResultAfterInitialEmptyNeverBecomesRetryable() = immediately {
+        for (phase in listOf(PreparedPhase.BASELINE, PreparedPhase.DIALOG)) {
+            val cases = listOf(
+                Triple("OBSERVED", listOf(outside(4)), PreparedVerdict.GEOMETRY_REJECTED),
+                Triple("OBSERVED", listOf("4:BLOCKED:PASSWORD:NONE"), PreparedVerdict.COLLECTION_BLOCKED),
+                Triple("OBSERVED", listOf("PRIVATE_INVALID"), PreparedVerdict.INVALID_DIAGNOSTIC),
+                Triple("INVALID_SESSION", emptyList(), PreparedVerdict.RESPONSE_REJECTED),
+                Triple("OBSERVED", listOf("4:ASSESSED:UNCERTAIN:UNCONFIRMED_TRANSITION:VALID:POSITIVE:POSITIVE:WITHIN_FRAME:NONE:OLDER"), PreparedVerdict.DETECTOR_UNCERTAIN),
+            )
+            for ((code, rows, expected) in cases) {
+                val progress = beforeStrictPhase(phase)
+                var clock = 0L
+                var reads = 0
+                rejected(expected) {
+                    verifyStrict(progress, phase) { scope ->
+                        PreparedDialogObservation.await(phase, { clock }, {
+                            if (reads++ == 0) read(progress, scope, emptyList())
+                            else progress.assess(scope, code, rows, false)
+                        }, { clock += it })
+                    }
+                }
+                assertEquals(2, reads); assertEquals(200L, clock)
+                assertEquals(PreparedStage.ABORTED, progress.stage)
+            }
+        }
+    }
+    @Test fun initialEmptyThenOverflowOrBaselineFalseCandidateFailsImmediately() = immediately {
+        for (phase in listOf(PreparedPhase.BASELINE, PreparedPhase.DIALOG)) {
+            val progress = beforeStrictPhase(phase)
+            var clock = 0L
+            var reads = 0
+            rejected(PreparedVerdict.OVERFLOW) {
+                verifyStrict(progress, phase) { scope ->
+                    PreparedDialogObservation.await(phase, { clock }, {
+                        if (reads++ == 0) read(progress, scope, emptyList())
+                        else read(progress, scope, emptyList(), overflow = true)
+                    }, { clock += it })
+                }
+            }
+            assertEquals(2, reads)
+        }
+        val progress = beforeStrictPhase(PreparedPhase.BASELINE)
+        rejected(PreparedVerdict.BASELINE_FALSE_CANDIDATE) {
+            progress.verifyBaseline { scope ->
+                read(progress, scope, emptyList())
+                read(progress, scope, listOf(candidate()))
+            }
+        }
+    }
+    @Test fun preparationInitialEmptyStillRejectsWithoutPollingPause() = immediately {
+        val progress = PreparedDialogProgress()
+        var reads = 0
+        var pauses = 0
+        rejected(PreparedVerdict.UNOBSERVED) {
+            progress.verifyPreparation { scope ->
+                PreparedDialogObservation.await(scope.phase, { 0L }, { reads++; read(progress, scope, emptyList()) }, { pauses++ })
+            }
+        }
+        assertEquals(1, reads); assertEquals(0, pauses)
+        rejected(PreparedVerdict.UNOBSERVED) {
+            PreparedDialogObservation.await(PreparedPhase.PREPARATION, { 0L }, { assess(PreparedPhase.PREPARATION) }, { fail("MUST_NOT_WAIT") })
+        }
+    }
+    @Test fun emptyFinalResultCannotCompleteAnyPhase() = immediately {
+        for (phase in PreparedPhase.entries) {
+            val progress = if (phase == PreparedPhase.PREPARATION) PreparedDialogProgress() else beforeStrictPhase(phase)
+            val checks: suspend (PreparedDialogProgress.Scope) -> Unit = { scope ->
+                finalBoundary(progress, scope, { 0L }, { emptyList() })
+            }
+            rejected(PreparedVerdict.UNOBSERVED) {
+                if (phase == PreparedPhase.PREPARATION) progress.verifyPreparation(checks) else verifyStrict(progress, phase, checks)
+            }
+            assertEquals(PreparedStage.ABORTED, progress.stage)
+            assertEquals("INCONCLUSIVE", progress.outcome(true, true))
+        }
+    }
+    @Test fun emptyFinalAfterGoodPollingIsRegressionAndPreventsDialogShow() = immediately {
+        for (phase in listOf(PreparedPhase.BASELINE, PreparedPhase.DIALOG)) {
+            val progress = beforeStrictPhase(phase)
+            var shows = 0
+            rejected(PreparedVerdict.SNAPSHOT_REGRESSED) {
+                verifyStrict(progress, phase) { scope ->
+                    var clock = 0L
+                    PreparedDialogObservation.await(phase, { clock }, { read(progress, scope, strictRows(phase)) }, { clock += it })
+                    finalBoundary(progress, scope, { clock }, { emptyList() })
+                }
+                progress.showAndVerifyDialogWindow { shows++ }
+            }
+            assertEquals(0, shows); assertEquals("INCONCLUSIVE", progress.outcome(true, true))
+        }
+    }
+    @Test fun firstGoodRowAtOrAfterDeadlineCannotReuseEmptyWait() = immediately {
+        for (phase in listOf(PreparedPhase.BASELINE, PreparedPhase.DIALOG)) for (late in listOf(3_000L, 3_100L)) {
+            val progress = beforeStrictPhase(phase)
+            var clock = 0L
+            var reads = 0
+            var finals = 0
+            rejected(PreparedVerdict.OBSERVATION_TIMEOUT) {
+                verifyStrict(progress, phase) { scope ->
+                    PreparedDialogObservation.await(phase, { clock }, {
+                        if (reads++ == 0) read(progress, scope, emptyList())
+                        else { clock = late; read(progress, scope, strictRows(phase)) }
+                    }, { clock += it })
+                    finals++; read(progress, scope, strictRows(phase), final = true)
+                }
+            }
+            assertEquals(2, reads); assertEquals(0, finals)
+            assertEquals(PreparedStage.ABORTED, progress.stage)
+        }
+    }
+    @Test fun emptyThenUnchangedOnlyDoesNotEstablishBaselineOrCandidate() = immediately {
+        for (phase in listOf(PreparedPhase.BASELINE, PreparedPhase.DIALOG)) {
+            val progress = beforeStrictPhase(phase)
+            var clock = 0L
+            var reads = 0
+            rejected(PreparedVerdict.OBSERVATION_TIMEOUT) {
+                verifyStrict(progress, phase) { scope ->
+                    PreparedDialogObservation.await(phase, { clock }, {
+                        read(progress, scope, if (reads++ == 0) emptyList() else listOf(plain(4, "UNCHANGED")))
+                    }, { clock += it })
+                }
+            }
+            assertEquals(3_000L, clock); assertEquals("INCONCLUSIVE", progress.outcome(true, true))
+        }
+    }
+    @Test fun initialEmptyThenValidPollingStillRequiresFinalBoundary() = immediately {
+        for (phase in listOf(PreparedPhase.BASELINE, PreparedPhase.DIALOG)) {
+            val progress = beforeStrictPhase(phase)
+            var clock = 0L
+            var reads = 0
+            rejected(PreparedVerdict.FINAL_RESULT_MISSING) {
+                verifyStrict(progress, phase) { scope ->
+                    PreparedDialogObservation.await(phase, { clock }, {
+                        read(progress, scope, if (reads++ == 0) emptyList() else strictRows(phase))
+                    }, { clock += it })
+                }
+            }
+            assertEquals("INCONCLUSIVE", progress.outcome(true, true))
+        }
+    }
+    @Test fun observationLoopAlsoRejectsRowDisappearanceWithoutScopeAdapter() = immediately {
+        for (phase in listOf(PreparedPhase.BASELINE, PreparedPhase.DIALOG)) {
+            var clock = 0L
+            var reads = 0
+            rejected(PreparedVerdict.SNAPSHOT_REGRESSED) {
+                PreparedDialogObservation.await(phase, { clock }, {
+                    PreparedMinimalDialogContract.assess(phase, "OBSERVED", if (reads++ == 0) strictRows(phase) else emptyList(), false)
+                }, { clock += it })
+            }
+            assertEquals(2, reads); assertEquals(200L, clock)
+        }
+    }
 }

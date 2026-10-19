@@ -58,6 +58,8 @@ Dialog 소유 창의 **같은 ATTEMPT 행**에서 ASSESSED/POPUP_CANDIDATE/BOUND
 
 PreparedDialogObservation.await는 실제 계측과 JVM이 함께 호출합니다. PREPARATION/BASELINE/DIALOG 모두 서비스 polling은 최소2초/마감3초/pause200ms이며 조회 전후 마감을 검사합니다. 마감 직전 성공 뒤 지연 재개나 늦은 응답도 고정 timeout입니다.
 
+후속 초기 미관측 보강에서는 BASELINE/DIALOG의 정상 `code=OBSERVED`, overflow 없음, ATTEMPT 행이 아직 없는 응답만 같은 관측 마감 안에서 기다립니다. PREPARATION의 미관측은 계속 즉시 거부합니다. 공유 scope와 실제 관측 루프 모두 이전에 행을 본 뒤 빈 응답이 오면 SNAPSHOT_REGRESSED로 종료합니다. 빈 응답은 baseline/candidate 증거가 아니며 최종 RESULT로도 허용하지 않습니다. 세션 오류·차단·geometry 오류·불확실성·후보 오탐·잘못된 진단·overflow는 재관측 가능한 상태가 아닙니다. 마감을 다시 시작하거나 RESET을 반복하지 않습니다.
+
 최종 RESULT의 P2 보강은 응답 수신 시점뿐 아니라 **완료 수락 경계**까지 포함합니다. `finalSnapshot`이 실제 조회 시작 시 같은 monotonic clock의 `PreparedFinalDeadline`을 만들고, 조회 전후 → 진단 출력/검증 callback → callback 뒤까지 확인합니다. 같은 deadline을 `assess(final=true)`에 전달해 모든 행 검증 후 scope.final 기록 직전·직후 확인하며, 그 사이 출력·suspend 작업은 없습니다. phase verify도 같은 deadline을 전이 직전·직후 검사합니다. 진단/판정/스케줄링으로 3,000ms에 도달하면 성공 verdict가 있어도 OBSERVATION_TIMEOUT/INCONCLUSIVE로 폐기합니다. deadline이 없으면 최종 표식도 거부합니다.
 
 host 준비/전후 안정성/정리를 포함한 phase 전체가 3초라는 뜻은 아닙니다. 기존 서비스 polling 한도를 연장하거나 다시 시작하지 않습니다. 마지막 시계 조회 직후의 선점이나 실제 Android 상태까지 원자적으로 보장하는 장치는 아닙니다. phase-success 코드를 포함한 어떤 예외 verdict도 failureOutcome에서 OBSERVED가 될 수 없습니다.
@@ -114,3 +116,11 @@ P2/P3 보강 **이전** 구현의 검증 기록은 신규42개 포함 JVM619개(
 운영 연결/새 권한/보호 우회는 없습니다. 남는 P1은 전체 F0 coverage, 실제 검사 값·salt/토큰/지문의 동일 시도 결합, 세션·화면 현재성·TTL입니다. P2 한계는 비협력적 호출 강제 중단 불가, RESULT/RESET/END·출처의 비원자성, 기존 운영 collector 정리 예외입니다. P3 한계는 미관측 ABA와 제한된 합성 fixture/표본의 일반화입니다. 새 엄격 helper가 실제 Android 장식·배경 창 조건을 만족하지 못하면 결과는 INCONCLUSIVE로 남겨야 하며 시험 통과를 위해 조건을 보정하지 않습니다.
 
 이번 한정 정적 점검·합성 회귀에서 추가 P0/P1/P2 필수 수정은 확인하지 못했습니다. 검토 대상 P2 두 건과 P3 정리 회귀 공백은 위 실제 공유 코드 경계로 보강했으며, 이는 Android 실측 성공이나 일반 운영 안전성 검증을 뜻하지 않습니다.
+
+## fdc328f 이후 사용자 API37 결과와 초기 미관측 보강
+
+위 검증 상태는 fdc328f 커밋 전 기록입니다. 이후 사용자가 제공한 실제 API37 실행은 SERVICE_CONNECTION_READY, PREPARATION의 INVALID_GEOMETRY/WINDOW_OUTSIDE_FRAME 및 VALID/NO_POPUP/BASELINE_ONLY·ORDINARY_CONTENT_CHANGE 행, PREPARATION_RECORDED까지 관측했습니다. BASELINE/BEFORE 뒤 첫 UNOBSERVED를 즉시 거부하여 INCONCLUSIVE/JUnit 실패(5.715초)였고 Dialog는 표시하지 않았습니다. 이 기록을 Dialog 후보 감지 성공으로 해석하지 않습니다.
+
+코드로 확인된 조기 거부는 await와 progress.assess 두 경계의 초기 UNOBSERVED 처리입니다. 이번 변경은 그 두 테스트 전용 경계에만 적용하며 서비스 이벤트를 추가 발생시키거나 값을 주입하지 않습니다. TextView 변경이 실제 접근성 이벤트를 발생시켰는지, Android에서 미관측이 발생한 원인, 3초 안에 유효 서비스 행이 도착할지는 미확정입니다. 지속 미관측은 끝까지 INCONCLUSIVE/JUnit 실패이며 운영 보호·detector·provider·동의·행동 정책은 변경하지 않습니다.
+
+이번 보강은 공유 관측 루프/phase 계약에 연결된 결정론적 JVM13개를 추가했습니다. 대상82개 및 앱396개/호스트263개, 전체659개가 실패·오류·skip0으로 통과했습니다. 전체 빌드에서 앱 테스트가 캐시로 처리되어 앱 JVM은 별도 --rerun으로 실제 실행했고, 호스트 전체 JVM도 실행했습니다. 양쪽 Debug/AndroidTest APK, 양쪽 Lint(이슈0), 기존 패키징 검사와 Prepared 계약/reader의 driver 전용 DEX 정의 격리 검사를 통과했습니다. 첫 대상 실행은 별도 Gradle 캐시 지정으로 배포본 다운로드 중 DNS 오류였으며, 프로젝트 변경 없이 기본 캐시/JDK17로 재실행해 통과했습니다. 수정 후 API37 재시험은 하지 않았습니다. 커밋·푸시·병합하지 않은 로컬 검증입니다.
