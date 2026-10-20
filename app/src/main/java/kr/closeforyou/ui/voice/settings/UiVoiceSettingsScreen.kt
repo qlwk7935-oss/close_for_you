@@ -1,6 +1,10 @@
 package kr.closeforyou.ui.voice.settings
 
 import kr.closeforyou.ui.voice.UiVoiceTheme
+import android.Manifest
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -47,6 +51,10 @@ import kr.closeforyou.core.contract.PopupRuleRepository
 import kr.closeforyou.core.model.ChoiceKind
 import kr.closeforyou.core.model.PopupRule
 import kr.closeforyou.core.model.RuleKey
+import kr.closeforyou.ui.voice.command.AndroidMicrophoneAccess
+import kr.closeforyou.ui.voice.command.SpeakButtonPolicy
+import kr.closeforyou.ui.voice.command.SpeakButtonState
+import kr.closeforyou.ui.voice.command.VoiceButtonFeature
 import kr.closeforyou.ui.voice.overlay.PromptAnnounceMode
 import java.text.DateFormat
 import java.util.Date
@@ -67,6 +75,20 @@ fun UiVoiceSettingsRoute(repository: PopupRuleRepository, modifier: Modifier = M
     val labelSource = remember { PackageManagerAppLabelSource(context.packageManager) }
     val packages = coreSettings.allowedPackages + rules.map { it.key.packageName }
     val appNames = remember(packages) { AppNames.displayNames(packages, labelSource) }
+    // Microphone: asked only here inside the Activity, never from the service's overlay.
+    val microphone = remember { AndroidMicrophoneAccess(context) }
+    fun micState() = SpeakButtonPolicy.state(featureEnabled = true, settingEnabled = true, microphone = microphone)
+    var microphoneState by remember { mutableStateOf(micState()) }
+    var microphoneDenied by rememberSaveable { mutableStateOf(false) }
+    val permissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        microphoneDenied = !granted
+        microphoneState = micState()
+    }
+    // The person may change the permission in system settings and come back.
+    LifecycleResumeEffect(Unit) {
+        microphoneState = micState()
+        onPauseOrDispose {}
+    }
 
     UiVoiceSettingsScreen(
         settings = settings,
@@ -77,6 +99,11 @@ fun UiVoiceSettingsRoute(repository: PopupRuleRepository, modifier: Modifier = M
         onAutoCloseChange = preferences::setAutoClose,
         onDetailChange = preferences::setDetail,
         onPromptModeChange = preferences::setPromptAnnounceMode,
+        voiceFeatureEnabled = VoiceButtonFeature.enabled,
+        microphoneState = microphoneState,
+        microphoneDenied = microphoneDenied,
+        onVoiceCommandsChange = preferences::setVoiceCommandsEnabled,
+        onAllowMicrophone = { permissionLauncher.launch(Manifest.permission.RECORD_AUDIO) },
         onRevoke = { id -> scope.launch { repository.revoke(id) } },
         onDeleteAll = { scope.launch { repository.deleteAll() } },
         modifier = modifier,
@@ -98,6 +125,13 @@ fun UiVoiceSettingsScreen(
     onRevoke: (String) -> Unit,
     onDeleteAll: () -> Unit,
     modifier: Modifier = Modifier,
+    /** [VoiceButtonFeature]; false hides the whole voice section. */
+    voiceFeatureEnabled: Boolean = false,
+    /** Microphone state ignoring the switch (the switch is shown separately). */
+    microphoneState: SpeakButtonState = SpeakButtonState.NOT_IN_THIS_VERSION,
+    microphoneDenied: Boolean = false,
+    onVoiceCommandsChange: (Boolean) -> Unit = {},
+    onAllowMicrophone: () -> Unit = {},
 ) {
     var confirmDeleteAll by rememberSaveable { mutableStateOf(false) }
     Column(
@@ -153,6 +187,11 @@ fun UiVoiceSettingsScreen(
             },
         )
 
+        if (voiceFeatureEnabled) {
+            HorizontalDivider()
+            VoiceSection(settings, microphoneState, microphoneDenied, onVoiceCommandsChange, onAllowMicrophone)
+        }
+
         HorizontalDivider()
         Heading(R.string.ui_settings_section_rules)
         if (rules.isEmpty()) {
@@ -182,6 +221,38 @@ fun UiVoiceSettingsScreen(
                 TextButton(onClick = { confirmDeleteAll = false }) { Text(stringResource(R.string.ui_settings_cancel)) }
             },
         )
+    }
+}
+
+/** Switch first, then one microphone line, then [마이크 허용] only when allowing can help. */
+@Composable
+private fun VoiceSection(
+    settings: UiVoiceSettings,
+    microphoneState: SpeakButtonState,
+    microphoneDenied: Boolean,
+    onVoiceCommandsChange: (Boolean) -> Unit,
+    onAllowMicrophone: () -> Unit,
+) {
+    Heading(R.string.ui_settings_section_voice)
+    SwitchRow(
+        label = stringResource(R.string.ui_settings_voice_enable),
+        description = stringResource(R.string.ui_settings_voice_enable_help),
+        checked = settings.voiceCommandsEnabled,
+        onCheckedChange = onVoiceCommandsChange,
+    )
+    val line = when (microphoneState) {
+        SpeakButtonState.SHOWN, SpeakButtonState.TURNED_OFF -> R.string.ui_settings_mic_granted
+        SpeakButtonState.PERMISSION_NEEDED ->
+            if (microphoneDenied) R.string.ui_settings_mic_denied else R.string.ui_settings_mic_needed
+        SpeakButtonState.NOT_IN_THIS_VERSION -> R.string.ui_settings_mic_not_in_version
+        SpeakButtonState.DEVICE_UNSUPPORTED -> R.string.ui_settings_mic_device_unsupported
+    }
+    Text(stringResource(line))
+    if (microphoneState == SpeakButtonState.PERMISSION_NEEDED) {
+        OutlinedButton(
+            onClick = onAllowMicrophone,
+            modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
+        ) { Text(stringResource(R.string.ui_settings_mic_allow)) }
     }
 }
 
@@ -289,6 +360,8 @@ private fun SettingsPreview() {
             appName = { if (it == "kr.example.shop") "예시 쇼핑" else it },
             onAutoCloseChange = { _, _ -> }, onDetailChange = {}, onPromptModeChange = {},
             onRevoke = {}, onDeleteAll = {},
+            voiceFeatureEnabled = true,
+            microphoneState = SpeakButtonState.PERMISSION_NEEDED,
         )
     }
 }

@@ -27,8 +27,8 @@ object VoiceChoiceMapper {
     fun map(command: VoiceCommand, prompt: ChoicePrompt): VoiceAction = when (command) {
         VoiceCommand.CLOSE -> pressByRole(prompt, ButtonRole.CLOSE)
         VoiceCommand.SKIP -> pressByRole(prompt, ButtonRole.SKIP)
-        VoiceCommand.READ_CONTENT -> option(prompt, PromptOptionKind.READ_CONTENT)
-        VoiceCommand.KEEP_OPEN -> option(prompt, PromptOptionKind.KEEP_OPEN)
+        VoiceCommand.READ_CONTENT -> option(prompt, PromptOptionKind.READ_CONTENT, command)
+        VoiceCommand.KEEP_OPEN -> option(prompt, PromptOptionKind.KEEP_OPEN, command)
         VoiceCommand.MOVE_TO_BUTTON -> moveToButton(prompt, command)
         VoiceCommand.GO_BACK, VoiceCommand.DESCRIBE_IMAGE -> VoiceAction.NotHandledHere(command)
     }
@@ -46,6 +46,8 @@ object VoiceChoiceMapper {
         prompt.options.singleOrNull { it.kind == PromptOptionKind.MOVE_TO_BUTTON }
             ?.let { VoiceAction.Choose(it) } ?: VoiceAction.NotHandledHere(command)
 
-    private fun option(prompt: ChoicePrompt, kind: PromptOptionKind): VoiceAction =
-        VoiceAction.Choose(prompt.options.first { it.kind == kind })
+    /** Only an option the prompt shows now; a hidden choice is never run by voice. */
+    private fun option(prompt: ChoicePrompt, kind: PromptOptionKind, command: VoiceCommand): VoiceAction =
+        prompt.options.firstOrNull { it.kind == kind }?.let { VoiceAction.Choose(it) }
+            ?: VoiceAction.NotHandledHere(command)
 }

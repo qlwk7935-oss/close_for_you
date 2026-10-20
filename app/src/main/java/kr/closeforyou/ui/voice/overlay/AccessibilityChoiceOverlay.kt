@@ -10,9 +10,14 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.MainScope
+import kotlinx.coroutines.cancel
 import kr.closeforyou.R
 import kr.closeforyou.core.model.ChoiceKind
 import kr.closeforyou.core.model.UserChoice
@@ -20,6 +25,7 @@ import kr.closeforyou.ui.voice.choice.ChoicePrompt
 import kr.closeforyou.ui.voice.choice.ChoicePromptContent
 import kr.closeforyou.ui.voice.choice.ChoicePromptPlanner
 import kr.closeforyou.ui.voice.choice.MoveToButtonRequest
+import kr.closeforyou.ui.voice.choice.PromptOption
 import kr.closeforyou.ui.voice.choice.PromptSelection
 
 /**
@@ -32,10 +38,14 @@ import kr.closeforyou.ui.voice.choice.PromptSelection
 class AccessibilityChoiceOverlay(
     private val service: AccessibilityService,
     private val listener: OverlayListener = OverlayListener.NONE,
+    /** [말하기]·[다시 듣기]·[그만 말하기]; [PromptControlsSupport.NONE] shows the choices only. */
+    private val controlsSupport: PromptControlsSupport = PromptControlsSupport.NONE,
 ) : ChoicePromptPresenter {
     private val windowManager = service.getSystemService(WindowManager::class.java)
     private var view: ComposeView? = null
     private var owner: OverlayLifecycleOwner? = null
+    private var controls: PromptControlsController? = null
+    private var controlsScope: CoroutineScope? = null
 
     override val isShowing: Boolean get() = view != null
 
@@ -46,24 +56,33 @@ class AccessibilityChoiceOverlay(
     ) {
         dismiss()
         val lifecycleOwner = OverlayLifecycleOwner()
+        // Taps and voice share this one path, so a voice choice is exactly a tap's UserChoice.
+        val onOption: (PromptOption) -> Unit = { option ->
+            when (val selection = ChoicePromptPlanner.select(prompt, option)) {
+                is PromptSelection.Choice -> {
+                    if (selection.choice.kind != ChoiceKind.READ_CONTENT) dismiss()
+                    onChoice(selection.choice)
+                }
+                is PromptSelection.MoveToButton -> {
+                    // Close first so the moved focus lands on the app, not on us.
+                    dismiss()
+                    onMoveToButton(selection.request)
+                }
+            }
+        }
+        val scope = MainScope()
+        val controller = PromptControlsController(prompt, scope, controlsSupport, onOption)
         val composeView = ComposeView(service).apply {
             setContent {
+                val controlsState by controller.state.collectAsState()
                 UiVoiceTheme {
                     ChoicePromptContent(
                         prompt = prompt,
-                        onOption = { option ->
-                            when (val selection = ChoicePromptPlanner.select(prompt, option)) {
-                                is PromptSelection.Choice -> {
-                                    if (selection.choice.kind != ChoiceKind.READ_CONTENT) dismiss()
-                                    onChoice(selection.choice)
-                                }
-                                is PromptSelection.MoveToButton -> {
-                                    // Close first so the moved focus lands on the app, not on us.
-                                    dismiss()
-                                    onMoveToButton(selection.request)
-                                }
-                            }
-                        },
+                        onOption = onOption,
+                        controls = controlsState,
+                        onSpeak = controller::onSpeak,
+                        onRepeat = controller::onRepeat,
+                        onStopSpeaking = controller::onStopSpeaking,
                         // Scrolls when large fonts make the prompt taller than the screen
                         // (the window is WRAP_CONTENT, so its height is capped by the display).
                         // statusBarsPadding: a full-height prompt stays below the status bar
@@ -81,12 +100,18 @@ class AccessibilityChoiceOverlay(
         windowManager.addView(composeView, layoutParams())
         view = composeView
         owner = lifecycleOwner
+        controls = controller
+        controlsScope = scope
         listener.onShown(prompt)
     }
 
     override fun dismiss() {
         val current = view ?: return
         view = null
+        controls?.dispose()
+        controls = null
+        controlsScope?.cancel()
+        controlsScope = null
         listener.onDismissed()
         windowManager.removeView(current)
         owner?.destroy()

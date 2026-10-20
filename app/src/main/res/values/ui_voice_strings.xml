@@ -60,6 +60,25 @@
     <string name="ui_choice_detail_move_buttons">직접 찾아갈 수 있는 버튼: %1$s.</string>
     <string name="ui_choice_detail_option_count">선택지는 %1$d개예요.</string>
     <string name="ui_content_none">읽을 수 있는 글자가 없어요.</string>
+    <!-- 선택 창 아래 버튼: 우리 음성 안내 다시 듣기·멈추기 (PopupAnnouncer.repeatLast / stop). -->
+    <string name="ui_choice_repeat">다시 듣기</string>
+    <string name="ui_choice_stop_speaking">그만 말하기</string>
+
+    <!-- F13 음성 명령: 말하기 버튼을 누를 때만 듣는다. 들은 말을 그대로 되풀이하지 않는다.
+         마이크가 켜진 동안 TalkBack이 읽을 수 있으므로 "닫아" 같은 명령어를 이 문장들에 넣지 않는다. -->
+    <string name="ui_voice_speak">말하기</string>
+    <string name="ui_voice_stop_listening">듣기 멈추기</string>
+    <string name="ui_voice_listening_state">듣는 중</string>
+    <string name="ui_voice_listening">듣고 있어요.</string>
+    <string name="ui_voice_listen_cancelled">듣기를 멈췄어요.</string>
+    <string name="ui_voice_not_understood">알아듣지 못했어요. 다시 말하거나 화면에서 골라 주세요.</string>
+    <string name="ui_voice_not_here">그 말은 이 창에서 쓸 수 없어요. 화면에서 골라 주세요.</string>
+    <!-- "앞으로 항상"·"다시 묻지 않기"류: 버튼 이름을 확인하고 화면 탭으로만 확정한다. -->
+    <string name="ui_voice_pick_on_screen">그 선택은 화면에서 직접 골라 주세요.</string>
+    <!-- 결제·구매·구독·삭제·권한·동의·로그인: 음성으로 대신 누르지 않는다. 무엇을 들었는지 되풀이하지 않는다. -->
+    <string name="ui_voice_refused">그 버튼은 대신 누를 수 없어요.</string>
+    <string name="ui_voice_unavailable">지금은 음성 명령을 쓸 수 없어요.</string>
+    <string name="ui_voice_permission_hint">음성 명령을 쓰려면 설정에서 마이크를 허용해 주세요.</string>
 
     <!-- 설정 화면 (C). 자동 닫기는 앱별·기본 꺼짐. 처음 보는 팝업은 항상 묻는다. -->
     <string name="ui_settings_title">안내·음성 설정</string>
@@ -79,6 +98,15 @@
     <string name="ui_settings_detail_detailed_help">대신 누를 수 있는 버튼 이름과 선택지 개수도 함께 말해요.</string>
     <string name="ui_settings_prompt_tts">선택 창이 뜰 때 음성으로도 알리기</string>
     <string name="ui_settings_prompt_tts_help">끄면 창만 뜨고 말하지 않아요. TalkBack이 새 창을 스스로 읽지 않는 기기가 있어서 켜 두기를 권해요.</string>
+    <string name="ui_settings_section_voice">음성 명령</string>
+    <string name="ui_settings_voice_enable">선택 창에 말하기 버튼 보이기</string>
+    <string name="ui_settings_voice_enable_help">말하기 버튼을 누를 때만 듣고, 기기 안에서만 알아들어요. 들은 말은 앱에 저장하지 않아요. 결제·동의 같은 버튼은 음성으로 누르지 않아요.</string>
+    <string name="ui_settings_mic_granted">마이크가 허용되어 있어요.</string>
+    <string name="ui_settings_mic_needed">마이크가 허용되지 않았어요. 음성 명령을 쓰려면 허용해 주세요.</string>
+    <string name="ui_settings_mic_allow">마이크 허용</string>
+    <string name="ui_settings_mic_denied">허용되지 않았어요. 휴대폰 설정의 앱 권한에서 바꿀 수 있어요.</string>
+    <string name="ui_settings_mic_not_in_version">아직 이 앱 버전에서는 음성 명령을 쓸 수 없어요.</string>
+    <string name="ui_settings_mic_device_unsupported">이 기기는 기기 안 음성 인식을 지원하지 않아서 음성 명령을 쓸 수 없어요.</string>
     <string name="ui_settings_section_rules">기억한 팝업</string>
     <string name="ui_settings_rules_empty">기억한 팝업이 없어요.</string>
     <string name="ui_settings_rules_empty_help">기억한 팝업이 생기면 여기에서 하나씩 해제하거나 모두 지울 수 있어요.</string>

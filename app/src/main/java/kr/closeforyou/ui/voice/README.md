@@ -13,7 +13,7 @@ F10 TalkBack·음성 안내(`PopupAnnouncer`), 사용자 선택 UI("닫을까요
 | `ui/voice/` | 음성 안내와 결과 문장 | `TtsPopupAnnouncer`(계약 `PopupAnnouncer` 구현, 기기 TTS, 다시 듣기), `AnnouncementBatcher`(2초 묶음 "팝업 3개를 닫았어요"), `PressResultSpeech`(누르기 실패 안내), `AndroidTtsEngine`·`SpeechEngine`, `AnnouncementHistory`(메모리만) |
 | `choice/` | 선택 창 내용과 선택 결과 | `ChoicePromptPlanner`(무엇을 보여 줄지 → `UserChoice`), `ChoicePromptContent`(Compose 화면), `PressableLabelPolicy`(누르기 버튼을 보여 줄 라벨), `MoveToButton`(버튼으로 이동, **꺼짐**) |
 | `overlay/` | 다른 앱 위에 선택 창 띄우기 | `ChoicePromptPresenter`(**A에게 제안하는 인터페이스**), `AccessibilityChoiceOverlay`(`TYPE_ACCESSIBILITY_OVERLAY` 구현), `PromptAnnouncementListener`·`PromptSpeech`(창이 뜰 때 안내 문장), `ChoiceOverlayIdentity`(A가 C 창 이벤트를 구분하는 법) |
-| `command/` | 음성 명령 | `OnDeviceVoiceCommandInput`(계약 `VoiceCommandInput` 구현, API 31+ 기기 안 인식만), `KoreanVoiceCommandMatcher`(문장 → 명령), `VoiceChoiceMapper`(명령 → 선택 창의 기존 버튼) |
+| `command/` | 음성 명령 | `OnDeviceVoiceCommandInput`(계약 `VoiceCommandInput` 구현, API 31+ 기기 안 인식만), `KoreanVoiceCommandMatcher`(문장 → 명령), `VoiceChoiceMapper`(명령 → 선택 창의 기존 버튼), `VoicePolicy`(바로 요청·탭 확정·거절 표, `VoiceUtterance`), `SpeakButtonAccess`(마이크 권한·[말하기] 보일지) |
 | `settings/` | C 설정 | `UiVoiceSettings`·`UiVoicePreferences`(앱별 자동 닫기 기본 꺼짐, 안내 길이, 선택 창 음성), `UiVoiceSettingsScreen`(기억 목록 해제·전체 삭제) |
 | `integration/` | A가 부르기만 하면 되는 연결 부품 | `PopupChoiceFlow`(`PopupEvent` → 분석·분류(주입) → 선택 창 → `ChoiceHandler`(B/A) → 결과 안내), `ChoiceHandler`, `UiText` |
 
@@ -43,7 +43,7 @@ debug 전용(`app/src/debug/.../ui/voice/debug/`): `ChoicePreviewActivity`(가�
 - 실패한 누르기는 다시 누르지 않는다. 화면이 바뀌었으면(STALE) 예전 분석으로 다시 묻지 않는다.
 - TalkBack 포커스는 사용자가 요청할 때만(버튼으로 이동) 옮긴다. 선택 창은 `FLAG_NOT_FOCUSABLE`.
 - 화면 글자·인식 문장은 로그·파일에 남기지 않는다(`toString()`은 redacted). `announceForAccessibility()`는 쓰지 않는다.
-- 음성 명령은 [말하기]를 누를 때 한 번만 듣는다. 원격 인식기 없음, INTERNET 권한 없음. `RECORD_AUDIO`는 debug 매니페스트에만 있다.
+- 음성 명령은 [말하기]를 누를 때 한 번만 듣는다. 원격 인식기 없음, INTERNET 권한 없음. `RECORD_AUDIO`는 debug 매니페스트에만 있다 → release에서는 [말하기]가 숨겨진다(A에게 main 매니페스트 추가 요청 예정). 선택 창 아래 [말하기]·[다시 듣기]·[그만 말하기]는 `overlay/PromptControls.kt`(`PromptControlsSupport.create`로 켬).
 
 ## 미검증 (실기기·연동)
 

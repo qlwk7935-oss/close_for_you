@@ -25,15 +25,21 @@ import kr.closeforyou.core.model.SnapshotToken
  * The recognized sentence stays in memory for matching and is never logged or stored.
  * Call every method on the main thread (SpeechRecognizer requirement).
  *
- * The contract has no "not understood" event, so an unclear sentence ends as [VoiceEvent.Cancelled].
+ * The contract has no "not understood" event, so an unclear sentence ends as [VoiceEvent.Cancelled];
+ * C's own prompt reads [utterances] instead, which tell "not understood", "refused" and silence apart.
  */
-class OnDeviceVoiceCommandInput(context: Context) : VoiceCommandInput {
+class OnDeviceVoiceCommandInput(context: Context) : SpeakButtonVoiceInput {
     private val appContext = context.applicationContext
     private val mutableEvents = MutableSharedFlow<VoiceEvent>(
         extraBufferCapacity = 8,
         onBufferOverflow = BufferOverflow.DROP_OLDEST,
     )
     override val events: Flow<VoiceEvent> = mutableEvents.asSharedFlow()
+    private val mutableUtterances = MutableSharedFlow<VoiceUtterance>(
+        extraBufferCapacity = 8,
+        onBufferOverflow = BufferOverflow.DROP_OLDEST,
+    )
+    override val utterances: Flow<VoiceUtterance> = mutableUtterances.asSharedFlow()
 
     private var recognizer: SpeechRecognizer? = null
 
@@ -88,8 +94,7 @@ class OnDeviceVoiceCommandInput(context: Context) : VoiceCommandInput {
         override fun onResults(results: Bundle?) {
             // Only the top result: lower-ranked alternatives are more likely to be wrong.
             val top = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull()
-            val command = KoreanVoiceCommandMatcher.match(top)
-            finish(if (command != null) VoiceEvent.Recognized(command, token) else VoiceEvent.Cancelled)
+            finish(KoreanVoiceCommandMatcher.classify(top))
         }
 
         override fun onError(error: Int) {
@@ -100,16 +105,20 @@ class OnDeviceVoiceCommandInput(context: Context) : VoiceCommandInput {
                     SpeechRecognizer.ERROR_LANGUAGE_UNAVAILABLE,
                     SpeechRecognizer.ERROR_RECOGNIZER_BUSY,
                     SpeechRecognizer.ERROR_SERVER_DISCONNECTED,
-                    -> VoiceEvent.Unavailable
-                    else -> VoiceEvent.Cancelled
+                    -> VoiceUtterance.Unavailable
+                    // Nothing was said: end quietly (error meaning from the SpeechRecognizer docs;
+                    // which code each device sends is not yet checked on a real device).
+                    SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> VoiceUtterance.Silent
+                    else -> VoiceUtterance.NotUnderstood
                 },
             )
         }
 
-        private fun finish(event: VoiceEvent) {
+        private fun finish(utterance: VoiceUtterance) {
             if (recognizer !== owner) return // A newer press already replaced this session.
             release()
-            mutableEvents.tryEmit(event)
+            mutableUtterances.tryEmit(utterance)
+            mutableEvents.tryEmit(utterance.toEvent(token))
         }
 
         override fun onReadyForSpeech(params: Bundle?) = Unit
@@ -124,4 +133,12 @@ class OnDeviceVoiceCommandInput(context: Context) : VoiceCommandInput {
     private companion object {
         const val LANGUAGE_TAG = "ko-KR"
     }
+}
+
+/**
+ * C's speak-button input: the contract's [VoiceCommandInput] plus one classified
+ * [VoiceUtterance] per finished session (none after [cancel]). Only C's prompt uses [utterances].
+ */
+interface SpeakButtonVoiceInput : VoiceCommandInput {
+    val utterances: Flow<VoiceUtterance>
 }

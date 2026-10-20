@@ -18,6 +18,7 @@ import kr.closeforyou.ui.voice.TtsPopupAnnouncer
 import kr.closeforyou.ui.voice.choice.ChoicePrompt
 import kr.closeforyou.ui.voice.overlay.AccessibilityChoiceOverlay
 import kr.closeforyou.ui.voice.overlay.PromptAnnouncementListener
+import kr.closeforyou.ui.voice.overlay.PromptControlsSupport
 import kr.closeforyou.ui.voice.settings.UiVoicePreferences
 import java.lang.ref.WeakReference
 
@@ -68,6 +69,8 @@ class ChoiceOverlayTestService : AccessibilityService() {
                     ttsDelayMillis = ttsDelayMillis,
                     detail = { UiVoicePreferences.get(this).current().detail },
                 ),
+                // Same [말하기]·[다시 듣기]·[그만 말하기] as the real prompt (synthetic fixtures only).
+                PromptControlsSupport.create(this, tts),
             )
             overlay = next
             next.show(prompt) { choice ->

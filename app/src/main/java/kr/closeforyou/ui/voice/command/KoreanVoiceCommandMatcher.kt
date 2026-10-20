@@ -45,6 +45,27 @@ object KoreanVoiceCommandMatcher {
         return command
     }
 
+    // CLAUDE.md 3-1: requests C never presses by voice. Checked before anything else, so
+    // "결제 닫아" or "구독 그대로 둬" is refused rather than half-understood.
+    private val refusedWords = listOf(
+        "결제", "구매", "구입", "주문", "구독", "삭제", "지워", "지우", "권한", "허용", "동의", "로그인", "가입",
+    )
+
+    // "앞으로 항상" choices need the button's name read out and a tap (CLAUDE.md 3-1, 3-6).
+    private val tapConfirmWords = listOf("항상", "앞으로", "매번", "다시묻지", "묻지마", "묻지말", "그만물어")
+
+    /**
+     * The full speak-button result for the prompt: refused and tap-only requests are told apart
+     * from "not understood". Same normalization and length limit as [match].
+     */
+    fun classify(recognized: String?): VoiceUtterance {
+        val text = normalize(recognized ?: return VoiceUtterance.NotUnderstood)
+        if (text.isEmpty() || text.length > MAX_COMMAND_LENGTH) return VoiceUtterance.NotUnderstood
+        if (refusedWords.any { it in text }) return VoiceUtterance.Refused
+        if (tapConfirmWords.any { it in text }) return VoiceUtterance.NeedsTapConfirm
+        return match(text)?.let { VoiceUtterance.Command(it) } ?: VoiceUtterance.NotUnderstood
+    }
+
     internal fun normalize(text: String): String =
         text.filterNot { it.isWhitespace() || it in PUNCTUATION }
 

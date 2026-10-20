@@ -18,6 +18,8 @@ data class UiVoiceSettings(
     val autoClosePackages: Set<String> = emptySet(),
     val detail: AnnouncementDetail = AnnouncementDetail.SHORT,
     val promptAnnounceMode: PromptAnnounceMode = PromptAnnounceMode.PANE_TITLE_AND_TTS,
+    /** F13 [말하기] on the prompt (default on). Off hides it; listening still needs a press. */
+    val voiceCommandsEnabled: Boolean = true,
 ) {
     fun withAutoClose(packageName: String, enabled: Boolean) = copy(
         autoClosePackages = if (enabled) autoClosePackages + packageName else autoClosePackages - packageName,
@@ -49,11 +51,14 @@ class UiVoicePreferences private constructor(context: Context) {
 
     fun setPromptAnnounceMode(mode: PromptAnnounceMode) = write(current().copy(promptAnnounceMode = mode))
 
+    fun setVoiceCommandsEnabled(enabled: Boolean) = write(current().copy(voiceCommandsEnabled = enabled))
+
     private fun write(settings: UiVoiceSettings) {
         preferences.edit {
             putStringSet(KEY_AUTO_CLOSE, settings.autoClosePackages)
             putString(KEY_DETAIL, settings.detail.name)
             putString(KEY_PROMPT_MODE, settings.promptAnnounceMode.name)
+            putBoolean(KEY_VOICE_COMMANDS, settings.voiceCommandsEnabled)
         }
         mutableState.value = settings
     }
@@ -64,6 +69,7 @@ class UiVoicePreferences private constructor(context: Context) {
         promptAnnounceMode = enumOrDefault(
             preferences.getString(KEY_PROMPT_MODE, null), PromptAnnounceMode.PANE_TITLE_AND_TTS,
         ),
+        voiceCommandsEnabled = preferences.getBoolean(KEY_VOICE_COMMANDS, true),
     )
 
     companion object {
@@ -71,6 +77,7 @@ class UiVoicePreferences private constructor(context: Context) {
         private const val KEY_AUTO_CLOSE = "auto_close_packages_v1"
         private const val KEY_DETAIL = "announcement_detail"
         private const val KEY_PROMPT_MODE = "prompt_announce_mode"
+        private const val KEY_VOICE_COMMANDS = "voice_commands_enabled"
         @Volatile private var instance: UiVoicePreferences? = null
 
         fun get(context: Context): UiVoicePreferences = instance ?: synchronized(this) {

@@ -15,7 +15,12 @@ class UiVoiceSettingsTest {
         assertFalse(settings.autoCloseAllowed(shop, setOf(shop)))
         assertEquals(AnnouncementDetail.SHORT, settings.detail)
         assertEquals(PromptAnnounceMode.PANE_TITLE_AND_TTS, settings.promptAnnounceMode)
+        // [말하기] is shown by default; it still listens only when pressed.
+        assertTrue(settings.voiceCommandsEnabled)
     }
+
+    @Test fun voiceCommandsCanBeTurnedOff() =
+        assertFalse(UiVoiceSettings().copy(voiceCommandsEnabled = false).voiceCommandsEnabled)
 
     @Test fun autoCloseIsPerAppAndCanBeTurnedOff() {
         val on = UiVoiceSettings().withAutoClose(shop, true)

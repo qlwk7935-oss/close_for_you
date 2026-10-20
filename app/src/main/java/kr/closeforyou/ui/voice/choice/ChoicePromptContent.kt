@@ -3,6 +3,7 @@ package kr.closeforyou.ui.voice.choice
 import kr.closeforyou.ui.voice.UiVoiceTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
@@ -15,24 +16,34 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.paneTitle
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import kr.closeforyou.R
 import kr.closeforyou.testing.mock.MockPopupFixture
 import kr.closeforyou.testing.mock.MockPopupFixtures
 import kr.closeforyou.ui.voice.PressResultSpeech
+import kr.closeforyou.ui.voice.command.SpeakButtonState
+import kr.closeforyou.ui.voice.overlay.PromptControlsState
 
 /**
  * "닫을까요?" prompt body, reusable inside the future accessibility overlay.
- * Reading order = layout order: summary first, then buttons. It never requests focus.
+ * Reading order = layout order: summary, choices, then [말하기] → [다시 듣기] → [그만 말하기] and the
+ * status line. It never requests focus. With the default [controls] only the choices are shown.
  */
 @Composable
 fun ChoicePromptContent(
     prompt: ChoicePrompt,
     onOption: (PromptOption) -> Unit,
     modifier: Modifier = Modifier,
+    controls: PromptControlsState = PromptControlsState(),
+    onSpeak: () -> Unit = {},
+    onRepeat: () -> Unit = {},
+    onStopSpeaking: () -> Unit = {},
 ) {
     val paneTitle = stringResource(R.string.ui_choice_pane_title)
     Surface(
@@ -63,7 +74,53 @@ fun ChoicePromptContent(
                     OutlinedButton(onClick = { onOption(option) }, modifier = buttonModifier) { Text(label) }
                 }
             }
+            PromptControls(controls, onSpeak, onRepeat, onStopSpeaking)
         }
+    }
+}
+
+/**
+ * The visible words are the TalkBack name (no separate contentDescription), so what TalkBack reads
+ * matches the screen. No command words ("닫아" …) in any label or status: TalkBack speaking them
+ * while the microphone is open could be heard as a command.
+ */
+@Composable
+private fun PromptControls(
+    controls: PromptControlsState,
+    onSpeak: () -> Unit,
+    onRepeat: () -> Unit,
+    onStopSpeaking: () -> Unit,
+) {
+    val buttonModifier = Modifier.heightIn(min = 48.dp)
+    if (controls.speakVisible) {
+        val listeningState = stringResource(R.string.ui_voice_listening_state)
+        OutlinedButton(
+            onClick = onSpeak,
+            modifier = buttonModifier.fillMaxWidth().semantics {
+                if (controls.listening) stateDescription = listeningState
+            },
+        ) {
+            Text(stringResource(if (controls.listening) R.string.ui_voice_stop_listening else R.string.ui_voice_speak))
+        }
+    }
+    if (controls.speechButtons) {
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedButton(onClick = onRepeat, modifier = buttonModifier.weight(1f)) {
+                Text(stringResource(R.string.ui_choice_repeat))
+            }
+            OutlinedButton(onClick = onStopSpeaking, modifier = buttonModifier.weight(1f)) {
+                Text(stringResource(R.string.ui_choice_stop_speaking))
+            }
+        }
+    }
+    controls.messageRes?.let {
+        Text(
+            text = stringResource(it),
+            modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
+        )
+    }
+    controls.hintRes?.let {
+        Text(text = stringResource(it), style = MaterialTheme.typography.bodySmall)
     }
 }
 
@@ -86,15 +143,35 @@ private fun PromptOption.label(): String = when (kind) {
 
 /** Previews use the fixture's expected answer as a stand-in for B's classifier. */
 @Composable
-private fun FixturePreview(fixture: MockPopupFixture) {
+private fun FixturePreview(fixture: MockPopupFixture, controls: PromptControlsState = PREVIEW_CONTROLS) {
     UiVoiceTheme {
         ChoicePromptContent(
             prompt = ChoicePromptPlanner.plan(fixture.analysis, fixture.expectedDisplayClassification),
             onOption = {},
             modifier = Modifier.padding(16.dp),
+            controls = controls,
         )
     }
 }
+
+private val PREVIEW_CONTROLS = PromptControlsState(
+    speakButton = SpeakButtonState.SHOWN,
+    speechButtons = true,
+)
+
+@Preview(name = "광고 · 듣는 중", showBackground = true)
+@Composable
+private fun ListeningPreview() = FixturePreview(
+    MockPopupFixtures.advertisement(),
+    PREVIEW_CONTROLS.copy(listening = true, messageRes = R.string.ui_voice_listening),
+)
+
+@Preview(name = "광고 · 마이크 허용 전", showBackground = true)
+@Composable
+private fun PermissionNeededPreview() = FixturePreview(
+    MockPopupFixtures.advertisement(),
+    PREVIEW_CONTROLS.copy(speakButton = SpeakButtonState.PERMISSION_NEEDED),
+)
 
 @Preview(name = "광고", showBackground = true)
 @Composable
