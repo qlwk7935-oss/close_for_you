@@ -1,6 +1,6 @@
 # 중간 발표(10/28) C 부분 자료 — UI·TalkBack·음성 (재호)
 
-> 발표자 우진이 읽기 쉽게 쓴 자료. 숫자는 보고서·실험 문서(`docs/experiments/overlay-talkback.md`, `docs/c-notes/*-report-*.md`)에 있는 것만 썼다.
+> 발표자 준영이 읽기 쉽게 쓴 자료. 숫자는 보고서·실험 문서(`docs/experiments/overlay-talkback.md`, `docs/c-notes/*-report-*.md`)에 있는 것만 썼다.
 > 10/20 기준. **실제 팝업 감지(A)·분류(B)·저장소(D)와 아직 연결 전이라, 시연은 가짜 팝업(Mock)으로 한다.**
 
 ## 1. C가 맡은 것 (한 줄)
