@@ -4,6 +4,9 @@ import java.util.concurrent.CancellationException
 import kotlin.coroutines.*
 import org.junit.Assert.*
 import org.junit.Test
+import kr.closeforyou.servicetest.ScrollClipEnvironmentCheck.*
+import kr.closeforyou.servicetest.ScrollClipEnvironmentField.*
+import kr.closeforyou.servicetest.ScrollClipReadStage.*
 
 /** Same contracts as the Android reader/driver. Fake callbacks are not Android F0 or recycle evidence. */
 class ScrollClipContractTest {
@@ -325,5 +328,219 @@ class ScrollClipContractTest {
             } catch (failure: Exception) { assertSame(primary, failure) }
             assertEquals(0, moves)
         }
+    }
+
+    private fun environmentFailure(diagnostics: ScrollClipReadDiagnostics, stage: ScrollClipReadStage,
+        check: ScrollClipEnvironmentCheck, field: ScrollClipEnvironmentField, read: () -> Unit): ScrollClipFailure {
+        try { diagnostics.at(stage, read); fail("ENVIRONMENT_FAILURE_REQUIRED") }
+        catch (failure: ScrollClipFailure) {
+            assertEquals(ScrollClipIssue.ENVIRONMENT_CHANGED, failure.issue)
+            assertEquals("ENVIRONMENT_CHANGED", failure.message)
+            val codes = checkNotNull(failure.environment)
+            assertSame(diagnostics.failure(), codes)
+            assertEquals(stage, codes.stage); assertEquals(check, codes.check); assertEquals(field, codes.field)
+            return failure
+        }
+        throw AssertionError("ENVIRONMENT_FAILURE_REQUIRED")
+    }
+
+    @Test fun missingDisplayUsesActualSharedNullBranch() {
+        val diagnostics = ScrollClipReadDiagnostics()
+        environmentFailure(diagnostics, INITIAL_PROBE, DISPLAY_MISSING, DISPLAY) { diagnostics.display<Any>(null) }
+    }
+    @Test fun invalidDisplayUsesActualSharedValidityBranch() {
+        val diagnostics = ScrollClipReadDiagnostics()
+        environmentFailure(diagnostics, INITIAL_PROBE, DISPLAY_INVALID, DISPLAY) { diagnostics.displayValid(false) }
+    }
+    @Test fun presentValidDisplayDoesNotCreateFailureOrReadAnythingElse() {
+        val diagnostics = ScrollClipReadDiagnostics(); val display = Any()
+        assertSame(display, diagnostics.display(display))
+        diagnostics.displayValid(true)
+        assertNull(diagnostics.failure())
+    }
+    @Test fun everyActualPositiveBoundsFieldRejectsEmptyAndReversedWithoutCorrection() {
+        for (field in listOf(LOGICAL, MAXIMUM, CURRENT, DECOR, VIEWPORT, REMOTE_WINDOW, REMOTE_ROOT)) {
+            for (rect in listOf(IsolationRect(0, 0, 0, 1), IsolationRect(0, 2, 1, 1), IsolationRect(2, 0, 1, 1))) {
+                val diagnostics = ScrollClipReadDiagnostics()
+                environmentFailure(diagnostics, PHASE_FIRST_SAMPLE, NONPOSITIVE_BOUNDS, field) { diagnostics.positive(field, rect) }
+            }
+        }
+    }
+    @Test fun nativeNonpositiveChecksRetainOriginalShortCircuitOrder() {
+        val diagnostics = ScrollClipReadDiagnostics(); val reads = mutableListOf<ScrollClipEnvironmentField>()
+        environmentFailure(diagnostics, INITIAL_PROBE, NONPOSITIVE_BOUNDS, MAXIMUM) {
+            for ((field, rect) in listOf(LOGICAL to viewport, MAXIMUM to IsolationRect(0, 0, 0, 0), CURRENT to viewport)) {
+                reads += field; diagnostics.positive(field, rect)
+            }
+        }
+        assertEquals(listOf(LOGICAL, MAXIMUM), reads)
+    }
+    @Test fun remoteWindowNonpositiveIsFirstEvenWhenRootAlsoInvalid() {
+        val diagnostics = ScrollClipReadDiagnostics(); var rootChecked = false
+        environmentFailure(diagnostics, STABILITY_CHECK, NONPOSITIVE_BOUNDS, REMOTE_WINDOW) {
+            diagnostics.positive(REMOTE_WINDOW, IsolationRect(0, 0, 0, 0))
+            rootChecked = true; diagnostics.positive(REMOTE_ROOT, IsolationRect(0, 0, 0, 0))
+        }
+        assertFalse(rootChecked)
+    }
+    @Test fun everySavedEnvironmentAndRemoteFieldUsesSharedMismatchBranch() {
+        for (field in listOf(WINDOW_ID, ROTATION, CONFIGURATION, APPLICATION_CONFIGURATION,
+            LOGICAL, MAXIMUM, CURRENT, DECOR, VIEWPORT, REMOTE_PATH, REMOTE_WINDOW, REMOTE_ROOT)) {
+            val diagnostics = ScrollClipReadDiagnostics()
+            environmentFailure(diagnostics, ANCHOR_CHECK, SAVED_BASELINE_MISMATCH, field) {
+                diagnostics.same(field, "PRIVATE_SAVED", "PRIVATE_CHANGED")
+            }
+        }
+    }
+    @Test fun absentSavedBaselineAndEqualValuesRetainOriginalAcceptance() {
+        val diagnostics = ScrollClipReadDiagnostics()
+        diagnostics.same(REMOTE_PATH, null, listOf(1, 2))
+        diagnostics.same(REMOTE_PATH, listOf(1, 2), listOf(1, 2))
+        diagnostics.positive(REMOTE_ROOT, viewport)
+        assertNull(diagnostics.failure())
+    }
+    @Test fun originalComparisonOrderKeepsFirstMismatchOnly() {
+        val diagnostics = ScrollClipReadDiagnostics(); var remoteCompared = false
+        environmentFailure(diagnostics, STABILITY_CHECK, SAVED_BASELINE_MISMATCH, ROTATION) {
+            diagnostics.same(WINDOW_ID, 7, 7)
+            diagnostics.same(ROTATION, 0, 1)
+            remoteCompared = true; diagnostics.same(REMOTE_PATH, listOf(0), listOf(1))
+        }
+        assertFalse(remoteCompared)
+    }
+    @Test fun coordinateOverflowIsClassifiedAtEveryActualCallSiteField() {
+        for (field in listOf(VIEWPORT, DECOR, TARGET_LAYOUT)) {
+            for ((a, b) in listOf(Int.MAX_VALUE to 1, Int.MIN_VALUE to -1)) {
+                val diagnostics = ScrollClipReadDiagnostics()
+                environmentFailure(diagnostics, INITIAL_PROBE, COORDINATE_OVERFLOW, field) { diagnostics.sum(a, b, field) }
+            }
+        }
+    }
+    @Test fun exactCoordinateLimitsStillAcceptedWithoutClamping() {
+        val diagnostics = ScrollClipReadDiagnostics()
+        assertEquals(Int.MAX_VALUE, diagnostics.sum(Int.MAX_VALUE - 1, 1, DECOR))
+        assertEquals(Int.MIN_VALUE, diagnostics.sum(Int.MIN_VALUE + 1, -1, VIEWPORT))
+        assertEquals(-1, diagnostics.sum(Int.MIN_VALUE, Int.MAX_VALUE, TARGET_LAYOUT))
+        assertNull(diagnostics.failure())
+    }
+    @Test fun allFourActualReadStagesAreDistinctAndCodesOnly() {
+        for (stage in ScrollClipReadStage.entries) {
+            val diagnostics = ScrollClipReadDiagnostics()
+            val failure = environmentFailure(diagnostics, stage, SAVED_BASELINE_MISMATCH, CURRENT) {
+                diagnostics.same(CURRENT, viewport, IsolationRect(0, 0, 101, 100))
+            }
+            assertEquals("READ_STAGE=${stage.name};CHECK=SAVED_BASELINE_MISMATCH;FIELD=CURRENT", failure.environment?.codes())
+        }
+    }
+    @Test fun actualWarmupPinsBeforePhaseFirstSampleAndStillRejectsChangeBeforeStability() {
+        val diagnostics = ScrollClipReadDiagnostics(); val safety = GeometryReadSafety()
+        var time = 0L; var saved: IsolationRect? = null; var stabilityReads = 0
+        run {
+            MinimalGeometryPolling.firstCoherent({ time }, safety, {
+                diagnostics.at(INITIAL_PROBE) {
+                    diagnostics.same(CURRENT, saved, viewport)
+                    saved = viewport // Same first successful sample pin point; not a stable proof.
+                    viewport
+                }
+            }, { true }, { time += it })
+        }
+        assertEquals(0L, time)
+        try { run {
+            val first = MinimalGeometryPolling.firstCoherent({ time }, safety, {
+                diagnostics.at(PHASE_FIRST_SAMPLE) {
+                    diagnostics.same(CURRENT, saved, IsolationRect(0, 0, 101, 100))
+                    viewport
+                }
+            }, { true }, { time += it })
+            MinimalGeometryPolling.stable({ time }, { stabilityReads++; first }, { true }, { time += it }, first)
+            fail("FAILURE_REQUIRED")
+        } } catch (failure: ScrollClipFailure) {
+            assertEquals(ScrollClipIssue.ENVIRONMENT_CHANGED, failure.issue)
+            assertEquals(PHASE_FIRST_SAMPLE, failure.environment?.stage)
+        }
+        assertEquals(0, stabilityReads)
+        assertEquals(viewport, saved)
+    }
+    @Test fun environmentFailureIsNotRetriedByActualFirstCoherentLoop() {
+        val diagnostics = ScrollClipReadDiagnostics(); var reads = 0; var pauses = 0
+        rejects(ScrollClipIssue.ENVIRONMENT_CHANGED) {
+            MinimalGeometryPolling.firstCoherent({ 0L }, GeometryReadSafety(), {
+                diagnostics.at(INITIAL_PROBE) { reads++; diagnostics.display<Any>(null) }
+            }, { true }, { pauses++ })
+        }
+        assertEquals(1, reads); assertEquals(0, pauses)
+    }
+    @Test fun mainThreadIssueOnlyRelayReattachesFirstEnumCodes() {
+        val diagnostics = ScrollClipReadDiagnostics()
+        val original = environmentFailure(diagnostics, INITIAL_PROBE, DISPLAY_INVALID, DISPLAY) { diagnostics.displayValid(false) }
+        val relayed = diagnostics.exception(original.issue)
+        assertSame(original.environment, relayed.environment)
+        assertEquals(original.message, relayed.message)
+        assertNull(relayed.cause)
+        assertNull(diagnostics.exception(ScrollClipIssue.OWNERSHIP_REJECTED).environment)
+    }
+    @Test fun laterChecksAndCleanupCannotOverwriteFirstFailure() = run {
+        val diagnostics = ScrollClipReadDiagnostics()
+        val first = environmentFailure(diagnostics, INITIAL_PROBE, DISPLAY_MISSING, DISPLAY) { diagnostics.display<Any>(null) }
+        try { diagnostics.at(ANCHOR_CHECK) { diagnostics.sum(Int.MAX_VALUE, 1, TARGET_LAYOUT) } }
+        catch (later: ScrollClipFailure) { assertSame(first.environment, later.environment) }
+        val cleanup = PreparedDialogCleanup()
+        cleanup.run({ throw IllegalStateException("PRIVATE_END") }, {}, {}, {})
+        assertFalse(cleanup.clean)
+        assertSame(first.environment, diagnostics.failure())
+    }
+    @Test fun environmentInspectionWithMultipleReleaseFailuresKeepsPrimaryAndAllReleases() {
+        val diagnostics = ScrollClipReadDiagnostics(); val safety = GeometryReadSafety(); var releases = 0
+        environmentFailure(diagnostics, STABILITY_CHECK, NONPOSITIVE_BOUNDS, REMOTE_ROOT) {
+            safety.inspect { scope ->
+                try { diagnostics.positive(REMOTE_ROOT, IsolationRect(0, 0, 0, 0)) }
+                finally { scope.releaseAll(listOf(1, 2, 3)) { releases++; throw IllegalStateException("PRIVATE_RELEASE") } }
+            }
+        }
+        assertEquals(3, releases); assertNotNull(safety.failure())
+        try { safety.requireClean(); fail("LATCH_REQUIRED") } catch (failure: GeometryDiagnosticFailure) {
+            assertEquals(GeometryIssue.RELEASE_FAILED, failure.issue)
+        }
+        assertEquals(STABILITY_CHECK, diagnostics.failure()?.stage)
+    }
+    @Test fun stageScopePreservesCancellationAndReleaseLatch() {
+        val diagnostics = ScrollClipReadDiagnostics(); val safety = GeometryReadSafety()
+        val primary = CancellationException("PRIVATE_CANCEL"); var releases = 0
+        try { diagnostics.at(ANCHOR_CHECK) {
+            safety.inspect { scope ->
+                try { throw primary }
+                finally { scope.release { releases++; throw IllegalStateException("PRIVATE_RELEASE") }; scope.release { releases++ } }
+            }
+        }; fail("CANCEL_REQUIRED") } catch (failure: CancellationException) { assertSame(primary, failure) }
+        assertEquals(2, releases); assertNotNull(safety.failure()); assertNull(diagnostics.failure())
+    }
+    @Test fun newDiagnosticFailureStillAbortsProgressAndCannotComplete() {
+        val progress = ScrollClipProgress(); val diagnostics = ScrollClipReadDiagnostics()
+        rejects(ScrollClipIssue.ENVIRONMENT_CHANGED) {
+            progress.phase(ScrollClipPhase.OUTSIDE_BEFORE) { diagnostics.at(INITIAL_PROBE) { diagnostics.displayValid(false) } }
+        }
+        assertEquals("INCONCLUSIVE", progress.outcome(true, true))
+        rejects(ScrollClipIssue.PHASE_ORDER) { progress.phase(ScrollClipPhase.OUTSIDE_BEFORE) {} }
+    }
+    @Test fun successfulDiagnosticsDoNotChangeActualProgressCompletion() = run {
+        val diagnostics = ScrollClipReadDiagnostics(); val progress = ScrollClipProgress()
+        for ((index, phase) in ScrollClipPhase.entries.withIndex()) progress.phase(phase) { scope ->
+            diagnostics.at(PHASE_FIRST_SAMPLE) { diagnostics.same(REMOTE_WINDOW, viewport, viewport) }
+            final(progress, scope, listOf(ready(index + 1)))
+        }
+        assertNull(diagnostics.failure()); assertEquals("OBSERVATIONS_COMPLETE", progress.outcome(true, true))
+        assertEquals("INCONCLUSIVE", progress.outcome(false, true))
+        assertEquals("INCONCLUSIVE", progress.outcome(true, false))
+    }
+    @Test fun failurePayloadAndStringsContainOnlyEnumsNeverPrivateInputs() {
+        val diagnostics = ScrollClipReadDiagnostics()
+        val failure = environmentFailure(diagnostics, ANCHOR_CHECK, SAVED_BASELINE_MISMATCH, REMOTE_PATH) {
+            diagnostics.same(REMOTE_PATH, "PRIVATE_PATH_123456789", "PRIVATE_CHANGED_987654321")
+        }
+        assertEquals("ScrollClipReadDiagnostics(codes_only)", diagnostics.toString())
+        assertEquals("ScrollClipEnvironmentFailure(READ_STAGE=ANCHOR_CHECK;CHECK=SAVED_BASELINE_MISMATCH;FIELD=REMOTE_PATH)", failure.environment.toString())
+        assertEquals("ENVIRONMENT_CHANGED", failure.message); assertNull(failure.cause)
+        assertTrue(ScrollClipEnvironmentFailure::class.java.declaredFields.filterNot { it.isSynthetic }.all { it.type.isEnum })
+        assertFalse((failure.toString() + diagnostics + failure.environment).contains("PRIVATE_"))
     }
 }

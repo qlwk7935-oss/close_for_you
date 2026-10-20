@@ -61,7 +61,7 @@ class ServiceScrollClipOptInTest {
             val owner = ScrollClipReader(instrumentation, automation, shown).also { reader = it }
             // Initial readiness is not service/baseline evidence. Subsequent phases never rebind the child.
             MinimalGeometryPolling.firstCoherent(SystemClock::uptimeMillis, owner.safety,
-                { owner.bind(); owner.sample(ScrollClipPhase.OUTSIDE_BEFORE) }, { true }, { delay(it) })
+                { owner.bind(); owner.sample(ScrollClipPhase.OUTSIDE_BEFORE, ScrollClipReadStage.INITIAL_PROBE) }, { true }, { delay(it) })
             for (next in ScrollClipPhase.entries) {
                 phase = next
                 currentCoroutineContext().ensureActive()
@@ -71,12 +71,12 @@ class ServiceScrollClipOptInTest {
                     ScrollClipTransition.run(next, { requireCode(call("RESET", key), "RESET") },
                         { currentCoroutineContext().ensureActive() }, { owner.move(next) })
                     val first = MinimalGeometryPolling.firstCoherent(SystemClock::uptimeMillis, owner.safety,
-                        { owner.sample(next) }, { true }, { delay(it) })
-                    val stable = MinimalGeometryPolling.stable(SystemClock::uptimeMillis, { owner.sample(next) },
+                        { owner.sample(next, ScrollClipReadStage.PHASE_FIRST_SAMPLE) }, { true }, { delay(it) })
+                    val stable = MinimalGeometryPolling.stable(SystemClock::uptimeMillis, { owner.sample(next, ScrollClipReadStage.STABILITY_CHECK) },
                         { true }, { delay(it) }, anchor = first)
                     fun anchor() {
                         owner.safety.requireClean()
-                        if (owner.sample(next) != stable) throw ScrollClipFailure(ScrollClipIssue.UNSTABLE)
+                        if (owner.sample(next, ScrollClipReadStage.ANCHOR_CHECK) != stable) throw ScrollClipFailure(ScrollClipIssue.UNSTABLE)
                     }
                     emit(stable.codes(next, ScrollClipSource.HOST_NATIVE))
                     emit(stable.codes(next, ScrollClipSource.UIAUTOMATION_SEPARATE))
@@ -86,7 +86,7 @@ class ServiceScrollClipOptInTest {
                         anchor()
                         assess(progress, scope, reply)
                     }, { delay(it) })
-                    MinimalGeometryPolling.stable(SystemClock::uptimeMillis, { owner.sample(next) }, { true }, { delay(it) }, anchor = stable)
+                    MinimalGeometryPolling.stable(SystemClock::uptimeMillis, { owner.sample(next, ScrollClipReadStage.STABILITY_CHECK) }, { true }, { delay(it) }, anchor = stable)
                     anchor()
                     PreparedDialogObservation.finalSnapshot(SystemClock::uptimeMillis, {
                         anchor()
@@ -108,7 +108,8 @@ class ServiceScrollClipOptInTest {
             progress.abort(); throw CancellationException("SCROLL_CLIP_CANCELLED")
         } catch (failure: ScrollClipFailure) {
             failed = true; progress.abort()
-            cleanup.report { emit("F1_SCROLL_CLIP_PROBLEM;PHASE=${phase.name};DETAIL=${failure.issue.name};RESULT=INCONCLUSIVE") }
+            cleanup.report { emit("F1_SCROLL_CLIP_PROBLEM;PHASE=${phase.name};DETAIL=${failure.issue.name};RESULT=INCONCLUSIVE" +
+                (failure.environment?.let { ";${it.codes()}" } ?: "")) }
         } catch (failure: GeometryDiagnosticFailure) {
             failed = true; progress.abort()
             cleanup.report { emit("F1_SCROLL_CLIP_PROBLEM;PHASE=${phase.name};DETAIL=${failure.issue.name};RESULT=INCONCLUSIVE") }

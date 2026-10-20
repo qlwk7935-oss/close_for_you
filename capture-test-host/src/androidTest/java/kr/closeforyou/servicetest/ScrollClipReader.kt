@@ -16,6 +16,7 @@ import android.widget.ScrollView
 import android.widget.TextView
 import java.util.concurrent.CancellationException
 import kr.closeforyou.capturetest.DetectionScenarioActivity
+import kr.closeforyou.servicetest.ScrollClipEnvironmentField.*
 
 internal data class ScrollClipEnvironment(val window: Int, val rotation: Int, val configuration: Configuration,
     val applicationConfiguration: Configuration, val logical: IsolationRect, val maximum: IsolationRect,
@@ -43,6 +44,7 @@ internal data class ScrollClipSample(val native: ScrollClipNative, val remoteBou
 internal class ScrollClipReader(private val instrumentation: Instrumentation, private val automation: UiAutomation,
     private val activity: DetectionScenarioActivity) {
     val safety = GeometryReadSafety()
+    private val diagnostics = ScrollClipReadDiagnostics()
     private var scroller: ScrollView? = null
     private var rows: LinearLayout? = null
     private var target: TextView? = null
@@ -83,8 +85,12 @@ internal class ScrollClipReader(private val instrumentation: Instrumentation, pr
         scroll.scrollTo(0, destination) // Owned host action; never accessibility scroll/click/gesture/event injection.
     }
 
+    fun sample(phase: ScrollClipPhase, stage: ScrollClipReadStage): ScrollClipSample = diagnostics.at(stage) {
+        readSample(phase)
+    }
+
     @Suppress("DEPRECATION")
-    fun sample(phase: ScrollClipPhase): ScrollClipSample = safety.inspect { releases ->
+    private fun readSample(phase: ScrollClipPhase): ScrollClipSample = safety.inspect { releases ->
         val leases = mutableListOf<AccessibilityNodeInfo>()
         try {
             lateinit var targetNode: AccessibilityNodeInfo
@@ -144,12 +150,27 @@ internal class ScrollClipReader(private val instrumentation: Instrumentation, pr
                     val sample = ScrollClipSample(before, matchedBounds ?: bad(ScrollClipIssue.IDENTITY_UNCONFIRMED),
                         matchedVisible, matchedPath ?: bad(ScrollClipIssue.IDENTITY_UNCONFIRMED),
                         Rect().also(window::getBoundsInScreen).isolated(), rootBounds)
-                    if (!sample.windowBounds.positive || !rootBounds.positive) bad(ScrollClipIssue.ENVIRONMENT_CHANGED)
+                    diagnostics.positive(REMOTE_WINDOW, sample.windowBounds)
+                    diagnostics.positive(REMOTE_ROOT, rootBounds)
                     ScrollClipContract.requirePlacement(phase, ScrollClipContract.position(before.environment.viewport, before.layout),
                         before.visible, matchedVisible)
-                    if (environment?.let { it != before.environment } == true || remotePath?.let { it != sample.remotePath } == true ||
-                        fixedWindow?.let { it != sample.windowBounds } == true || fixedRoot?.let { it != rootBounds } == true)
-                        bad(ScrollClipIssue.ENVIRONMENT_CHANGED)
+                    // Same field order as ScrollClipEnvironment's generated equals, followed by
+                    // the original remote path/window/root comparisons. No Android getters here.
+                    environment?.let { saved ->
+                        val current = before.environment
+                        diagnostics.same(WINDOW_ID, saved.window, current.window)
+                        diagnostics.same(ROTATION, saved.rotation, current.rotation)
+                        diagnostics.same(CONFIGURATION, saved.configuration, current.configuration)
+                        diagnostics.same(APPLICATION_CONFIGURATION, saved.applicationConfiguration, current.applicationConfiguration)
+                        diagnostics.same(LOGICAL, saved.logical, current.logical)
+                        diagnostics.same(MAXIMUM, saved.maximum, current.maximum)
+                        diagnostics.same(CURRENT, saved.current, current.current)
+                        diagnostics.same(DECOR, saved.decor, current.decor)
+                        diagnostics.same(VIEWPORT, saved.viewport, current.viewport)
+                    }
+                    diagnostics.same(REMOTE_PATH, remotePath, sample.remotePath)
+                    diagnostics.same(REMOTE_WINDOW, fixedWindow, sample.windowBounds)
+                    diagnostics.same(REMOTE_ROOT, fixedRoot, rootBounds)
                     environment = before.environment; remotePath = sample.remotePath
                     fixedWindow = sample.windowBounds; fixedRoot = rootBounds
                     sample
@@ -178,20 +199,22 @@ internal class ScrollClipReader(private val instrumentation: Instrumentation, pr
         val groupNode = group.createAccessibilityNodeInfo().also(leases::add)
         for (node in listOf(root, targetNode, scrollNode, groupNode))
             ScrollClipContract.requireOwner(window, node.packageName?.toString(), node.windowId)
-        val display = activity.getSystemService(DisplayManager::class.java).getDisplay(Display.DEFAULT_DISPLAY)
-            ?: bad(ScrollClipIssue.ENVIRONMENT_CHANGED)
-        if (!display.isValid) bad(ScrollClipIssue.ENVIRONMENT_CHANGED)
+        val display = diagnostics.display(activity.getSystemService(DisplayManager::class.java).getDisplay(Display.DEFAULT_DISPLAY))
+        diagnostics.displayValid(display.isValid)
         val size = Point().also(display::getRealSize)
         val location = IntArray(2).also(scroll::getLocationOnScreen)
-        val viewport = IsolationRect(sum(location[0], scroll.paddingLeft), sum(location[1], scroll.paddingTop),
-            sum(location[0], scroll.width - scroll.paddingRight), sum(location[1], scroll.height - scroll.paddingBottom))
+        val viewport = IsolationRect(diagnostics.sum(location[0], scroll.paddingLeft, VIEWPORT), diagnostics.sum(location[1], scroll.paddingTop, VIEWPORT),
+            diagnostics.sum(location[0], scroll.width - scroll.paddingRight, VIEWPORT), diagnostics.sum(location[1], scroll.height - scroll.paddingBottom, VIEWPORT))
         val env = ScrollClipEnvironment(window, display.rotation, Configuration(activity.resources.configuration),
             Configuration(activity.applicationContext.resources.configuration), IsolationRect(0, 0, size.x, size.y),
             activity.windowManager.maximumWindowMetrics.bounds.isolated(), activity.windowManager.currentWindowMetrics.bounds.isolated(),
-            layoutBounds(decor), viewport)
-        if (listOf(env.logical, env.maximum, env.current, env.decor, viewport).any { !it.positive })
-            bad(ScrollClipIssue.ENVIRONMENT_CHANGED)
-        return ScrollClipNative(env, path(child), layoutBounds(child), Rect().also(targetNode::getBoundsInScreen).isolated(),
+            layoutBounds(decor, DECOR), viewport)
+        diagnostics.positive(LOGICAL, env.logical)
+        diagnostics.positive(MAXIMUM, env.maximum)
+        diagnostics.positive(CURRENT, env.current)
+        diagnostics.positive(DECOR, env.decor)
+        diagnostics.positive(VIEWPORT, viewport)
+        return ScrollClipNative(env, path(child), layoutBounds(child, TARGET_LAYOUT), Rect().also(targetNode::getBoundsInScreen).isolated(),
             targetNode.isVisibleToUser, scroll.scrollX, scroll.scrollY)
     }
     private fun requireViewIdentity() {
@@ -214,14 +237,9 @@ internal class ScrollClipReader(private val instrumentation: Instrumentation, pr
         }
         return result.asReversed().toList()
     }
-    private fun layoutBounds(view: View): IsolationRect {
+    private fun layoutBounds(view: View, field: ScrollClipEnvironmentField): IsolationRect {
         val location = IntArray(2).also(view::getLocationOnScreen)
-        return IsolationRect(location[0], location[1], sum(location[0], view.width), sum(location[1], view.height))
-    }
-    private fun sum(a: Int, b: Int): Int {
-        val sum = a.toLong() + b
-        if (sum !in Int.MIN_VALUE.toLong()..Int.MAX_VALUE.toLong()) bad(ScrollClipIssue.ENVIRONMENT_CHANGED)
-        return sum.toInt()
+        return IsolationRect(location[0], location[1], diagnostics.sum(location[0], view.width, field), diagnostics.sum(location[1], view.height, field))
     }
     private fun Rect.isolated() = IsolationRect(left, top, right, bottom)
     private fun <T : Any> main(block: () -> T): T {
@@ -241,5 +259,5 @@ internal class ScrollClipReader(private val instrumentation: Instrumentation, pr
         return result ?: bad(ScrollClipIssue.FIXTURE_INVALID)
     }
     fun close() { target = null; rows = null; scroller = null; fixedPath = null; environment = null; remotePath = null; fixedWindow = null; fixedRoot = null }
-    private fun bad(issue: ScrollClipIssue): Nothing = throw ScrollClipFailure(issue)
+    private fun bad(issue: ScrollClipIssue): Nothing = throw diagnostics.exception(issue)
 }

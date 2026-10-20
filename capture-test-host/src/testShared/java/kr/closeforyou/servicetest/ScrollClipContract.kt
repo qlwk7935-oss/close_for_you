@@ -8,7 +8,60 @@ internal enum class ScrollClipIssue {
     ENVIRONMENT_CHANGED, UNSTABLE, RESPONSE_REJECTED, INVALID_DIAGNOSTIC, OVERFLOW,
     UNOBSERVED, UNEXPECTED_BLOCK, SNAPSHOT_REGRESSED, PHASE_ORDER, FINAL_MISSING, TIMEOUT,
 }
-internal class ScrollClipFailure(val issue: ScrollClipIssue) : RuntimeException(issue.name)
+internal class ScrollClipFailure(val issue: ScrollClipIssue, val environment: ScrollClipEnvironmentFailure? = null) : RuntimeException(issue.name)
+internal enum class ScrollClipReadStage { INITIAL_PROBE, PHASE_FIRST_SAMPLE, STABILITY_CHECK, ANCHOR_CHECK }
+internal enum class ScrollClipEnvironmentCheck {
+    DISPLAY_MISSING, DISPLAY_INVALID, NONPOSITIVE_BOUNDS, SAVED_BASELINE_MISMATCH, COORDINATE_OVERFLOW,
+}
+internal enum class ScrollClipEnvironmentField {
+    DISPLAY, WINDOW_ID, ROTATION, CONFIGURATION, APPLICATION_CONFIGURATION,
+    LOGICAL, MAXIMUM, CURRENT, DECOR, VIEWPORT, TARGET_LAYOUT, REMOTE_PATH, REMOTE_WINDOW, REMOTE_ROOT,
+}
+/** Enum-only first failure; no raw environment, source path, resource or exception is retained. */
+internal class ScrollClipEnvironmentFailure(val stage: ScrollClipReadStage, val check: ScrollClipEnvironmentCheck,
+    val field: ScrollClipEnvironmentField) {
+    fun codes() = "READ_STAGE=${stage.name};CHECK=${check.name};FIELD=${field.name}"
+    override fun toString() = "ScrollClipEnvironmentFailure(${codes()})"
+}
+
+/** Shared with the actual reader. No reset: a later check/cleanup cannot replace the first failure.
+ * These are the existing comparisons/arithmetic, not new Android reads or a readiness policy. */
+internal class ScrollClipReadDiagnostics {
+    private var stage = ScrollClipReadStage.INITIAL_PROBE
+    private var first: ScrollClipEnvironmentFailure? = null
+    fun failure(): ScrollClipEnvironmentFailure? = first
+    // Android's main-thread bridge already transports only an issue enum. Reattach the
+    // reader-owned first codes, never the original throwable or framework data.
+    fun exception(issue: ScrollClipIssue) = ScrollClipFailure(issue,
+        if (issue == ScrollClipIssue.ENVIRONMENT_CHANGED) first else null)
+    fun <T> at(point: ScrollClipReadStage, read: () -> T): T {
+        val previous = stage
+        stage = point
+        try { return read() } finally { stage = previous }
+    }
+    fun fail(check: ScrollClipEnvironmentCheck, field: ScrollClipEnvironmentField): Nothing {
+        val diagnostic = first ?: ScrollClipEnvironmentFailure(stage, check, field).also { first = it }
+        throw ScrollClipFailure(ScrollClipIssue.ENVIRONMENT_CHANGED, diagnostic)
+    }
+    fun <T : Any> display(value: T?): T = value
+        ?: fail(ScrollClipEnvironmentCheck.DISPLAY_MISSING, ScrollClipEnvironmentField.DISPLAY)
+    fun displayValid(valid: Boolean) {
+        if (!valid) fail(ScrollClipEnvironmentCheck.DISPLAY_INVALID, ScrollClipEnvironmentField.DISPLAY)
+    }
+    fun positive(field: ScrollClipEnvironmentField, bounds: IsolationRect) {
+        if (!bounds.positive) fail(ScrollClipEnvironmentCheck.NONPOSITIVE_BOUNDS, field)
+    }
+    fun <T : Any> same(field: ScrollClipEnvironmentField, saved: T?, current: T) {
+        if (saved != null && saved != current) fail(ScrollClipEnvironmentCheck.SAVED_BASELINE_MISMATCH, field)
+    }
+    fun sum(a: Int, b: Int, field: ScrollClipEnvironmentField): Int {
+        val sum = a.toLong() + b
+        if (sum !in Int.MIN_VALUE.toLong()..Int.MAX_VALUE.toLong())
+            fail(ScrollClipEnvironmentCheck.COORDINATE_OVERFLOW, field)
+        return sum.toInt()
+    }
+    override fun toString() = "ScrollClipReadDiagnostics(codes_only)"
+}
 internal enum class ScrollClipService { UNOBSERVED, MALFORMED_ONLY, ASSESSED_ONLY, MIXED }
 internal enum class ScrollClipSource { HOST_NATIVE, UIAUTOMATION_SEPARATE }
 internal enum class ScrollClipContrast { REVERSED_Y_OUTSIDE_ONLY, OTHER_PATTERN, INCONCLUSIVE }

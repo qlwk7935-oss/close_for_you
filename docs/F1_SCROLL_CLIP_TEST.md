@@ -1,7 +1,8 @@
 # F1 동일 Scroll 자식의 화면 밖 → 안 → 밖 독립 관측
 
-기준: `feature/f1-popup-detection` / `366c0824cf5c9bceaf1b3f987c7749d6313a1457`.
-이번 계측은 테스트 전용이며 Android API37에서 아직 실행하지 않았습니다. 기존 사용자 로그의 원본14개 UNOBSERVED=14, Scroll REVERSED_Y 및 별개 Window/frame 문제를 해결했다는 보고가 아닙니다. 최신 LAYOUT_CHANGE checkpoint의 사용자 제공 두 번 성공은 최소 fixture의 별도 관측으로만 유지합니다.
+최초 구현 기준: `feature/f1-popup-detection` / `366c0824cf5c9bceaf1b3f987c7749d6313a1457`.
+최소 진단 보강 기준: `52c97dce5d5c8882edeb5d2d0752482620e342f5`.
+이번 계측은 테스트 전용입니다. 아래 사용자 첫 API37 실행은 실패했으며, 진단 보강 버전은 Android에서 아직 실행하지 않았습니다. 기존 사용자 로그의 원본14개 UNOBSERVED=14, Scroll REVERSED_Y 및 별개 Window/frame 문제를 해결했다는 보고가 아닙니다. 최신 LAYOUT_CHANGE checkpoint의 사용자 제공 두 번 성공은 최소 fixture의 별도 관측으로만 유지합니다.
 
 ## 이전 시험과 다른 점
 
@@ -69,6 +70,8 @@ $serial = "emulator-5554" # 실제 API37 대상 확인
 
 ## 로컬 검증 기록 (2026-10-20)
 
+아래는 최초 구현 당시의 검증 및 미추적 파일 상태에 대한 과거 기록입니다. 이후 최초 구현5개 파일은 `52c97dce5d5c8882edeb5d2d0752482620e342f5`로 커밋됐으며, 이번 진단 보강의 검증 결과와 구분합니다.
+
 신규 ScrollClipContractTest46개가 실패·오류·skip0으로 통과했습니다. 실제 reader/driver가 사용하는 동일한 소유권 선행 callback·identity/placement/shape/출력 계약·phase 전이·서비스 tuple 검사·관측 loop·final deadline·reset/scroll 순서를 가짜 시계/IPC/host callback으로 검사합니다. 동일 자식 대응 실패, 원래 Rect 형태 보존, PARTIAL/불명 소유권 거부, malformed/ASSESSED/MIXED 구분, 예산/보호 차단 거부, 행 소실/변경·중복·phase 재사용, 빈 응답/마감 후 정상 응답 거부를 포함합니다. 기존 stability/anchor의 관측 ABA, GeometryReadSafety/독립 해제의 검사 실패+해제 실패 및 취소, 실제 finally와 공유하는 cleanup callback의 개별 시도와 실패 보존도 검사합니다. Android 노드 identity/Binder/event/recycle 동작을 JVM에서 재현한 것은 아닙니다.
 
 JDK17에서 다음 명령을 실행해 BUILD SUCCESSFUL(54초)을 확인했습니다. 양쪽 JVM task는 --rerun으로 실제 실행했고 전체789개(앱396/호스트393)가 실패·오류·skip0으로 통과했습니다.
@@ -80,3 +83,59 @@ JDK17에서 다음 명령을 실행해 BUILD SUCCESSFUL(54초)을 확인했습�
 양쪽 Debug/AndroidTest APK 빌드, 양쪽 Lint(이슈0), 기존 tools/verify_capture_test_apks.py를 통과했습니다. 실제 DEX class_def를 검사해 ScrollClip reader/driver/공유 계약·상태·표본 클래스가 host AndroidTest APK에만 정의되고 본 앱·본 앱 AndroidTest·host APK에는 없음을 확인했습니다. JVM 회귀 클래스는 모든 APK에서 제외됩니다. Gradle 경고 출력은 없었습니다.
 
 기존 추적 파일과 staged 변경은 없고 위 신규5개 파일만 미추적 상태로 보존합니다. gradle.properties 내용 hash는 작업 시작과 동일합니다. git diff --check 및 별도의 신규 파일 전체 공백/개행 검사를 통과했습니다. 실제 API37 계측, 커밋·푸시·병합은 실행하지 않았습니다. 원본14개·Scroll/Window 오류 및 F0/F1 미입증 범위는 그대로입니다.
+
+## 사용자 제공 API37 첫 실행 — 실패
+
+기준 커밋 `52c97dce5d5c8882edeb5d2d0752482620e342f5`에서 SERVICE_CONNECTION_READY 이후 OUTSIDE_BEFORE / ENVIRONMENT_CHANGED / INCONCLUSIVE로 종료됐습니다. 사용자 제공 실행 시간은1.543초이며 JUnit 실패1건입니다. Codex가 Android에서 직접 실행한 결과가 아닙니다.
+
+기존 ENVIRONMENT_CHANGED 하나로는 display 없음/무효, 비양수 경계, 저장한 환경·remote 경로·창/root 경계 불일치, 좌표 덧셈 overflow를 구분할 수 없습니다. OUTSIDE_BEFORE도 초기 probe부터 사용되므로 실패한 조회 단계를 특정하지 못합니다. 실행 시간만으로 애니메이션이나 타이밍 원인을 확정하지 않습니다.
+
+## 최소 환경 실패 진단 — 판정 변경 없음
+
+기존 F1_SCROLL_CLIP_PROBLEM의 DETAIL=ENVIRONMENT_CHANGED 및 RESULT=INCONCLUSIVE를 유지하고, 해당 실패에만 READ_STAGE / CHECK / FIELD를 추가합니다. 아래는 출력 형식 예시이며 실제 관측 결과가 아닙니다.
+
+```text
+F1_SCROLL_CLIP_PROBLEM;PHASE=OUTSIDE_BEFORE;DETAIL=ENVIRONMENT_CHANGED;RESULT=INCONCLUSIVE;READ_STAGE=PHASE_FIRST_SAMPLE;CHECK=SAVED_BASELINE_MISMATCH;FIELD=CURRENT
+```
+
+READ_STAGE는 실제 sample 호출 위치에서 지정합니다.
+
+| 코드 | 호출 위치 |
+|---|---|
+| INITIAL_PROBE | bind 뒤 초기 firstCoherent의 sample |
+| PHASE_FIRST_SAMPLE | scroll 요청 뒤 phase의 첫 firstCoherent sample |
+| STABILITY_CHECK | 서비스 관측 전/후 기존 stable loop의 sample |
+| ANCHOR_CHECK | 기존 서비스 RESULT 전/후 및 최종 anchor sample |
+
+CHECK/FIELD는 기존 검사 순서와 단락 평가를 유지합니다.
+
+| CHECK | 실제 FIELD / 기존 분기 |
+|---|---|
+| DISPLAY_MISSING | DISPLAY: 기본 display 조회 결과 null |
+| DISPLAY_INVALID | DISPLAY: 기존 isValid가 false |
+| NONPOSITIVE_BOUNDS | LOGICAL → MAXIMUM → CURRENT → DECOR → VIEWPORT, 또는 REMOTE_WINDOW → REMOTE_ROOT: 기존 positive 검사 |
+| SAVED_BASELINE_MISMATCH | WINDOW_ID → ROTATION → CONFIGURATION → APPLICATION_CONFIGURATION → LOGICAL → MAXIMUM → CURRENT → DECOR → VIEWPORT → REMOTE_PATH → REMOTE_WINDOW → REMOTE_ROOT: 저장값과 현재값의 기존 동등 비교 |
+| COORDINATE_OVERFLOW | VIEWPORT / DECOR / TARGET_LAYOUT: 기존 Long 덧셈 결과가 Int 범위 밖 |
+
+ScrollClipReadDiagnostics는 reader 수명 동안 첫 실패의 enum3개만 보존하며 reset API가 없습니다. Android main-thread bridge는 기존처럼 issue enum만 전달하고, instrumentation thread에서 같은 reader의 최초 진단을 다시 붙입니다. 원본 예외·raw 경계·Configuration 값·View 경로·window ID·timestamp·토큰·지문·Android 객체를 새 진단 payload에 저장하지 않습니다. 이미 존재하는 raw 표본의 비교·참조 수명은 그대로이며, 진단 출력은 기존 실패 보고1회 안에서만 추가합니다. polling 로그·getter·IPC·sleep·시계 조회는 추가하지 않습니다.
+
+최초 성공 표본이 다회 안정화 전에 기준으로 고정되는 동작과 stable(anchor=first)는 그대로입니다. 초기 probe의 A가 저장된 뒤 phase 첫 표본이 B이면 기존대로 안정화 전에 거부합니다. 초기 변화를 실제로 관측했는지는 새 API37 실행이 필요합니다. ENVIRONMENT_CHANGED는 기존 firstCoherent의 재관측 허용 대상이 아니며 이번에도 즉시 실패합니다. 단일 sample 안의 BEFORE/AFTER 불일치는 기존 UNSTABLE이고, anchor 변경·deadline·소유권·민감 필드 검사·서비스 완료 조건·해제/취소/cleanup 차단도 변경하지 않습니다.
+
+진단 분기는 순수 JVM 코드와 실제 Android reader가 공유하지만, JVM은 실제 Configuration 변화·display/window 조회·노드 identity·framework recycle 실패를 재현하지 않습니다. 관측된 첫 분기가 원인 전체나 Android 결함을 증명하지 않으며 F0 완전성·현재성·TTL·토큰 결합·원본14개 F1 정확도도 입증하지 않습니다. 초기 기준 고정의 보수적 false-INCONCLUSIVE 가능성과 기존 정리 후 보고 취소 순서 회귀(P3)는 후속 과제로 남깁니다. 이번에는 진단만 보강하며 커밋·푸시·병합하지 않습니다.
+
+## 최소 진단 보강의 로컬 검증 (2026-10-20)
+
+신규 JVM 회귀21개를 추가해 ScrollClipContractTest67개가 통과했습니다. 실제 reader가 호출하는 display null/validity, positive, saved equality, overflow, 단계 scope, main-thread issue 재전달 계약을 검사합니다. 각 실제 FIELD, 원래 단락 평가 순서, 초기 probe와 phase 첫 표본의 구분, 기존 firstCoherent에서 warmup의 첫 표본 고정 후 변화가 안정성 검사 전에 거부되는 callback 순서를 포함합니다. 최초 enum 보존, 환경 검사와 여러 release 실패의 동반 발생, 취소·cleanup 실패, 개인정보 비노출 및 기존 progress의 성공/실패 계약도 검사했습니다. 가짜 callback과 raw 합성 Rect를 사용한 시험이며 Android reader 전체 또는 실제 framework 실행의 재현은 아닙니다.
+
+처음 별도 Gradle cache를 지정한 wrapper 실행은 배포본 다운로드의 호스트 조회 실패로 중단됐고 테스트는 실행되지 않았습니다. 기존 cache를 사용하는 아래 오프라인 JDK17 실행으로 대상 검증 및 전체 검증을 완료했습니다. 저장소 설정 파일은 수정하지 않았습니다.
+
+```text
+JAVA_HOME=/workspace/jdk17 ./gradlew --offline --no-daemon :capture-test-host:testDebugUnitTest --tests kr.closeforyou.servicetest.ScrollClipContractTest --rerun
+JAVA_HOME=/workspace/jdk17 ./gradlew --offline --no-daemon :app:testDebugUnitTest --rerun :capture-test-host:testDebugUnitTest --rerun :app:assembleDebug :app:assembleDebugAndroidTest :capture-test-host:assembleDebug :capture-test-host:assembleDebugAndroidTest :app:lintDebug :capture-test-host:lintDebug
+```
+
+전체 JVM810개(앱396/호스트414), 실패·오류·skip0을 실제 JUnit XML에서 확인했습니다. 전체 명령은 BUILD SUCCESSFUL(1분54초), 양쪽 Debug/AndroidTest APK 및 양쪽 Lint(이슈0)를 통과했으며 Gradle 경고 출력은 없었습니다. tools/verify_capture_test_apks.py와 추가 class_def 검사로 ScrollClip reader/driver/계약/진단 타입이 host AndroidTest APK에만 정의되고 앱·앱 AndroidTest·host APK에는 없음을 확인했습니다. JVM 회귀 클래스도 APK에 없습니다.
+
+기존 Android getter·RESULT/RESET IPC·clock·delay·sendStatus 호출 수가 동일하고 서비스 판정/시간/progress 계약과 driver finally가 원문 그대로임을 소스 대조했습니다. 이는 framework 실행 순서·타이밍의 Android 실측 증명이 아닙니다. enum 전달과 순수 비교 처리에도 실행 비용이 있으므로 타이밍 영향이0이라고 보장하지 않습니다.
+
+변경은 허용된 ScrollClip5개 파일뿐이며 나머지 추적 파일의 SHA-256은 작업 시작과 같습니다. AndroidManifest.xml·gradle.properties·운영 코드·원본14개·기존 다른 계측은 미변경입니다. git diff --check와 변경 파일 전체 공백/개행 검사를 통과했습니다. 진단 보강 버전의 API37 계측·커밋·푸시·병합은 실행하지 않았습니다. 위 Windows 명령으로 재시험해 첫 실제 READ_STAGE/CHECK/FIELD를 확인해야 하며, 이전 실패 원인은 아직 미확정입니다.
