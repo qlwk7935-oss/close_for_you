@@ -2,7 +2,9 @@
 
 소유자: 동준/D, 브랜치: `feature/database-qa`.
 
-F12 사용자 선택 기억: `RoomPopupRuleRepository`(Room)와 `DeviceKeyedFingerprintProvider`(기기 내부 키 지문)를 구현했습니다. 설계·조회 규칙·fail-closed 조건은 [F12 저장소 문서](../../../../../../../docs/F12_RULE_STORAGE.md)를 참고하세요. 아직 서비스 경로(A/B)에 연결하지 않았고 실기기 미검증입니다. `SafeDiagnostics`는 후속 구현입니다.
+F12 사용자 선택 기억: `RoomPopupRuleRepository`(Room)와 `DeviceKeyedFingerprintProvider`(기기 내부 키 지문)를 구현했습니다. 설계·조회 규칙·fail-closed 조건은 [F12 저장소 문서](../../../../../../../docs/F12_RULE_STORAGE.md)를 참고하세요. 아직 서비스 경로(A/B)에 연결하지 않았고 실기기 미검증입니다.
+
+`SafeDiagnostics`: `CountingSafeDiagnostics`가 고정 코드·사유의 횟수만 메모리에 셉니다. 검증 지표 집계(`tools/qa_metrics.py`)와 버그·실험 이슈 양식은 [검증 지표 문서](../../../../../../../docs/QA_METRICS.md)를 참고하세요.
 
 시험용 팝업 재현 앱(`:popup-test-app`)과 웹 페이지, 정답지는 [팝업 재현 앱 문서](../../../../../../../docs/POPUP_TEST_APP.md)를 참고하세요. 합성 데이터만 사용하며 아직 실기기·TalkBack 미검증입니다.
 
