@@ -31,6 +31,7 @@ class AnswerKeyCsvTest {
             assertEquals(id, scenario.expected.name, row["expected_handling"])
             assertEquals(id, scenario.closeEvidence.name, row["close_evidence"])
             assertEquals(id, scenario.correctTargetId.orEmpty(), row["correct_target"])
+            assertEquals(id, scenario.appAllowedTargetId.orEmpty(), row["app_allowed_target"])
             assertEquals(id, scenario.forbiddenTargetIds, split(row["forbidden_targets"]))
             assertEquals(id, scenario.rememberable.toString(), row["rememberable"])
             assertEquals(id, scenario.memoryReusableFrom.orEmpty(), row["memory_reusable_from"])
