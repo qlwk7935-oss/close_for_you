@@ -11,6 +11,27 @@ import kotlinx.coroutines.flow.map
 /** 현재 규칙 스키마. 다른 버전의 규칙은 일치시키지 않는다. */
 const val CURRENT_RULE_SCHEMA_VERSION = 1
 
+/** 팀 합의(A·B·C·D, 10/21): 기억 규칙 기본 만료 30일. 만료일 없는 규칙은 저장하지 않는다. */
+object RuleRetention {
+    const val DEFAULT_TTL_MILLIS: Long = 30L * 24 * 60 * 60 * 1000
+
+    /** 저장 시각에서 30일 뒤. 저장할 규칙의 expiresAtEpochMillis에 그대로 넣는다. */
+    fun defaultExpiry(createdAtEpochMillis: Long): Long = createdAtEpochMillis + DEFAULT_TTL_MILLIS
+}
+
+/** 저장 거부 사유. 원문 없이 고정 코드만 담는다. */
+enum class RuleRejection {
+    /** 만료일이 없음. */
+    MISSING_EXPIRY,
+    /** 만료일이 생성 시각에서 30일을 넘음. */
+    EXPIRY_TOO_LONG,
+    /** 자동 반복은 팀 합의로 OFF. 반복 자동화 허락이 켜진 규칙은 저장하지 않는다. */
+    REPEAT_AUTOMATION_DISABLED,
+}
+
+class RuleRejectedException(val reason: RuleRejection) :
+    IllegalArgumentException("Popup rule rejected: $reason")
+
 /**
  * 규칙을 쓸 수 있는지 판단한다. 일치해도 실행 허가가 아니며 B가 정책을 다시 확인한다.
  * 정확한 키, 활성, 실패 0회, 현재 스키마, 생성 이후, 만료 전이어야 한다.
@@ -22,14 +43,34 @@ object RuleValidity {
             rule.failureCount == 0 &&
             rule.schemaVersion == CURRENT_RULE_SCHEMA_VERSION &&
             nowEpochMillis >= rule.createdAtEpochMillis &&
-            (rule.expiresAtEpochMillis == null || nowEpochMillis < rule.expiresAtEpochMillis)
+            rule.expiresAtEpochMillis != null &&
+            nowEpochMillis < rule.expiresAtEpochMillis
+
+    /** 저장 전에 검사한다. 통과하지 못하면 [RuleRejectedException]. */
+    fun checkStorable(rule: PopupRule, repeatAutomationEnabled: Boolean) {
+        val expiresAt = rule.expiresAtEpochMillis ?: throw RuleRejectedException(RuleRejection.MISSING_EXPIRY)
+        if (expiresAt - rule.createdAtEpochMillis > RuleRetention.DEFAULT_TTL_MILLIS) {
+            throw RuleRejectedException(RuleRejection.EXPIRY_TOO_LONG)
+        }
+        if (rule.repeatAutomationExplicitlyAllowed && !repeatAutomationEnabled) {
+            throw RuleRejectedException(RuleRejection.REPEAT_AUTOMATION_DISABLED)
+        }
+    }
 }
 
 /**
  * D: F12 사용자 선택 기억의 Room 구현. InMemoryMockPopupRuleRepository를 대체한다.
  * 화면 원문·노드·이미지는 받지도 저장하지도 않는다(RuleKey는 지문만 담는다).
+ *
+ * 팀 합의(10/21):
+ * - 만료일은 필수이며 최대 30일([RuleRetention]). 철회·전체 삭제는 유지한다.
+ * - 자동 반복은 OFF. [repeatAutomationEnabled]가 false인 동안 반복 자동화 허락이 켜진 규칙은 저장을 거부한다.
+ * - 실제 클릭 성공과 사용자 기억 동의를 확인한 뒤에만 [save]를 호출한다(호출하는 쪽 책임, B·C).
  */
-class RoomPopupRuleRepository(private val dao: PopupRuleDao) : PopupRuleRepository {
+class RoomPopupRuleRepository(
+    private val dao: PopupRuleDao,
+    private val repeatAutomationEnabled: Boolean = false,
+) : PopupRuleRepository {
 
     override suspend fun findExact(key: RuleKey, nowEpochMillis: Long): PopupRule? =
         dao.findUsable(
@@ -45,7 +86,9 @@ class RoomPopupRuleRepository(private val dao: PopupRuleDao) : PopupRuleReposito
             .mapNotNull { it.toRuleOrNull() }
             .firstOrNull { RuleValidity.isUsable(it, key, nowEpochMillis) }
 
+    /** @throws RuleRejectedException 만료일이 없거나 30일을 넘거나, 자동 반복이 OFF인데 반복 허락이 켜진 경우 */
     override suspend fun save(rule: PopupRule) {
+        RuleValidity.checkStorable(rule, repeatAutomationEnabled)
         dao.replace(PopupRuleEntity.from(rule))
     }
 
