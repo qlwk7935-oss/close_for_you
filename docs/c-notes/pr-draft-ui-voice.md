@@ -59,7 +59,7 @@ feat(ui-voice): C 선택 창·TalkBack 안내·음성 명령·설정 화면 (Moc
 - **못 본 것**: 실제 A 서비스 연동, [말하기]로 실제 인식(LG 미지원 → 갤럭시 S26 필요), 10/19 이후 버튼([다시 듣기]·[그만 말하기]·상태 줄)의 TalkBack 읽기 순서, 허용 앱 이름이 실제로 보이는지
 
 ### A·B·D에게 필요한 것
-- **A**: 실제 서비스에서 `AccessibilityChoiceOverlay`를 만들 때 **세 번째 인자 `PromptControlsSupport.create(this, announcer)`**를 넘겨야 [말하기]·[다시 듣기]·[그만 말하기]가 보임(안 넘기면 예전 선택 창). 음성 명령을 release에서 쓰려면 main 매니페스트에 `RECORD_AUDIO` 추가 필요(팀 결정). `ChoicePromptPresenter`·`ButtonFocusMover` 위치, C 창 이벤트를 새 팝업 판정에서 빼는 것 합의 필요 (`docs/c-notes/presenter-usage-for-a.md`)
+- **A**: 실제 서비스에서 `AccessibilityChoiceOverlay`를 만들 때 **세 번째 인자 `PromptControlsSupport.create(this, announcer)`**를 넘겨야 [말하기]·[다시 듣기]·[그만 말하기]가 보임(안 넘기면 예전 선택 창). release의 `RECORD_AUDIO`는 A가 실제 연결·안전성 검토 후 별도 변경으로 진행(10/20 우진). `ChoicePromptPresenter`·`ButtonFocusMover` 위치 합의 필요. **C 오버레이의 liveRegion·버튼 이벤트가 A의 토큰 무효화·baseline 초기화에 영향을 줄 수 있음** → A가 C 창 식별 방식을 검토하고, 다른 앱의 실제 변경·사용자 조작은 무시하지 않도록 회귀 시험 예정 (`docs/c-notes/presenter-usage-for-a.md`)
 - **B/A**: 공용 라벨 판정 계약 병합 후 C 임시 복사본 `AGateLabelPolicy` → `ButtonLabelRules.roleOf`로 교체
 - **D**: `PopupRuleRepository`가 아직 메모리 Mock. Room 저장소가 들어오면 기억 목록·"항상 닫기"를 연결
 - 계약 제안(C): `AnnouncementState.FAILED`, `VoiceEvent.NotUnderstood`, `announcementAvailable` 정의 (`docs/c-notes/contract-proposal-tts-2026-10-19.md`)
