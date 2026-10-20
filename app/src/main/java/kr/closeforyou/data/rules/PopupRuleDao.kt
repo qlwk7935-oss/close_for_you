@@ -23,7 +23,8 @@ abstract class PopupRuleDao {
           AND failureCount = 0
           AND schemaVersion = :schemaVersion
           AND createdAtEpochMillis <= :now
-          AND (expiresAtEpochMillis IS NULL OR expiresAtEpochMillis > :now)
+          AND expiresAtEpochMillis IS NOT NULL
+          AND expiresAtEpochMillis > :now
         ORDER BY createdAtEpochMillis DESC
         """,
     )
