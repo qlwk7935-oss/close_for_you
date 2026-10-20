@@ -40,9 +40,18 @@ A의 `SnapshotToken` 지문은 세션 salt를 쓰므로 재사용하지 않습�
 | `NO_CONTENT` | 결박할 글자가 없음 |
 | `INVALID_APP_VERSION` | 앱 버전이 0 이하 |
 
+## 저장 조건 (팀 합의 10/21)
+
+- **만료일 필수, 최대 30일**: `RuleRetention.defaultExpiry(생성 시각)`으로 30일 뒤를 넣습니다. 만료일이 없으면 `MISSING_EXPIRY`, 30일을 넘으면 `EXPIRY_TOO_LONG`으로 저장을 거부합니다(`RuleRejectedException`).
+- **자동 반복 OFF**: `repeatAutomationExplicitlyAllowed = true`인 규칙은 `REPEAT_AUTOMATION_DISABLED`로 거부합니다. 팀이 켜기로 합의하면 `RoomPopupRuleRepository(dao, repeatAutomationEnabled = true)`로만 허용됩니다.
+- **실제 클릭 성공과 사용자 기억 동의를 확인한 뒤에만 `save`를 호출**합니다. 저장소는 이를 알 수 없으므로 호출하는 쪽(B·C) 책임입니다.
+- `INCOMPLETE_EVIDENCE`는 A가 일괄 제거하지 않습니다. "근거가 충분한 경우" 기준을 A·D가 합의하기 전까지 지문 생성은 계속 실패(기억 불가)합니다.
+- 닫기 후보는 B가 같은 토큰에 붙인 분석을 지문 생성기의 `EvidenceExtractor`로 전달합니다. D는 후보 탐지를 구현하지 않습니다.
+- 저장소 병합(이 PR)과 실제 서비스 연동은 별도 PR로 진행합니다.
+
 ## 조회 규칙
 
-`findExact`는 다섯 키(패키지·버전·구조·본문·대상)가 모두 같고, 활성이며, 실패 0회, 스키마 1, `생성 ≤ 현재 < 만료`일 때만 규칙을 돌려줍니다. 규칙이 일치해도 실행 허가가 아니며 B가 정책·최신성·사용자 허락을 다시 확인합니다.
+`findExact`는 다섯 키(패키지·버전·구조·본문·대상)가 모두 같고, 활성이며, 실패 0회, 스키마 1, 만료일이 있고 `생성 ≤ 현재 < 만료`일 때만 규칙을 돌려줍니다. 규칙이 일치해도 실행 허가가 아니며 B가 정책·최신성·사용자 허락을 다시 확인합니다.
 
 - `save`: 같은 ID나 같은 키의 이전 선택을 지우고 새 선택만 남깁니다(철회 후 옛 허락 부활 방지).
 - `revoke`: 비활성으로 남겨 목록에 "철회됨"으로 보이게 합니다.
@@ -60,5 +69,6 @@ A의 `SnapshotToken` 지문은 세션 salt를 쓰므로 재사용하지 않습�
 
 - A/B 서비스 경로 연결: `InMemoryMockPopupRuleRepository`·`FixtureOnlyFingerprintProvider` 대체.
 - C의 규칙 목록·철회·전체 삭제 UI 연동.
-- 기본 만료 기간 정책(팀 합의), 스키마 변경 시 Migration과 스키마 JSON 커밋.
+- 스키마 변경 시 Migration과 스키마 JSON 커밋.
+- `INCOMPLETE_EVIDENCE` 해제 기준(A·D 합의).
 - 실기기 계측 실행, C09 시나리오(앱 업데이트·버튼 위치 변경) 추가.
