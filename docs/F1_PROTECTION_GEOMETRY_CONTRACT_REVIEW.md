@@ -2,6 +2,24 @@
 
 결론: **현재 운영 차단을 유지합니다.** 독립 증거·projection·지문 codec은 Android 수집기에 연결하지 않았습니다. `9922c80` 이후 기존 보호 pass root 소유권 검사(0-C)와 `e6b1a91` 이후 collector 지역 관측 기록(0-F)을 적용합니다. 기록은 기존 반환 경로와 독립적입니다. CollectionAttempt/receipt 연결·새 반환 경로·부분 F1 관측은 여전히 후속 설계이며, 두 pass·예산·지문 규격·F1/원래14개 정답은 유지합니다. 이후 절의 독립 모델 구현 기록은 당시 범위를 설명합니다.
 
+## 0-G. 운영 SNAPSHOT_PASS의 검사값·사용값 결박 — d75e752 이후
+
+이번 변경은 실제 AndroidSnapshotCollector의 대상 snapshot pass에만 CheckedNodeRead를 연결합니다. 기존 PROTECTION_PASS의 inspect/walk, target·동일 앱 배경·숨김 자식 검사와 ProtectionRootGuard/ObservedProtectionPass는 그대로입니다. CollectionProjection/CollectedRect/CollectionAttempt/SnapshotFingerprintCodec의 운영 연결, 새로운 Ready/Blocked 유형이나 보호 완료 receipt는 추가하지 않습니다.
+
+기존 snapshot pass는 inspect가 검사한 뒤 text/description/viewId/className/paneTitle을 getter로 다시 읽었습니다. 이제 collector 소유 AndroidCheckedNodeSource를 동기 호출해 기존 package → password/editable/inputType → TEXT/CONTENT_DESCRIPTION/VIEW_ID/CLASS_NAME/ERROR/HINT/PANE_TITLE/TOOLTIP/STATE_DESCRIPTION 순서로 모두 검사합니다. 해당 pass의 각 텍스트 getter는1회이며, 필드 간에는 재사용/동일성 추측을 하지 않습니다. 첫 보호 pass까지 포함하면 target 필드는 여전히 두 번 검사합니다.
+
+각 CharSequence는 먼저4096자 한도를 확인합니다. 이미 불변인 String은 그대로 사용하고, 나머지는 관측 길이만큼 한도 안의 CharArray에 문자 단위로 복사합니다. 원본의 toString/subSequence나 길이 절단을 사용하지 않습니다. 복사 뒤 원본 길이가 한도를 넘으면 기존 NODE_TEXT_LIMIT, 길이가 달라지면 고정 CHECKED_NODE_LENGTH_CHANGED 예외로 전체 거부합니다. 복사된 불변 String에 기존 CollectionProtectionCheck.text의 길이·민감·불확실성 검사를 수행하고, 허용된 바로 그 String을 사용합니다. ERROR/HINT/TOOLTIP/STATE_DESCRIPTION은 검사 후 보관하지 않습니다. CheckedNodeRead에는 다섯 불변 String?만 있으며 Source·Android node·가변 원본·예외를 저장하지 않습니다.
+
+NodeSnapshot의 네 문자열, 구조/본문/outline 지문 입력 및 DetectionOutline의 pane 판정은 이 검사값에서만 만듭니다. CheckedNodeRead의 snapshot/outline 함수는 기존 생성자에 값을 전달하는 함수일 뿐이며 completeness·토큰·보호 receipt·현재성·실행 허가를 생성하지 않습니다. getter·복사 실패는 기존 CollectionProgress의 실제 NODE_TEXT_READ 또는 NODE_TEXT_CHECK 경계로 분류하고 원문 예외를 진단에 넣지 않습니다. 제거된 두 번째 getter의 과거 실패 지점을 가상으로 출력하지 않습니다.
+
+clickable/enabled/actions/childCount/visible/scrollable 및 walk의 원래 호출 순서, path·부모/자식 순회, 두 pass 공유2400 방문/100ms·4096/32768 문자 한도, raw bounds 변환과 malformed 차단을 유지합니다. 정상 고정 입력의 DTO 필드와 V1 null/empty/UTF-8/길이/actions 인코딩은 동일합니다. 기존 salt·해시 함수·토큰 생성·snapshot/frame·Ready/Blocked·catch/finally와 서비스/Runtime은 미변경입니다. 역전 경계가 있으면 기존 MALFORMED_NODE_BOUNDS로 전체 Blocked이며, 정상 Dialog가 섞여도 노드 생략·부분 Ready·Candidate·OCR/행동으로 승격하지 않습니다.
+
+한계: 복사 중 관측한 길이 변화는 거부하지만 미관측 ABA·같은 길이의 변경과 전체 화면 원자성을 증명하지 않습니다. 소비한 복사값을 검사했다는 사실만 보장합니다. 처음 보호 pass의 원본 CharSequence 검사와 배경 상태 변화는 기존 동작이며, 실제 전체 F0 coverage·동일 시도/세션/정책/토큰·지문 결박·현재성/TTL의 P1은 남습니다. collector의 일반 catch(Exception)이 CancellationException을 Blocked로 바꾸는 동작과 Job 취소 검사 부재, 정리 예외가 원래 오류를 가릴 수 있는 기존 P2도 이번에 변경하지 않았습니다. 100ms는 기존 방문 지점의 예산 검사이고 비협력적 getter·복사를 강제로 중단하는 hard deadline이 아닙니다. 복사 비용에 대한 실제 API37 측정은 필요하며 한도를 늘려 보완하지 않습니다.
+
+API37에서 수정 버전은 아직 실행하지 않았습니다. 기존 F0 보호 우선순위 및 최소 Dialog/Layout 계측을 운영 회귀로 재사용하고, 원본14개는 원래 baseline·정답 그대로 실행해야 합니다. Scroll 역전 Rect·별도 Window/frame 불일치·원본14개 UNOBSERVED를 해결한 변경이 아닙니다. 추가 ScrollClip 진단이나 timeout 조정은 하지 않습니다. 코드/문서만 로컬에 보존하며 커밋·푸시·PR 변경·병합은 하지 않습니다.
+
+**2026-10-20 이번 로컬 검증:** 신규 CheckedNodeReadTest 34개를 포함한 JVM866개(앱430/호스트436), 실패·오류·skip0입니다. 두 모듈 Debug/AndroidTest APK, 앱 Release, 앱 Debug/Release 및 호스트 Debug Lint(각 이슈0), 기존 패키징 검사와 추가 DEX 정의 격리를 통과했습니다. CheckedNodeRead/collector adapter는 앱 Debug/Release에만 정의되고 JVM 테스트 클래스는 모든 APK에서 제외됐습니다. 이전832개 기록과 구분합니다. 기존 독립 Python 생성 golden의 구조 stream 및 구조/본문/각 outline SHA-256 바이트와, 실제 snapshot pass가 호출하는 read/snapshot/outline 함수의 합성 결과가 일치합니다. 첫 보호 loop/inspect, snapshot visitor 이후 반환·catch/finally, walk/해시/예산/상수 코드는 기준 HEAD와 동일합니다. 이는 Android getter·실제 background/숨김 자식·전체 수집기의 시점 동등성이나 100ms 성능 측정이 아닙니다.
+
 ## 0-F. collector 지역 관측 F0 순회 기록 — e6b1a91 이후
 
 [관측 보호 순회 기록](F1_OBSERVED_PROTECTION_PASS.md)을 추가합니다. capture마다 private owner가 실제 window/root 열거에서 target/동일 앱 배경/제외 타사를 등록하며, 보호 callback의 실제 walk 정상 반환 직후에만 root 완료를 기록합니다. 제외 guard의 정상 반환은 완료가 아닙니다. 전체 보호 root가 정확히1회 완료된 경우 private pass 기록을 만들고, 정상 종료를 포함한 모든 finally에서 framework 해제 전에 폐기합니다.

@@ -8,6 +8,18 @@ A 2차는 PR #1 병합 후 최신 `main`(`f52be56`)에서 만든 `feature/core-c
 
 최신 후속은 **A 내부 증거 표현·DTO 변환 게이트 1단계**입니다. 운영 수집기에 연결하지 않은 순수 Kotlin 구현이며, 보호 완료/순회 완료/geometry 완료를 분리하고 불완전 관측의 DTO 생성을 거부합니다. 아래 마지막 절과 [구현 범위·신뢰 경계](F1_PROTECTION_GEOMETRY_CONTRACT_REVIEW.md#0-1단계-구현--운영과-연결하지-않은-구조-검증)를 참고합니다. Scroll/Window 문제나 원래14개 baseline을 복구한 변경이 아닙니다.
 
+## 운영 F0 검사값·사용값 결박 (2026-10-20, d75e752 이후)
+
+현재 후속 변경은 실제 collector SNAPSHOT_PASS에 CheckedNodeRead를 연결한 것입니다. 위 독립 증거 모델·projection·합성 CollectionAttempt·지문 codec은 여전히 운영에 연결하지 않습니다. [상세 보호 경계](F1_PROTECTION_GEOMETRY_CONTRACT_REVIEW.md#0-g-운영-snapshot_pass의-검사값사용값-결박--d75e752-이후)를 기준으로 합니다.
+
+기존 첫 보호 pass의 target/동일 앱 배경·숨김 자식 순회는 원문 그대로 유지합니다. 두 번째 pass는 기존 모든 보호 필드를 순서대로 재검사하며, 제한된 불변 복사값으로 허용된 text/description/viewId/className/paneTitle을 getter 재조회 없이 DTO·지문·outline에 재사용합니다. 가변 입력의 크기 초과·관측 길이 변화·민감/불확실 값·getter/copy 실패는 전체 거부합니다. Source·Android 객체·가변 CharSequence·원문 예외를 새 결과에 보관하지 않습니다.
+
+기존 두 pass 공유2400 방문/100ms·필드4096/본문32768, actions/childCount/노드·부모 관계, V1 salt/인코딩·토큰·기존 Ready/Blocked·최초 진단·해제 및 서비스의 현재성/TTL 경로는 유지합니다. 실제 입력의 변화나 새 복사 경계에서의 실패는 해당 경계로 기록하며 과거의 두 번째 getter 실패를 만들어내지 않습니다. malformed Rect는 기존처럼 Blocked이며 geometry 미완료를 실행 가능한 Ready/Candidate로 만들지 않습니다. Service/Runtime·공통 DTO·BCD·UI·행동 게이트·기존 계측/원본14개·Manifest·gradle.properties는 변경하지 않습니다. 원문/좌표/지문/토큰의 로그·파일·DB·IPC 출력도 추가하지 않습니다.
+
+이 변경은 전체 F0 완전성·화면 원자성/현재성·TTL·토큰/지문 결합을 증명하지 않습니다. 기존 취소 삼킴·실제 Job 관측 및 정리 예외 위험은 남습니다. Scroll/Window 문제와 원본14개 UNOBSERVED도 미해결이며, 기존 사용자 Prepared Dialog/Layout/Scroll 실측을 새 버전의 성공으로 재사용하지 않습니다. 추가 ScrollClip 계측이나 timeout 변경은 없습니다. API37 수정 버전은 미실행이며 커밋·푸시·병합·PR 변경도 하지 않습니다.
+
+이번 실제 로컬 검증은 신규34개 포함 JVM866개(앱430/호스트436), 실패·오류·skip0입니다. 양쪽 Debug/AndroidTest APK·앱 Release, 앱 Debug/Release·호스트 Debug Lint(이슈0), 패키징/DEX 격리 및 diff/공백 검사를 통과했습니다. 기존832개는 과거 기록입니다. 기존 독립 golden 바이트와 합성 DTO/outline 필드 보존을 검증했으며 실제 Android 수집기 전체의 시점·성능 동등성은 미검증입니다.
+
 ## 구현 범위
 
 | 항목 | 현재 상태 | 담당·남은 작업 |

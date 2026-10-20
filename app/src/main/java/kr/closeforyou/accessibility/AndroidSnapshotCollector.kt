@@ -170,9 +170,10 @@ internal class AndroidSnapshotCollector {
             val content = progress.at(CollectionOperation.DIGEST_INITIALIZE) { MessageDigest.getInstance("SHA-256").apply { update(salt) } }
             var textCharacters = 0
             walk(root, budget, progress) { node, path, underScrollAncestor ->
-                inspect(node, packageName, progress, isRoot = path == "0")
-                val text = progress.at(CollectionOperation.NODE_TEXT_READ, CollectionField.TEXT) { node.text?.toString() }
-                val description = progress.at(CollectionOperation.NODE_TEXT_READ, CollectionField.CONTENT_DESCRIPTION) { node.contentDescription?.toString() }
+                val checked = CheckedNodeRead.read(AndroidCheckedNodeSource(node), packageName,
+                    isRoot = path == "0", progress, MAX_NODE_TEXT_CHARACTERS)
+                val text = checked.text
+                val description = checked.contentDescription
                 progress.at(CollectionOperation.TEXT_BUDGET) {
                     textCharacters += (text?.length ?: 0) + (description?.length ?: 0)
                     if (textCharacters > MAX_TEXT_CHARACTERS) throw CollectionGuardFailure(PrivacyBlockReason.TRUNCATED_TREE,
@@ -196,12 +197,10 @@ internal class AndroidSnapshotCollector {
                     }.toPersistentSet()
                 }
                 // Read Android properties before DTO constructors: a getter failure is not a DTO failure.
-                val viewId = progress.at(CollectionOperation.NODE_PROPERTIES_READ, CollectionField.VIEW_ID) { node.viewIdResourceName }
-                val className = progress.at(CollectionOperation.NODE_PROPERTIES_READ, CollectionField.CLASS_NAME) { node.className?.toString() }
                 val clickable = progress.at(CollectionOperation.NODE_PROPERTIES_READ) { node.isClickable }
                 val enabled = progress.at(CollectionOperation.NODE_PROPERTIES_READ) { node.isEnabled }
                 val snapshot = progress.at(CollectionOperation.NODE_DTO) {
-                    NodeSnapshot(path, viewId, className, text, description, clickable, enabled, bounds, actions).also { nodes += it }
+                    checked.snapshot(path, clickable, enabled, bounds, actions).also { nodes += it }
                 }
                 val childCount = progress.at(CollectionOperation.CHILD_COUNT_READ) { node.childCount }
                 val structuralFields = progress.at(CollectionOperation.STRUCTURE_FIELDS) {
@@ -212,13 +211,10 @@ internal class AndroidSnapshotCollector {
                 progress.at(CollectionOperation.CONTENT_HASH) { content.field(path); content.field(text); content.field(description) }
                 val fingerprint = progress.at(CollectionOperation.OUTLINE_HASH) { digest(path, snapshot.viewId, snapshot.className) }
                 val outlineChildCount = progress.at(CollectionOperation.CHILD_COUNT_READ) { node.childCount }
-                val pane = progress.at(CollectionOperation.OUTLINE_PROPERTIES_READ, CollectionField.PANE_TITLE) { !node.paneTitle.isNullOrEmpty() }
                 val visible = progress.at(CollectionOperation.OUTLINE_PROPERTIES_READ) { node.isVisibleToUser }
                 val scrollable = progress.at(CollectionOperation.OUTLINE_PROPERTIES_READ) { node.isScrollable }
                 progress.at(CollectionOperation.OUTLINE_DTO) {
-                    outlines += DetectionOutline(fingerprint, bounds, outlineChildCount,
-                        snapshot.className?.contains("dialog", ignoreCase = true) == true || NodeAction.DISMISS in actions,
-                        path, pane, visible, scrollable)
+                    outlines += checked.outline(fingerprint, bounds, outlineChildCount, actions, path, visible, scrollable)
                 }
                 scrollable // Context for descendants only; protection still inspects every node.
             }
@@ -355,6 +351,27 @@ internal class AndroidSnapshotCollector {
         check(CollectionField.PANE_TITLE) { node.paneTitle }
         check(CollectionField.TOOLTIP) { node.tooltipText }
         check(CollectionField.STATE_DESCRIPTION) { node.stateDescription }
+    }
+
+    /** One visitor call only; never stored in CheckedNodeRead, a DTO, or any completion record. */
+    private class AndroidCheckedNodeSource(private val node: AccessibilityNodeInfo) : CheckedNodeRead.Source {
+        override fun packageName(): String? = node.packageName?.toString()
+        override fun password(): Boolean = node.isPassword
+        override fun editable(): Boolean = node.isEditable
+        override fun inputType(): Int = node.inputType
+        override fun value(field: CollectionField): CharSequence? = when (field) {
+            CollectionField.TEXT -> node.text
+            CollectionField.CONTENT_DESCRIPTION -> node.contentDescription
+            CollectionField.VIEW_ID -> node.viewIdResourceName
+            CollectionField.CLASS_NAME -> node.className
+            CollectionField.ERROR -> node.error
+            CollectionField.HINT -> node.hintText
+            CollectionField.PANE_TITLE -> node.paneTitle
+            CollectionField.TOOLTIP -> node.tooltipText
+            CollectionField.STATE_DESCRIPTION -> node.stateDescription
+            else -> throw IllegalArgumentException("CHECKED_NODE_FIELD_INVALID")
+        }
+        override fun toString(): String = "AndroidCheckedNodeSource(redacted)"
     }
 
     private fun walk(
