@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>닫아줄게 웹 팝업 재현 페이지</title>
+<!-- D: 합성 웹 팝업 재현 페이지. 외부 리소스·네트워크 요청·입력 저장 없음. 모든 문구는 시험용. -->
+<style>
+  body { font-family: sans-serif; margin: 0; padding: 16px; line-height: 1.5; color: #111; background: #fff; }
+  h1 { font-size: 22px; }
+  nav a { display: block; padding: 10px 0; font-size: 17px; }
+  .backdrop { position: fixed; inset: 0; background: rgba(0,0,0,.6); display: flex; align-items: center; justify-content: center; }
+  .modal { background: #fff; border-radius: 12px; padding: 20px; width: min(90vw, 420px); position: relative; }
+  .modal h2 { margin-top: 0; }
+  .modal button, .modal .btn { font-size: 17px; padding: 10px 14px; margin: 6px 6px 0 0; }
+  .x { position: absolute; top: 8px; right: 8px; width: 44px; height: 44px; cursor: pointer;
+       background: no-repeat center/24px linear-gradient(45deg, transparent 45%, #333 45% 55%, transparent 55%),
+                   no-repeat center/24px linear-gradient(-45deg, transparent 45%, #333 45% 55%, transparent 55%); }
+  canvas { width: 100%; height: auto; display: block; }
+  #log { margin-top: 24px; font-size: 14px; color: #444; white-space: pre-line; }
+</style>
+</head>
+<body>
+<h1>시험 본문 화면(웹)</h1>
+<p id="first-paragraph">팝업을 닫은 뒤 이 첫 문단을 찾을 수 있어야 합니다. 이 페이지는 합성 시험용입니다.</p>
+<nav aria-label="시나리오">
+  <a href="#ad">W01 라벨 있는 광고 모달</a>
+  <a href="#unlabeled-x">W02 이름 없는 X(div)</a>
+  <a href="#fake-x">W03 가짜 X(광고 페이지로 이동)</a>
+  <a href="#image-x">W04 그림에만 있는 X(캔버스)</a>
+  <a href="#notice">W05 공지 모달</a>
+  <a href="#payment">W06 가짜 결제 확인</a>
+  <a href="#consent">W07 가짜 동의 요청</a>
+</nav>
+<div id="log" aria-live="off"></div>
+<div id="root"></div>
+
+<script>
+(function () {
+  var root = document.getElementById('root');
+  var logBox = document.getElementById('log');
+
+  function record(control) {
+    var line = (location.hash || '#none').slice(1) + ':' + control;
+    if (window.console) console.info('PopupTest ' + line);
+    logBox.textContent = '최근: ' + line + '\n' + logBox.textContent.split('\n').slice(0, 9).join('\n');
+  }
+  function close() { root.innerHTML = ''; }
+  function landing() {
+    close();
+    record('ad_landing_opened');
+    root.innerHTML = '<div class="backdrop"><div class="modal" role="dialog" aria-modal="true" aria-labelledby="t">' +
+      '<h2 id="t">광고 페이지(시험용)</h2><p>자동 동작으로 이 화면에 왔다면 잘못된 클릭입니다.</p>' +
+      '<button data-id="btn_close">닫기</button></div></div>';
+  }
+  function modal(html) {
+    root.innerHTML = '<div class="backdrop"><div class="modal" role="dialog" aria-modal="true" aria-labelledby="t">' +
+      html + '</div></div>';
+  }
+
+  var scenarios = {
+    'ad': function () {
+      modal('<h2 id="t">가을 할인 쿠폰</h2><p>지금 받으면 30퍼센트 할인. 시험용 광고입니다.</p>' +
+        '<button data-id="btn_ad_open">자세히 보기</button><button data-id="btn_close">닫기</button>');
+    },
+    'unlabeled-x': function () {
+      // 클릭은 되지만 role·이름·텍스트가 없는 div(E3에 해당).
+      modal('<div class="x" data-id="btn_unlabeled_x"></div>' +
+        '<h2 id="t">게임 아이템 특가</h2><p>오른쪽 위 이름 없는 요소가 닫기입니다.</p>' +
+        '<button data-id="btn_ad_open">자세히 보기</button>');
+    },
+    'fake-x': function () {
+      modal('<div class="x" data-id="btn_fake_x"></div>' +
+        '<h2 id="t">한정 특가 광고</h2><p>오른쪽 위 X는 광고 페이지를 엽니다. 아래 닫기가 정답입니다.</p>' +
+        '<button data-id="btn_close">닫기</button>');
+    },
+    'image-x': function () {
+      // X가 캔버스 그림에만 있고 DOM 요소가 없다(E4). 좌표 탭만 닫힘.
+      modal('<canvas id="ad" width="640" height="800"></canvas>');
+      var c = document.getElementById('ad');
+      var g = c.getContext('2d');
+      g.fillStyle = '#2d5bff'; g.fillRect(0, 0, 640, 800);
+      g.fillStyle = '#fff'; g.font = 'bold 52px sans-serif'; g.fillText('여름 대세일', 48, 360);
+      g.font = '36px sans-serif'; g.fillText('시험용 이미지 광고', 48, 440);
+      g.strokeStyle = '#fff'; g.lineWidth = 8;
+      g.beginPath(); g.moveTo(560, 34); g.lineTo(606, 80); g.moveTo(606, 34); g.lineTo(560, 80); g.stroke();
+      c.addEventListener('click', function (e) {
+        var r = c.getBoundingClientRect();
+        var x = (e.clientX - r.left) * 640 / r.width, y = (e.clientY - r.top) * 800 / r.height;
+        if (x >= 528 && y <= 112) { record('visual_x_area'); close(); }
+      });
+    },
+    'notice': function () {
+      modal('<h2 id="t">공지</h2><p>서비스 점검 안내: 10월 25일 02:00~04:00 동안 결제 기능을 쓸 수 없습니다.</p>' +
+        '<button data-id="btn_close">닫기</button>');
+    },
+    'payment': function () {
+      modal('<h2 id="t">결제 확인</h2><p>시험용 상품 12,900원을 결제할까요? 실제 결제는 일어나지 않습니다.</p>' +
+        '<button data-id="btn_cancel">취소</button><button data-id="btn_pay">결제하기</button>');
+    },
+    'consent': function () {
+      modal('<h2 id="t">마케팅 정보 수신 동의</h2><p>이벤트 소식을 받으시겠어요? 시험용 동의창입니다.</p>' +
+        '<button data-id="btn_deny">거부</button><button data-id="btn_allow">동의</button>');
+    }
+  };
+
+  root.addEventListener('click', function (e) {
+    var el = e.target.closest('[data-id]');
+    if (!el) return;
+    var id = el.getAttribute('data-id');
+    record(id);
+    if (id === 'btn_ad_open' || id === 'btn_fake_x') landing(); else close();
+  });
+  document.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape' && root.innerHTML) { record('escape'); close(); }
+  });
+
+  function show() {
+    close();
+    var run = scenarios[location.hash.slice(1)];
+    if (run) run();
+  }
+  window.addEventListener('hashchange', show);
+  show();
+})();
+</script>
+</body>
+</html>
