@@ -23,6 +23,7 @@ class ScenarioCatalogTest {
             assertTrue(it.id, it.expected == ExpectedHandling.AUTO_FORBIDDEN ||
                 it.expected == ExpectedHandling.BLOCK_ANALYSIS)
             assertNull(it.id, it.correctTargetId)
+            assertNull(it.id, it.appAllowedTargetId)
             assertFalse(it.id, it.rememberable)
         }
     }
@@ -45,11 +46,36 @@ class ScenarioCatalogTest {
     }
 
     @Test
-    fun visualOnlyCloseIsNeverRemembered() {
+    fun visualOnlyCloseHasNoHumanTarget() {
         all.filter { it.closeEvidence == CloseEvidence.E4_VISUAL_ONLY }.forEach {
             assertNull(it.id, it.correctTargetId)
+        }
+    }
+
+    /** AGENTS 6-3·A 게이트: 라벨 없는 X(E3)·그림 X(E4)는 앱이 누르지도 기억하지도 않는다. */
+    @Test
+    fun unlabeledOrVisualXIsNeverAppClickableOrRemembered() {
+        all.filter {
+            it.closeEvidence == CloseEvidence.E3_UNLABELED_CLICKABLE || it.closeEvidence == CloseEvidence.E4_VISUAL_ONLY
+        }.forEach {
+            assertNull(it.id, it.appAllowedTargetId)
             assertFalse(it.id, it.rememberable)
         }
+    }
+
+    @Test
+    fun appAllowedTargetIsTheHumanTargetAndNeverForbidden() {
+        all.forEach { s ->
+            s.appAllowedTargetId?.let {
+                assertEquals(s.id, s.correctTargetId, it)
+                assertFalse(s.id, it in s.forbiddenTargetIds)
+            }
+        }
+    }
+
+    @Test
+    fun onlyAppClickableScenariosAreRememberable() {
+        all.filter { it.rememberable }.forEach { assertNotNull(it.id, it.appAllowedTargetId) }
     }
 
     @Test
