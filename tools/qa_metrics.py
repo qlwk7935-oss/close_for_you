@@ -28,6 +28,8 @@ DEFAULT_KEY = REPO / "docs" / "templates" / "popup_answer_key.csv"
 OUTCOMES = ("AUTO_HANDLED", "USER_CONFIRMED", "ANNOUNCED_ONLY", "MISSED", "BLOCKED", "NOT_RUN")
 EXPECTED = ("USER_CHOICE", "AUTO_FORBIDDEN", "BLOCK_ANALYSIS", "NO_ACTION")
 DANGEROUS = {"AUTO_FORBIDDEN", "BLOCK_ANALYSIS"}
+APP_ACTED = {"AUTO_HANDLED", "USER_CONFIRMED"}
+REFUSED = {"ANNOUNCED_ONLY", "BLOCKED"}
 YES, NO = "Y", "N"
 
 LOG_LINE = re.compile(r"PopupTest(?:\(\s*\d+\))?\s*:\s*([A-Z]\d\d):([A-Za-z0-9_]+)")
@@ -60,6 +62,8 @@ def load_results(path: Path, key: dict[str, dict]) -> tuple[list[dict], list[str
             row = {k.strip(): (v or "").strip() for k, v in row.items() if k}
             sid = row.get("scenario_id", "")
             answer = key.get(sid)
+            row["_in_key"] = bool(answer)
+            row["_app_allowed"] = (answer or {}).get("app_allowed_target", "")
             if answer:
                 row.setdefault("expected_handling", "")
                 if not row["expected_handling"]:
@@ -93,10 +97,13 @@ def scan_logcat(path: Path, key: dict[str, dict]) -> list[str]:
         answer = key.get(sid)
         forbidden = set(filter(None, (answer or {}).get("forbidden_targets", "").split(";")))
         correct = (answer or {}).get("correct_target", "")
+        allowed = (answer or {}).get("app_allowed_target", "")
         if control == "ad_landing_opened" or control in forbidden:
             verdict = "**금지 동작**"
+        elif allowed and control == allowed:
+            verdict = "정답 버튼(앱 허용)"
         elif correct and control == correct:
-            verdict = "정답 버튼"
+            verdict = "사람 기준 정답(앱은 누르면 안 됨)"
         elif answer is None:
             verdict = "정답지에 없는 시나리오"
         else:
@@ -134,6 +141,18 @@ def report(rows: list[dict], problems: list[str], log_lines: list[str] | None) -
             f"- 전체 시행 중 금지 버튼 실행: {all_forbidden}건",
             "- 0건 관측은 영구적으로 안전하다는 증거가 아닙니다.", ""]
 
+    # 앱 판단 대 정답지 (B 분류·후보·정책)
+    keyed = [r for r in run if r["_in_key"]]
+    acted = [r for r in keyed if r["outcome"] in APP_ACTED and r.get("clicked_target")]
+    wrong = [r for r in acted if r["clicked_target"] != r["_app_allowed"]]
+    could = [r for r in keyed if r["_app_allowed"] and r.get("expected_handling") == "USER_CHOICE"]
+    refused = [r for r in could if r["outcome"] in REFUSED]
+    out += ["## 앱 판단(정답지 기준)", "",
+            f"- 오클릭(앱이 누른 버튼이 '앱 허용 버튼'이 아님): {ratio(len(wrong), len(acted))}",
+            f"- 잘못 거부(앱이 눌러도 되는데 닫기를 제안하지 않음): {ratio(len(refused), len(could))}",
+            "- '앱 허용 버튼'은 팀 규칙상 앱이 대신 누를 수 있는 버튼이다. 라벨 없는 X(P04)·그림 X(P05)는 없음이므로",
+            "  앱이 누르지 않아도 잘못 거부로 세지 않는다.", ""]
+
     # 처리 범위 (C13)
     popups = [r for r in run if yn(r.get("is_popup")) is not False]
     outcome_counts = Counter(r["outcome"] for r in popups)
@@ -157,13 +176,19 @@ def report(rows: list[dict], problems: list[str], log_lines: list[str] | None) -
     by_sid: dict[str, list[dict]] = defaultdict(list)
     for r in run:
         by_sid[r.get("scenario_id", "?")].append(r)
-    out += ["## 시나리오별", "", "| 시나리오 | 시행 | 감지 | 금지 버튼 실행 | 결과 분포 |", "|---|---|---|---|---|"]
+    out += ["## 시나리오별", "",
+            "| 시나리오 | 시행 | 감지 | 금지 버튼 실행 | 오클릭 | 잘못 거부 | 결과 분포 |",
+            "|---|---|---|---|---|---|---|"]
     for sid in sorted(by_sid):
         rs = by_sid[sid]
         detected = sum(1 for r in rs if yn(r.get("detected")))
         bad = sum(1 for r in rs if yn(r.get("forbidden_click")))
+        wrong_n = sum(1 for r in rs if r["_in_key"] and r["outcome"] in APP_ACTED and r.get("clicked_target")
+                      and r["clicked_target"] != r["_app_allowed"])
+        refused_n = sum(1 for r in rs if r["_in_key"] and r["_app_allowed"]
+                        and r.get("expected_handling") == "USER_CHOICE" and r["outcome"] in REFUSED)
         dist = ", ".join(f"{k} {v}" for k, v in Counter(r["outcome"] for r in rs).most_common())
-        out.append(f"| {sid} | {len(rs)} | {detected} | {bad} | {dist} |")
+        out.append(f"| {sid} | {len(rs)} | {detected} | {bad} | {wrong_n} | {refused_n} | {dist} |")
     out.append("")
 
     if log_lines is not None:
