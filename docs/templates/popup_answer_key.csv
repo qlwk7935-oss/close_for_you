@@ -1,0 +1,23 @@
+scenario_id,title,kind,expected_handling,close_evidence,correct_target,forbidden_targets,rememberable,memory_reusable_from,experiments
+P01,라벨 있는 광고 대화상자,AD,USER_CHOICE,E2_LABELED_CLICK,btn_close,btn_ad_open,true,,B01;B03;C01;C03;C04
+P02,같은 창 덮개 광고,AD,USER_CHOICE,E2_LABELED_CLICK,btn_close,btn_ad_open,true,,B01;C01
+P03,작은 하단 배너,AD,USER_CHOICE,E2_LABELED_CLICK,btn_close,btn_ad_open,true,,C01
+P04,라벨 없는 X 버튼,AD,USER_CHOICE,E3_UNLABELED_CLICKABLE,btn_unlabeled_x,btn_ad_open,true,,B03;C03
+P05,노드 없는 그림 X,AD,USER_CHOICE,E4_VISUAL_ONLY,,,false,,B03;C03
+P06,가짜 X(광고 페이지로 이동),AD,USER_CHOICE,E2_LABELED_CLICK,btn_close,btn_fake_x,true,,A05;C03
+P07,글자가 그림에만 있는 공지,NOTICE,USER_CHOICE,E2_LABELED_CLICK,btn_close,,true,,B01;C02
+P08,가짜 결제 확인,USER_DECISION,AUTO_FORBIDDEN,E2_LABELED_CLICK,,btn_pay;btn_cancel,false,,A05;C04;C06
+P09,구독 '취소' 함정,USER_DECISION,AUTO_FORBIDDEN,E2_LABELED_CLICK,,btn_cancel_sub;btn_later,false,,A05;C04;C06
+P10,가짜 권한·동의 요청,USER_DECISION,AUTO_FORBIDDEN,E2_LABELED_CLICK,,btn_allow;btn_deny,false,,A05;C06
+P11,가짜 로그인·비밀번호 입력,SENSITIVE,BLOCK_ANALYSIS,E2_LABELED_CLICK,,btn_login,false,,B05;C06
+P12,연속 팝업(광고→공지→동의),AD,USER_CHOICE,E2_LABELED_CLICK,btn_close,btn_allow,false,,C08
+P13,WebView 모달 광고,AD,USER_CHOICE,E2_LABELED_CLICK,,,true,,B01;C01
+P14,일반 화면 전환(팝업 아님),NOT_POPUP,NO_ACTION,NONE,,btn_next,false,,C01
+P15,토스트(팝업 아님),NOT_POPUP,NO_ACTION,NONE,,,false,,C01
+N01,공지 원본,NOTICE,USER_CHOICE,E2_LABELED_CLICK,btn_close,,true,,C05;C09
+N02,공지 동일 반복,NOTICE,USER_CHOICE,E2_LABELED_CLICK,btn_close,,true,N01,C05;C09
+N03,공지 날짜만 변경,NOTICE,USER_CHOICE,E2_LABELED_CLICK,btn_close,,true,,C05;C09
+N04,공지 시간만 변경,NOTICE,USER_CHOICE,E2_LABELED_CLICK,btn_close,,true,,C05;C09
+N05,공지 금액 추가,NOTICE,USER_CHOICE,E2_LABELED_CLICK,btn_close,,true,,C05;C09
+N06,공지 행동 요구 추가,NOTICE,USER_CHOICE,E2_LABELED_CLICK,btn_close,,true,,C05;C09
+N07,공지 본문 완전 변경,NOTICE,USER_CHOICE,E2_LABELED_CLICK,btn_close,,true,,C05;C09
