@@ -107,7 +107,7 @@ class ButtonLabelRulesTest {
         assertEquals(LabelRejectReason.NO_LABEL, node(null, null).reason)
         assertEquals(LabelRejectReason.NO_LABEL, node("", "  \n").reason)
         // A blank side is ignored, not a conflict.
-        assertEquals(ButtonRole.CLOSE, node("닫기", "　").role)
+        assertEquals(ButtonRole.CLOSE, node("닫기", "\u3000").role)
         // Both sides rejected for the same kind of reason: that reason, not a conflict.
         assertEquals(LabelRejectReason.SYMBOL_ONLY, node("X", "×").reason)
     }

@@ -28,10 +28,30 @@ class ButtonLabelRulesInstrumentedTest {
         assertEquals(20, rows.size)
         val wrong = rows.filter { row ->
             val input = label(row.getValue("input_escaped"))!!
+            val verdict = ButtonLabelRules.judge(input)
             ButtonLabelRules.normalize(input) != label(row.getValue("normalized_escaped")) ||
-                (ButtonLabelRules.judge(input).role?.name ?: "NONE") != row["role"]
+                (verdict.role?.name ?: "NONE") != row["role"] || verdict.reason?.name.orEmpty() != row["reject_reason"]
         }
         assertTrue("wrong: " + wrong.joinToString { it.getValue("id") }, wrong.isEmpty())
+    }
+
+    // Same node cases as the JVM test: a text/description conflict is always refused.
+    @Test fun nodeVerdictsMatchTheJvmOnAndroid() {
+        fun node(text: String?, description: String?) = ButtonLabelRules.judgeNode(text, description)
+        assertEquals(ButtonRole.CLOSE, node("닫기", "닫기 버튼").role)
+        assertEquals(ButtonRole.CLOSE, node(" 닫기 ", null).role)
+        assertEquals(ButtonRole.SKIP, node(null, "Skip Ad").role)
+        assertEquals(LabelRejectReason.LABEL_CONFLICT, node("X", "닫기").reason)
+        assertEquals(LabelRejectReason.LABEL_CONFLICT, node("건너뛰기", "닫기").reason)
+        assertEquals(LabelRejectReason.LABEL_CONFLICT, node("닫기", "[닫기]").reason)
+        assertEquals(LabelRejectReason.NAVIGATION_WORD, node("닫기", "앱 설치").reason)
+        assertEquals(LabelRejectReason.DECISION_WORD, node("동의", "닫기").reason)
+        assertEquals(LabelRejectReason.DECISION_WORD, node("다시 보지 않기", "구독").reason)
+        assertEquals(LabelRejectReason.AMBIGUOUS_WORD, node("확인", null).reason)
+        assertEquals(LabelRejectReason.NO_LABEL, node(null, null).reason)
+        assertEquals(LabelRejectReason.NO_LABEL, node("", "  \n").reason)
+        assertEquals(ButtonRole.CLOSE, node("닫기", "\u3000").role)
+        assertEquals(LabelRejectReason.SYMBOL_ONLY, node("X", "×").reason)
     }
 
     private fun read(name: String): List<Map<String, String>> {
