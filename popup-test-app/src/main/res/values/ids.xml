@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 정답지(ScenarioCatalog)의 correctTargetId·forbiddenTargetIds와 같은 이름. -->
+<resources>
+    <item name="btn_close" type="id" />
+    <item name="btn_ad_open" type="id" />
+    <item name="btn_unlabeled_x" type="id" />
+    <item name="btn_fake_x" type="id" />
+    <item name="btn_pay" type="id" />
+    <item name="btn_cancel" type="id" />
+    <item name="btn_cancel_sub" type="id" />
+    <item name="btn_later" type="id" />
+    <item name="btn_allow" type="id" />
+    <item name="btn_deny" type="id" />
+    <item name="btn_login" type="id" />
+    <item name="btn_next" type="id" />
+    <item name="field_password" type="id" />
+</resources>
