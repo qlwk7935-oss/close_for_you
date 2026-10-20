@@ -105,6 +105,34 @@ internal class LayoutWaitDiagnostics(private val phase: LayoutPhase) {
     override fun toString() = "LayoutWaitDiagnostics(phase=${phase.name},point=${lastPoint.name})"
 }
 
+/** One query after RESET, before the real host request. No phase completion is issued.
+ * A separate bounded deadline does not replace/restart the existing polling/final deadlines.
+ * The caller supplies the same session/window query and fail-closed ownership anchors.
+ */
+internal object LayoutBeforeRequestCheckpoint {
+    suspend fun <T> run(now: () -> Long, reset: suspend () -> Unit, active: suspend () -> Unit,
+        anchor: () -> Unit, query: suspend () -> T, assess: (T) -> PreparedAssessment,
+        report: (String) -> Unit, request: () -> Unit) {
+        reset()
+        active()
+        val deadline = PreparedFinalDeadline.start(now)
+        anchor()
+        deadline.check()
+        val reply = query() // Exactly one RESULT; no polling or retry.
+        deadline.check()
+        anchor()
+        val diagnostic = LayoutWaitDiagnostics(LayoutPhase.LAYOUT_CHANGE)
+        diagnostic.assessed { assess(reply) }
+        deadline.check()
+        report("F1_LAYOUT_CHECKPOINT;PHASE=LAYOUT_CHANGE;CHECKPOINT=BEFORE_LAYOUT_REQUEST;" +
+            "OWNED_ATTEMPTS=${diagnostic.ownedAttempts.name};BASELINE_ONLY_ATTEMPTS=${diagnostic.baselineOnlyAttempts.name};" +
+            "REASONS=${diagnostic.reasons.name};PHASE_EVIDENCE=NONE;ATOMIC_BINDING=NONE")
+        active()
+        deadline.check() // Includes reporting/scheduling before allowing the host request.
+        request()
+    }
+}
+
 /** Exact fixture bounds only, not a correction/tolerance for observed Android bounds. */
 internal object LayoutMutation {
     fun changed(before: List<IsolationRect>, after: List<IsolationRect>): Boolean {
@@ -125,7 +153,8 @@ internal object LayoutMutation {
 
 /** Real service rows are still parsed/checked by the existing Prepared contract. */
 internal object LayoutChangeContract {
-    fun assess(phase: LayoutPhase, code: String?, attempts: List<String>, overflow: Boolean, floor: Int): PreparedAssessment {
+    fun assess(phase: LayoutPhase, code: String?, attempts: List<String>, overflow: Boolean, floor: Int,
+        evidenceFloor: Int = floor): PreparedAssessment {
         // Inspect all bounded, allowlisted rows for a reported candidate, even when another
         // row would make ordinary-screen validation stop first. This can only fail the test.
         if (code == "OBSERVED" && attempts.size <= 256 && attempts.any { encoded ->
@@ -135,7 +164,7 @@ internal object LayoutChangeContract {
             }) return PreparedAssessment(PreparedVerdict.BASELINE_FALSE_CANDIDATE)
         val result = PreparedMinimalDialogContract.assess(phase.observationPhase, code, attempts, overflow, floor)
         if (phase == LayoutPhase.LAYOUT_CHANGE && result.verdict == PreparedVerdict.BASELINE_CONFIRMED &&
-            result.rows.values.none { ";REASON=ORDINARY_CONTENT_CHANGE;" in it })
+            result.rows.none { (ordinal, row) -> ordinal > evidenceFloor && ";REASON=ORDINARY_CONTENT_CHANGE;" in row })
             return PreparedAssessment(PreparedVerdict.BASELINE_INSUFFICIENT, result.rows)
         return result
     }
@@ -145,7 +174,7 @@ internal object LayoutChangeContract {
 
 /** Test-only ordered orchestration. No Android F0/currentness/TTL proof is issued. */
 internal class LayoutChangeProgress {
-    class Scope internal constructor(val phase: LayoutPhase, internal val floor: Int) {
+    class Scope internal constructor(val phase: LayoutPhase, internal val floor: Int, internal val evidenceFloor: Int = floor) {
         internal var previous = emptyMap<Int, String>()
         internal var final: PreparedAssessment? = null
         internal var deadline: PreparedFinalDeadline? = null
@@ -155,11 +184,29 @@ internal class LayoutChangeProgress {
         private set
     private var active: Scope? = null
     private var completedOrdinal = 0
+    private var checkpointOrdinal: Int? = null
+    private var checkpointRows = emptyMap<Int, String>()
+
+    /** Diagnostic acceptance only. Keep all provider rows and the original validation floor.
+     * A stricter evidence boundary prevents these same retained rows from later completing change.
+     */
+    fun inspectCheckpoint(code: String?, rows: List<String>?, overflow: Any?): PreparedAssessment {
+        if (stage != LayoutStage.BASELINE_VERIFIED || active != null || checkpointOrdinal != null)
+            stop(PreparedVerdict.STAGE_ORDER_INVALID)
+        if (code != "OBSERVED") stop(PreparedVerdict.RESPONSE_REJECTED)
+        if (rows == null || overflow !is Boolean) stop(PreparedVerdict.INVALID_DIAGNOSTIC)
+        val result = LayoutChangeContract.assess(LayoutPhase.LAYOUT_CHANGE, code, rows, overflow, completedOrdinal)
+        if (result.verdict !in setOf(PreparedVerdict.UNOBSERVED, PreparedVerdict.BASELINE_INSUFFICIENT, PreparedVerdict.BASELINE_CONFIRMED))
+            stop(result.verdict)
+        checkpointOrdinal = maxOf(completedOrdinal, result.maximumOrdinal)
+        checkpointRows = result.rows
+        return result // Never updates completedOrdinal, a scope final marker or the stage.
+    }
 
     fun assess(scope: Scope, code: String?, rows: List<String>, overflow: Boolean, final: Boolean = false,
         deadline: PreparedFinalDeadline? = null): PreparedAssessment {
         if (active !== scope || scope.final != null) stop(PreparedVerdict.STAGE_ORDER_INVALID)
-        val result = LayoutChangeContract.assess(scope.phase, code, rows, overflow, scope.floor)
+        val result = LayoutChangeContract.assess(scope.phase, code, rows, overflow, scope.floor, scope.evidenceFloor)
         val waiting = PreparedMinimalDialogContract.awaitingFirstAttempt(scope.phase.observationPhase, result)
         if (waiting && scope.previous.isNotEmpty()) stop(PreparedVerdict.SNAPSHOT_REGRESSED)
         val expected = PreparedMinimalDialogContract.expected(scope.phase.observationPhase)
@@ -196,7 +243,14 @@ internal class LayoutChangeProgress {
     private suspend fun verify(phase: LayoutPhase, expected: LayoutStage, next: LayoutStage,
         checks: suspend (Scope) -> Unit) {
         if (stage != expected || active != null) stop(PreparedVerdict.STAGE_ORDER_INVALID)
-        val scope = Scope(phase, completedOrdinal).also { active = it }
+        val scope = Scope(phase, completedOrdinal,
+            if (phase == LayoutPhase.LAYOUT_CHANGE) checkpointOrdinal ?: completedOrdinal else completedOrdinal).also {
+            if (phase == LayoutPhase.LAYOUT_CHANGE) {
+                it.previous = checkpointRows // Retained diagnostics must not disappear/change after the checkpoint.
+                checkpointRows = emptyMap() // Transfer the existing bounded map; do not duplicate rows.
+            }
+            active = it
+        }
         try {
             checks(scope)
             if (stage != expected || active !== scope) stop(PreparedVerdict.STAGE_ORDER_INVALID)
@@ -213,6 +267,8 @@ internal class LayoutChangeProgress {
     }
     fun abort() {
         active?.previous = emptyMap(); active?.final = null; active?.deadline = null
+        checkpointOrdinal = null
+        checkpointRows = emptyMap()
         active = null; stage = LayoutStage.ABORTED
     }
     fun outcome(cleanup: Boolean, readsClean: Boolean) =

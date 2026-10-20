@@ -97,9 +97,14 @@ class ServiceLayoutChangeOptInTest {
             phase = LayoutPhase.LAYOUT_CHANGE
             val changed = progress.changeAndVerifyHost {
                 reader.anchor(base, stimulated = true)
-                requireCode(call("RESET", key), "RESET") // Records only; exactly once BEFORE real layout mutation.
-                currentCoroutineContext().ensureActive()
-                reader.requestChange(base)
+                LayoutBeforeRequestCheckpoint.run(SystemClock::uptimeMillis,
+                    reset = { requireCode(call("RESET", key), "RESET") },
+                    active = { currentCoroutineContext().ensureActive() },
+                    anchor = { reader.anchor(base, stimulated = true) },
+                    query = { call("RESULT", key, Bundle().apply { putInt("ownedWindowId", base.geometry.own.window) }) },
+                    assess = { reply -> checkpointAssessment(progress, reply) },
+                    report = ::emit,
+                    request = { reader.requestChange(base) })
                 val first = MinimalGeometryPolling.firstCoherent(SystemClock::uptimeMillis, reader.safety,
                     { reader.afterChange(base) }, { it.geometry.coherent }, { delay(it) })
                 MinimalGeometryPolling.stable(SystemClock::uptimeMillis, { reader.afterChange(base) },
@@ -190,6 +195,10 @@ class ServiceLayoutChangeOptInTest {
     private fun assess(progress: LayoutChangeProgress, scope: LayoutChangeProgress.Scope, reply: Bundle, final: Boolean,
         deadline: PreparedFinalDeadline? = null) = progress.assess(scope, reply.getString("code"),
         reply.getStringArrayList("attempts").orEmpty(), reply.getBoolean("overflow"), final, deadline)
+
+    @Suppress("DEPRECATION") // Inspect the actual IPC type; getBoolean could silently default malformed data to false.
+    private fun checkpointAssessment(progress: LayoutChangeProgress, reply: Bundle) = progress.inspectCheckpoint(
+        reply.getString("code"), reply.getStringArrayList("attempts"), reply.get("overflow"))
 
     private suspend fun finish(activity: MinimalDialogActivity) {
         MinimalGeometryReader.onMain(instrumentation) { activity.finishAndRemoveTask() }

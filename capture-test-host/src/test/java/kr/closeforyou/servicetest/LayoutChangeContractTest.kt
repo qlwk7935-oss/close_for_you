@@ -42,6 +42,267 @@ class LayoutChangeContractTest {
     }
     private suspend fun beforeChange() = ready().also { it.changeAndVerifyHost { } }
 
+    private suspend fun checkpoint(progress: LayoutChangeProgress, rows: List<String>, code: String = "OBSERVED",
+        overflow: Boolean = false, now: () -> Long = { 0L }, reset: suspend () -> Unit = {},
+        active: suspend () -> Unit = {}, anchor: () -> Unit = {}, query: suspend () -> List<String> = { rows },
+        report: (String) -> Unit = {}, request: () -> Unit = {}) = progress.changeAndVerifyHost {
+        LayoutBeforeRequestCheckpoint.run(now, reset, active, anchor, query,
+            { progress.inspectCheckpoint(code, it, overflow) }, report, request)
+    }
+
+    @Test fun checkpointEmptyResultIsNoneWithoutCompletingChange() = immediately {
+        val progress = ready()
+        var output = ""
+        checkpoint(progress, emptyList(), report = { output = it })
+        assertEquals("F1_LAYOUT_CHECKPOINT;PHASE=LAYOUT_CHANGE;CHECKPOINT=BEFORE_LAYOUT_REQUEST;" +
+            "OWNED_ATTEMPTS=NONE;BASELINE_ONLY_ATTEMPTS=NONE;REASONS=NONE;PHASE_EVIDENCE=NONE;ATOMIC_BINDING=NONE", output)
+        assertEquals(LayoutStage.LAYOUT_CHANGED, progress.stage)
+        assertEquals("INCONCLUSIVE", progress.outcome(true, true))
+    }
+
+    @Test fun checkpointOneBaselineRowIsOneOneNotSuccess() = immediately {
+        val progress = ready()
+        var output = ""
+        checkpoint(progress, listOf(row(3, "BASELINE_ONLY")), report = { output = it })
+        assertTrue(output.contains("OWNED_ATTEMPTS=ONE;BASELINE_ONLY_ATTEMPTS=ONE;REASONS=BASELINE_ONLY_ONLY;"))
+        assertFalse(output.contains(";ATTEMPT="))
+        assertEquals("INCONCLUSIVE", progress.outcome(true, true))
+    }
+
+    @Test fun checkpointMultipleRowsUseUniqueOrdinalCategories() = immediately {
+        var output = ""
+        checkpoint(ready(), listOf(row(3, "BASELINE_ONLY"), row(4, "BASELINE_ONLY")), report = { output = it })
+        assertTrue(output.contains("OWNED_ATTEMPTS=MULTIPLE;BASELINE_ONLY_ATTEMPTS=MULTIPLE;REASONS=BASELINE_ONLY_ONLY;"))
+    }
+
+    @Test fun checkpointMixedReasonsAreFixedCodesOnly() = immediately {
+        var output = ""
+        checkpoint(ready(), listOf(row(3, "BASELINE_ONLY"), row(4, "UNCHANGED")), report = { output = it })
+        assertTrue(output.contains("OWNED_ATTEMPTS=MULTIPLE;BASELINE_ONLY_ATTEMPTS=ONE;REASONS=MIXED;"))
+    }
+
+    @Test fun checkpointActualSharedSequenceHasExactlyOneQueryBeforeRequest() = immediately {
+        val calls = mutableListOf<String>()
+        val progress = ready()
+        progress.changeAndVerifyHost {
+            LayoutBeforeRequestCheckpoint.run({ 0L }, { calls += "RESET" }, { calls += "ACTIVE" },
+                { calls += "ANCHOR" }, { calls += "QUERY"; emptyList<String>() },
+                { calls += "ASSESS"; progress.inspectCheckpoint("OBSERVED", it, false) },
+                { calls += "REPORT"; assertEquals(LayoutStage.BASELINE_VERIFIED, progress.stage) },
+                { calls += "REQUEST"; assertEquals(LayoutStage.BASELINE_VERIFIED, progress.stage) })
+        }
+        assertEquals(listOf("RESET", "ACTIVE", "ANCHOR", "QUERY", "ANCHOR", "ASSESS", "REPORT", "ACTIVE", "REQUEST"), calls)
+        assertEquals(LayoutStage.LAYOUT_CHANGED, progress.stage)
+    }
+
+    @Test fun checkpointRejectedResultsNeverRequestLayoutOrReportAcceptance() = immediately {
+        for ((code, rows, overflow, expected) in listOf(
+            CheckpointBad("INVALID_SESSION", emptyList(), false, PreparedVerdict.RESPONSE_REJECTED),
+            CheckpointBad("OBSERVED", emptyList(), true, PreparedVerdict.OVERFLOW),
+            CheckpointBad("OBSERVED", listOf(outside(3)), false, PreparedVerdict.GEOMETRY_REJECTED),
+            CheckpointBad("OBSERVED", listOf("3:BLOCKED:PASSWORD:NONE"), false, PreparedVerdict.COLLECTION_BLOCKED),
+            CheckpointBad("OBSERVED", listOf("3:ASSESSED:UNCERTAIN:UNCONFIRMED_STRUCTURE:VALID:POSITIVE:POSITIVE:WITHIN_FRAME:NONE:OLDER"), false, PreparedVerdict.DETECTOR_UNCERTAIN),
+            CheckpointBad("OBSERVED", listOf(candidate(3)), false, PreparedVerdict.BASELINE_FALSE_CANDIDATE),
+            CheckpointBad("OBSERVED", listOf(row(3), row(3)), false, PreparedVerdict.INVALID_DIAGNOSTIC),
+            CheckpointBad("OBSERVED", listOf("PRIVATE_INVALID"), false, PreparedVerdict.INVALID_DIAGNOSTIC),
+            CheckpointBad("OBSERVED", listOf(row(2)), false, PreparedVerdict.PHASE_ATTEMPT_REUSED),
+        )) {
+            val progress = ready()
+            var resets = 0; var queries = 0; var reports = 0; var requests = 0
+            rejects(expected) { checkpoint(progress, rows, code, overflow, reset = { resets++ },
+                query = { queries++; rows }, report = { reports++ }, request = { requests++ }) }
+            assertEquals(1, resets); assertEquals(1, queries)
+            assertEquals(0, reports); assertEquals(0, requests)
+            assertEquals(LayoutStage.ABORTED, progress.stage)
+        }
+    }
+    private data class CheckpointBad(val code: String, val rows: List<String>, val overflow: Boolean, val expected: PreparedVerdict)
+
+    @Test fun checkpointMissingOrMistypedFieldsAreNotAnEmptyValidReply() = immediately {
+        val missing: List<Pair<List<String>?, Any?>> = listOf(null to false, emptyList<String>() to null,
+            emptyList<String>() to "PRIVATE_FALSE", emptyList<String>() to 0)
+        for ((rows, overflow) in missing) {
+            val progress = ready()
+            var requests = 0
+            rejects(PreparedVerdict.INVALID_DIAGNOSTIC) {
+                progress.changeAndVerifyHost {
+                    LayoutBeforeRequestCheckpoint.run({ 0L }, {}, {}, {}, { Unit },
+                        { progress.inspectCheckpoint("OBSERVED", rows, overflow) }, {}, { requests++ })
+                }
+            }
+            assertEquals(0, requests); assertEquals(LayoutStage.ABORTED, progress.stage)
+        }
+    }
+
+    @Test fun checkpointOwnershipFailureBeforeQueryPreventsAnyRead() = immediately {
+        val progress = ready()
+        var queries = 0; var requests = 0
+        try {
+            checkpoint(progress, emptyList(), anchor = { throw GeometryDiagnosticFailure(GeometryIssue.WINDOW_MISMATCH) },
+                query = { queries++; emptyList() }, request = { requests++ })
+            fail("OWNERSHIP_FAILURE_REQUIRED")
+        } catch (failure: GeometryDiagnosticFailure) { assertEquals(GeometryIssue.WINDOW_MISMATCH, failure.issue) }
+        assertEquals(0, queries); assertEquals(0, requests)
+        assertEquals(LayoutStage.ABORTED, progress.stage)
+    }
+
+    @Test fun checkpointOwnershipFailureAfterResponsePreventsAssessmentAndRequest() = immediately {
+        val progress = ready()
+        var anchors = 0; var reports = 0; var requests = 0
+        try {
+            checkpoint(progress, listOf(row(3)), anchor = { if (++anchors == 2) throw GeometryDiagnosticFailure(GeometryIssue.WINDOW_MISMATCH) },
+                report = { reports++ }, request = { requests++ })
+            fail("OWNERSHIP_FAILURE_REQUIRED")
+        } catch (failure: GeometryDiagnosticFailure) { assertEquals(GeometryIssue.WINDOW_MISMATCH, failure.issue) }
+        assertEquals(0, reports); assertEquals(0, requests)
+        assertEquals(LayoutStage.ABORTED, progress.stage)
+    }
+
+    @Test fun checkpointResetFailurePreventsQueryAndRequest() = immediately {
+        val progress = ready()
+        var queries = 0; var requests = 0
+        rejects(PreparedVerdict.RESPONSE_REJECTED) {
+            checkpoint(progress, emptyList(), reset = { throw PreparedFailure(PreparedVerdict.RESPONSE_REJECTED) },
+                query = { queries++; emptyList() }, request = { requests++ })
+        }
+        assertEquals(0, queries); assertEquals(0, requests)
+    }
+
+    @Test fun checkpointQueryFailureIsPropagatedAndNeverRetried() = immediately {
+        val progress = ready()
+        val primary = IllegalStateException("PRIVATE_QUERY_FAILURE")
+        var queries = 0; var requests = 0
+        try {
+            checkpoint(progress, emptyList(), query = { queries++; throw primary }, request = { requests++ })
+            fail("QUERY_FAILURE_REQUIRED")
+        } catch (failure: IllegalStateException) { assertSame(primary, failure) }
+        assertEquals(1, queries); assertEquals(0, requests)
+        assertEquals(LayoutStage.ABORTED, progress.stage)
+    }
+
+    @Test fun checkpointReportFailureOrCancellationPreventsRequest() = immediately {
+        for (primary in listOf(IllegalStateException("PRIVATE_REPORT"), CancellationException("PRIVATE_CANCEL"))) {
+            val progress = ready()
+            var requests = 0
+            try {
+                checkpoint(progress, emptyList(), report = { throw primary }, request = { requests++ })
+                fail("REPORT_FAILURE_REQUIRED")
+            } catch (failure: Exception) { assertSame(primary, failure) }
+            assertEquals(0, requests); assertEquals(LayoutStage.ABORTED, progress.stage)
+        }
+    }
+
+    @Test fun checkpointCancellationCheckBeforeRequestCannotBeSkipped() = immediately {
+        val progress = ready()
+        var checks = 0; var requests = 0
+        val primary = CancellationException("PRIVATE_CANCEL")
+        try {
+            checkpoint(progress, emptyList(), active = { if (++checks == 2) throw primary }, request = { requests++ })
+            fail("CANCEL_REQUIRED")
+        } catch (failure: CancellationException) { assertSame(primary, failure) }
+        assertEquals(0, requests); assertEquals(LayoutStage.ABORTED, progress.stage)
+    }
+
+    @Test fun checkpointLateQueryOrReportingNeverStartsMutation() = immediately {
+        for (delayed in listOf("QUERY", "REPORT")) for (late in listOf(3_000L, 3_100L)) {
+            val progress = ready()
+            var clock = 0L
+            var queries = 0; var requests = 0
+            rejects(PreparedVerdict.OBSERVATION_TIMEOUT) {
+                checkpoint(progress, emptyList(), now = { clock }, query = {
+                    queries++; if (delayed == "QUERY") clock = late; emptyList()
+                }, report = { if (delayed == "REPORT") clock = late }, request = { requests++ })
+            }
+            assertEquals(1, queries); assertEquals(0, requests)
+            assertEquals(LayoutStage.ABORTED, progress.stage)
+        }
+    }
+
+    @Test fun checkpointCannotBeInspectedOutOfOrderOrTwice() = immediately {
+        val early = LayoutChangeProgress()
+        rejects(PreparedVerdict.STAGE_ORDER_INVALID) { early.inspectCheckpoint("OBSERVED", emptyList(), false) }
+        val progress = ready()
+        rejects(PreparedVerdict.STAGE_ORDER_INVALID) {
+            progress.changeAndVerifyHost {
+                progress.inspectCheckpoint("OBSERVED", emptyList(), false)
+                progress.inspectCheckpoint("OBSERVED", emptyList(), false)
+            }
+        }
+        assertEquals(LayoutStage.ABORTED, progress.stage)
+    }
+
+    @Test fun checkpointOrdinaryRowsAndLaterUnchangedCannotBecomeChangeEvidence() = immediately {
+        for (later in listOf(listOf(row(3)), listOf(row(3), row(4, "UNCHANGED")))) {
+            val progress = ready()
+            checkpoint(progress, listOf(row(3)))
+            val trace = LayoutWaitDiagnostics(LayoutPhase.LAYOUT_CHANGE)
+            var clock = 0L
+            rejects(PreparedVerdict.OBSERVATION_TIMEOUT) {
+                progress.change { scope ->
+                    assertEquals(2, scope.floor); assertEquals(3, scope.evidenceFloor)
+                    poll(progress, scope, trace, { clock }, { later }, { clock += it })
+                }
+            }
+            assertEquals(3_000L, clock); assertFalse(trace.expectedSeen)
+            assertEquals("INCONCLUSIVE", progress.outcome(true, true))
+        }
+    }
+
+    @Test fun checkpointEmptyResultDoesNotMakeLaterEmptyResultsSuccessful() = immediately {
+        val progress = ready()
+        checkpoint(progress, emptyList())
+        val trace = LayoutWaitDiagnostics(LayoutPhase.LAYOUT_CHANGE)
+        var clock = 0L
+        rejects(PreparedVerdict.OBSERVATION_TIMEOUT) {
+            progress.change { scope -> poll(progress, scope, trace, { clock }, { emptyList() }, { clock += it }) }
+        }
+        assertEquals(3_000L, clock); assertFalse(trace.expectedSeen)
+    }
+
+    @Test fun checkpointRetainedRowsPlusNewOrdinaryRowRequireNormalFinalVerification() = immediately {
+        for (reason in listOf("BASELINE_ONLY", "ORDINARY_CONTENT_CHANGE")) {
+            val progress = ready()
+            val prior = row(3, reason)
+            checkpoint(progress, listOf(prior))
+            val trace = LayoutWaitDiagnostics(LayoutPhase.LAYOUT_CHANGE)
+            val allRows = listOf(prior, row(4))
+            var clock = 0L
+            progress.change { scope ->
+                poll(progress, scope, trace, { clock }, { allRows }, { clock += it })
+                assertEquals(2_000L, clock)
+                assertEquals("INCONCLUSIVE", progress.outcome(true, true))
+                final(progress, scope, allRows, now = { clock })
+            }
+            assertEquals("OBSERVED_NEGATIVE_CONTROL", progress.outcome(true, true))
+        }
+    }
+
+    @Test fun checkpointEvidenceBoundaryDoesNotHideBadOrCandidateRows() = immediately {
+        for ((later, expected) in listOf(
+            listOf(row(3), candidate(4)) to PreparedVerdict.BASELINE_FALSE_CANDIDATE,
+            listOf(outside(3), row(4)) to PreparedVerdict.GEOMETRY_REJECTED,
+        )) {
+            val progress = ready()
+            checkpoint(progress, listOf(row(3)))
+            rejects(expected) {
+                progress.change { scope -> progress.assess(scope, "OBSERVED", later, false) }
+            }
+            assertEquals("INCONCLUSIVE", progress.outcome(true, true))
+        }
+    }
+
+    @Test fun checkpointAcceptedRowsCannotDisappearOrChangeInLaterSnapshots() = immediately {
+        for (later in listOf(emptyList(), listOf(row(4)), listOf(row(3, "UNCHANGED"), row(4)))) {
+            val progress = ready()
+            checkpoint(progress, listOf(row(3, "BASELINE_ONLY")))
+            rejects(PreparedVerdict.SNAPSHOT_REGRESSED) {
+                progress.change { scope -> progress.assess(scope, "OBSERVED", later, false) }
+            }
+            assertEquals(LayoutStage.ABORTED, progress.stage)
+            assertEquals("INCONCLUSIVE", progress.outcome(true, true))
+        }
+    }
+
     private suspend fun poll(progress: LayoutChangeProgress, scope: LayoutChangeProgress.Scope, trace: LayoutWaitDiagnostics,
         now: () -> Long, query: suspend () -> List<String>, pause: suspend (Long) -> Unit,
         anchor: () -> Unit = {}, code: String = "OBSERVED", overflow: Boolean = false) =

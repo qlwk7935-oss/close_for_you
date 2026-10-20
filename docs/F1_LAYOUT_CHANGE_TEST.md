@@ -1,6 +1,6 @@
 # F1 최소 일반 문서 LAYOUT_CHANGE 독립 음성 대조군
 
-최초 구현 기준: `feature/f1-popup-detection`, `bb80e530920fffbe0046e75d9de85610c9eed2ad`입니다. 최초 관측 진단 보강은 `56244c87e6d68594f0db8ac85f666445c71a2e79`, 이번 ATTEMPT 개수 범주 보강은 `0b3b5d9779d5aca46c388e39db09f175d069516f`를 기준으로 합니다. 음성 대조군은 negative control이라는 실험 용어이며 TTS/음성 UI를 추가하지 않습니다. Windows API37의 Prepared Minimal Dialog 두 번 성공은 사용자 제공 로그에 따른 별도 양성 사례입니다. 그 기록을 이 시험의 baseline·오탐 방지 성공으로 재사용하지 않습니다. 본 LAYOUT_CHANGE 시험은 사용자 API37에서 누적4회 중 성공2회·실패2회이며, 기존 진단 버전만 보면 성공1회·실패1회입니다. 이번 개수 범주 보강 버전은 아직 Android에서 실행하지 않았습니다.
+최초 구현 기준: `feature/f1-popup-detection`, `bb80e530920fffbe0046e75d9de85610c9eed2ad`입니다. 최초 관측 진단 보강은 `56244c87e6d68594f0db8ac85f666445c71a2e79`, ATTEMPT 개수 범주 보강은 `0b3b5d9779d5aca46c388e39db09f175d069516f`를 기준으로 했습니다. 이번 변경 전 checkpoint는 `c327bfd86b61ac8de7b6903217bb590a8b3cd67b`를 기준으로 합니다. 음성 대조군은 negative control이라는 실험 용어이며 TTS/음성 UI를 추가하지 않습니다. Windows API37의 Prepared Minimal Dialog 두 번 성공은 사용자 제공 로그에 따른 별도 양성 사례입니다. 그 기록을 이 시험의 baseline·오탐 방지 성공으로 재사용하지 않습니다. 이전 사용자 보고의 누적4회는 성공2회·실패2회이며, 당시 진단 버전만 보면 성공1회·실패1회였습니다. 이후 개수 진단 버전에서 ONE/ONE 타임아웃이 보고됐습니다. 아래 이력을 구분하며 이번 checkpoint 버전은 아직 Android에서 실행하지 않았습니다.
 
 ## 범위와 기존 시나리오와의 차이
 
@@ -15,7 +15,7 @@
 1. 기존 signature provider에서 명시 opt-in BEGIN을 받습니다. 서비스 연결·수집 동의·host 단독 허용·분석 시작·캡처 동의 OFF·캡처 허용 목록 비어 있음은 사용자가 미리 설정하며 시험은 변경하지 않습니다.
 2. PREPARATION: 실제 최소 Activity를 시작하고 소유 창·raw geometry·회전/Configuration과 최소 트리를 확인합니다. 반복 raw 값 최소3회/1초 이상 안정성을 확인합니다. 초기 WINDOW_OUTSIDE_FRAME는 기존 준비 계약의 거부 진단으로만 기록합니다. 후보·차단·미관측·잘못된 진단·overflow는 준비 성공이 아닙니다. 후속 anchor 검사 뒤 마지막 RESULT를 검증합니다.
 3. 엄격 BASELINE: 기록 RESET을 한 번 하고 기존 PreparedDialogReader.stimulate로 TextView의 enabled=false 및 고정 합성 description을 설정합니다. 실제 서비스의 같은 session/소유 window 행 모두 유효 geometry의 NO_POPUP이어야 하고 BASELINE_ONLY 또는 ORDINARY_CONTENT_CHANGE가 최소 하나 필요합니다. UNCHANGED만으로는 불충분합니다. 실제 remote 자극 필드와 후속 raw anchor·최종 RESULT를 확인하기 전에는 layout 변경을 요청하지 않습니다.
-4. 실제 LAYOUT_CHANGE: 소유 창/기존 baseline을 재확인하고 기록 RESET을 한 번 합니다. host main에서 단일 TextView의 LayoutParams 높이를 content의 절반으로 바꿉니다. text·description·enabled는 바꾸지 않으며 sendAccessibilityEvent/판정 주입은 없습니다. 실제 layout 완료를 기다려 native 접근성 노드 bounds의 변화가 정확히 이 자식의 절반 높이에 해당하는지 확인합니다. content·window·display frame·root·Configuration은 그대로여야 합니다. 원래 bounds를 정렬·clamp·이동시키는 처리가 아닙니다.
+4. 실제 LAYOUT_CHANGE: 소유 창/기존 baseline을 재확인하고 기록 RESET을 한 번 합니다. 아래 checkpoint로 기존 기록을 한 번 조회한 뒤 host main에서 단일 TextView의 LayoutParams 높이를 content의 절반으로 바꿉니다. text·description·enabled는 바꾸지 않으며 sendAccessibilityEvent/판정 주입은 없습니다. 실제 layout 완료를 기다려 native 접근성 노드 bounds의 변화가 정확히 이 자식의 절반 높이에 해당하는지 확인합니다. content·window·display frame·root·Configuration은 그대로여야 합니다. 원래 bounds를 정렬·clamp·이동시키는 처리가 아닙니다.
 5. 변경 후: 같은 raw 변경 샘플의 최소3회/1초 안정성을 확인한 뒤 실제 서비스 결과를 조회합니다. 별도 구간의 새 ordinal이며 동일 행의 NO_POPUP / ORDINARY_CONTENT_CHANGE / VALID / 양수 extent / WITHIN_FRAME / OUTSIDE_EDGES=NONE을 최소 하나 요구합니다. BASELINE_ONLY·UNCHANGED만으로는 성공하지 않습니다. 후속 anchor 안정성 검사와 마지막 RESULT 전체 재판정까지 끝내야 CHANGE_VERIFIED입니다.
 
 LayoutMutation의 순수 JVM 검사는 실제 reader가 얻은 native nodeBounds에 사용됩니다. LayoutChangeReader는 기존 MinimalGeometryReader/PreparedDialogReader를 통해 실제 native 및 UiAutomation 최소 트리도 검사합니다. TextView 실제 높이·layout 완료와 raw bounds 변화는 host 증거이며, 서비스가 그 값을 원자적으로 읽었다는 증명은 아닙니다.
@@ -75,6 +75,22 @@ DETAIL은 OBSERVATION_TIMEOUT / ASSESSMENT_REJECTED / HOST_REJECTED / OBSERVATIO
 
 기존 P3인 cleanup 완료 후 진단 보고 취소의 실제 순서 회귀 보강은 이번 작업 범위 밖의 후속 과제로 유지합니다.
 
+## RESET 직후, 실제 변경 요청 전 checkpoint
+
+개수 진단 버전의 사용자 API37 후속 실패에서는 엄격 BASELINE의 ORDINARY_CONTENT_CHANGE / VALID와 host LAYOUT_CHANGED 뒤, LAST_POINT=ASSESSED / RESULT_RECEIVED=YES / ROWS=PRESENT / OWNED_ATTEMPTS=ONE / BASELINE_ONLY_ATTEMPTS=ONE / REASONS=BASELINE_ONLY_ONLY / EXPECTED_SEEN=NO / FINAL_RESULT=NOT_REACHED / OBSERVATION_TIMEOUT / INCONCLUSIVE가 보고됐습니다. 이는 한 고유 BASELINE_ONLY 행을 반복 조회한 것과 일치하지만, 해당 수집이 실제 변경 전/후인지, baseline이 왜 비교 불가능해졌는지는 확정하지 못합니다. Codex의 Android 재실행 결과가 아닙니다.
+
+실제 driver와 JVM이 공유하는 LayoutBeforeRequestCheckpoint.run의 순서는 RESET → 취소 확인 → host ownership/raw anchor → RESULT 정확히 한 번 → 같은 anchor → 공유 판정 → 고정 코드 출력 → 취소/마감 확인 → requestChange입니다. 기존 session key와 동일 ownedWindowId를 사용하며, RESET부터 기존 변경 구간까지 같은 기록 generation을 유지합니다. 새로운 RESET·행 삭제·detector 초기화·이벤트 주입은 없습니다. 기존 polling 루프에는 IPC·출력·sleep·시계 조회를 추가하지 않습니다.
+
+실제 provider의 정상 응답인 code=OBSERVED, attempts 목록 및 Boolean overflow 필드를 요구합니다. 누락/잘못된 타입·세션 거부·중복/이전 phase ordinal·geometry 오류·UNCERTAIN·보호 차단·후보·overflow는 변경 요청 전에 실패합니다. candidate는 기존 FALSE_POSITIVE 분류를 유지합니다. 빈 정상 RESULT는 checkpoint의 NONE 진단만 허용하고 phase 완료로 사용하지 않습니다. 최대256행·행당2,048자 및 기존 allowlist 검증을 재사용합니다. 조회 뒤 anchor가 실패하면 응답을 승인하거나 출력하지 않습니다.
+
+checkpoint 출력은 F1_LAYOUT_CHECKPOINT / PHASE=LAYOUT_CHANGE / CHECKPOINT=BEFORE_LAYOUT_REQUEST / OWNED_ATTEMPTS=NONE·ONE·MULTIPLE / BASELINE_ONLY_ATTEMPTS=NONE·ONE·MULTIPLE / REASONS=기존 고정 범주 / PHASE_EVIDENCE=NONE / ATOMIC_BINDING=NONE뿐입니다. 실제 개수·ordinal·창 ID·시각·원문·token·지문·예외 메시지를 출력하지 않습니다. checkpoint가 보존하는 진단 map도 기존과 동일한 검증 완료 고정 코드 행만 포함하며, 다음 scope의 regression 검사로 전달하고 별도 복사하지 않습니다. 이후 행의 소실/변경은 SNAPSHOT_REGRESSED입니다.
+
+checkpoint의 BASELINE_ONLY나 ORDINARY_CONTENT_CHANGE를 이후 성공 근거로 재사용하지 않습니다. 기존 completedOrdinal 검증 floor를 유지한 채, checkpoint에서 본 최대 ordinal을 더 엄격한 성공 증거 경계로만 보존합니다. 모든 행은 계속 검사하며, 그 경계보다 새로운 ORDINARY_CONTENT_CHANGE / VALID 행이 있어야 기존 2초 최소 관측·3초 마감·최종 RESULT·phase 전이·정리 조건을 거쳐 성공할 수 있습니다. 기존 checkpoint 행의 반복 조회, 이후 UNCHANGED만 추가, 빈 응답만 반복은 성공하지 않습니다. checkpoint 자체에는 final 표식이나 CHANGE_VERIFIED 발급 경로가 없습니다.
+
+단발 조회와 출력에는 기존 PreparedFinalDeadline을 이용한 별도 3초 제한을 두어 늦은 응답/출력 뒤 layout 요청을 시작하지 않습니다. 이 제한은 기존 polling 및 최종 RESULT의 시계를 재시작하거나 연장하지 않습니다. 예외·취소·출력 실패는 기존 본문 실패와 정리 경로로 전달됩니다. 비협력적 Binder/framework 호출 자체의 강제 중단은 보장하지 않습니다.
+
+추가 IPC·anchor·출력은 실행 타이밍과 이벤트 coalescing에 영향을 줄 수 있습니다. 빈 checkpoint라도 그 조회 뒤 requestChange 전에 수집이 시작될 수 있으며, 더 새로운 ordinal도 실제 layout 변경 이후에 시작/완료됐다는 인과 증명이 아닙니다. checkpoint에 행이 있으면 요청 전에 완료·기록된 관측이 있었다는 좁은 사실만 알 수 있습니다. RESULT↔requestChange/END 비원자성, ATOMIC_BINDING=NONE / SERVICE_FRAME_BINDING=UNAVAILABLE, 미관측 ABA, baseline 소실 원인 및 실제 서비스 frame/digest 결합은 여전히 미해결입니다. F0 완전성·현재성·TTL·F1 정확도·원본14개·클릭/OCR 안전성을 입증하지 않습니다. 운영 코드와 성공한 Dialog 계측은 미변경이며, 새 버전 API37 실행 전 timeout 원인을 확정하지 않습니다.
+
 ## Windows API37 재검증
 
 개인정보 없는 전용 에뮬레이터에서 위 준비 설정을 수동 확인합니다. 실제 사용자 메시지·은행·결제 앱은 시험하지 않습니다.
@@ -101,7 +117,7 @@ JDK17로 다음 명령을 실행해 BUILD SUCCESSFUL(1분14초)을 확인했습�
 
 신규 LayoutChangeContractTest 33개, 전체 JVM692개(앱396/호스트296)가 실패·오류·skip0으로 통과했습니다. 기존 Prepared Minimal Dialog JVM82개도 포함됩니다. 양쪽 Debug/AndroidTest APK와 양쪽 Lint(이슈0), 기존 패키징 검사 및 새 LayoutChange 클래스의 driver 전용 DEX class_def 격리 검사를 통과했습니다. JVM 회귀 클래스는 APK에 포함되지 않습니다. 경고 출력은 없었습니다.
 
-위 내용은 최초 구현 당시의 로컬 검증 기록입니다. 당시 새 테스트·문서5개는 미추적 상태였으며 이후 기준 HEAD에 커밋됐습니다. 이번 개수 보강의 재실행 결과와 구분합니다. JVM의 가짜 IPC·시계·host callback·해제 callback은 Android 서비스 F0나 실제 이벤트/recycle 성공을 증명하지 않습니다. 실제 API37 결과는 위 사용자 실측 누적4회 중 성공2회·실패2회이며, 이번 개수 보강 버전과 기존 Dialog 계측을 Codex가 Android에서 재실행하지 않았습니다. 이번 작업에서 커밋·푸시·병합하지 않습니다.
+위 내용은 최초 구현 당시의 로컬 검증 기록입니다. 당시 새 테스트·문서5개는 미추적 상태였으며 이후 기준 HEAD에 커밋됐습니다. 이후 개수 보강 및 checkpoint의 재실행 결과와 구분합니다. JVM의 가짜 IPC·시계·host callback·해제 callback은 Android 서비스 F0나 실제 이벤트/recycle 성공을 증명하지 않습니다. 당시 보고된 API37 누적4회는 성공2회·실패2회였으며, 이후 개수 진단 실패는 위에 별도 기록합니다. Codex는 이 Android 계측을 직접 재실행하지 않았습니다. 이번 작업에서 커밋·푸시·병합하지 않습니다.
 
 ## 최초 실패 전용 진단 보강의 로컬 검증 기록
 
@@ -115,7 +131,7 @@ JDK17에서 다음을 실행하여 BUILD SUCCESSFUL(1분12초)을 확인했습�
 
 전체713개(앱396/호스트317)가 실패·오류·skip0으로 통과했습니다. 신규 회귀는 실제 driver의 동일 진단 await/read와 기존 공유 관측 루프를 가짜 시계·IPC·anchor로 실행하며, 빈 응답·UNCHANGED·BASELINE_ONLY timeout, 기대 판정 뒤 deadline 초과, 응답 후 anchor 실패, geometry/보호/UNCERTAIN/overflow/후보 거부, phase 격리, 출력 실패·취소 보존, 정상 완료·최종 거부 및 고정 코드 비노출을 검사합니다. 진단 객체 필드가 enum/boolean뿐인지도 확인했습니다.
 
-양쪽 Debug/AndroidTest APK 빌드와 양쪽 Lint(이슈0), 기존 tools/verify_capture_test_apks.py를 통과했습니다. 실제 DEX class_def에서 새 LayoutWaitDiagnostics/Point/Reasons/Failure와 LayoutChange driver·계약이 외부 host AndroidTest APK에만 있고, 본 앱·본 앱 AndroidTest·host APK에는 없음을 확인했습니다. LayoutChangeContractTest는 모든 APK에서 제외됐습니다. Gradle 경고 출력은 없었습니다. 당시 허용된4개 파일 외 변경 없음과 git diff --check도 확인했습니다. 이는 최초 진단 패치 개발 당시의 로컬 기록이며, 이후 커밋·사용자 Android 실측과 현재 누적 결과는 위에서 구분합니다. 이번 개수 범주 보강 버전은 Android 미실행이며 실패 원인을 확정한 결과가 아닙니다.
+양쪽 Debug/AndroidTest APK 빌드와 양쪽 Lint(이슈0), 기존 tools/verify_capture_test_apks.py를 통과했습니다. 실제 DEX class_def에서 새 LayoutWaitDiagnostics/Point/Reasons/Failure와 LayoutChange driver·계약이 외부 host AndroidTest APK에만 있고, 본 앱·본 앱 AndroidTest·host APK에는 없음을 확인했습니다. LayoutChangeContractTest는 모든 APK에서 제외됐습니다. Gradle 경고 출력은 없었습니다. 당시 허용된4개 파일 외 변경 없음과 git diff --check도 확인했습니다. 이는 최초 진단 패치 개발 당시의 로컬 기록이며, 이후 커밋·사용자 Android 실측과 현재 누적 결과는 위에서 구분합니다. 당시 개수 범주 보강 전이었으며, 이 로컬 기록은 Android 실패 원인을 확정한 결과가 아닙니다.
 
 ## ATTEMPT 개수 범주 보강의 로컬 검증
 
@@ -127,4 +143,14 @@ JDK17에서 다음 명령을 실행하여 BUILD SUCCESSFUL(1분10초)을 확인�
 ./gradlew --no-daemon :app:testDebugUnitTest --rerun :capture-test-host:testDebugUnitTest --rerun :app:assembleDebug :app:assembleDebugAndroidTest :capture-test-host:assembleDebug :capture-test-host:assembleDebugAndroidTest :app:lintDebug :capture-test-host:lintDebug
 ```
 
-양쪽 Debug/AndroidTest APK 빌드, 양쪽 Lint(이슈0), 기존 패키징 검사와 실제 DEX 격리 검사를 통과했습니다. LayoutAttemptCount 및 진단·driver·계약은 외부 AndroidTest APK에만 정의되고 JVM 시험 클래스는 모든 APK에서 제외됩니다. Gradle 경고는 없었습니다. 허용된 공유 계약·JVM 테스트·문서3개만 변경했고 기존 Android driver와 운영 코드·공유 Dialog 계약은 미변경입니다. git diff --check 및 공백 검사도 통과했습니다. 이번 버전의 Android API37 계측은 미실행이며, 실제 실측은 여전히 누적4회 중 성공2회·실패2회입니다. 개수 범주는 원인 확정이나 F0/F1 안전 증명이 아닙니다. 커밋·푸시·병합하지 않았습니다.
+양쪽 Debug/AndroidTest APK 빌드, 양쪽 Lint(이슈0), 기존 패키징 검사와 실제 DEX 격리 검사를 통과했습니다. LayoutAttemptCount 및 진단·driver·계약은 외부 AndroidTest APK에만 정의되고 JVM 시험 클래스는 모든 APK에서 제외됩니다. Gradle 경고는 없었습니다. 허용된 공유 계약·JVM 테스트·문서3개만 변경했고 기존 Android driver와 운영 코드·공유 Dialog 계약은 미변경입니다. git diff --check 및 공백 검사도 통과했습니다. 이 개수 보강의 로컬 검증 당시에는 Android API37 계측 미실행이었고, 당시 보고된 누적 실측은4회 중 성공2회·실패2회였습니다. 이후 ONE/ONE 실패와 이번 checkpoint 미실행 상태는 위에서 구분합니다. 개수 범주는 원인 확정이나 F0/F1 안전 증명이 아닙니다. 커밋·푸시·병합하지 않았습니다.
+
+## 변경 전 checkpoint의 로컬 검증 (2026-10-20)
+
+중단 당시 보존된 Android driver·공유 계약·JVM 테스트3개 파일을 이어서 사용했습니다. 기존 checkpoint 회귀19개를 유지하고, 승인된 checkpoint 행이 후속 응답에서 사라지거나 바뀌면 SNAPSHOT_REGRESSED로 거부하는 회귀1개를 추가했습니다. 해당 map은 다음 scope로 전달하고 abort 시 폐기합니다. 문서에 새 checkpoint 순서와 미입증 범위를 기록했습니다. 기존 gradle.properties는 변경하지 않았습니다.
+
+대상 LayoutChangeContractTest는 기존64개와 신규20개를 합친84개가 통과했습니다. 실제 Android driver가 호출하는 같은 LayoutBeforeRequestCheckpoint.run과 inspectCheckpoint/assess를 가짜 시계·IPC·host callback으로 검증합니다. NONE/ONE/MULTIPLE 및 BASELINE_ONLY 범주, 단일 조회 순서, 잘못된 응답/누락·타입 불일치/소유권/보호/geometry/후보/overflow 거부, 취소·보고·마감 실패 시 요청0회, checkpoint 증거 반복 재사용 거부, snapshot regression 및 새 일반 화면 행과 최종 검증을 통한 정상 완료를 포함합니다. Android framework 호출이나 실제 이벤트 전달을 JVM에서 재현한 것은 아닙니다.
+
+JDK17에서 위 전체 Gradle 명령을 다시 실행하여 BUILD SUCCESSFUL(1분3초)을 확인했습니다. 양쪽 JVM task에 --rerun을 지정했고 전체743개(앱396/호스트347)가 실패·오류·skip0으로 통과했습니다. 양쪽 Debug/AndroidTest APK 빌드, 양쪽 Lint(이슈0), 기존 패키징 검사 및 실제 DEX class_def 격리 검사도 통과했습니다. LayoutBeforeRequestCheckpoint와 LayoutChange 진단·계약·driver는 host AndroidTest APK에만 정의되며 본 앱·본 앱 AndroidTest·host APK에 없습니다. JVM 회귀 클래스도 모든 APK에서 제외됩니다. Gradle 경고 출력은 없었습니다.
+
+허용된 driver·공유 계약·JVM 테스트·이 문서4개만 수정됐고 staged/미추적 파일은 없습니다. 운영 collector·서비스·detector·provider와 기존 Prepared Dialog 계측/공유 계약이 HEAD와 동일함을 확인했습니다. git diff --check를 통과했습니다. 커밋·푸시·병합하지 않았고 checkpoint 버전의 Android API37 계측도 실행하지 않았습니다. 기존 timeout·Scroll/Window·원본14개 UNOBSERVED 문제는 해결됐다고 주장하지 않습니다. cleanup 완료 후 보고 취소 순서 회귀(P3)는 후속 과제로 남깁니다.
