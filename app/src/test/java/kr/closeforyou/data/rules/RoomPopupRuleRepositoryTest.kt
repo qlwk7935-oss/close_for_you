@@ -13,6 +13,7 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
+import org.junit.Assert.fail
 import org.junit.Test
 
 /**
@@ -56,7 +57,7 @@ class RoomPopupRuleRepositoryTest {
     @Test
     fun replacingAChoiceCannotRestoreAnOlderPermission() = runBlocking {
         val repository = RoomPopupRuleRepository(FakePopupRuleDao())
-        repository.save(rule(id = "old", repeat = true))
+        repository.save(rule(id = "old"))
         repository.save(rule(id = "new", choice = ChoiceKind.STOP_ASKING, repeat = false))
         assertEquals(listOf("new"), repository.observeRules().first().map { it.id })
         repository.revoke("new")
@@ -97,17 +98,79 @@ class RoomPopupRuleRepositoryTest {
     }
 
     @Test
+    fun ruleWithoutExpiryIsRejected() {
+        assertRejected(RuleRejection.MISSING_EXPIRY) { it.save(rule(expiresAt = null)) }
+    }
+
+    @Test
+    fun expiryLongerThanThirtyDaysIsRejected() {
+        assertRejected(RuleRejection.EXPIRY_TOO_LONG) {
+            it.save(rule(expiresAt = RuleRetention.defaultExpiry(100) + 1))
+        }
+    }
+
+    @Test
+    fun defaultExpiryIsThirtyDaysAndAccepted() = runBlocking {
+        assertEquals(100L + 30L * 24 * 60 * 60 * 1000, RuleRetention.defaultExpiry(100))
+        val repository = RoomPopupRuleRepository(FakePopupRuleDao())
+        repository.save(rule(expiresAt = RuleRetention.defaultExpiry(100)))
+        assertNotNull(repository.findExact(key, RuleRetention.defaultExpiry(100) - 1))
+        assertNull(repository.findExact(key, RuleRetention.defaultExpiry(100)))
+    }
+
+    @Test
+    fun repeatAutomationIsOffByDefault() {
+        assertRejected(RuleRejection.REPEAT_AUTOMATION_DISABLED) { it.save(rule(repeat = true)) }
+    }
+
+    @Test
+    fun repeatAutomationCanOnlyBeStoredWhenExplicitlyEnabled() = runBlocking {
+        val repository = RoomPopupRuleRepository(FakePopupRuleDao(), repeatAutomationEnabled = true)
+        repository.save(rule(repeat = true))
+        assertTrue(repository.findExact(key, 150)!!.repeatAutomationExplicitlyAllowed)
+    }
+
+    @Test
+    fun rejectedRuleIsNotStored() = runBlocking {
+        val dao = FakePopupRuleDao()
+        try {
+            RoomPopupRuleRepository(dao).save(rule(repeat = true))
+        } catch (expected: RuleRejectedException) {
+            // 저장 거부
+        }
+        assertTrue(dao.rows.value.isEmpty())
+    }
+
+    @Test
+    fun storedRowWithoutExpiryNeverMatches() = runBlocking {
+        val dao = FakePopupRuleDao()
+        dao.rows.value = listOf(PopupRuleEntity.from(rule(expiresAt = null)))
+        assertNull(RoomPopupRuleRepository(dao).findExact(key, 150))
+    }
+
+    @Test
     fun entityRoundTripKeepsEveryField() {
         val original = rule(expiresAt = 500, repeat = true).copy(failureCount = 0, enabled = true)
         assertEquals(original, PopupRuleEntity.from(original).toRuleOrNull())
         assertTrue("redacted" in PopupRuleEntity.from(original).toString())
     }
 
+    private fun assertRejected(expected: RuleRejection, block: suspend (RoomPopupRuleRepository) -> Unit) {
+        val dao = FakePopupRuleDao()
+        try {
+            runBlocking { block(RoomPopupRuleRepository(dao)) }
+            fail("Expected $expected")
+        } catch (e: RuleRejectedException) {
+            assertEquals(expected, e.reason)
+        }
+        assertTrue(dao.rows.value.isEmpty())
+    }
+
     private fun rule(
         id: String = "rule-1",
         choice: ChoiceKind = ChoiceKind.REMEMBER_EXACT_POPUP,
-        repeat: Boolean = true,
-        expiresAt: Long? = null,
+        repeat: Boolean = false,
+        expiresAt: Long? = RuleRetention.defaultExpiry(100),
         target: String = key.targetFingerprint,
     ) = PopupRule(
         id = id,
@@ -137,7 +200,7 @@ internal class FakePopupRuleDao : PopupRuleDao() {
             it.structureFingerprint == structureFingerprint && it.contentFingerprint == contentFingerprint &&
             it.targetFingerprint == targetFingerprint && it.enabled && it.failureCount == 0 &&
             it.schemaVersion == schemaVersion && it.createdAtEpochMillis <= now &&
-            (it.expiresAtEpochMillis ?: Long.MAX_VALUE) > now
+            (it.expiresAtEpochMillis ?: Long.MIN_VALUE) > now
     }.sortedByDescending { it.createdAtEpochMillis }
 
     override fun observeAll(): Flow<List<PopupRuleEntity>> =
