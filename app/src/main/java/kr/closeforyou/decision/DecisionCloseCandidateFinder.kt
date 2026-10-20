@@ -1,5 +1,6 @@
 package kr.closeforyou.decision
 
+import kr.closeforyou.core.model.ButtonLabelRules
 import kr.closeforyou.core.model.ButtonRole
 import kr.closeforyou.core.model.CloseCandidate
 import kr.closeforyou.core.model.EvidenceLevel
@@ -58,9 +59,8 @@ class DecisionCloseCandidateFinder {
 
     private fun candidate(node: NodeSnapshot): CloseCandidate? {
         val labels = listOfNotNull(node.text, node.contentDescription).filter { it.isNotBlank() }
-        val roles = labels.map(DecisionKeywords::buttonRoleOf).toSet()
-        // Every label on the node must say the same close/skip thing; a conflict is not a candidate.
-        val labeledRole = roles.singleOrNull()
+        // Shared contract: every label on the node must say the same close/skip thing.
+        val labeledRole = ButtonLabelRules.judgeNode(node.text, node.contentDescription).role
         // Kept verbatim, not trimmed: A's gate (PR #10) compares it with the node's text exactly.
         // Role matching already ignores whitespace, and C trims it for display.
         val label = labels.firstOrNull()
