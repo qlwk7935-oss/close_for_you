@@ -102,7 +102,7 @@ class AccessibilityChoiceOverlay(
         owner = lifecycleOwner
         controls = controller
         controlsScope = scope
-        listener.onShown(prompt)
+        listener.onShown(prompt, controller::speakPressed)
     }
 
     override fun dismiss() {
@@ -133,7 +133,8 @@ class AccessibilityChoiceOverlay(
 
 /** Hooks for announcing the prompt (step 2). Receives no screen text beyond the prompt itself. */
 interface OverlayListener {
-    fun onShown(prompt: ChoicePrompt) = Unit
+    /** [speakPressed]: true once [말하기] started listening on this prompt (checked when speaking). */
+    fun onShown(prompt: ChoicePrompt, speakPressed: () -> Boolean = { false }) = Unit
     fun onDismissed() = Unit
 
     companion object {

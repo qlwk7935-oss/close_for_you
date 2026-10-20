@@ -87,6 +87,10 @@ class PromptControlsController(
     )
     val state: StateFlow<PromptControlsState> = mutableState.asStateFlow()
 
+    /** True once listening started on this prompt; the first announcement is then skipped. */
+    var speakPressed: Boolean = false
+        private set
+
     init {
         val input = support.voiceInput
         if (input != null && mutableState.value.speakVisible) {
@@ -106,6 +110,7 @@ class PromptControlsController(
         support.announcer?.stop()
         val message = when (input.startFromSpeakButton(prompt.token)) {
             VoiceAvailability.READY -> {
+                speakPressed = true
                 mutableState.update { it.copy(listening = true, messageRes = R.string.ui_voice_listening) }
                 return
             }

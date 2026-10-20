@@ -23,26 +23,40 @@ import kr.closeforyou.ui.voice.choice.textRes
  */
 enum class PromptAnnounceMode { PANE_TITLE_ONLY, PANE_TITLE_AND_TTS }
 
-/** Speaks the prompt summary once when it appears and stops speaking when it is dismissed. */
-class PromptAnnouncementListener(
-    private val context: Context,
+/**
+ * Speaks the prompt summary once when it appears and stops speaking when it is dismissed.
+ * If the person pressed [말하기] before the first announcement, it is skipped and not spoken later:
+ * our TTS must not reach the microphone, and the person has already acted.
+ */
+class PromptAnnouncementListener internal constructor(
     private val announcer: PopupAnnouncer,
     private val scope: CoroutineScope,
     private val mode: () -> PromptAnnounceMode,
-    private val ttsDelayMillis: Long = DEFAULT_TTS_DELAY_MILLIS,
-    private val detail: () -> AnnouncementDetail = { AnnouncementDetail.SHORT },
+    private val ttsDelayMillis: Long,
+    private val detail: () -> AnnouncementDetail,
+    private val sentence: (ChoicePrompt, AnnouncementDetail) -> String,
 ) : OverlayListener {
+    constructor(
+        context: Context,
+        announcer: PopupAnnouncer,
+        scope: CoroutineScope,
+        mode: () -> PromptAnnounceMode,
+        ttsDelayMillis: Long = DEFAULT_TTS_DELAY_MILLIS,
+        detail: () -> AnnouncementDetail = { AnnouncementDetail.SHORT },
+    ) : this(announcer, scope, mode, ttsDelayMillis, detail, { prompt, level -> PromptSpeech.sentence(context, prompt, level) })
+
     private var speaking: Job? = null
 
-    override fun onShown(prompt: ChoicePrompt) {
+    override fun onShown(prompt: ChoicePrompt, speakPressed: () -> Boolean) {
         speaking?.cancel()
         if (mode() != PromptAnnounceMode.PANE_TITLE_AND_TTS) return
         // A follow-up after a failed press: its result was just spoken by the caller.
         if (prompt.pressFailure != null) return
-        val text = PromptSpeech.sentence(context, prompt, detail())
+        val text = sentence(prompt, detail())
         speaking = scope.launch {
             // Lets TalkBack finish its own window-change speech first (delay value unverified).
             delay(ttsDelayMillis)
+            if (speakPressed()) return@launch
             announcer.announce(AnnouncementRequest(prompt.token, AnnouncementKind.POPUP_FOUND, text))
         }
     }

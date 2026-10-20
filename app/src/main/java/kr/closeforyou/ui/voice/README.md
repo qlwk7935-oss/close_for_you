@@ -12,9 +12,9 @@ F10 TalkBack·음성 안내(`PopupAnnouncer`), 사용자 선택 UI("닫을까요
 |---|---|---|
 | `ui/voice/` | 음성 안내와 결과 문장 | `TtsPopupAnnouncer`(계약 `PopupAnnouncer` 구현, 기기 TTS, 다시 듣기), `AnnouncementBatcher`(2초 묶음 "팝업 3개를 닫았어요"), `PressResultSpeech`(누르기 실패 안내), `AndroidTtsEngine`·`SpeechEngine`, `AnnouncementHistory`(메모리만) |
 | `choice/` | 선택 창 내용과 선택 결과 | `ChoicePromptPlanner`(무엇을 보여 줄지 → `UserChoice`), `ChoicePromptContent`(Compose 화면), `PressableLabelPolicy`(누르기 버튼을 보여 줄 라벨), `MoveToButton`(버튼으로 이동, **꺼짐**) |
-| `overlay/` | 다른 앱 위에 선택 창 띄우기 | `ChoicePromptPresenter`(**A에게 제안하는 인터페이스**), `AccessibilityChoiceOverlay`(`TYPE_ACCESSIBILITY_OVERLAY` 구현), `PromptAnnouncementListener`·`PromptSpeech`(창이 뜰 때 안내 문장), `ChoiceOverlayIdentity`(A가 C 창 이벤트를 구분하는 법) |
+| `overlay/` | 다른 앱 위에 선택 창 띄우기 | `ChoicePromptPresenter`(**A에게 제안하는 인터페이스**), `AccessibilityChoiceOverlay`(`TYPE_ACCESSIBILITY_OVERLAY` 구현), `PromptAnnouncementListener`·`PromptSpeech`(창이 뜰 때 0.7초 뒤 안내 문장, 그 전에 [말하기]로 듣기 시작하면 건너뜀), `PromptControls`([말하기]·[다시 듣기]·[그만 말하기]), `ChoiceOverlayIdentity`(A가 C 창 이벤트를 구분하는 법) |
 | `command/` | 음성 명령 | `OnDeviceVoiceCommandInput`(계약 `VoiceCommandInput` 구현, API 31+ 기기 안 인식만), `KoreanVoiceCommandMatcher`(문장 → 명령), `VoiceChoiceMapper`(명령 → 선택 창의 기존 버튼), `VoicePolicy`(바로 요청·탭 확정·거절 표, `VoiceUtterance`), `SpeakButtonAccess`(마이크 권한·[말하기] 보일지) |
-| `settings/` | C 설정 | `UiVoiceSettings`·`UiVoicePreferences`(앱별 자동 닫기 기본 꺼짐, 안내 길이, 선택 창 음성), `UiVoiceSettingsScreen`(기억 목록 해제·전체 삭제) |
+| `settings/` | C 설정 | `UiVoiceSettings`·`UiVoicePreferences`(앱별 자동 닫기 기본 꺼짐, 안내 길이, 선택 창 음성, 음성 명령 켜기/끄기), `UiVoiceSettingsScreen`(허용 앱 이름, 마이크 상태, 기억 목록 해제·전체 삭제), `AppNames` |
 | `integration/` | A가 부르기만 하면 되는 연결 부품 | `PopupChoiceFlow`(`PopupEvent` → 분석·분류(주입) → 선택 창 → `ChoiceHandler`(B/A) → 결과 안내), `ChoiceHandler`, `UiText` |
 
 debug 전용(`app/src/debug/.../ui/voice/debug/`): `ChoicePreviewActivity`(가짜 팝업 미리보기, 누르기 결과 흉내, 말하기 시험), `ChoiceOverlayTestService`(C 시험용 접근성 서비스, 화면 내용 안 읽음, 아무것도 안 누름), `DebugRules`.
@@ -52,10 +52,12 @@ debug 전용(`app/src/debug/.../ui/voice/debug/`): `ChoicePreviewActivity`(가�
 | 실제 A 서비스에서 `PopupChoiceFlow`·오버레이 동작 | 미연동 (Mock 단위 시험만) |
 | 오버레이가 뜰 때 TalkBack이 창 제목을 읽는지 | LG: 읽지 않음 → 자체 TTS 기본. S26 미확인 |
 | 우리 TTS와 TalkBack 겹침 | LG 홈 화면 0.7/1.5초 모두 끝까지 들림. S26 미확인 |
-| 기기 안 음성 인식 | LG 미지원. S26 미확인 |
-| 큰 글꼴(200%)에서 선택 창 스크롤·잘림 | 10/19 스크롤 추가, 실기기 미확인 |
-| 오버레이 창의 상태 표시줄·내비게이션 바 여백 | 미확인 |
-| 다크 모드 | C 화면은 항상 밝은 색 (결정 필요) |
+| 기기 안 음성 인식 | LG 미지원([말하기] 숨겨짐 확인). S26 미확인 |
+| 큰 글꼴(200%)에서 선택 창 스크롤·잘림 | LG 10/20: 글꼴 2.0배에서 시나리오 0·3·6 잘림 없음(화면 안에 들어가 스크롤은 안 생김). S26 미확인 |
+| 오버레이 창의 상태 표시줄·내비게이션 바 여백 | 창이 화면 끝까지 차는 경우는 미확인 |
+| 다크 모드 | 시스템 설정을 따름. LG 10/20: 선택 창·설정 화면 색 바뀌고 읽힘 |
 | 버튼으로 이동 | 꺼짐. A 포커스 API·계약 값 필요 |
+| [다시 듣기]·[그만 말하기]·상태 줄의 TalkBack 읽기 순서 | 코드 기준만, 실기기 TalkBack 미확인 |
+| 앞으로 항상 닫기·다시 묻지 않기, 거부 이유 안내 | 플래그 꺼짐 (`RememberChoiceFeature`, `CannotPressReasonFeature`) |
 
 상시 듣기와 F6 영상 줄거리 설명은 구현하지 않습니다.

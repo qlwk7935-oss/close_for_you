@@ -4,6 +4,7 @@ import kotlinx.collections.immutable.persistentListOf
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.test.TestScope
+import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kr.closeforyou.R
@@ -52,7 +53,11 @@ class PromptControlsControllerTest {
     private class FakeAnnouncer : PopupAnnouncer {
         var stops = 0
         var repeats = 0
-        override suspend fun announce(request: AnnouncementRequest) = AnnouncementReceipt(AnnouncementState.TTS_COMPLETED)
+        var announces = 0
+        override suspend fun announce(request: AnnouncementRequest): AnnouncementReceipt {
+            announces++
+            return AnnouncementReceipt(AnnouncementState.TTS_COMPLETED)
+        }
         override suspend fun repeatLast(): AnnouncementReceipt {
             repeats++
             return AnnouncementReceipt(AnnouncementState.TTS_COMPLETED)
@@ -170,5 +175,44 @@ class PromptControlsControllerTest {
         val controller = PromptControlsController(prompt, backgroundScope, PromptControlsSupport.NONE) {}
         assertFalse(controller.state.value.speakVisible)
         assertFalse(controller.state.value.speechButtons)
+    }
+
+    private fun Harness.firstAnnouncement(scope: TestScope) = PromptAnnouncementListener(
+        announcer, scope.backgroundScope, { PromptAnnounceMode.PANE_TITLE_AND_TTS }, 700L,
+        { kr.closeforyou.ui.voice.settings.AnnouncementDetail.SHORT }, { _, _ -> "" },
+    )
+
+    @Test fun firstAnnouncementPlaysWhenSpeakNotPressed() = runTest {
+        val h = Harness(this, prompt = prompt)
+        h.firstAnnouncement(this).onShown(prompt, h.controller::speakPressed)
+        advanceTimeBy(701)
+        assertEquals(1, h.announcer.announces)
+    }
+
+    @Test fun speakBeforeFirstAnnouncementSkipsIt() = runTest {
+        val h = Harness(this, prompt = prompt)
+        h.firstAnnouncement(this).onShown(prompt, h.controller::speakPressed)
+        advanceTimeBy(300)
+        h.controller.onSpeak()
+        advanceTimeBy(1000)
+        assertEquals(0, h.announcer.announces)
+    }
+
+    @Test fun skippedAnnouncementIsNotSpokenAfterListeningEnds() = runTest {
+        val h = Harness(this, prompt = prompt)
+        h.firstAnnouncement(this).onShown(prompt, h.controller::speakPressed)
+        h.controller.onSpeak()
+        h.controller.onSpeak() // second press cancels listening
+        advanceTimeBy(5000)
+        assertEquals(0, h.announcer.announces)
+    }
+
+    @Test fun speakThatCouldNotListenKeepsTheAnnouncement() = runTest {
+        val h = Harness(this, prompt = prompt)
+        h.input.availability = VoiceAvailability.MICROPHONE_PERMISSION_REQUIRED
+        h.firstAnnouncement(this).onShown(prompt, h.controller::speakPressed)
+        h.controller.onSpeak()
+        advanceTimeBy(701)
+        assertEquals(1, h.announcer.announces)
     }
 }
