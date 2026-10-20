@@ -1,6 +1,6 @@
 # B 위협 모델 — 분류·안전 판단·닫기 후보
 
-작성: B 준영 · 2026-10-19 · 기준 코드: `main` `845214a` (PR #8·#11·#12)
+작성: B 준영 · 2026-10-19 (PR #13 리뷰 반영 2026-10-20) · 기준 코드: `main` `845214a` (PR #8·#11·#12)
 
 이 문서는 B(`decision` 패키지)가 막아야 하는 위협과, 각 위협을 **어떤 코드 규칙과 어떤 단위 시험으로 막는지**를 정리합니다. 근거는 [AGENTS.md](../../../../../../../AGENTS.md)의 필수 안전 규칙, 통합 설계 v5(`docs/통합설계.md`)와 검증 실험 계획(`docs/검증 실험 계획.md`)입니다.
 
@@ -135,9 +135,9 @@
 ### T14. 위장 문자로 라벨 검사 우회
 
 - **예:** 키릴 문자로 쓴 "сlose", 폭 없는 공백이 든 "닫​기"
-- **근거:** 공용 라벨 계약 초안 v1
+- **근거:** 공용 라벨 계약 초안 v1~v3 (v3에서 A Q8 승인: NFKC 후 정확 일치만 허용, 키릴 문자·U+200B·U+FEFF는 거부)
 - **B 대응:** 정확 일치라서 일치하지 않고 거부됩니다. 보이지 않는 문자를 지우지 않습니다.
-- **시험:** 공용 라벨 계약 시험 벡터 R8 범주 (계약 PR에서 단위 시험으로 추가 예정)
+- **시험:** 공용 라벨 계약 v3 시험 벡터의 R8 범주 7개. Kotlin 단위 시험은 이 PR이 아니라 공용 라벨 계약 PR에서 추가합니다
 - **상태: 막음**, 단위 시험은 계약 PR에서 추가
 
 ### T15. 개인정보 유출
@@ -153,8 +153,8 @@
 - **예:** 광고 본문의 "구매" 때문에 "결정 필요"로 안내, 불확실한 문구를 단정
 - **근거:** 설계 F7 "'판단 불가'를 정상 결과로 허용", PR #8 리뷰 6번
 - **B 대응:** 애매하면 `UNKNOWN`으로 둡니다. 표시 분류는 실행 허가와 분리돼 있습니다. C는 "광고로 보이는 팝업이에요"처럼 단정하지 않게 안내합니다.
-- **시험:** `fixturesMatchTheirExpectedDisplayClassification`, `fixturesYieldOnlyTheLabeledCloseButton`, `onlyWordingThatDoubtsItselfIsUncertain`, `blankOrMissingTextIsUnknown`, `installAdvertisementStaysAnAdvertisement`, `englishWordsUseWordBoundaries`("Download"의 ad를 광고로 보지 않음)
-- **상태: 줄임.** 정확도는 아직 측정하지 않았습니다(분류 정확도 시험 세트 예정).
+- **시험:** `fixturesMatchTheirExpectedDisplayClassification`, `fixturesYieldOnlyTheLabeledCloseButton`, `onlyWordingThatDoubtsItselfIsUncertain`, `blankOrMissingTextIsUnknown`, `installAdvertisementStaysAnAdvertisement`, `englishWordsUseWordBoundaries`("Download"의 ad를 광고로 보지 않음), `noDecisionIsShownAsAnAdvertisementOrANotice`, `confusionMatrixMatchesTheRecordedBaseline`
+- **상태: 줄임.** 이 PR의 합성 82개 평가([평가 보고서](CLASSIFIER_EVAL.md))에서 정확도는 68/82(82.9%)이고, 결정 화면을 광고·공지로 안내한 위험 오류는 0건입니다. **B가 혼자 정답을 붙인 합성 문구의 JVM 평가**라서 실제 앱 정확도가 아닙니다. 정답 교차 검토(D)와 실제 앱 수집(검증 계획 A03)이 남아 있습니다.
 
 ## 4. 요약표
 
@@ -175,15 +175,15 @@
 | T13 | 재시도·좌표 탭 | 줄임 | A 게이트 (중앙 장부) |
 | T14 | 위장 문자 | 막음 (시험은 계약 PR에서) | 공용 라벨 계약 |
 | T15 | 개인정보 유출 | 막음 | 전원 |
-| T16 | 잘못된 안내 | 줄임 | C (안내 문장) |
+| T16 | 잘못된 안내 | 줄임 (합성 82개 68개 정답, 위험 오류 0) | C (안내 문장), D (정답 교차 검토) |
 
 ## 5. 검증 계획과의 연결
 
 | 검증 계획 항목 | 관련 위협 | B 쪽 현재 근거 |
 |---|---|---|
-| A05 위험 화면 시나리오 정답지 | T1·T2·T3 | 시험 사례(라벨 계약 벡터 175개 포함) |
+| A05 위험 화면 시나리오 정답지 | T1·T2·T3 | 단위 시험 사례. 라벨 계약 벡터 176개(v3, 초안 v1·v2는 175개)는 계약 PR에서 Kotlin 시험으로 추가 |
 | C03 라벨 없는 버튼과 실제 안전 클릭 | T1·T8·T13 | 단위 시험. 실기기 미실시 |
-| C04 팝업 4분류 성능 | T3·T16 | 혼동행렬 미측정 → 분류 시험 세트 예정 |
+| C04 팝업 4분류 성능 | T3·T16 | 합성 82개 JVM 평가: 68/82(82.9%), 위험 오류 0. B 단독 정답이라 실제 앱 정확도 아님 |
 | C06 위험 동작·민감정보 보호 | T3·T15 | 단위 시험, 정적 점검 |
 | C08 연속 팝업·상태 관리 | T6·T7·T13 | 토큰·조작 거부 단위 시험. 실기기 미실시 |
 | C09 사용자 선택 기억 | T10 | 자동 반복 꺼짐. D 연동 전 |
@@ -202,8 +202,8 @@
 
 ## 8. 남은 일
 
-- 공용 라벨 계약 PR: 위장 문자·전각·공백 변형 175개 벡터를 단위 시험으로 추가 (T14)
+- 공용 라벨 계약 PR: 위장 문자·전각·공백 변형을 포함한 v3 벡터 176개를 Kotlin 단위 시험으로 추가 (T14)
 - 개인정보 정적 점검(로그·파일·네트워크·Android import 금지)을 자동 시험으로 고정 (T15)
-- 분류 정확도 시험 세트와 혼동행렬 (T16, C04)
+- 합성 82개 평가 정답의 교차 검토(D)와 실제 앱 분류 정확도 측정 (T16, C04·A03). 합성 평가와 혼동행렬은 이 PR에서 완료
 - 계약 합의 후 앱별 자동 닫기·실행 기록 반영 (T10·T13)
 - 실기기·TalkBack 검증 (D QA와 함께, C03·C08)
