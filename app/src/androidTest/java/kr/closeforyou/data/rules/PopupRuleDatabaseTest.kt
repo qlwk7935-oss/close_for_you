@@ -63,6 +63,18 @@ class PopupRuleDatabaseTest {
     }
 
     @Test
+    fun rulesBreakingTeamPolicyAreNotStored() = runBlocking {
+        listOf(rule(expiresAt = null), rule(expiresAt = RuleRetention.defaultExpiry(100) + 1)).forEach {
+            try {
+                repository.save(it)
+            } catch (expected: RuleRejectedException) {
+                // 저장 거부
+            }
+        }
+        assertTrue(repository.observeRules().first().isEmpty())
+    }
+
+    @Test
     fun purgeAndDeleteAll() = runBlocking {
         repository.save(rule(id = "a", expiresAt = 200))
         repository.save(rule(id = "b").copy(key = key.copy(targetFingerprint = "u".repeat(64))))
@@ -74,13 +86,13 @@ class PopupRuleDatabaseTest {
     private fun rule(
         id: String = "rule-1",
         choice: ChoiceKind = ChoiceKind.REMEMBER_EXACT_POPUP,
-        expiresAt: Long? = null,
+        expiresAt: Long? = RuleRetention.defaultExpiry(100),
     ) = PopupRule(
         id = id,
         key = key,
         choice = choice,
         buttonMeaningConfirmed = choice == ChoiceKind.REMEMBER_EXACT_POPUP,
-        repeatAutomationExplicitlyAllowed = choice == ChoiceKind.REMEMBER_EXACT_POPUP,
+        repeatAutomationExplicitlyAllowed = false,
         createdAtEpochMillis = 100,
         expiresAtEpochMillis = expiresAt,
     )
