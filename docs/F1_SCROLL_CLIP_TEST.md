@@ -2,7 +2,8 @@
 
 최초 구현 기준: `feature/f1-popup-detection` / `366c0824cf5c9bceaf1b3f987c7749d6313a1457`.
 최소 진단 보강 기준: `52c97dce5d5c8882edeb5d2d0752482620e342f5`.
-이번 계측은 테스트 전용입니다. 아래 사용자 첫 API37 실행은 실패했으며, 진단 보강 버전은 Android에서 아직 실행하지 않았습니다. 기존 사용자 로그의 원본14개 UNOBSERVED=14, Scroll REVERSED_Y 및 별개 Window/frame 문제를 해결했다는 보고가 아닙니다. 최신 LAYOUT_CHANGE checkpoint의 사용자 제공 두 번 성공은 최소 fixture의 별도 관측으로만 유지합니다.
+안정화 후 기준 확정 변경의 기준: `4597b2fd23a83732dd09951df4b7ab6d38f18ed1`.
+이번 계측은 테스트 전용입니다. 아래 사용자 첫 실행 및 진단 보강 버전의 API37 재실행은 모두 실패했습니다. 현재 안정화 후 기준 확정 버전은 Android에서 아직 실행하지 않았습니다. 기존 사용자 로그의 원본14개 UNOBSERVED=14, Scroll REVERSED_Y 및 별개 Window/frame 문제를 해결했다는 보고가 아닙니다. 최신 LAYOUT_CHANGE checkpoint의 사용자 제공 두 번 성공은 최소 fixture의 별도 관측으로만 유지합니다.
 
 ## 이전 시험과 다른 점
 
@@ -28,9 +29,9 @@ OUTSIDE_BEFORE는 BEGIN 뒤 Activity 시작에서 생긴 실제 관측을 유지
 
 View.getLocationOnScreen과 실제 width/height로 얻은 별도의 unclipped host layout bounds와 padding을 제외한 실제 Scroll viewport를 사용해 INSIDE/OUTSIDE/PARTIAL/INVALID를 판정합니다. 이는 접근성 Rect를 복구하는 대체 값이 아닙니다. 안에서는 완전 포함 및 native/remote 양쪽 VISIBLE, 밖에서는 교차 없음 및 양쪽 NOT_VISIBLE을 요구합니다. PARTIAL이나 양쪽 가시성 불일치는 성공하지 않습니다. 접근성 bounds의 원래 ORDERED/EMPTY/REVERSED_X/REVERSED_Y/REVERSED_BOTH는 그대로 관측합니다.
 
-native BEFORE/AFTER 값을 한 표본 안에서 비교하고, 반복 raw 표본 최소3회/1초 조건과 고정 anchor를 기존 ObservedGeometryStability/MinimalGeometryPolling으로 검사합니다. window·rotation·두 Configuration·논리 frame·Activity max/current·decor·viewport·native 부모 경로·remote 경로·remote root/window는 세 상태 사이에 동일해야 합니다. 실제 scroll 위치·대상 layout/accessibility bounds·가시성은 상태 안에서 반복 일치해야 합니다. 서비스 관측 전후에도 같은 anchor를 확인합니다. layout pending 초기 재관측은 기존 제한 안에서만 허용하며 해제 실패가 있으면 중단합니다.
+native BEFORE/AFTER 값을 한 표본 안에서 비교하고, 반복 raw 표본 최소3회/1초 조건을 기존 ObservedGeometryStability/MinimalGeometryPolling으로 검사합니다. INITIAL_PROBE와 phase 첫 표본은 환경 기준을 저장하지 않습니다. 첫 OUTSIDE_BEFORE 안정화에서만 최초 표본 anchor 없이 실제 전체 raw sample의 반복 일치를 관측하고, 기존3초 마감 안에서 안정화·취소·해제 검사를 통과한 뒤 기준을 한 번 확정합니다. 그 이후 window·rotation·두 Configuration·논리 frame·Activity max/current·decor·viewport·remote 경로·remote root/window는 세 상태 사이에 동일해야 합니다. native View identity·부모 경로는 초기 bind부터 매번 유지해야 하며, 기준 확정 전에도 이를 재선택하거나 생략하지 않습니다. 실제 scroll 위치·대상 layout/accessibility bounds·가시성은 각 상태 안에서 반복 일치해야 합니다. 이후 phase 및 서비스 관측 전후의 고정 anchor는 유지합니다. layout pending 초기 재관측은 기존 제한 안에서만 허용하며 해제 실패가 있으면 중단합니다.
 
-이는 단속적 표본 안정성이지 연속 불변성의 증명이 아닙니다. 관측된 변화/ABA는 anchor에서 실패하지만 표본 사이에서 나타났다 사라진 미관측 ABA는 감지 보장 밖입니다.
+이는 단속적 표본 안정성이지 연속 불변성의 증명이 아닙니다. 최초 확정 전 관측된 A→B→A는 반복 횟수·시작 시간을 재설정하며, 확정 후 기준/anchor 위반은 실패합니다. 표본 사이에서 나타났다 사라진 미관측 ABA는 감지 보장 밖입니다.
 
 ## 실제 서비스 관측과 완료 의미
 
@@ -92,6 +93,8 @@ JDK17에서 다음 명령을 실행해 BUILD SUCCESSFUL(54초)을 확인했습�
 
 ## 최소 환경 실패 진단 — 판정 변경 없음
 
+이 절과 다음 로컬 검증 절은 `4597b2f` 진단 보강 당시의 동작·미실행 상태에 대한 과거 기록입니다. 이후 사용자 재실행 및 현재 기준 확정 시점 변경은 문서 마지막 절과 구분합니다.
+
 기존 F1_SCROLL_CLIP_PROBLEM의 DETAIL=ENVIRONMENT_CHANGED 및 RESULT=INCONCLUSIVE를 유지하고, 해당 실패에만 READ_STAGE / CHECK / FIELD를 추가합니다. 아래는 출력 형식 예시이며 실제 관측 결과가 아닙니다.
 
 ```text
@@ -139,3 +142,33 @@ JAVA_HOME=/workspace/jdk17 ./gradlew --offline --no-daemon :app:testDebugUnitTes
 기존 Android getter·RESULT/RESET IPC·clock·delay·sendStatus 호출 수가 동일하고 서비스 판정/시간/progress 계약과 driver finally가 원문 그대로임을 소스 대조했습니다. 이는 framework 실행 순서·타이밍의 Android 실측 증명이 아닙니다. enum 전달과 순수 비교 처리에도 실행 비용이 있으므로 타이밍 영향이0이라고 보장하지 않습니다.
 
 변경은 허용된 ScrollClip5개 파일뿐이며 나머지 추적 파일의 SHA-256은 작업 시작과 같습니다. AndroidManifest.xml·gradle.properties·운영 코드·원본14개·기존 다른 계측은 미변경입니다. git diff --check와 변경 파일 전체 공백/개행 검사를 통과했습니다. 진단 보강 버전의 API37 계측·커밋·푸시·병합은 실행하지 않았습니다. 위 Windows 명령으로 재시험해 첫 실제 READ_STAGE/CHECK/FIELD를 확인해야 하며, 이전 실패 원인은 아직 미확정입니다.
+
+## 사용자 진단 재실행과 안정화 후 기준 확정
+
+사용자가 `4597b2fd23a83732dd09951df4b7ab6d38f18ed1`의 API37 재실행에서 OUTSIDE_BEFORE / ENVIRONMENT_CHANGED / PHASE_FIRST_SAMPLE / SAVED_BASELINE_MISMATCH / REMOTE_WINDOW / INCONCLUSIVE를 제공했습니다. 이는 첫 probe에서 저장한 접근성 창 경계와 phase 첫 표본 경계가 달랐다는 증거입니다. Android가 경계를 달리 제공한 이유, 애니메이션 여부, 서비스 frame과의 원자적 관계는 확정하지 않습니다. Codex 직접 Android 실행이 아닙니다.
+
+현재 ScrollClipBaseline은 NEW → STABILIZING → FIXED → DISPOSED의 테스트 소유 수명만 관리합니다. 임의 완료 표식·공개 commit/reset은 없습니다. NEW의 probe·phase 첫 표본과 STABILIZING의 표본은 기준을 저장하지 않습니다. 실제 reader가 매번 기존 소유권 선검사, 동일 native View/원격 source 대응·부모·Scroll 조상, 민감/입력 필드 거부, layout/양수 경계/안팎 위치·가시성, 한 표본의 native BEFORE/AFTER 일치와 독립 해제를 모두 수행해야 합니다. raw Rect 정렬·clamp·가짜 경계는 없습니다.
+
+최초 establishBaseline만 기존 stable loop의 anchor를 생략합니다. 관계 enum 대신 ScrollClipSample 전체(raw 경계·경로·window ID·rotation·두 Configuration·scroll 위치·가시성)의 정확한 동등성을 기존 gate로 비교합니다. 변화하면 기존3초 안에서 횟수와 시작 시간이 다시 계산되며,3회 이상/1초 이상을 채우지 못하면 STABLE_UNOBSERVED / INCONCLUSIVE입니다. 중간 검사 예외나 release 실패를 새로 재시도하지 않습니다. 단일 표본 내부의 불일치도 기존 UNSTABLE 즉시 실패입니다.
+
+stable 반환 후 reference 구성·Job 취소·동일 GeometryReadSafety latch를 확인하고 최초 establish 시작 시각의3초 마감을 기준 대입 직전/직후에도 검사합니다. 마감·실패·취소 시 참조를 폐기하고 원래 고정 예외/취소를 전파합니다. 환경·remote 경로·window/root만 보존하며 Android node/window나 본문·토큰·지문을 보관하지 않습니다. 기준이 FIXED이면 기존 필드별 정확한 비교와 READ_STAGE/CHECK/FIELD 진단을 사용하며 불일치 시 폐기합니다. phase별 재확정, 실패 후 복구, close 후 재사용은 거부합니다.
+
+이후 INSIDE/OUTSIDE_AFTER의 안정화는 기존 phase 첫 표본 anchor를 유지하고, 서비스 관측 전/후와 최종 RESULT의 anchor도 그대로입니다. 실제 scroll에 따라 바뀌어야 하는 대상 경계와 scroll 위치를 전 phase의 초기 대상 값으로 고정하지 않습니다. 환경 기준은 교체하지 않으면서 각 phase 안의 전체 raw 표본 안정성은 별도로 엄격히 요구합니다.
+
+기존 서비스 최소2초/최대3초, session45초·256행, RESET 횟수, ownership/ordinal floor, 실제 ATTEMPT와 최종 RESULT·phase 완료·cleanup 조건은 미변경입니다. 초기 launch 기록도 삭제하지 않습니다. 안정 기준은 host 표본의 비교 기준일 뿐 서비스 F1 baseline·선택 노드의 collector binding·F0 완료 증거가 아닙니다. RESULT↔RESET/END 및 host/UiAutomation/서비스의 비원자성, Binder 강제 중단 불가, 미관측 ABA, 기존 Scroll/Window 문제와 원본14개 UNOBSERVED는 유지합니다. 실제 이벤트/ATTEMPT 미도착이나 후속 기준 변화로 여전히 실패할 수 있습니다. 기존 P3 정리 후 보고 취소 순서 회귀도 별도 후속 과제입니다.
+
+## 안정화 후 기준 확정의 로컬 검증 (2026-10-20)
+
+신규 JVM22개를 추가하고, 이전의 초기 표본 고정을 기대하던 회귀1개를 현재 probe 미확정 계약으로 교체했습니다. 첫 대상 실행은 신규 테스트1개의 반환 타입 컴파일 오류로 중단됐습니다. 테스트에 Unit 반환을 명시한 뒤 대상88개가 통과했고, 이후 기준 대입 직후의 정확한 마감 경계 회귀1개를 더한 전체 실행에서 ScrollClip89개 및 전체832개(앱396/호스트436), 실패·오류·skip0을 JUnit XML로 확인했습니다.
+
+실제 reader와 공유하는 ScrollClipBaseline/MinimalGeometryPolling/ObservedGeometryStability 경로를 가짜 시계·표본·검사/해제 callback으로 검증합니다. 초기 probe와 phase 첫 표본은 NEW 유지, remote window 및 대상 raw bounds 변화 후 카운트 재시작, 최소3회와1초 각각의 필수성, A→B→A 초기 재시작,3초 내 안정화 실패, FIXED 후 configuration/path/window/root 변경 거부, phase 사이 대상 경계 변경과 phase 내부 anchor 거부의 구분을 포함합니다. 재확정·close 후 복구 금지, 기준 구성 및 대입 직전/직후3,000ms 마감, 취소와 여러 해제 실패의 동반 발생, release latch 유지, 실제 서비스·최종 RESULT·cleanup 없는 완료 금지도 검사합니다. Android framework 자체나 실제 node/window/configuration 변화를 JVM에서 재현한 것은 아닙니다.
+
+```text
+JAVA_HOME=/workspace/jdk17 ./gradlew --offline --no-daemon :app:testDebugUnitTest --rerun :capture-test-host:testDebugUnitTest --rerun :app:assembleDebug :app:assembleDebugAndroidTest :capture-test-host:assembleDebug :capture-test-host:assembleDebugAndroidTest :app:lintDebug :capture-test-host:lintDebug
+```
+
+위 전체 실행은 BUILD SUCCESSFUL(1분26초)이었습니다. 양쪽 Debug/AndroidTest APK와 Lint(이슈0), tools/verify_capture_test_apks.py 및 새 ScrollClipBaseline/상태/Reference를 포함한 실제 DEX class_def 격리를 통과했습니다. ScrollClip 타입은 host AndroidTest APK에만 정의되고 앱·앱 AndroidTest·host APK에는 없으며 JVM 테스트는 모든 APK에서 제외됩니다. Gradle 경고 출력은 없었습니다.
+
+전체 추적 파일의 작업 전후 SHA-256을 비교해 허용된5개 파일 외에는 변경이 없음을 확인했습니다. 기존 Android getter/recycle 호출 수와 서비스 판정·시간/progress 계약, driver의 anchor 이후 최종 RESULT·finally 코드는 원문 동일합니다. 최초 안정화에 필요한 표본 반복은 기존3초 안에서만 수행하며 실제 실행 횟수/타이밍이 과거와 같다고 주장하지 않습니다. git diff --check와 변경 파일 전체 공백/개행 검사를 통과했습니다. 기준 HEAD는 `4597b2fd23a83732dd09951df4b7ab6d38f18ed1`을 유지하며 staged·미추적 파일은 없습니다. 커밋·푸시·병합·PR 변경은 하지 않았습니다.
+
+이 수정 버전의 API37 계측은 미실행입니다. 위 Windows 명령으로 같은 시험을 다시 실행해 초기 완전한 raw 표본이 실제로 안정화되는지, 확정 후 기준과 anchor를 유지하는지, 각 scroll 상태의 실제 서비스 ATTEMPT가 도착하는지 확인해야 합니다. 안정화 전 REMOTE_WINDOW 고정의 코드 경로는 수정했지만, Android가 서로 다른 창 경계를 제공한 원인이나 Scroll REVERSED_Y·운영 Window/frame·원본14개 문제를 해결했다는 증거는 아닙니다. F0 완전성·현재성·TTL·토큰/지문 결합·F1 정확도·OCR·행동 안전성은 미입증입니다.

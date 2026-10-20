@@ -432,34 +432,19 @@ class ScrollClipContractTest {
             assertEquals("READ_STAGE=${stage.name};CHECK=SAVED_BASELINE_MISMATCH;FIELD=CURRENT", failure.environment?.codes())
         }
     }
-    @Test fun actualWarmupPinsBeforePhaseFirstSampleAndStillRejectsChangeBeforeStability() {
-        val diagnostics = ScrollClipReadDiagnostics(); val safety = GeometryReadSafety()
-        var time = 0L; var saved: IsolationRect? = null; var stabilityReads = 0
-        run {
-            MinimalGeometryPolling.firstCoherent({ time }, safety, {
-                diagnostics.at(INITIAL_PROBE) {
-                    diagnostics.same(CURRENT, saved, viewport)
-                    saved = viewport // Same first successful sample pin point; not a stable proof.
-                    viewport
-                }
+    @Test fun initialProbeAndPhaseFirstSampleNeverPinBaseline() = run {
+        val diagnostics = ScrollClipReadDiagnostics()
+        val baseline = preparationBaseline(diagnostics)
+        var time = 0L
+        for ((stage, sample) in listOf(INITIAL_PROBE to preparationSample(),
+            PHASE_FIRST_SAMPLE to preparationSample().copy(window = IsolationRect(0, 0, 101, 100)))) {
+            MinimalGeometryPolling.firstCoherent({ time }, GeometryReadSafety(), {
+                diagnostics.at(stage) { baseline.check(sample); sample }
             }, { true }, { time += it })
         }
         assertEquals(0L, time)
-        try { run {
-            val first = MinimalGeometryPolling.firstCoherent({ time }, safety, {
-                diagnostics.at(PHASE_FIRST_SAMPLE) {
-                    diagnostics.same(CURRENT, saved, IsolationRect(0, 0, 101, 100))
-                    viewport
-                }
-            }, { true }, { time += it })
-            MinimalGeometryPolling.stable({ time }, { stabilityReads++; first }, { true }, { time += it }, first)
-            fail("FAILURE_REQUIRED")
-        } } catch (failure: ScrollClipFailure) {
-            assertEquals(ScrollClipIssue.ENVIRONMENT_CHANGED, failure.issue)
-            assertEquals(PHASE_FIRST_SAMPLE, failure.environment?.stage)
-        }
-        assertEquals(0, stabilityReads)
-        assertEquals(viewport, saved)
+        assertEquals("ScrollClipBaseline(state=NEW)", baseline.toString())
+        assertNull(diagnostics.failure())
     }
     @Test fun environmentFailureIsNotRetriedByActualFirstCoherentLoop() {
         val diagnostics = ScrollClipReadDiagnostics(); var reads = 0; var pauses = 0
@@ -542,5 +527,231 @@ class ScrollClipContractTest {
         assertEquals("ENVIRONMENT_CHANGED", failure.message); assertNull(failure.cause)
         assertTrue(ScrollClipEnvironmentFailure::class.java.declaredFields.filterNot { it.isSynthetic }.all { it.type.isEnum })
         assertFalse((failure.toString() + diagnostics + failure.environment).contains("PRIVATE_"))
+    }
+
+    private data class PreparationSample(val configuration: Int, val window: IsolationRect, val root: IsolationRect,
+        val path: List<Int>, val targetBounds: IsolationRect) {
+        override fun toString() = "PreparationSample(redacted)"
+    }
+    private fun preparationSample() = PreparationSample(1, viewport, viewport, listOf(0, 1), IsolationRect(0, 120, 10, 140))
+    private fun preparationBaseline(diagnostics: ScrollClipReadDiagnostics) = ScrollClipBaseline<PreparationSample, PreparationSample>(
+        { it }, { saved, sample ->
+            diagnostics.same(CONFIGURATION, saved.configuration, sample.configuration)
+            diagnostics.same(REMOTE_PATH, saved.path, sample.path)
+            diagnostics.same(REMOTE_WINDOW, saved.window, sample.window)
+            diagnostics.same(REMOTE_ROOT, saved.root, sample.root)
+        })
+    private suspend fun establish(baseline: ScrollClipBaseline<PreparationSample, PreparationSample>,
+        sample: PreparationSample = preparationSample()): PreparationSample {
+        var time = 0L
+        return baseline.establish({ time }, GeometryReadSafety(), { baseline.check(sample); sample }, { time += it }, {})
+    }
+
+    @Test fun initialRemoteWindowChangeSettlesThenOnlyStableReferenceIsAccepted() = run {
+        val diagnostics = ScrollClipReadDiagnostics(); val baseline = preparationBaseline(diagnostics)
+        val first = preparationSample(); val settled = first.copy(window = IsolationRect(0, 0, 101, 100))
+        diagnostics.at(INITIAL_PROBE) { baseline.check(first) }
+        diagnostics.at(PHASE_FIRST_SAMPLE) { baseline.check(first) }
+        var time = 0L; var reads = 0
+        val stable = baseline.establish({ time }, GeometryReadSafety(), {
+            val sample = if (reads++ == 0) first else settled
+            diagnostics.at(STABILITY_CHECK) { baseline.check(sample) }
+            assertEquals("ScrollClipBaseline(state=STABILIZING)", baseline.toString())
+            sample
+        }, { time += it }, {})
+        assertEquals(settled, stable); assertEquals(1_200L, time)
+        diagnostics.at(ANCHOR_CHECK) { baseline.check(settled) }
+        environmentFailure(diagnostics, ANCHOR_CHECK, SAVED_BASELINE_MISMATCH, REMOTE_WINDOW) { baseline.check(first) }
+        Unit
+    }
+    @Test fun rawTargetBoundsChangeAlsoRestartsInitialStabilityCount() = run {
+        val diagnostics = ScrollClipReadDiagnostics(); val baseline = preparationBaseline(diagnostics)
+        val first = preparationSample(); val settled = first.copy(targetBounds = IsolationRect(0, 121, 10, 141))
+        var time = 0L; var reads = 0
+        val stable = baseline.establish({ time }, GeometryReadSafety(), {
+            val sample = if (reads++ == 0) first else settled
+            baseline.check(sample); sample
+        }, { time += it }, {})
+        assertEquals(settled, stable); assertEquals(1_200L, time)
+    }
+    @Test fun atLeastThreeSamplesAreRequiredEvenIfOneSecondAlreadyPassed() = run {
+        val baseline = preparationBaseline(ScrollClipReadDiagnostics()); var time = 0L; var reads = 0
+        baseline.establish({ time }, GeometryReadSafety(), { reads++; preparationSample() }, { time += 1_000L }, {})
+        assertEquals(3, reads); assertEquals(2_000L, time)
+    }
+    @Test fun manyEqualSamplesStillRequireOneFullSecond() = run {
+        val baseline = preparationBaseline(ScrollClipReadDiagnostics()); var time = 0L; var reads = 0
+        baseline.establish({ time }, GeometryReadSafety(), { reads++; preparationSample() }, { time += it }, {})
+        assertEquals(6, reads); assertEquals(1_000L, time)
+    }
+    @Test fun observedInitialAbaDoesNotReuseOldStartOrCount() = run {
+        val baseline = preparationBaseline(ScrollClipReadDiagnostics()); var time = 0L; var reads = 0
+        val a = preparationSample(); val b = a.copy(window = IsolationRect(0, 0, 101, 100))
+        baseline.establish({ time }, GeometryReadSafety(), { if (reads++ == 1) b else a }, { time += it }, {})
+        assertEquals(1_400L, time)
+    }
+    @Test fun neverStableRawSamplesTimeOutWithoutReference() {
+        val baseline = preparationBaseline(ScrollClipReadDiagnostics()); var time = 0L; var reads = 0
+        try { run { baseline.establish({ time }, GeometryReadSafety(), {
+            preparationSample().copy(configuration = reads++ % 2)
+        }, { time += it }, {}) }; fail("STABILITY_TIMEOUT_REQUIRED") }
+        catch (failure: GeometryDiagnosticFailure) { assertEquals(GeometryIssue.STABLE_UNOBSERVED, failure.issue) }
+        assertEquals(3_000L, time)
+        rejects(ScrollClipIssue.PHASE_ORDER) { baseline.check(preparationSample()) }
+    }
+    @Test fun everyFixedReferenceComponentRejectsChangeWithExistingCodes() = run {
+        val first = preparationSample()
+        val changes = listOf(CONFIGURATION to first.copy(configuration = 2),
+            REMOTE_PATH to first.copy(path = listOf(0, 2)),
+            REMOTE_WINDOW to first.copy(window = IsolationRect(0, 0, 101, 100)),
+            REMOTE_ROOT to first.copy(root = IsolationRect(0, 0, 100, 101)))
+        for ((field, changed) in changes) {
+            val diagnostics = ScrollClipReadDiagnostics(); val baseline = preparationBaseline(diagnostics)
+            establish(baseline, first)
+            environmentFailure(diagnostics, PHASE_FIRST_SAMPLE, SAVED_BASELINE_MISMATCH, field) { baseline.check(changed) }
+            rejects(ScrollClipIssue.PHASE_ORDER) { baseline.check(first) }
+        }
+    }
+    @Test fun approvedReferenceCannotBeReestablishedForLaterPhase() = run {
+        val baseline = preparationBaseline(ScrollClipReadDiagnostics()); establish(baseline)
+        var reads = 0
+        rejects(ScrollClipIssue.PHASE_ORDER) {
+            baseline.establish({ 0L }, GeometryReadSafety(), { reads++; preparationSample() }, {}, {})
+        }
+        assertEquals(0, reads)
+        rejects(ScrollClipIssue.PHASE_ORDER) { baseline.check(preparationSample()) }
+    }
+    @Test fun changedTargetAllowedAcrossPhasesButFixedEnvironmentRemainsRequired() = run {
+        val diagnostics = ScrollClipReadDiagnostics(); val baseline = preparationBaseline(diagnostics)
+        val outside = establish(baseline)
+        baseline.check(outside.copy(targetBounds = IsolationRect(0, 20, 10, 40)))
+        baseline.check(outside)
+        assertNull(diagnostics.failure())
+    }
+    @Test fun laterPhaseAnchorStillRejectsObservedTargetChangeBeforeReturnToA() = run {
+        val baseline = preparationBaseline(ScrollClipReadDiagnostics()); val first = establish(baseline)
+        var reads = 0; var time = 0L
+        try {
+            MinimalGeometryPolling.stable({ time }, {
+                val sample = if (++reads == 1) first.copy(targetBounds = IsolationRect(0, 21, 10, 41)) else first
+                baseline.check(sample); sample
+            }, { true }, { time += it }, anchor = first)
+            fail("ANCHOR_REJECTION_REQUIRED")
+        } catch (failure: GeometryDiagnosticFailure) { assertEquals(GeometryIssue.STABLE_GEOMETRY_CHANGED, failure.issue) }
+        assertEquals(1, reads)
+    }
+    @Test fun cancellationDuringInitialPauseIsPreservedAndPreventsReference() {
+        val baseline = preparationBaseline(ScrollClipReadDiagnostics()); val primary = CancellationException("PRIVATE_CANCEL")
+        try { run { baseline.establish({ 0L }, GeometryReadSafety(), { preparationSample() }, { throw primary }, {}) }; fail("CANCEL_REQUIRED") }
+        catch (failure: CancellationException) { assertSame(primary, failure) }
+        rejects(ScrollClipIssue.PHASE_ORDER) { baseline.check(preparationSample()) }
+    }
+    @Test fun cancellationAtReferenceAcceptanceIsPreservedWithoutCommit() {
+        val baseline = preparationBaseline(ScrollClipReadDiagnostics()); var time = 0L; var reads = 0
+        val primary = CancellationException("PRIVATE_CANCEL")
+        try { run { baseline.establish({ time }, GeometryReadSafety(), { reads++; preparationSample() }, { time += it }, {
+            if (reads >= 6) throw primary
+        }) }; fail("CANCEL_REQUIRED") } catch (failure: CancellationException) { assertSame(primary, failure) }
+        rejects(ScrollClipIssue.PHASE_ORDER) { baseline.check(preparationSample()) }
+    }
+    @Test fun referenceProjectionReachingExactDeadlineCannotCommit() {
+        for (late in listOf(3_000L, 3_100L)) {
+            var time = 0L
+            val baseline = ScrollClipBaseline<PreparationSample, PreparationSample>({ time = late; it }, { _, _ -> })
+            try { run { baseline.establish({ time }, GeometryReadSafety(), { preparationSample() }, { time += it }, {}) }; fail("TIMEOUT_REQUIRED") }
+            catch (failure: GeometryDiagnosticFailure) { assertEquals(GeometryIssue.STABLE_UNOBSERVED, failure.issue) }
+            rejects(ScrollClipIssue.PHASE_ORDER) { baseline.check(preparationSample()) }
+        }
+    }
+    @Test fun lateCoherentReadCannotSupplyApprovedReference() {
+        var time = 0L; val baseline = preparationBaseline(ScrollClipReadDiagnostics())
+        try { run { baseline.establish({ time }, GeometryReadSafety(), { time = 3_000L; preparationSample() }, {}, {}) }; fail("TIMEOUT_REQUIRED") }
+        catch (failure: GeometryDiagnosticFailure) { assertEquals(GeometryIssue.STABLE_UNOBSERVED, failure.issue) }
+        rejects(ScrollClipIssue.PHASE_ORDER) { baseline.check(preparationSample()) }
+    }
+    @Test fun deadlineCrossedAtReferenceAssignmentDiscardsTheTentativeReference() {
+        var time = 0L; var selected = false; var acceptanceClockReads = 0
+        val baseline = ScrollClipBaseline<PreparationSample, PreparationSample>({ selected = true; it }, { _, _ -> })
+        val now = { if (selected && ++acceptanceClockReads >= 2) 3_000L else time }
+        try { run { baseline.establish(now, GeometryReadSafety(), { preparationSample() }, { time += it }, {}) }; fail("TIMEOUT_REQUIRED") }
+        catch (failure: GeometryDiagnosticFailure) { assertEquals(GeometryIssue.STABLE_UNOBSERVED, failure.issue) }
+        assertEquals("ScrollClipBaseline(state=DISPOSED)", baseline.toString())
+        rejects(ScrollClipIssue.PHASE_ORDER) { baseline.check(preparationSample()) }
+    }
+    @Test fun invalidOwnedSampleIsNotRetriedDuringInitialStability() {
+        val baseline = preparationBaseline(ScrollClipReadDiagnostics()); var reads = 0
+        rejects(ScrollClipIssue.OWNERSHIP_REJECTED) {
+            baseline.establish({ 0L }, GeometryReadSafety(), {
+                reads++; ScrollClipContract.requireOwner(1, "PRIVATE_OTHER", 1); preparationSample()
+            }, {}, {})
+        }
+        assertEquals(1, reads)
+        rejects(ScrollClipIssue.PHASE_ORDER) { baseline.check(preparationSample()) }
+    }
+    @Test fun nonpositiveBoundsStillFailWithExistingDiagnosisBeforeAnyReference() {
+        val diagnostics = ScrollClipReadDiagnostics(); val baseline = preparationBaseline(diagnostics); var reads = 0
+        environmentFailure(diagnostics, STABILITY_CHECK, NONPOSITIVE_BOUNDS, REMOTE_WINDOW) {
+            run { baseline.establish({ 0L }, GeometryReadSafety(), {
+                reads++; diagnostics.positive(REMOTE_WINDOW, IsolationRect(0, 0, 0, 0)); preparationSample()
+            }, {}, {}) }
+        }
+        assertEquals(1, reads)
+        rejects(ScrollClipIssue.PHASE_ORDER) { baseline.check(preparationSample()) }
+    }
+    @Test fun finalStableSampleReleaseFailurePreventsReferenceAndLaterReuse() {
+        val safety = GeometryReadSafety(); val baseline = preparationBaseline(ScrollClipReadDiagnostics()); var time = 0L
+        try { run { baseline.establish({ time }, safety, { safety.inspect { scope ->
+            if (time == 1_000L) scope.release { throw IllegalStateException("PRIVATE_RELEASE") }
+            preparationSample()
+        } }, { time += it }, {}) }; fail("RELEASE_FAILURE_REQUIRED") } catch (_: PriorityReleaseException) { }
+        assertNotNull(safety.failure())
+        rejects(ScrollClipIssue.PHASE_ORDER) { baseline.check(preparationSample()) }
+    }
+    @Test fun initialInspectionAndMultipleReleaseFailuresKeepOriginalAndTryAll() {
+        val safety = GeometryReadSafety(); val baseline = preparationBaseline(ScrollClipReadDiagnostics())
+        val primary = CancellationException("PRIVATE_CANCEL"); var releases = 0
+        try { run { baseline.establish({ 0L }, safety, { safety.inspect { scope ->
+            try { throw primary } finally {
+                scope.release { releases++; throw IllegalStateException("PRIVATE_RELEASE") }
+                scope.release { releases++; throw CancellationException("PRIVATE_RELEASE_CANCEL") }
+                scope.release { releases++ }
+            }
+        } }, {}, {}) }; fail("CANCEL_REQUIRED") } catch (failure: CancellationException) { assertSame(primary, failure) }
+        assertEquals(3, releases); assertNotNull(safety.failure())
+        rejects(ScrollClipIssue.PHASE_ORDER) { baseline.check(preparationSample()) }
+    }
+    @Test fun releaseLatchCannotBeErasedBySuccessfulLaterReadOrReferenceProjection() {
+        val safety = GeometryReadSafety(); var time = 0L; var reads = 0
+        val baseline = preparationBaseline(ScrollClipReadDiagnostics())
+        try { run { baseline.establish({ time }, safety, {
+            reads++
+            if (reads == 2) {
+                val primary = GeometryDiagnosticFailure(GeometryIssue.ROOT_UNAVAILABLE)
+                safety.inspect { scope -> try { throw primary } finally { scope.release { throw IllegalStateException("PRIVATE_RELEASE") } } }
+            }
+            preparationSample()
+        }, { time += it }, {}) }; fail("PRIMARY_REQUIRED") }
+        catch (failure: GeometryDiagnosticFailure) { assertEquals(GeometryIssue.ROOT_UNAVAILABLE, failure.issue) }
+        assertEquals(2, reads); assertNotNull(safety.failure())
+        rejects(ScrollClipIssue.PHASE_ORDER) { baseline.check(preparationSample()) }
+    }
+    @Test fun closingBaselineReleasesReferenceAndNeverPermitsReestablishment() = run {
+        val baseline = preparationBaseline(ScrollClipReadDiagnostics()); establish(baseline)
+        baseline.close()
+        assertEquals("ScrollClipBaseline(state=DISPOSED)", baseline.toString())
+        rejects(ScrollClipIssue.PHASE_ORDER) { baseline.check(preparationSample()) }
+        rejects(ScrollClipIssue.PHASE_ORDER) { establish(baseline) }
+    }
+    @Test fun stableReferenceStillCannotReplaceMissingServiceOrCleanupEvidence() = run {
+        val baseline = preparationBaseline(ScrollClipReadDiagnostics()); establish(baseline)
+        val progress = ScrollClipProgress()
+        assertEquals("INCONCLUSIVE", progress.outcome(true, true))
+        for ((index, phase) in ScrollClipPhase.entries.withIndex()) progress.phase(phase) { scope ->
+            baseline.check(preparationSample())
+            final(progress, scope, listOf(ready(index + 1)))
+        }
+        assertEquals("OBSERVATIONS_COMPLETE", progress.outcome(true, true))
+        assertEquals("INCONCLUSIVE", progress.outcome(false, true))
+        assertEquals("INCONCLUSIVE", progress.outcome(true, false))
     }
 }

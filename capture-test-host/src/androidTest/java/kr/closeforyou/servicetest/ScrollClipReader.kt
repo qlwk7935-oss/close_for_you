@@ -36,6 +36,11 @@ internal data class ScrollClipSample(val native: ScrollClipNative, val remoteBou
             ScrollClipContract.shape(if (own) native.bounds else remoteBounds), if (own) native.visible else remoteVisible)
     }
 }
+/** Only the same environment/path/window/root values previously retained by the reader. */
+internal class ScrollClipReference(val environment: ScrollClipEnvironment, val remotePath: List<Int>,
+    val window: IsolationRect, val root: IsolationRect) {
+    override fun toString() = "ScrollClipReference(redacted)"
+}
 
 /** Own View references only for this Activity lifetime. Native node leases last one sample.
  * Remote matching uses actual AccessibilityNodeInfo equality (source/window identity) AND
@@ -49,10 +54,25 @@ internal class ScrollClipReader(private val instrumentation: Instrumentation, pr
     private var rows: LinearLayout? = null
     private var target: TextView? = null
     private var fixedPath: List<Int>? = null
-    private var environment: ScrollClipEnvironment? = null
-    private var remotePath: List<Int>? = null
-    private var fixedWindow: IsolationRect? = null
-    private var fixedRoot: IsolationRect? = null
+    private val baseline = ScrollClipBaseline<ScrollClipSample, ScrollClipReference>(
+        { ScrollClipReference(it.native.environment, it.remotePath, it.windowBounds, it.rootBounds) },
+        { saved, sample ->
+            val current = sample.native.environment
+            val env = saved.environment
+            // Original generated-equals field order, then remote path/window/root. No Android reads.
+            diagnostics.same(WINDOW_ID, env.window, current.window)
+            diagnostics.same(ROTATION, env.rotation, current.rotation)
+            diagnostics.same(CONFIGURATION, env.configuration, current.configuration)
+            diagnostics.same(APPLICATION_CONFIGURATION, env.applicationConfiguration, current.applicationConfiguration)
+            diagnostics.same(LOGICAL, env.logical, current.logical)
+            diagnostics.same(MAXIMUM, env.maximum, current.maximum)
+            diagnostics.same(CURRENT, env.current, current.current)
+            diagnostics.same(DECOR, env.decor, current.decor)
+            diagnostics.same(VIEWPORT, env.viewport, current.viewport)
+            diagnostics.same(REMOTE_PATH, saved.remotePath, sample.remotePath)
+            diagnostics.same(REMOTE_WINDOW, saved.window, sample.windowBounds)
+            diagnostics.same(REMOTE_ROOT, saved.root, sample.rootBounds)
+        })
 
     fun bind() = main {
         val content = activity.findViewById<ViewGroup>(android.R.id.content) ?: bad(ScrollClipIssue.FIXTURE_INVALID)
@@ -88,6 +108,10 @@ internal class ScrollClipReader(private val instrumentation: Instrumentation, pr
     fun sample(phase: ScrollClipPhase, stage: ScrollClipReadStage): ScrollClipSample = diagnostics.at(stage) {
         readSample(phase)
     }
+
+    suspend fun establishBaseline(now: () -> Long, pause: suspend (Long) -> Unit, active: suspend () -> Unit): ScrollClipSample =
+        baseline.establish(now, safety,
+            { sample(ScrollClipPhase.OUTSIDE_BEFORE, ScrollClipReadStage.STABILITY_CHECK) }, pause, active)
 
     @Suppress("DEPRECATION")
     private fun readSample(phase: ScrollClipPhase): ScrollClipSample = safety.inspect { releases ->
@@ -154,25 +178,7 @@ internal class ScrollClipReader(private val instrumentation: Instrumentation, pr
                     diagnostics.positive(REMOTE_ROOT, rootBounds)
                     ScrollClipContract.requirePlacement(phase, ScrollClipContract.position(before.environment.viewport, before.layout),
                         before.visible, matchedVisible)
-                    // Same field order as ScrollClipEnvironment's generated equals, followed by
-                    // the original remote path/window/root comparisons. No Android getters here.
-                    environment?.let { saved ->
-                        val current = before.environment
-                        diagnostics.same(WINDOW_ID, saved.window, current.window)
-                        diagnostics.same(ROTATION, saved.rotation, current.rotation)
-                        diagnostics.same(CONFIGURATION, saved.configuration, current.configuration)
-                        diagnostics.same(APPLICATION_CONFIGURATION, saved.applicationConfiguration, current.applicationConfiguration)
-                        diagnostics.same(LOGICAL, saved.logical, current.logical)
-                        diagnostics.same(MAXIMUM, saved.maximum, current.maximum)
-                        diagnostics.same(CURRENT, saved.current, current.current)
-                        diagnostics.same(DECOR, saved.decor, current.decor)
-                        diagnostics.same(VIEWPORT, saved.viewport, current.viewport)
-                    }
-                    diagnostics.same(REMOTE_PATH, remotePath, sample.remotePath)
-                    diagnostics.same(REMOTE_WINDOW, fixedWindow, sample.windowBounds)
-                    diagnostics.same(REMOTE_ROOT, fixedRoot, rootBounds)
-                    environment = before.environment; remotePath = sample.remotePath
-                    fixedWindow = sample.windowBounds; fixedRoot = rootBounds
+                    baseline.check(sample) // Probes never set the reference; fixed references never move.
                     sample
                 } finally { releases.release { root.recycle() } }
             } finally { releases.releaseAll(windows) { it.recycle() } }
@@ -258,6 +264,6 @@ internal class ScrollClipReader(private val instrumentation: Instrumentation, pr
         issue?.let { bad(it) }; geometry?.let { throw GeometryDiagnosticFailure(it) }
         return result ?: bad(ScrollClipIssue.FIXTURE_INVALID)
     }
-    fun close() { target = null; rows = null; scroller = null; fixedPath = null; environment = null; remotePath = null; fixedWindow = null; fixedRoot = null }
+    fun close() { target = null; rows = null; scroller = null; fixedPath = null; baseline.close() }
     private fun bad(issue: ScrollClipIssue): Nothing = throw diagnostics.exception(issue)
 }

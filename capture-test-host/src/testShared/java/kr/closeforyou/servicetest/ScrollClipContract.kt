@@ -62,6 +62,59 @@ internal class ScrollClipReadDiagnostics {
     }
     override fun toString() = "ScrollClipReadDiagnostics(codes_only)"
 }
+
+internal enum class ScrollClipBaselineState { NEW, STABILIZING, FIXED, DISPOSED }
+
+/** Test-owned reference only, not a protection receipt or service baseline.
+ * Every read must still perform its own ownership/identity/protection/release checks.
+ * The existing exact-raw-value stability loop is used only once without an anchor;
+ * after that, comparisons never replace the approved reference, including between phases.
+ */
+internal class ScrollClipBaseline<S : Any, R : Any>(private val select: (S) -> R,
+    private val compare: (R, S) -> Unit) {
+    private var state = ScrollClipBaselineState.NEW
+    private var reference: R? = null
+
+    fun check(sample: S) {
+        when (state) {
+            ScrollClipBaselineState.NEW, ScrollClipBaselineState.STABILIZING -> Unit
+            ScrollClipBaselineState.FIXED -> try { compare(reference ?: stop(), sample) }
+                catch (failure: Exception) { close(); throw failure }
+            ScrollClipBaselineState.DISPOSED -> stop()
+        }
+    }
+
+    suspend fun establish(now: () -> Long, safety: GeometryReadSafety, read: suspend () -> S,
+        pause: suspend (Long) -> Unit, active: suspend () -> Unit): S {
+        if (state != ScrollClipBaselineState.NEW) stop()
+        state = ScrollClipBaselineState.STABILIZING
+        try {
+            val start = now()
+            val stable = MinimalGeometryPolling.stable(now, {
+                active()
+                safety.requireClean()
+                val sample = read()
+                safety.requireClean()
+                sample
+            }, { true }, pause) // No first-sample anchor before the initial reference exists.
+            val candidate = select(stable)
+            active()
+            safety.requireClean()
+            if (state != ScrollClipBaselineState.STABILIZING) stop()
+            // Include projection/cancellation checks and reference acceptance in this same
+            // initial 3s limit; no logging/suspend between the last check and assignment.
+            if (now() - start >= 3_000) throw GeometryDiagnosticFailure(GeometryIssue.STABLE_UNOBSERVED)
+            reference = candidate
+            state = ScrollClipBaselineState.FIXED
+            if (now() - start >= 3_000) throw GeometryDiagnosticFailure(GeometryIssue.STABLE_UNOBSERVED)
+            return stable
+        } catch (failure: Exception) { close(); throw failure }
+    }
+
+    fun close() { reference = null; state = ScrollClipBaselineState.DISPOSED }
+    private fun stop(): Nothing { close(); throw ScrollClipFailure(ScrollClipIssue.PHASE_ORDER) }
+    override fun toString() = "ScrollClipBaseline(state=${state.name})"
+}
 internal enum class ScrollClipService { UNOBSERVED, MALFORMED_ONLY, ASSESSED_ONLY, MIXED }
 internal enum class ScrollClipSource { HOST_NATIVE, UIAUTOMATION_SEPARATE }
 internal enum class ScrollClipContrast { REVERSED_Y_OUTSIDE_ONLY, OTHER_PATTERN, INCONCLUSIVE }

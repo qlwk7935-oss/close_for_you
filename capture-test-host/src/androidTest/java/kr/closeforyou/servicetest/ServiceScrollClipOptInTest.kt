@@ -59,7 +59,8 @@ class ServiceScrollClipOptInTest {
             activity = shown
             instrumentation.waitForIdleSync()
             val owner = ScrollClipReader(instrumentation, automation, shown).also { reader = it }
-            // Initial readiness is not service/baseline evidence. Subsequent phases never rebind the child.
+            // Initial readiness is not service/baseline evidence and never pins geometry.
+            // Subsequent phases never rebind the child or replace the approved reference.
             MinimalGeometryPolling.firstCoherent(SystemClock::uptimeMillis, owner.safety,
                 { owner.bind(); owner.sample(ScrollClipPhase.OUTSIDE_BEFORE, ScrollClipReadStage.INITIAL_PROBE) }, { true }, { delay(it) })
             for (next in ScrollClipPhase.entries) {
@@ -72,7 +73,9 @@ class ServiceScrollClipOptInTest {
                         { currentCoroutineContext().ensureActive() }, { owner.move(next) })
                     val first = MinimalGeometryPolling.firstCoherent(SystemClock::uptimeMillis, owner.safety,
                         { owner.sample(next, ScrollClipReadStage.PHASE_FIRST_SAMPLE) }, { true }, { delay(it) })
-                    val stable = MinimalGeometryPolling.stable(SystemClock::uptimeMillis, { owner.sample(next, ScrollClipReadStage.STABILITY_CHECK) },
+                    val stable = if (next == ScrollClipPhase.OUTSIDE_BEFORE)
+                        owner.establishBaseline(SystemClock::uptimeMillis, { delay(it) }, { currentCoroutineContext().ensureActive() })
+                    else MinimalGeometryPolling.stable(SystemClock::uptimeMillis, { owner.sample(next, ScrollClipReadStage.STABILITY_CHECK) },
                         { true }, { delay(it) }, anchor = first)
                     fun anchor() {
                         owner.safety.requireClean()
