@@ -30,7 +30,9 @@ python3 tools/qa_metrics.py 결과.csv --logcat popuptest.log  # 재현 앱 버�
 adb logcat -s PopupTest > popuptest.log                       # 로그 저장(재현 앱)
 ```
 
-보고서 항목: 감지 정밀도·재현율·오탐·미탐(C01), 위험 클릭률(C06), 자동 처리 커버리지 전체/지원 기준과 결과 분포(C13), 작업 완료율·내용 이해 정확도(C12), 시나리오별 표, 로그 대조(금지 버튼·광고 페이지 도착 표시). 형식이 틀린 행은 집계에서 빼고 보고서 끝에 표시하며 종료 코드 1을 돌려줍니다.
+보고서 항목: 감지 정밀도·재현율·오탐·미탐(C01), 위험 클릭률(C06), 앱 판단의 오클릭·잘못 거부(B 분류·후보·정책), 자동 처리 커버리지 전체/지원 기준과 결과 분포(C13), 작업 완료율·내용 이해 정확도(C12), 시나리오별 표, 로그 대조(금지 버튼·광고 페이지 도착 표시). 형식이 틀린 행은 집계에서 빼고 보고서 끝에 표시하며 종료 코드 1을 돌려줍니다.
+
+**오클릭**은 앱이 누른 버튼(`AUTO_HANDLED`·`USER_CONFIRMED`의 `clicked_target`)이 정답지의 `app_allowed_target`과 다른 경우, **잘못 거부**는 `app_allowed_target`이 있는 `USER_CHOICE` 시나리오에서 결과가 `ANNOUNCED_ONLY`·`BLOCKED`인 경우입니다. 라벨 없는 X(P04)·그림 X(P05)는 앱 허용 버튼이 없어서 앱이 누르지 않아도 잘못 거부가 아닙니다. 둘 다 정답지에 있는 시나리오만 셉니다.
 
 정답지 CSV [`templates/popup_answer_key.csv`](templates/popup_answer_key.csv)는 `ScenarioCatalog`와 같아야 합니다. `AnswerKeyCsvTest`가 CI에서 두 값을 비교합니다.
 
