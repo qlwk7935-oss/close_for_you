@@ -20,6 +20,11 @@ import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
+/** Same shape as C's `ChoiceHandler` (ui/voice/integration/PopupChoiceFlow.kt), copied so B does not depend on C. */
+private fun interface CsChoiceHandler {
+    suspend fun handle(choice: UserChoice, analysis: PopupAnalysis): ActionResult?
+}
+
 class DecisionCandidateWiringTest {
     private val notice = MockPopupFixtures.notice()
     private val ad = MockPopupFixtures.advertisement()
@@ -39,7 +44,8 @@ class DecisionCandidateWiringTest {
     /** A's extractor today: the fixture's analysis, marked like the real runtime, with no candidates. */
     private val aExtractor = object : EvidenceExtractor {
         override suspend fun extract(snapshot: PopupSnapshot): PopupAnalysis =
-            listOf(notice, ad).first { it.snapshot.token == snapshot.token }.analysis.copy(
+            listOf(notice, ad).first { it.snapshot.token.copy(screenVersion = 0) == snapshot.token.copy(screenVersion = 0) }.analysis.copy(
+                token = snapshot.token,
                 closeCandidates = persistentListOf(),
                 limitations = persistentSetOf(AnalysisLimit.INCOMPLETE_EVIDENCE, AnalysisLimit.IMAGE_MODEL_NOT_IMPLEMENTED),
             )
@@ -47,6 +53,13 @@ class DecisionCandidateWiringTest {
 
     private fun candidate(fixture: kr.closeforyou.testing.mock.MockPopupFixture, signal: PopupSignal = PopupSignal.NEW_WINDOW) =
         PopupEvent.Candidate(fixture.snapshot, PopupDetection(fixture.snapshot.token, persistentSetOf(signal)))
+
+    /** The same popup as [fixture], seen at another screen version. */
+    private fun at(fixture: kr.closeforyou.testing.mock.MockPopupFixture, version: Long): PopupSnapshot =
+        fixture.snapshot.copy(token = fixture.snapshot.token.copy(screenVersion = version))
+
+    private fun candidateOf(snapshot: PopupSnapshot) =
+        PopupEvent.Candidate(snapshot, PopupDetection(snapshot.token, persistentSetOf(PopupSignal.NEW_WINDOW)))
 
     private fun deliver(source: FakeSource, wiring: DecisionCandidateWiring, vararg events: PopupEvent) = runBlocking {
         source.pending += events
@@ -111,6 +124,46 @@ class DecisionCandidateWiringTest {
         assertTrue("B's finder decides, never a preset list", wiring.extractor.extract(notice.snapshot).closeCandidates.isEmpty())
     }
 
+    @Test fun aScreenThatIsNoLongerCurrentGetsNoCandidates() = runBlocking {
+        // A's token expired (TTL), was blocked or moved on, but no event reached this collector yet.
+        val source = FakeSource(token)
+        val wiring = DecisionCandidateWiring(source, aExtractor)
+        deliver(source, wiring, candidate(notice))
+        source.token = null
+        assertTrue(wiring.extractor.extract(notice.snapshot).closeCandidates.isEmpty())
+        source.token = ad.snapshot.token
+        assertTrue(wiring.extractor.extract(notice.snapshot).closeCandidates.isEmpty())
+    }
+
+    @Test fun lateEventsFromAnotherCollectorDoNotBringOldScreensBack() = runBlocking {
+        val v5 = at(notice, 5)
+        val v6 = at(notice, 6)
+        val source = FakeSource(v6.token)
+        val wiring = DecisionCandidateWiring(source, aExtractor)
+
+        // Invalidated(6) starts version 6 and the popup of version 6 follows: candidates.
+        deliver(source, wiring, PopupEvent.Invalidated(6), candidateOf(v6))
+        assertEquals(1, wiring.extractor.extract(v6).closeCandidates.size)
+
+        // A slow collector replays version 5 afterwards: neither its Candidate nor its Invalidated wins.
+        deliver(source, wiring, candidateOf(v5), PopupEvent.Invalidated(5))
+        assertEquals(1, wiring.extractor.extract(v6).closeCandidates.size)
+
+        // Once version 7 starts, version 6 is gone and a late version-6 Candidate cannot return.
+        deliver(source, wiring, PopupEvent.Invalidated(7), candidateOf(v6))
+        assertTrue(wiring.extractor.extract(v6).closeCandidates.isEmpty())
+    }
+
+    @Test fun aBlockAtTheSameVersionCoversThatScreen() = runBlocking {
+        val v4 = at(notice, 4)
+        val source = FakeSource(v4.token)
+        val wiring = DecisionCandidateWiring(source, aExtractor)
+        deliver(source, wiring, candidateOf(v4), PopupEvent.Blocked(PrivacyBlockReason.SENSITIVE_CONTENT, screenVersion = 4))
+        assertTrue(wiring.extractor.extract(v4).closeCandidates.isEmpty())
+        deliver(source, wiring, candidateOf(v4))
+        assertTrue("a late Candidate of the blocked version stays out", wiring.extractor.extract(v4).closeCandidates.isEmpty())
+    }
+
     @Test fun currentTokenComesFromA() {
         val source = FakeSource(token)
         val wiring = DecisionCandidateWiring(source, aExtractor)
@@ -136,8 +189,10 @@ class DecisionCandidateWiringTest {
             }
         }
         val handler = DecisionChoiceHandler(wiring.source, gate, { false }, { true })
+        // INTEGRATION.md passes it to C as ChoiceHandler(handler::handle).
+        val forC = CsChoiceHandler(handler::handle)
         val choice = UserChoice(token, ChoiceKind.CLOSE_ONCE, classified.closeCandidates.single().id, buttonMeaningConfirmed = true)
-        val result = handler.handle(choice, classified)
+        val result = forC.handle(choice, classified)
         assertEquals(ActionStatus.NOT_EXECUTED, result?.status)
         assertEquals(1, requests.size)
     }

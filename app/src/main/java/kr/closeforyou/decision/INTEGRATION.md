@@ -45,14 +45,16 @@ PopupChoiceFlow(
 
 - **같은 `wiring` 하나를 C 흐름과 D 지문 생성기(F12 연결 때)에 함께 넘겨 주세요.** D의 `DeviceKeyedFingerprintProvider(evidenceExtractor = wiring.extractor, …)`가 저장 직전에 다시 `extract`해도 같은 화면이면 같은 후보가 붙습니다.
 - `wiring.source.events`를 C가 구독할 때 B가 최신 `Candidate`의 감지 신호만 기억합니다. 스냅샷은 보관하지 않고, `Blocked`·`Invalidated`가 오면 잊습니다.
+- A의 이벤트는 여러 곳에서 구독할 수 있어서, 늦게 처리된 옛 이벤트가 최신 기억을 덮어쓰지 않도록 화면 버전으로 거릅니다. `Invalidated(v)` 이후에는 v보다 오래된 화면이 돌아오지 않습니다. `Blocked(v)`는 버전 v 화면까지 막습니다.
 
 ## 3. 동작 규칙
 
 - **후보:** `NEW_WINDOW`는 활성 창 전체, `SAME_WINDOW_OVERLAY`는 Dialog 노드가 하나일 때 그 하위 노드만 봅니다. `FULL_SCREEN_TRANSITION`·`INSUFFICIENT_EVIDENCE`에서는 후보를 만들지 않습니다. 라벨 없는 X·아이콘(E3)·그림(E4)은 후보가 아닙니다.
-- **다른 화면:** 스냅샷·분석·감지의 토큰이 하나라도 다르면 후보 0개입니다. 이전 화면의 버튼을 새 화면에 내지 않습니다.
+- **다른 화면:** 스냅샷·분석·감지의 토큰이 하나라도 다르거나, 그 스냅샷이 A의 `currentToken()`(TTL·차단·화면 변경 반영)과 다르면 후보 0개입니다. 이전 화면의 버튼을 새 화면에 내지 않습니다.
 - **선택 처리:** 누르기 선택(`CLOSE_ONCE`/`SKIP_ONCE`)이 아니면 `null`을 반환하고 게이트를 부르지 않습니다. 정책이 `ALLOW_ONCE`가 아니면 게이트 없이 `BLOCKED`/`STALE`/`NOT_EXECUTED`를 반환합니다. `ALLOW_ONCE`면 토큰을 한 번 더 확인하고 게이트를 정확히 1번 부릅니다. 게이트 예외는 재시도 없이 `OUTCOME_UNKNOWN`(attempted=true)입니다.
 - **`ALLOW_ONCE`는 요청일 뿐입니다.** 실제 화면 재검증과 실행 결정은 A 게이트가 합니다.
 - **기억 규칙:** 첫 통합에서는 쓰지 않습니다(`matchingRule = null`). F12 연결 때 B가 정책 전에 `findExact` 결과를 받고, 기억으로 실행했는데 실패하면 D의 `recordFailure`를 부르는 부분을 추가합니다.
+- **F12 주의:** 후보는 현재 화면일 때만 붙으므로, "클릭 성공 뒤 저장"을 하려면 D의 지문(`RuleKey`)은 **클릭 전에** 만들어 두고 성공이 확인된 뒤 `save`해야 합니다. 클릭 뒤에는 팝업이 닫혀 화면이 바뀌므로 후보가 0개가 되어 지문이 `UNKNOWN_TARGET`으로 실패합니다.
 
 ## 4. 브랜치·PR
 
@@ -65,6 +67,6 @@ PopupChoiceFlow(
 
 ## 5. 시험
 
-- `DecisionCandidateWiringTest` 7개: 같은 화면에만 후보 부착, 다른 화면·새 팝업·`Blocked`/`Invalidated`·다른 토큰 분석·불확실 감지에서는 0개, 미리 붙은 후보는 쓰지 않음, A 이벤트는 그대로 전달, 첫 통합 경로(분류 → 선택 → 게이트 1회, 클릭 없음)
+- `DecisionCandidateWiringTest` 10개: 같은 화면에만 후보 부착, 다른 화면·새 팝업·`Blocked`/`Invalidated`·다른 토큰 분석·불확실 감지·A 현재 화면이 아님에서는 0개, 늦게 온 옛 이벤트가 최신 기억을 덮지 못함, 같은 버전 차단, 미리 붙은 후보는 쓰지 않음, A 이벤트는 그대로 전달, 첫 통합 경로(분류 → 선택 → C의 `ChoiceHandler` 모양 → 게이트 1회, 클릭 없음)
 - `DecisionChoiceHandlerTest` 9개
-- 토큰 확인을 일부러 빼면 시험이 실패하는 것을 확인했습니다
+- 토큰 확인·현재 화면 확인·버전 확인을 하나씩 일부러 빼면 시험이 실패하는 것을 확인했습니다
