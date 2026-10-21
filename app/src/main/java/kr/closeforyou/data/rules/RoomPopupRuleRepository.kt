@@ -19,14 +19,21 @@ object RuleRetention {
     fun defaultExpiry(createdAtEpochMillis: Long): Long = createdAtEpochMillis + DEFAULT_TTL_MILLIS
 }
 
+/**
+ * 팀 합의(10/21): 자동 반복 **실행**은 지금 OFF.
+ * 사용자의 명시적 허락([PopupRule.repeatAutomationExplicitlyAllowed])은 저장하되, 그 허락으로 실제 자동 실행을
+ * 할지는 B 정책·A 게이트가 이 값과 함께 판단한다. 저장소는 허락 저장과 실행 금지를 섞지 않는다.
+ */
+object RepeatAutomation {
+    const val EXECUTION_ENABLED: Boolean = false
+}
+
 /** 저장 거부 사유. 원문 없이 고정 코드만 담는다. */
 enum class RuleRejection {
     /** 만료일이 없음. */
     MISSING_EXPIRY,
     /** 만료일이 생성 시각에서 30일을 넘음. */
     EXPIRY_TOO_LONG,
-    /** 자동 반복은 팀 합의로 OFF. 반복 자동화 허락이 켜진 규칙은 저장하지 않는다. */
-    REPEAT_AUTOMATION_DISABLED,
 }
 
 class RuleRejectedException(val reason: RuleRejection) :
@@ -47,13 +54,10 @@ object RuleValidity {
             nowEpochMillis < rule.expiresAtEpochMillis
 
     /** 저장 전에 검사한다. 통과하지 못하면 [RuleRejectedException]. */
-    fun checkStorable(rule: PopupRule, repeatAutomationEnabled: Boolean) {
+    fun checkStorable(rule: PopupRule) {
         val expiresAt = rule.expiresAtEpochMillis ?: throw RuleRejectedException(RuleRejection.MISSING_EXPIRY)
         if (expiresAt - rule.createdAtEpochMillis > RuleRetention.DEFAULT_TTL_MILLIS) {
             throw RuleRejectedException(RuleRejection.EXPIRY_TOO_LONG)
-        }
-        if (rule.repeatAutomationExplicitlyAllowed && !repeatAutomationEnabled) {
-            throw RuleRejectedException(RuleRejection.REPEAT_AUTOMATION_DISABLED)
         }
     }
 }
@@ -64,13 +68,11 @@ object RuleValidity {
  *
  * 팀 합의(10/21):
  * - 만료일은 필수이며 최대 30일([RuleRetention]). 철회·전체 삭제는 유지한다.
- * - 자동 반복은 OFF. [repeatAutomationEnabled]가 false인 동안 반복 자동화 허락이 켜진 규칙은 저장을 거부한다.
- * - 실제 클릭 성공과 사용자 기억 동의를 확인한 뒤에만 [save]를 호출한다(호출하는 쪽 책임, B·C).
+ * - 사용자 반복 허락은 그대로 저장한다. 자동 반복 실행은 [RepeatAutomation.EXECUTION_ENABLED]가 false인 동안
+ *   B 정책·A 게이트가 막는다(저장소는 실행하지 않는다).
+ * - 실제 클릭이 필요한 기억은 A가 실행 성공을 확인한 뒤에만 [save]를 호출한다(호출하는 쪽 책임).
  */
-class RoomPopupRuleRepository(
-    private val dao: PopupRuleDao,
-    private val repeatAutomationEnabled: Boolean = false,
-) : PopupRuleRepository {
+class RoomPopupRuleRepository(private val dao: PopupRuleDao) : PopupRuleRepository {
 
     override suspend fun findExact(key: RuleKey, nowEpochMillis: Long): PopupRule? =
         dao.findUsable(
@@ -86,9 +88,9 @@ class RoomPopupRuleRepository(
             .mapNotNull { it.toRuleOrNull() }
             .firstOrNull { RuleValidity.isUsable(it, key, nowEpochMillis) }
 
-    /** @throws RuleRejectedException 만료일이 없거나 30일을 넘거나, 자동 반복이 OFF인데 반복 허락이 켜진 경우 */
+    /** @throws RuleRejectedException 만료일이 없거나 30일을 넘는 경우 */
     override suspend fun save(rule: PopupRule) {
-        RuleValidity.checkStorable(rule, repeatAutomationEnabled)
+        RuleValidity.checkStorable(rule)
         dao.replace(PopupRuleEntity.from(rule))
     }
 
