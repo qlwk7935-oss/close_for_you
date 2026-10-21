@@ -16,12 +16,17 @@ import kr.closeforyou.core.contract.AnnouncementState
 import kr.closeforyou.core.contract.EvidenceExtractor
 import kr.closeforyou.core.contract.PopupAnnouncer
 import kr.closeforyou.core.contract.PopupClassifier
+import kr.closeforyou.core.contract.PopupFingerprintProvider
+import kr.closeforyou.core.contract.PopupRuleRepository
 import kr.closeforyou.core.model.ActionResult
 import kr.closeforyou.core.model.ActionStatus
 import kr.closeforyou.core.model.ButtonRole
+import kr.closeforyou.core.model.CloseCandidate
 import kr.closeforyou.core.model.ChoiceKind
 import kr.closeforyou.core.model.PopupAnalysis
+import kr.closeforyou.core.model.PopupRule
 import kr.closeforyou.core.model.PopupSnapshot
+import kr.closeforyou.core.model.RuleKey
 import kr.closeforyou.core.model.UserChoice
 import kr.closeforyou.testing.mock.FixtureOnlyFingerprintProvider
 import kr.closeforyou.testing.mock.InMemoryMockPopupRuleRepository
@@ -93,11 +98,25 @@ class PopupChoiceFlowTest {
         }
     }
 
-    /** Counts save requests; never stores screen text. */
-    private class FakeStore(private val answer: Boolean = true) : RememberedPopupStore {
-        val saved = mutableListOf<UserChoice>()
-        override suspend fun save(choice: UserChoice, snapshot: PopupSnapshot, analysis: PopupAnalysis): Boolean {
-            saved += choice
+    /**
+     * Counts prepare/commit calls into [log] (shared with the handler to check the order);
+     * never stores screen text.
+     */
+    private class FakeStore(
+        private val answer: Boolean = true,
+        private val keyAvailable: Boolean = true,
+    ) : RememberedPopupStore {
+        val log = mutableListOf<String>()
+        val prepared = mutableListOf<UserChoice>()
+        val saved = mutableListOf<PreparedRule>()
+        override suspend fun prepare(choice: UserChoice, snapshot: PopupSnapshot, analysis: PopupAnalysis): PreparedRule? {
+            log += "prepare"
+            prepared += choice
+            return if (keyAvailable) PreparedRule(choice.token, RuleKey("p", 1, "s", "c", "t")) else null
+        }
+        override suspend fun commit(prepared: PreparedRule): Boolean {
+            log += "commit"
+            saved += prepared
             return answer
         }
     }
@@ -113,6 +132,8 @@ class PopupChoiceFlowTest {
         val presenter = FakePresenter()
         val announcer = FakeAnnouncer()
         val handled = mutableListOf<UserChoice>()
+        /** Order of handler and store calls (shared with a [FakeStore]). */
+        val log = (store as? FakeStore)?.log ?: mutableListOf()
         val flushed = mutableListOf<BatchSummary>()
         private var fixture: MockPopupFixture = MockPopupFixtures.advertisement()
         /** Replaces the fixture's analysis (e.g. a skip button); null uses the fixture's. */
@@ -131,6 +152,7 @@ class PopupChoiceFlowTest {
             batcher = AnnouncementBatcher(scope.backgroundScope, onFlush = { flushed += it }),
             handler = ChoiceHandler { choice, _ ->
                 handled += choice
+                log += "handle"
                 if (choice.kind == ChoiceKind.KEEP_OPEN) null else ActionResult(choice.token, status, reason = null)
             },
             text = UiText { "res$it" },
@@ -270,10 +292,16 @@ class PopupChoiceFlowTest {
         assertTrue(sent.buttonMeaningConfirmed)
         assertFalse("A one-time press carries no repeat permission", sent.repeatAutomationExplicitlyAllowed)
 
-        val saved = store.saved.single()
-        assertEquals(ChoiceKind.REMEMBER_EXACT_POPUP, saved.kind)
-        assertTrue(saved.buttonMeaningConfirmed && saved.repeatAutomationExplicitlyAllowed)
-        assertEquals(sent.candidateId, saved.candidateId)
+        val asked = store.prepared.single()
+        assertEquals(ChoiceKind.REMEMBER_EXACT_POPUP, asked.kind)
+        assertTrue(asked.buttonMeaningConfirmed && asked.repeatAutomationExplicitlyAllowed)
+        assertEquals(sent.candidateId, asked.candidateId)
+        assertEquals(
+            "Key made once before the press, saved once after success",
+            listOf("prepare", "handle", "commit"),
+            h.log,
+        )
+        assertEquals(sent.token, store.saved.single().token)
 
         val said = h.announcer.said.single()
         assertEquals(AnnouncementKind.ACTION_RESULT, said.kind)
@@ -328,6 +356,7 @@ class PopupChoiceFlowTest {
             tapRemember(h)
 
             assertEquals("$status: handler once", ChoiceKind.CLOSE_ONCE, h.handled.single().kind)
+            assertEquals("$status: key prepared before the press, then dropped", listOf("prepare", "handle"), h.log)
             assertTrue("$status: nothing saved", store.saved.isEmpty())
             // Same failure sentence as a one-time press (MoveToButtonFeature is off here).
             val failure = requireNotNull(PressResultSpeech.failureOf(ActionResult(h.handled.single().token, status, null)))
@@ -357,6 +386,27 @@ class PopupChoiceFlowTest {
         assertTrue(store.saved.isEmpty())
     }
 
+    @Test fun rememberKeyFailureStillPressesOnceButSavesNothing() = runTest {
+        val store = FakeStore(keyAvailable = false)
+        val h = start(remember = true, store = store)
+        tapRemember(h)
+        assertEquals(listOf("prepare", "handle"), h.log)
+        assertEquals(ChoiceKind.CLOSE_ONCE, h.handled.single().kind)
+        assertTrue(store.saved.isEmpty())
+        assertEquals("res${R.string.ui_remember_not_saved}", h.announcer.said.single().text)
+        advanceTimeBy(AnnouncementBatcher.DEFAULT_WINDOW_MILLIS + 1)
+        assertEquals("The close itself still counts", 1, h.flushed.single().closed)
+    }
+
+    @Test fun rememberKeyFailureAndFailedPressSaysOnlyThePressFailure() = runTest {
+        val store = FakeStore(keyAvailable = false)
+        val h = start(status = ActionStatus.ATTEMPT_FAILED, remember = true, store = store)
+        tapRemember(h)
+        assertEquals(1, h.handled.size)
+        assertTrue(store.saved.isEmpty())
+        assertTrue(h.announcer.said.none { it.text == "res${R.string.ui_remember_not_saved}" })
+    }
+
     @Test fun rememberWithoutConnectedStoreSaysNotSaved() = runTest {
         val h = start(remember = true)
         tapRemember(h)
@@ -379,7 +429,52 @@ class PopupChoiceFlowTest {
         assertEquals(ChoiceKind.REMEMBER_EXACT_POPUP, rule.choice)
         assertTrue(rule.buttonMeaningConfirmed && rule.repeatAutomationExplicitlyAllowed)
         assertEquals("rule-1", rule.id)
+        assertEquals(1_000L, rule.createdAtEpochMillis)
+        assertEquals("Expiry is creation + 30 days", 1_000L + RememberRetention.TTL_MILLIS, rule.expiresAtEpochMillis)
         assertEquals(1, h.handled.size)
+    }
+
+    @Test fun rememberKeyIsMadeBeforeThePopupDisappears() = runTest {
+        // Like D's provider: the key needs the button in the current popup. Once the press has
+        // succeeded the popup is gone, so a key made after the press would always fail.
+        var popupGone = false
+        val fingerprints = object : PopupFingerprintProvider {
+            override suspend fun createKey(snapshot: PopupSnapshot, target: CloseCandidate, appVersionCode: Long): RuleKey {
+                check(!popupGone) { "UNKNOWN_TARGET" }
+                return FixtureOnlyFingerprintProvider().createKey(snapshot, target, appVersionCode)
+            }
+        }
+        val repository = InMemoryMockPopupRuleRepository()
+        val inner = RepositoryRememberedPopupStore(fingerprints, repository, { 1L })
+        val store = object : RememberedPopupStore by inner {
+            override suspend fun commit(prepared: PreparedRule): Boolean {
+                popupGone = true
+                return inner.commit(prepared)
+            }
+        }
+        val h = start(remember = true, store = store)
+        tapRemember(h)
+        assertEquals(1, repository.observeRules().first().size)
+        assertEquals(
+            "res${R.string.ui_remember_saved} res${R.string.ui_remember_auto_close_off}",
+            h.announcer.said.single().text,
+        )
+    }
+
+    @Test fun rememberRejectedByStorageIsToldNotSwallowed() = runTest {
+        // Like D's Room repository: it throws instead of saving (here always, after checking expiry).
+        val repository = object : PopupRuleRepository by InMemoryMockPopupRuleRepository() {
+            override suspend fun save(rule: PopupRule) {
+                val expires = requireNotNull(rule.expiresAtEpochMillis) { "MISSING_EXPIRY" }
+                require(expires - rule.createdAtEpochMillis <= RememberRetention.TTL_MILLIS) { "EXPIRY_TOO_LONG" }
+                throw IllegalStateException("storage error")
+            }
+        }
+        val store = RepositoryRememberedPopupStore(FixtureOnlyFingerprintProvider(), repository, { 1L })
+        val h = start(remember = true, store = store)
+        tapRemember(h)
+        assertEquals(1, h.handled.size)
+        assertEquals("res${R.string.ui_remember_not_saved}", h.announcer.said.single().text)
     }
 
     @Test fun rememberEndToEndSavesNothingWhenBlocked() = runTest {

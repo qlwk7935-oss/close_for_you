@@ -60,9 +60,9 @@ fun interface UiText {
  *   counted by [batcher]. Nothing is retried (AGENTS 6-6).
  * - [앞으로 항상 닫기] (REMEMBER_EXACT_POPUP, team decision 10/20 (가)): B's policy does not press
  *   for REMEMBER_EXACT_POPUP, so [handler] gets the same token and candidate as CLOSE_ONCE (SKIP_ONCE
- *   for a skip button, as B checks the role). Only MECHANICAL_SUCCESS saves the rule to
- *   [rememberStore], once; any other result saves nothing and is spoken like a one-time press.
- *   The handler is still called at most once per tap.
+ *   for a skip button, as B checks the role). The rule key is prepared by [rememberStore] before
+ *   the press (team decision 10/21); only MECHANICAL_SUCCESS commits it, once; any other result
+ *   drops it and is spoken like a one-time press. The handler is still called at most once per tap.
  *
  * Call [run] from a main-thread coroutine owned by the service; cancel it when the service stops.
  */
@@ -134,14 +134,20 @@ class PopupChoiceFlow(
         }
         val remember = choice.kind == ChoiceKind.REMEMBER_EXACT_POPUP
         val sent = if (remember) oneTimePressFor(choice, analysis) ?: return null else choice
+        // The key is made before the press, on the same token: after a successful press the popup
+        // is gone and the fingerprint cannot find its button. Null still presses once, saves nothing.
+        // [팀 확정 필요] prepare/commit live in C's flow for now; where they sit is agreed when A assembles.
+        val prepared = if (remember) rememberStore.prepare(choice, snapshot, analysis) else null
         val result = handler.handle(sent, analysis) ?: return null
         if (!PressResultSpeech.isPressChoice(sent.kind)) return null
         val failure = PressResultSpeech.failureOf(result)
         if (failure == null) {
             AnnouncementBatcher.outcomeOf(result, sent.kind)?.let(batcher::add)
-            if (remember && result.token == choice.token) rememberAfterSuccess(choice, snapshot, analysis)
+            if (remember && result.token == choice.token) rememberAfterSuccess(choice, prepared)
             return null
         }
+        // Not pressed or not confirmed (ATTEMPT_FAILED, OUTCOME_UNKNOWN, NOT_EXECUTED, BLOCKED, STALE):
+        // the prepared key is dropped here, nothing is saved.
         val followUp = if (source.currentToken() == choice.token) {
             ChoicePromptPlanner.afterFailedPress(prompt, failure, moveToButtonEnabled)
         } else {
@@ -177,12 +183,14 @@ class PopupChoiceFlow(
     }
 
     /**
-     * Saves once and says what happened. The popup is gone by now, so A's next event may cancel
-     * this popup's work; the short local save the person asked for still finishes.
-     * The close itself is counted by [batcher]; this adds only the remember sentence.
+     * Saves the key prepared before the press, once, and says what happened. The popup is gone by
+     * now, so A's next event may cancel this popup's work; the short local save the person asked
+     * for still finishes. The close itself is counted by [batcher]; this adds only the remember
+     * sentence. A failed save (no key, D rejected the rule) is told, never swallowed.
      */
-    private suspend fun rememberAfterSuccess(choice: UserChoice, snapshot: PopupSnapshot, analysis: PopupAnalysis) {
-        val saved = withContext(NonCancellable) { rememberStore.save(choice, snapshot, analysis) }
+    private suspend fun rememberAfterSuccess(choice: UserChoice, prepared: PreparedRule?) {
+        val saved = prepared != null && prepared.token == choice.token &&
+            withContext(NonCancellable) { rememberStore.commit(prepared) }
         val sentence = if (saved) {
             text.get(R.string.ui_remember_saved) + " " +
                 text.get(RememberChoiceSpeech.afterRememberRes(autoCloseEnabledForApp(choice.token.packageName)))

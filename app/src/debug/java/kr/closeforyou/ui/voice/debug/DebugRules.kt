@@ -5,6 +5,7 @@ import kr.closeforyou.core.model.PopupRule
 import kr.closeforyou.core.model.RuleKey
 import kr.closeforyou.testing.mock.InMemoryMockPopupRuleRepository
 import kr.closeforyou.testing.mock.MockPopupFixtures
+import kr.closeforyou.ui.voice.integration.RememberRetention
 
 /** Debug-only: fake remembered rules so the settings list can be tried before D's Room lands. */
 internal object DebugRules {
@@ -30,7 +31,7 @@ internal object DebugRules {
             buttonMeaningConfirmed = always,
             repeatAutomationExplicitlyAllowed = always,
             createdAtEpochMillis = createdAt,
-            expiresAtEpochMillis = null,
+            expiresAtEpochMillis = RememberRetention.expiryFor(createdAt),
         )
     }
 

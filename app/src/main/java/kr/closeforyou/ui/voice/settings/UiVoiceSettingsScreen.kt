@@ -55,6 +55,7 @@ import kr.closeforyou.ui.voice.command.AndroidMicrophoneAccess
 import kr.closeforyou.ui.voice.command.SpeakButtonPolicy
 import kr.closeforyou.ui.voice.command.SpeakButtonState
 import kr.closeforyou.ui.voice.command.VoiceButtonFeature
+import kr.closeforyou.ui.voice.integration.RememberRetention
 import kr.closeforyou.ui.voice.overlay.PromptAnnounceMode
 import java.text.DateFormat
 import java.util.Date
@@ -62,9 +63,15 @@ import java.util.Date
 /**
  * Stateful entry: C settings plus A's pause state (read only) and D's remembered rules.
  * The repository is whatever D provides; today the debug screen passes the in-memory mock.
+ * [deleteAll] lets the app pass D's `RuleStorage.eraseAll` (rules + fingerprint key) later; the
+ * default still only deletes the rules (F12 wiring PR).
  */
 @Composable
-fun UiVoiceSettingsRoute(repository: PopupRuleRepository, modifier: Modifier = Modifier) {
+fun UiVoiceSettingsRoute(
+    repository: PopupRuleRepository,
+    modifier: Modifier = Modifier,
+    deleteAll: suspend () -> Unit = repository::deleteAll,
+) {
     val context = LocalContext.current
     val preferences = remember { UiVoicePreferences.get(context) }
     val core = remember { CorePreferences.get(context) }
@@ -105,7 +112,7 @@ fun UiVoiceSettingsRoute(repository: PopupRuleRepository, modifier: Modifier = M
         onVoiceCommandsChange = preferences::setVoiceCommandsEnabled,
         onAllowMicrophone = { permissionLauncher.launch(Manifest.permission.RECORD_AUDIO) },
         onRevoke = { id -> scope.launch { repository.revoke(id) } },
-        onDeleteAll = { scope.launch { repository.deleteAll() } },
+        onDeleteAll = { scope.launch { deleteAll() } },
         modifier = modifier,
     )
 }
@@ -354,7 +361,8 @@ private fun SettingsPreview() {
                 PopupRule(
                     id = "preview", key = RuleKey("kr.example.shop", 1, "s", "c", "t"),
                     choice = ChoiceKind.REMEMBER_EXACT_POPUP, buttonMeaningConfirmed = true,
-                    repeatAutomationExplicitlyAllowed = true, createdAtEpochMillis = 0, expiresAtEpochMillis = null,
+                    repeatAutomationExplicitlyAllowed = true, createdAtEpochMillis = 0,
+                    expiresAtEpochMillis = RememberRetention.expiryFor(0),
                 ),
             ),
             appName = { if (it == "kr.example.shop") "예시 쇼핑" else it },
