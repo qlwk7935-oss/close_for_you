@@ -39,6 +39,16 @@ enum class RuleRejection {
 class RuleRejectedException(val reason: RuleRejection) :
     IllegalArgumentException("Popup rule rejected: $reason")
 
+/** [RoomPopupRuleRepository.cleanUp] 결과. 지운 행 개수만 담는다(화면 원문·지문 없음). */
+data class RuleCleanUpResult(
+    /** 만료됐거나 만료일이 없는 행. */
+    val expired: Int,
+    /** 규칙으로 읽을 수 없는 손상 행. */
+    val unreadable: Int,
+) {
+    val total: Int get() = expired + unreadable
+}
+
 /**
  * 규칙을 쓸 수 있는지 판단한다. 일치해도 실행 허가가 아니며 B가 정책을 다시 확인한다.
  * 정확한 키, 활성, 실패 0회, 현재 스키마, 생성 이후, 만료 전이어야 한다.
@@ -111,6 +121,18 @@ class RoomPopupRuleRepository(private val dao: PopupRuleDao) : PopupRuleReposito
      */
     suspend fun recordFailure(id: String): Boolean = dao.incrementFailure(id) > 0
 
-    /** 만료된 규칙을 실제로 지운다. 조회는 이 호출 없이도 만료 규칙을 무시한다. */
+    /** 만료됐거나 만료일이 없는 규칙을 실제로 지운다. 조회는 이 호출 없이도 이런 규칙을 무시한다. */
     suspend fun purgeExpired(nowEpochMillis: Long): Int = dao.deleteExpired(nowEpochMillis)
+
+    /**
+     * 정리: 만료(만료일 없음 포함) 행과 읽을 수 없는 손상 행을 지운다.
+     * 해제됨·실패로 꺼짐 규칙은 사용자가 목록에서 볼 수 있도록 만료 전까지 남긴다.
+     *
+     * 호출 시점(팀 제안 10/22): A 서비스 시작 시 한 번, C 설정 화면을 열 때 한 번. 조회 안전성은 이 호출과
+     * 무관하다(조회는 늘 만료·손상 행을 무시한다). 로그를 남기지 않는다.
+     */
+    suspend fun cleanUp(nowEpochMillis: Long): RuleCleanUpResult = RuleCleanUpResult(
+        expired = dao.deleteExpired(nowEpochMillis),
+        unreadable = dao.deleteUnreadable(),
+    )
 }
