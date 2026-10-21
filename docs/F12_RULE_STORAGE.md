@@ -45,6 +45,7 @@ A의 `SnapshotToken` 지문은 세션 salt를 쓰므로 재사용하지 않습�
 - **만료일 필수, 최대 30일**: `RuleRetention.defaultExpiry(생성 시각)`으로 30일 뒤를 넣습니다. 만료일이 없으면 `MISSING_EXPIRY`, 30일을 넘으면 `EXPIRY_TOO_LONG`으로 저장을 거부합니다(`RuleRejectedException`).
 - **허락 저장과 실행 금지 분리**: 사용자의 반복 허락(`repeatAutomationExplicitlyAllowed = true`, C의 [앞으로 항상 닫기])은 그대로 저장합니다. 자동 반복 **실행**은 `RepeatAutomation.EXECUTION_ENABLED = false`인 동안 B 정책·A 게이트가 막습니다.
 - C의 [기억하기]는 저장 의사입니다. **실제 클릭이 필요한 기억은 A가 실행 성공을 확인한 뒤에만 `save`를 호출**합니다(호출하는 쪽 책임).
+- **지문(`RuleKey`)은 클릭 전에 만듭니다.** `createKey`는 현재 분석의 닫기 후보를 다시 확인하므로, 클릭 뒤 팝업이 사라진 화면에서는 항상 `UNKNOWN_TARGET`으로 실패합니다. 클릭 전 같은 토큰에서 키를 만들어 두고, A가 실행 성공을 확인하면 그 키로 `save`, 실패·미실행이면 버립니다(B 리뷰 10/21).
 - 기억으로 실제 실행을 시도했다가 실패하면 A의 결과를 받은 B가 `recordFailure`를 호출합니다. 실행하지 않은 경우는 성공으로 취급하지 않고 따로 구분합니다.
 - `INCOMPLETE_EVIDENCE`는 A가 일괄 제거하지 않습니다. "근거가 충분한 경우" 기준을 A·D가 합의하기 전까지 지문 생성은 계속 실패(기억 불가)합니다.
 - `INCOMPLETE_EVIDENCE` 해제 기준은 F0 보호 검사, 화면·토큰 현재성, 필요한 본문 근거의 완전성을 함께 봅니다.
@@ -66,6 +67,13 @@ A의 `SnapshotToken` 지문은 세션 salt를 쓰므로 재사용하지 않습�
 - JVM: `DeviceKeyedFingerprintProviderTest`(세션 간 동일, 날짜·시간·금액 변경, 버튼 이동·라벨 변경, 앱 버전, 기기 키, fail-closed 8종), `RoomPopupRuleRepositoryTest`(정확 일치, 만료, 철회, 교체, 실패, 정리, 손상 행).
 - 계측: `PopupRuleDatabaseTest`가 실제 Room SQL로 같은 시나리오를 검사합니다. CI는 컴파일만 하며 실행은 기기에서 해야 합니다.
 - 팝업 재현 앱의 공지 변형 N01~N07(C05·C09)로 실기기 검증 예정.
+
+## F12 연결 PR 때 정할 것 (B 리뷰 10/21)
+
+- **`recordFailure` 계약 위치**: 지금은 `RoomPopupRuleRepository`에만 있습니다. B는 공통 계약만 쓰므로 `PopupRuleRepository`에 `recordFailure(id)`를 추가하거나, A 조립에서 B에 실패 기록 함수를 넘깁니다.
+- **실패로 볼 결과**(B 제안): `ATTEMPT_FAILED`, `OUTCOME_UNKNOWN`(실제로 눌렀을 수 있음)은 실패로 기록합니다. `NOT_EXECUTED`·`BLOCKED`·`STALE`(누르지 않음)은 실패도 성공도 아닙니다.
+- **규칙이 맞은 후보**: 닫기·건너뛰기가 함께 있으면 B는 후보가 1개가 아니어서 막습니다. 후보별 키로 `findExact`가 맞은 후보 id를 `DecisionContext`로 넘기는 방안(공통 계약 변경, 별도 PR).
+- **[다시 묻지 않기]의 대상 없는 키**: `createKey`는 대상 버튼이 필수입니다. 닫기 버튼이 없는 팝업용 키를 어떻게 만들지는 C가 이 기능을 켤 때 정합니다(현재 C에서 꺼짐).
 
 ## 남은 일
 
