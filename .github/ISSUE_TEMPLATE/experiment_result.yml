@@ -1,0 +1,64 @@
+name: 실험 결과 기록
+description: 검증 실험 계획(A·B·C)의 시행 결과를 기록합니다.
+title: "[실험] "
+labels: ["experiment"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        검증 실험 계획 E절 양식입니다. 성공·실패·미실시를 모두 남깁니다. 관문 기준을 사후에 바꾸지 않습니다.
+        **개인정보 주의**: 실제 화면 글자·계정·결제 정보·실제 앱 스크린샷을 올리지 마세요.
+        여러 시나리오를 시행했다면 `docs/templates/experiment_results.csv` 양식으로 CSV를 첨부하고
+        `python3 tools/qa_metrics.py 결과.csv` 보고서를 붙여 주세요.
+  - type: input
+    id: experiment
+    attributes:
+      label: 실험 ID / 단계
+      placeholder: "예: C05 / 개발 후"
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: 기기 / Android / TalkBack 버전 / 커밋
+    validations:
+      required: true
+  - type: input
+    id: scenarios
+    attributes:
+      label: 시나리오 ID
+      placeholder: "예: N01~N07"
+  - type: textarea
+    id: expected
+    attributes:
+      label: 예상 행동·금지 행동
+    validations:
+      required: true
+  - type: dropdown
+    id: result
+    attributes:
+      label: 결론
+      options:
+        - 가능
+        - 부분 가능
+        - 불가
+        - 재실험 필요
+        - 미실시
+    validations:
+      required: true
+  - type: textarea
+    id: observed
+    attributes:
+      label: 실제 관측
+      description: 처리 시간·횟수·오류 코드·사용자 조작 수·정보 전달 여부
+    validations:
+      required: true
+  - type: textarea
+    id: report
+    attributes:
+      label: qa_metrics.py 보고서
+      render: markdown
+  - type: textarea
+    id: next
+    attributes:
+      label: 다음 수정 담당 / 변경 내용
