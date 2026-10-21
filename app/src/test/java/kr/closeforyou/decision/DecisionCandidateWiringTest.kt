@@ -1,0 +1,144 @@
+package kr.closeforyou.decision
+
+import kr.closeforyou.core.contract.ActionExecutor
+import kr.closeforyou.core.contract.ActionRequest
+import kr.closeforyou.core.contract.EvidenceExtractor
+import kr.closeforyou.core.contract.PopupEvent
+import kr.closeforyou.core.contract.SnapshotSource
+import kr.closeforyou.core.model.*
+import kr.closeforyou.testing.mock.MockPopupFixtures
+import kotlinx.collections.immutable.persistentListOf
+import kotlinx.collections.immutable.persistentSetOf
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.asFlow
+import kotlinx.coroutines.flow.emitAll
+import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.toList
+import kotlinx.coroutines.runBlocking
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertSame
+import org.junit.Assert.assertTrue
+import org.junit.Test
+
+class DecisionCandidateWiringTest {
+    private val notice = MockPopupFixtures.notice()
+    private val ad = MockPopupFixtures.advertisement()
+    private val token = notice.snapshot.token
+
+    /** A's source: events queued by the test, delivered on the next collection. */
+    private class FakeSource(var token: SnapshotToken?) : SnapshotSource {
+        val pending = mutableListOf<PopupEvent>()
+        override val events: Flow<PopupEvent> = flow {
+            val now = pending.toList()
+            pending.clear()
+            emitAll(now.asFlow())
+        }
+        override fun currentToken(): SnapshotToken? = token
+    }
+
+    /** A's extractor today: the fixture's analysis, marked like the real runtime, with no candidates. */
+    private val aExtractor = object : EvidenceExtractor {
+        override suspend fun extract(snapshot: PopupSnapshot): PopupAnalysis =
+            listOf(notice, ad).first { it.snapshot.token == snapshot.token }.analysis.copy(
+                closeCandidates = persistentListOf(),
+                limitations = persistentSetOf(AnalysisLimit.INCOMPLETE_EVIDENCE, AnalysisLimit.IMAGE_MODEL_NOT_IMPLEMENTED),
+            )
+    }
+
+    private fun candidate(fixture: kr.closeforyou.testing.mock.MockPopupFixture, signal: PopupSignal = PopupSignal.NEW_WINDOW) =
+        PopupEvent.Candidate(fixture.snapshot, PopupDetection(fixture.snapshot.token, persistentSetOf(signal)))
+
+    private fun deliver(source: FakeSource, wiring: DecisionCandidateWiring, vararg events: PopupEvent) = runBlocking {
+        source.pending += events
+        wiring.source.events.toList()
+    }
+
+    @Test fun theAnalysisOfTheAnnouncedScreenCarriesBsCandidates() = runBlocking {
+        val source = FakeSource(token)
+        val wiring = DecisionCandidateWiring(source, aExtractor)
+        val delivered = deliver(source, wiring, candidate(notice))
+        assertEquals("events pass through unchanged", 1, delivered.size)
+
+        val analysis = wiring.extractor.extract(notice.snapshot)
+        assertEquals(listOf("node:1"), analysis.closeCandidates.map { it.id })
+        assertEquals(ButtonRole.CLOSE, analysis.closeCandidates.single().role)
+        assertTrue("A's limits are kept", AnalysisLimit.INCOMPLETE_EVIDENCE in analysis.limitations)
+        // Extracting again for the same screen (e.g. D's fingerprint right before saving) gives the same candidates.
+        assertEquals(analysis.closeCandidates, wiring.extractor.extract(notice.snapshot).closeCandidates)
+    }
+
+    @Test fun anotherScreenGetsNoCandidates() = runBlocking {
+        val source = FakeSource(token)
+        val wiring = DecisionCandidateWiring(source, aExtractor)
+        // Nothing announced yet.
+        assertTrue(wiring.extractor.extract(notice.snapshot).closeCandidates.isEmpty())
+
+        deliver(source, wiring, candidate(notice))
+        assertTrue("a snapshot of a different screen", wiring.extractor.extract(ad.snapshot).closeCandidates.isEmpty())
+
+        // A newer popup replaces the remembered detection: the old screen no longer gets candidates.
+        deliver(source, wiring, candidate(ad))
+        assertTrue(wiring.extractor.extract(notice.snapshot).closeCandidates.isEmpty())
+    }
+
+    @Test fun blockedOrInvalidatedScreensForgetTheDetection() = runBlocking {
+        for (end in listOf(PopupEvent.Invalidated(screenVersion = 2), PopupEvent.Blocked(PrivacyBlockReason.PASSWORD, screenVersion = 2))) {
+            val source = FakeSource(token)
+            val wiring = DecisionCandidateWiring(source, aExtractor)
+            deliver(source, wiring, candidate(notice), end)
+            assertTrue(end::class.simpleName, wiring.extractor.extract(notice.snapshot).closeCandidates.isEmpty())
+        }
+    }
+
+    @Test fun anAnalysisOfADifferentTokenGetsNoCandidates() = runBlocking {
+        val source = FakeSource(token)
+        val staleExtractor = object : EvidenceExtractor {
+            override suspend fun extract(snapshot: PopupSnapshot): PopupAnalysis = ad.analysis
+        }
+        val wiring = DecisionCandidateWiring(source, staleExtractor)
+        deliver(source, wiring, candidate(notice))
+        assertTrue(wiring.extractor.extract(notice.snapshot).closeCandidates.isEmpty())
+    }
+
+    @Test fun uncertainDetectionsAndCandidatesFromElsewhereAreNotUsed() = runBlocking {
+        val source = FakeSource(token)
+        val presetExtractor = object : EvidenceExtractor {
+            override suspend fun extract(snapshot: PopupSnapshot): PopupAnalysis =
+                notice.analysis.copy(closeCandidates = persistentListOf(notice.analysis.closeCandidates.first().copy(id = "from-elsewhere")))
+        }
+        val wiring = DecisionCandidateWiring(source, presetExtractor)
+        deliver(source, wiring, candidate(notice, PopupSignal.INSUFFICIENT_EVIDENCE))
+        assertTrue("B's finder decides, never a preset list", wiring.extractor.extract(notice.snapshot).closeCandidates.isEmpty())
+    }
+
+    @Test fun currentTokenComesFromA() {
+        val source = FakeSource(token)
+        val wiring = DecisionCandidateWiring(source, aExtractor)
+        assertSame(token, wiring.source.currentToken())
+        source.token = null
+        assertEquals(null, wiring.source.currentToken())
+    }
+
+    @Test fun firstIntegrationPathReachesTheGateOnceAndClicksNothing() = runBlocking {
+        // A's Candidate → B wiring → B classifier → person taps the named button → B handler → A gate (not executing).
+        val source = FakeSource(token)
+        val wiring = DecisionCandidateWiring(source, aExtractor)
+        deliver(source, wiring, candidate(notice))
+        val analysis = wiring.extractor.extract(notice.snapshot)
+        val classified = analysis.copy(classification = DecisionPopupClassifier().classify(analysis))
+        assertEquals(PopupClassification.NOTICE, classified.classification)
+
+        val requests = mutableListOf<ActionRequest>()
+        val gate = object : ActionExecutor {
+            override suspend fun execute(request: ActionRequest): ActionResult {
+                requests += request
+                return ActionResult(request.decision.token, ActionStatus.NOT_EXECUTED, SafetyReason.NOT_IMPLEMENTED)
+            }
+        }
+        val handler = DecisionChoiceHandler(wiring.source, gate, { false }, { true })
+        val choice = UserChoice(token, ChoiceKind.CLOSE_ONCE, classified.closeCandidates.single().id, buttonMeaningConfirmed = true)
+        val result = handler.handle(choice, classified)
+        assertEquals(ActionStatus.NOT_EXECUTED, result?.status)
+        assertEquals(1, requests.size)
+    }
+}
