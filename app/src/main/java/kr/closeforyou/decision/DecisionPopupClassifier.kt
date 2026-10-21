@@ -14,7 +14,10 @@ import kr.closeforyou.core.model.TextSource
  * INCOMPLETE_EVIDENCE, which restricts automation (ActionPolicy) rather than what the user is told.
  */
 class DecisionPopupClassifier : PopupClassifier {
-    override suspend fun classify(analysis: PopupAnalysis): PopupClassification {
+    override suspend fun classify(analysis: PopupAnalysis): PopupClassification = displayClassification(analysis)
+
+    /** The same classification without suspending, for B's own readers such as [DecisionVideoAd]. */
+    internal fun displayClassification(analysis: PopupAnalysis): PopupClassification {
         val texts = analysis.texts.filter { it.text.isNotBlank() }
 
         // 1. Important decisions first, from any source: the cautious direction.
