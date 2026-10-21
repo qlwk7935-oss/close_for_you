@@ -27,6 +27,8 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -34,11 +36,14 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
@@ -57,20 +62,22 @@ import kr.closeforyou.ui.voice.command.SpeakButtonState
 import kr.closeforyou.ui.voice.command.VoiceButtonFeature
 import kr.closeforyou.ui.voice.integration.RememberRetention
 import kr.closeforyou.ui.voice.overlay.PromptAnnounceMode
-import java.text.DateFormat
-import java.util.Date
+import java.time.Clock
+import java.time.ZoneId
 
 /**
  * Stateful entry: C settings plus A's pause state (read only) and D's remembered rules.
  * The repository is whatever D provides; today the debug screen passes the in-memory mock.
- * [deleteAll] lets the app pass D's `RuleStorage.eraseAll` (rules + fingerprint key) later; the
- * default still only deletes the rules (F12 wiring PR).
+ * [deleteAll] is what [전체 삭제] runs. The default only deletes the rules; the F12 wiring PR (A)
+ * passes D's `RuleStorage.repository(context)` and `{ RuleStorage.eraseAll(context) }`, which also
+ * destroys the fingerprint key. [clock] decides which rules show as expired (re-read on resume).
  */
 @Composable
 fun UiVoiceSettingsRoute(
     repository: PopupRuleRepository,
     modifier: Modifier = Modifier,
     deleteAll: suspend () -> Unit = repository::deleteAll,
+    clock: Clock = Clock.systemDefaultZone(),
 ) {
     val context = LocalContext.current
     val preferences = remember { UiVoicePreferences.get(context) }
@@ -79,6 +86,10 @@ fun UiVoiceSettingsRoute(
     val coreSettings by core.state.collectAsState()
     val rules by repository.observeRules().collectAsState(initial = persistentListOf())
     val scope = rememberCoroutineScope()
+    val currentDeleteAll by rememberUpdatedState(deleteAll)
+    val actions = remember(repository) { RememberedRuleActions(repository) { currentDeleteAll() } }
+    var deleteFailed by rememberSaveable { mutableStateOf(false) }
+    var now by remember { mutableLongStateOf(clock.millis()) }
     val labelSource = remember { PackageManagerAppLabelSource(context.packageManager) }
     val packages = coreSettings.allowedPackages + rules.map { it.key.packageName }
     val appNames = remember(packages) { AppNames.displayNames(packages, labelSource) }
@@ -94,6 +105,7 @@ fun UiVoiceSettingsRoute(
     // The person may change the permission in system settings and come back.
     LifecycleResumeEffect(Unit) {
         microphoneState = micState()
+        now = clock.millis()
         onPauseOrDispose {}
     }
 
@@ -111,9 +123,15 @@ fun UiVoiceSettingsRoute(
         microphoneDenied = microphoneDenied,
         onVoiceCommandsChange = preferences::setVoiceCommandsEnabled,
         onAllowMicrophone = { permissionLauncher.launch(Manifest.permission.RECORD_AUDIO) },
-        onRevoke = { id -> scope.launch { repository.revoke(id) } },
-        onDeleteAll = { scope.launch { deleteAll() } },
+        onRevoke = { id -> scope.launch { actions.revoke(id) } },
+        onDeleteAll = {
+            deleteFailed = false
+            scope.launch { deleteFailed = actions.deleteAll() == DeleteAllResult.FAILED }
+        },
         modifier = modifier,
+        nowEpochMillis = now,
+        zone = clock.zone,
+        deleteAllFailed = deleteFailed,
     )
 }
 
@@ -139,6 +157,10 @@ fun UiVoiceSettingsScreen(
     microphoneDenied: Boolean = false,
     onVoiceCommandsChange: (Boolean) -> Unit = {},
     onAllowMicrophone: () -> Unit = {},
+    /** Decides expired / on; the Route passes its clock. */
+    nowEpochMillis: Long = System.currentTimeMillis(),
+    zone: ZoneId = ZoneId.systemDefault(),
+    deleteAllFailed: Boolean = false,
 ) {
     var confirmDeleteAll by rememberSaveable { mutableStateOf(false) }
     Column(
@@ -205,11 +227,18 @@ fun UiVoiceSettingsScreen(
             Text(stringResource(R.string.ui_settings_rules_empty))
             Text(stringResource(R.string.ui_settings_rules_empty_help), style = MaterialTheme.typography.bodySmall)
         } else {
-            rules.forEach { rule -> RuleRow(rule, appName(rule.key.packageName), onRevoke) }
+            rules.forEach { rule -> RuleRow(rule, appName(rule.key.packageName), nowEpochMillis, zone, onRevoke) }
             OutlinedButton(
                 onClick = { confirmDeleteAll = true },
                 modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
             ) { Text(stringResource(R.string.ui_settings_rules_delete_all)) }
+        }
+        if (deleteAllFailed) {
+            // Polite live region: TalkBack reads it once, focus stays where the person is.
+            Text(
+                stringResource(R.string.ui_settings_rules_delete_all_failed),
+                modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
+            )
         }
     }
 
@@ -263,15 +292,23 @@ private fun VoiceSection(
     }
 }
 
+/** One line "앱 · 선택 · 상태, 날짜" (one TalkBack node); [해제] repeats it in its description. */
 @Composable
-private fun RuleRow(rule: PopupRule, appName: String, onRevoke: (String) -> Unit) {
-    val date = remember(rule.createdAtEpochMillis) {
-        DateFormat.getDateInstance(DateFormat.MEDIUM).format(Date(rule.createdAtEpochMillis))
-    }
-    val summary = stringResource(R.string.ui_settings_rule_summary, appName, stringResource(rule.choice.ruleLabelRes()), date)
+private fun RuleRow(rule: PopupRule, appName: String, nowEpochMillis: Long, zone: ZoneId, onRevoke: (String) -> Unit) {
+    val resources = LocalContext.current.resources
+    val locale = LocalConfiguration.current.locales[0]
+    val summary = RuleListText.summary(
+        rule = rule,
+        appName = appName,
+        nowEpochMillis = nowEpochMillis,
+        formatDate = { millis ->
+            RuleDates.format(millis, nowEpochMillis, zone, locale, android.text.format.DateFormat::getBestDateTimePattern)
+        },
+        text = { res, args -> resources.getString(res, *args) },
+    )
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Text(summary)
-        if (rule.enabled) {
+        if (RuleStatusPolicy.canRevoke(RuleStatusPolicy.statusOf(rule, nowEpochMillis))) {
             val revokeDescription = stringResource(R.string.ui_settings_rule_revoke_description, summary)
             OutlinedButton(
                 onClick = { onRevoke(rule.id) },
@@ -280,8 +317,6 @@ private fun RuleRow(rule: PopupRule, appName: String, onRevoke: (String) -> Unit
                     .heightIn(min = 48.dp)
                     .semantics { contentDescription = revokeDescription },
             ) { Text(stringResource(R.string.ui_settings_rule_revoke)) }
-        } else {
-            Text(stringResource(R.string.ui_settings_rule_revoked), style = MaterialTheme.typography.bodySmall)
         }
     }
 }
@@ -358,13 +393,12 @@ private fun SettingsPreview() {
             coreAllowedPackages = setOf("kr.example.shop", "kr.example.news"),
             collectionEnabled = false,
             rules = persistentListOf(
-                PopupRule(
-                    id = "preview", key = RuleKey("kr.example.shop", 1, "s", "c", "t"),
-                    choice = ChoiceKind.REMEMBER_EXACT_POPUP, buttonMeaningConfirmed = true,
-                    repeatAutomationExplicitlyAllowed = true, createdAtEpochMillis = 0,
-                    expiresAtEpochMillis = RememberRetention.expiryFor(0),
-                ),
+                previewRule("on", createdAt = PREVIEW_NOW - PREVIEW_DAY),
+                previewRule("expired", createdAt = PREVIEW_NOW - 31 * PREVIEW_DAY),
+                previewRule("failed", createdAt = PREVIEW_NOW - PREVIEW_DAY).copy(failureCount = 1),
+                previewRule("revoked", createdAt = PREVIEW_NOW - PREVIEW_DAY).copy(enabled = false),
             ),
+            nowEpochMillis = PREVIEW_NOW,
             appName = { if (it == "kr.example.shop") "예시 쇼핑" else it },
             onAutoCloseChange = { _, _ -> }, onDetailChange = {}, onPromptModeChange = {},
             onRevoke = {}, onDeleteAll = {},
@@ -373,3 +407,13 @@ private fun SettingsPreview() {
         )
     }
 }
+
+private const val PREVIEW_DAY = 24 * 60 * 60 * 1000L
+private const val PREVIEW_NOW = 1_792_000_000_000L // 2026-10
+
+private fun previewRule(content: String, createdAt: Long) = PopupRule(
+    id = "preview-$content", key = RuleKey("kr.example.shop", 1, "s", content, "t"),
+    choice = ChoiceKind.REMEMBER_EXACT_POPUP, buttonMeaningConfirmed = true,
+    repeatAutomationExplicitlyAllowed = true, createdAtEpochMillis = createdAt,
+    expiresAtEpochMillis = RememberRetention.expiryFor(createdAt),
+)

@@ -29,7 +29,7 @@ debug 전용(`app/src/debug/.../ui/voice/debug/`): `ChoicePreviewActivity`(가�
 | `VoiceCommandInput`·`VoiceEvent` | `OnDeviceVoiceCommandInput` | 못 알아들음도 지금은 `Cancelled` → `NotUnderstood` 제안 |
 | `UserChoice`·`ChoiceKind` | `ChoicePromptPlanner.toUserChoice` / `select` | CLOSE→`CLOSE_ONCE`, SKIP→`SKIP_ONCE`, `buttonMeaningConfirmed=true`(버튼 이름을 보고 고름), 반복 허락은 항상 false |
 | `ActionResult` | `PressResultSpeech.failureOf`, `AnnouncementBatcher.outcomeOf` | 성공만 "닫았어요". 나머지는 이유 + 다음 선택 |
-| `PopupRuleRepository` | 설정 화면 목록·해제·전체 삭제 | D의 Room 전이라 메모리 Mock |
+| `PopupRuleRepository` | 설정 화면 목록·해제·전체 삭제. 목록은 규칙마다 켜짐/만료됨/꺼짐(실패)/해제됨과 만료 날짜를 한 줄로 보여 줌(`RememberedRuleList.kt`) | 기본·debug는 메모리 Mock. D의 Room(`RuleStorage`)은 A의 F12 연결 PR에서 넘김 ([사용 예](../../../../../../../../docs/c-notes/presenter-usage-for-a.md#4-설정-화면--기억-목록-f12-연결)) |
 | `SnapshotSource`·`EvidenceExtractor`·`PopupClassifier` | `PopupChoiceFlow`가 주입받아 사용 | A/B 코드는 고치지 않음 |
 | (계약 없음) 선택 창 띄우기 | `ChoicePromptPresenter` | A와 합의 필요 |
 | (계약 없음) 버튼으로 이동 | `MoveToButtonRequest`, `ButtonFocusMover` | 기능 플래그 **꺼짐** |

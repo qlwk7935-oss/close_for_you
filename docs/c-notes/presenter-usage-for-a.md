@@ -87,3 +87,20 @@ overlay.dismiss()
 1. **C 창 이벤트 구분:** C 창 버튼·`liveRegion` 안내도 우리 앱 패키지의 접근성 이벤트다. `ChoiceOverlayIdentity.isOwnOverlayEvent(event.packageName, packageName)` / `isOwnOverlayWindow(...)`로 C 창 이벤트인지 구분할 수 있다. **C 창 이벤트라고 토큰 무효화를 전부 빼지는 않는다** (10/20 우진): A가 C 오버레이의 소유권과 이벤트 출처를 확인한 뒤, C 자체의 무해한 이벤트만 새 팝업 판정·baseline 초기화에서 뺀다. 대상 앱의 실제 화면 변경과 사용자 조작에 따른 현재성 검사는 그대로 유지하고 회귀 시험으로 확인한다 (설계 F11).
 2. **버튼으로 이동 (계약 후):** `ButtonFocusMover.moveFocusTo(MoveToButtonRequest(token, candidateId))` — 토큰이 현재인지 확인하고 그 노드에 접근성 포커스만 (`ACTION_ACCESSIBILITY_FOCUS`). 누르지 않음. C는 `MoveToButtonFeature.enabled`가 꺼져 있어서 지금은 호출하지 않는다.
 3. **실행 결과:** `ChoiceHandler`가 돌려주는 `ActionResult.status`로 C가 문장을 고른다. 성공 = `MECHANICAL_SUCCESS`만. 실패 후 다시 누르지 않는 것은 A 게이트 규칙과 같다.
+
+## 4. 설정 화면 — 기억 목록 (F12 연결)
+
+C 설정 화면은 같은 `app` 모듈이라 D의 `RuleStorage`를 바로 넘길 수 있다. 기본값은 바꾸지 않았다(지금은 debug 미리보기만 메모리 Mock 사용). 실제 연결은 A의 F12 연결 PR에서 아래처럼 넘긴다.
+
+```kotlin
+val context = LocalContext.current
+UiVoiceSettingsRoute(
+    repository = remember { RuleStorage.repository(context) },          // 서비스와 같은 DB
+    deleteAll = { RuleStorage.eraseAll(context.applicationContext) },  // 규칙 + 지문 키 폐기
+)
+```
+
+- `deleteAll`을 넘기지 않으면 `repository.deleteAll()`만 부른다(지문 키는 남음). Room 연결 때는 꼭 `eraseAll`을 넘긴다.
+- [전체 삭제]는 넘긴 함수를 1번만 부른다(진행 중 두 번 눌러도 무시). 실패하면 "기억을 지우지 못했어요"를 보이고 다시 누를 수 있다.
+- 목록 상태는 `RuleStatusPolicy.statusOf(rule, now)`: 해제됨(`enabled=false`) → 꺼짐·실패(`failureCount>0`) → 꺼짐(만료일 없음·다른 스키마·저장 시각보다 이전) → 만료됨(`now ≥ expiresAt`) → 켜짐. D의 `RuleValidity.isUsable`과 같은 경계다. 만료·실패 규칙도 [해제]·[전체 삭제] 대상.
+- 시각은 `clock: Clock`(기본 `Clock.systemDefaultZone()`)으로 주입하고 화면에 돌아올 때 다시 읽는다. 날짜는 기기 로케일("11월 13일까지").

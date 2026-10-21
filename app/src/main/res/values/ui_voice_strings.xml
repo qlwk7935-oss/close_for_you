@@ -110,7 +110,12 @@
     <string name="ui_settings_section_rules">기억한 팝업</string>
     <string name="ui_settings_rules_empty">기억한 팝업이 없어요.</string>
     <string name="ui_settings_rules_empty_help">기억한 팝업이 생기면 여기에서 하나씩 해제하거나 모두 지울 수 있어요.</string>
-    <string name="ui_settings_rule_summary">%1$s · %2$s · %3$s 저장</string>
+    <!-- 앱 이름 · 선택 · 상태. 상태가 이름에 들어가 TalkBack이 한 줄로 읽는다. 화면 글자·지문은 넣지 않는다. -->
+    <string name="ui_settings_rule_summary">%1$s · %2$s · %3$s</string>
+    <string name="ui_settings_rule_status_on">켜짐, %1$s까지</string>
+    <string name="ui_settings_rule_status_expired">만료됨, %1$s에 끝남</string>
+    <string name="ui_settings_rule_status_failed">꺼짐, 닫기에 실패해서 다시 쓰지 않음</string>
+    <string name="ui_settings_rule_status_off">꺼짐, 쓸 수 없는 기억</string>
     <string name="ui_settings_rule_always_close">앞으로 항상 닫기</string>
     <string name="ui_settings_rule_stop_asking">다시 묻지 않기</string>
     <string name="ui_settings_rule_other">기억한 선택</string>
@@ -121,5 +126,6 @@
     <string name="ui_settings_rules_delete_all_title">기억한 팝업을 모두 지울까요?</string>
     <string name="ui_settings_rules_delete_all_body">지우면 되돌릴 수 없어요. 다음부터는 같은 팝업도 다시 물어봐요.</string>
     <string name="ui_settings_rules_delete_all_confirm">모두 지우기</string>
+    <string name="ui_settings_rules_delete_all_failed">기억을 지우지 못했어요. 다시 시도해 주세요.</string>
     <string name="ui_settings_cancel">취소</string>
 </resources>
