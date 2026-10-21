@@ -118,23 +118,20 @@ class RoomPopupRuleRepositoryTest {
         assertNull(repository.findExact(key, RuleRetention.defaultExpiry(100)))
     }
 
+    /** 팀 합의: 사용자 반복 허락은 저장하고, 자동 반복 실행만 OFF로 둔다. */
     @Test
-    fun repeatAutomationIsOffByDefault() {
-        assertRejected(RuleRejection.REPEAT_AUTOMATION_DISABLED) { it.save(rule(repeat = true)) }
-    }
-
-    @Test
-    fun repeatAutomationCanOnlyBeStoredWhenExplicitlyEnabled() = runBlocking {
-        val repository = RoomPopupRuleRepository(FakePopupRuleDao(), repeatAutomationEnabled = true)
+    fun repeatPermissionIsStoredWhileExecutionStaysOff() = runBlocking {
+        val repository = RoomPopupRuleRepository(FakePopupRuleDao())
         repository.save(rule(repeat = true))
         assertTrue(repository.findExact(key, 150)!!.repeatAutomationExplicitlyAllowed)
+        assertFalse(RepeatAutomation.EXECUTION_ENABLED)
     }
 
     @Test
     fun rejectedRuleIsNotStored() = runBlocking {
         val dao = FakePopupRuleDao()
         try {
-            RoomPopupRuleRepository(dao).save(rule(repeat = true))
+            RoomPopupRuleRepository(dao).save(rule(expiresAt = null))
         } catch (expected: RuleRejectedException) {
             // 저장 거부
         }
