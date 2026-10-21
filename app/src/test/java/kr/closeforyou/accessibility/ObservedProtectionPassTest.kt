@@ -190,7 +190,7 @@ class ObservedProtectionPassTest {
             assertDiscarded(h)
         }
     }
-    @Test fun cancellationStillFitsExistingGenericExceptionBoundaryAndDiscards() {
+    @Test fun cancellationKeepsDiagnosticClassificationAndDiscardsSyntheticObservation() {
         val (h, target) = fixedTarget(); val progress = CollectionProgress()
         val cancelled = CancellationException("PRIVATE_CANCELLATION")
         var caught: Exception? = null
@@ -199,7 +199,7 @@ class ObservedProtectionPassTest {
                 progress.at(CollectionOperation.NODE_FIELD_READ) { throw cancelled }
             }
             h.finish()
-        } catch (exception: Exception) { caught = exception } // Existing collector also catches Exception.
+        } catch (exception: Exception) { caught = exception } // Synthetic classification probe, not capture's cancellation policy.
         finally { h.discard() }
         assertSame(cancelled, caught)
         assertEquals(CollectionExceptionKind.ILLEGAL_STATE, progress.failure?.exception)

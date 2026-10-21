@@ -1,5 +1,9 @@
 # A 담당 개발 상태 — 1차 기반과 2차 캡처/OCR
 
+2026-10-22 PR #7 최종 검토: 기존 A 독립 변경24개를 보존하고 native OCR 제출/리스너 등록 예외에서 조기 lease 해제를 차단했습니다. 상세 구현·실제 재검증 결과·Android 미검증 범위는 [A 독립 안전성 후속](A_INDEPENDENT_SAFETY_COMPLETION.md)을 따릅니다. 최신 main은 비교만 하고 합치지 않았습니다.
+
+2026-10-21 최신 후속은 [A 독립 안전성 개선](A_INDEPENDENT_SAFETY_COMPLETION.md)입니다. 기존 미커밋 취소/정리·동일 capture window/frame 검사를 보존하고, 실제 Job·현재 정책 checkpoint, 첫 보호 pass의 불변 검사값, childCount 일관성, Runtime 발행 작업 identity/원래5초 TTL/중복 방지, OCR 동의 철회·정리 경계를 보강합니다. 아래 과거 기록과 구분합니다. 합성 CollectionAttempt의 운영 연결·실제 F0 완전성 인증·B/C 소비자 통합·실제 행동은 여전히 보류입니다. API37 새 버전은 미실행이며 Scroll/Window·원본14개 UNOBSERVED를 해결했다고 주장하지 않습니다.
+
 기준일: 2026-10-17. Android 코어와 최초 공통 계약을 제안하는 단계입니다. 개발 환경에서 실기기·에뮬레이터·TalkBack 시험은 미실시입니다. **사용자 제공 API 37 에뮬레이터 결과는 아래 PR별 기록과 [최신 PR #6 정리](PR6_REVIEW_SCOPE.md)에 별도로 반영**합니다. 이전 절의 미실시/미검증은 당시 개발 환경의 기록이며 후속 사용자 실측과 구분합니다. 제조사별 호환성·팝업 감지 성능·사용성 개선을 주장하지 않습니다. 원문 설계와 검증 계획은 보존하고 최신 팀 결정을 적용합니다.
 
 A 2차는 PR #1 병합 후 최신 `main`(`f52be56`)에서 만든 `feature/core-capture-ocr`입니다. [캡처/OCR 구현·자원 수명·시험 절차](CAPTURE_OCR.md)가 현재 캡처 경로의 상세 기준입니다. 기존 공통 계약은 유지하고 캡처는 별도 동의·앱별 허락 기본 꺼짐으로 연결했습니다.

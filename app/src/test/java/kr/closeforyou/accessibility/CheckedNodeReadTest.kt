@@ -276,7 +276,7 @@ class CheckedNodeReadTest {
         val p = CollectionProgress(); val s = source(); val original = CancellationException("SYNTHETIC_PRIVATE")
         s.read = { _, _ -> throw original }
         assertSame(original, assertThrows(CancellationException::class.java) { checked(s, p) })
-        // capture's existing catch(Exception) still converts this to Blocked; this is not Job-cancellation proof.
+        // Diagnostic classification is unchanged; capture now rethrows cancellation. Not Job-cancellation proof.
         assertEquals(CollectionExceptionKind.ILLEGAL_STATE, p.failure?.exception)
     }
     @Test fun cancellationDuringCopyNeverReturnsCheckedFields() {

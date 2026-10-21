@@ -1,6 +1,10 @@
 # PR #7: 보호 검사와 geometry 완전성 계약 검토
 
+2026-10-21 독립 후속은 [A 안전성 일괄 개선](A_INDEPENDENT_SAFETY_COMPLETION.md)을 따릅니다. 0-G의 첫 보호 pass 원본 CharSequence/현재성 미연결 설명은 당시 기록이며, 이번에는 동일 CheckedNodeRead 검사·실제 Job/정책 checkpoint·childCount 비교를 적용합니다. 합성 receipt/projection은 여전히 운영 미연결이고 전체 보호 범위/원자성의 P1을 해결했다고 주장하지 않습니다.
+
 결론: **현재 운영 차단을 유지합니다.** 독립 증거·projection·지문 codec은 Android 수집기에 연결하지 않았습니다. `9922c80` 이후 기존 보호 pass root 소유권 검사(0-C)와 `e6b1a91` 이후 collector 지역 관측 기록(0-F)을 적용합니다. 기록은 기존 반환 경로와 독립적입니다. CollectionAttempt/receipt 연결·새 반환 경로·부분 F1 관측은 여전히 후속 설계이며, 두 pass·예산·지문 규격·F1/원래14개 정답은 유지합니다. 이후 절의 독립 모델 구현 기록은 당시 범위를 설명합니다.
+
+2026-10-21 후속: [collector 취소·정리 경계](F0_COLLECTION_RESOURCE_SAFETY.md)를 보완합니다. 아래 0-G의 취소 삼킴/정리 예외 P2 설명은 그때의 기록입니다. 이번 후속은 전달된 CancellationException 재전파, 독립 해제 시도, 최초 실패 보존 및 정리 실패 Ready 거부에 한정합니다. 실제 Job 취소의 협력적 감지·강제 중단, 화면 원자성/현재성·TTL 및 F1 geometry 문제의 해결을 뜻하지 않습니다.
 
 ## 0-G. 운영 SNAPSHOT_PASS의 검사값·사용값 결박 — d75e752 이후
 
@@ -223,6 +227,20 @@ UiAutomation/host 샘플은 다른 연결·시점입니다. MINIMAL 시작 시�
 필요한 후속은 같은 서비스 capture 안에서의 bounded 전후 일관성 조사입니다. 재시도 없이 동일 대상/동일 display의 window/frame을 다시 읽고, 기존 package/system/가림/화면 세대 검사를 함께 유지해야 합니다. 값이 다르면 현재 시도를 폐기해야 합니다. 고정 코드는 WINDOW_READ_CHANGED/UNCHANGED/UNAVAILABLE, FRAME_READ_CHANGED/UNCHANGED/UNAVAILABLE, TARGET_CHANGED/SAME/UNAVAILABLE처럼 관계만 후보로 삼습니다. UNCHANGED도 원자성/ROI/픽셀 대응 보증은 아닙니다. 이는 **미구현 진단 설계**이며 추가 framework 호출 비용까지 기존 시간 예산 안에서 검증하기 전 패치하지 않습니다.
 
 동일 시도에서 변동이 입증돼도 '기다렸다가 괜찮아짐'을 운영 승인 조건으로 바꾸지 않습니다. 반복해서 같은 outside가 관측되면 여전히 미지원 관계입니다. tolerance/clamp/좌표 이동/전체 화면 캡처 우회/PR #6 버퍼 거부 해제는 허용하지 않습니다.
+
+### 6-A. 2026-10-21 후속: 동일 capture의 bounded 전후 비교
+
+위 미구현 문단은 당시 설계 기록입니다. 이번 후속은 운영 collector의 `CollectionWindowFrameCheck` 연결이며, 실제 API37 원인 규명·수집 성공을 뜻하지 않습니다. 직전 미커밋 취소/정리 변경8개와 신규28개 회귀를 먼저 검토했고 명백한 중단 사유를 발견하지 않았습니다. 해당 변경과 회귀는 보존합니다.
+
+- 시작: 기존 root package/창ID, WindowSnapshot 목록, 대상 display를 사용합니다. `AndroidScreenGeometry.read`가 이미 교차 검사한 회전값을 내부 결과에 함께 담아, 새 getter 없이 frame과 묶습니다. 창 목록 최대32/중복ID/대상 application/활성 시스템 창/검증 frame·기본 display를 확인하고 scalar 목록만 복사합니다. 새 모델은 보호 완료·현재성 receipt가 아니며 문자열 표현은 redacted입니다.
+- 완료: 원래 두 pass와 DTO/지문 구성 뒤, Ready 반환 전에 `rootInActiveWindow`, `service.windows`, 논리 geometry를 각각 한 번만 재조회합니다. root는 package와 창ID만 읽고 대상 소유권을 먼저 검사하며, 새 root의 자식·본문·geometry를 읽거나 대체 수집하지 않습니다. 현재 package gate도 다시 확인합니다. 대상 display, 창 목록 전체의 ID/type/bounds/active/focused/layer와 원래 frame/회전을 비교합니다. 캡처 격리가 필요한 경우 보조 display 창의 기존 거부도 완료 시 다시 검사하며, 격리가 꺼진 경우에는 이를 위한 추가 getter를 호출하지 않습니다. 목록 순서만 다른 경우에는 ID로 비교하며 누락/추가/중복·다른 metadata는 거부합니다. 관계 코드가 같은 것만으로 통과하지 않고 원래 raw 값의 정확한 동일성을 요구합니다.
+- 완료 root/window는 즉시 기존 해제 소유 목록에 넣습니다. 기존 객체와 같은 참조가 반환된 경우에는 identity로 중복 등록을 피합니다. 직전 공유 정리 경계가 오류·취소·조기 종료에도 해제를 시도하며, 해제 실패가 Ready를 발행하지 못하게 합니다.
+- 기존 TraversalBudget 생성 위치·100ms deadline·`>` 경계와2400 방문/깊이/자식 상한을 유지합니다. 추가 조회 전후·비교 후·Ready 직전에 같은 deadline을 검사하며 재설정하거나 방문 횟수를 인위적으로 늘리지 않습니다. 추가 호출 비용은 이 예산에서 소비합니다. 예외/실패는 기존 고정 WINDOW_GUARD/GEOMETRY_GUARD/ROOT_WINDOW_MISMATCH/PACKAGE_MISMATCH 및 예산 거부를 사용하고, 원문·좌표·실제ID·예외 메시지를 진단에 추가하지 않습니다. 취소는 직전 수정대로 전파합니다.
+- 원래 snapshot/frame/토큰/지문의 입력은 시작 시 수집한 값을 유지합니다. 완료 값으로 갱신·재시도·clamp·확대하지 않습니다. 노드 실패/역전 Rect는 완료 비교에 도달하기 전에 기존처럼 차단됩니다. 같지만 여전히 outside/nonpositive인 창은 기존 detector의 INVALID_GEOMETRY 거부 대상이며, 전후 동일성을 정상 baseline/Candidate 근거로 사용하지 않습니다. 운영 detector나 F1 정책·공통 계약·서비스/Runtime은 수정하지 않습니다.
+
+한계: 두 표본은 각각 순차 조회이므로 **UNCHANGED는 원자성 증명이 아닙니다**. 미관측 ABA, 같은 package/창ID의 root 내용 교체, 배경 내용 변화·새 자식, 이벤트 세대/Job 취소·TTL·정책 철회의 완전한 결박은 별도 문제입니다. 마지막 확인 뒤의 변화와 정리 비용, 비협력적 Binder 호출의 강제 중단도 보장하지 않습니다. 실제 Android에서 추가 getter의 비용·창 전환/회전/실제 해제·Job 취소를 검증해야 하며, 한도를 늘려 통과시키지 않습니다. Scroll/Window 원인과 원본14개 UNOBSERVED는 미해결입니다. API37 수정 버전은 미실행이고 커밋·푸시·병합하지 않습니다.
+
+이번 실제 로컬 검증은 신규40개 포함 JVM934개(앱498/호스트436), 실패·오류·skip0입니다. 기존 취소/정리28개도 재실행해 통과했습니다. 정상/변경/조회 실패/취소, raw 값과 관계 코드의 구분, 중복·누락·추가 창, 같은 크기의 회전 변경, 캡처 display 격리, 동일 deadline의 조회 전후·비교 비용 및 기존100ms `>` 경계, 정리 실패 시 최초 실패 보존을 실제 공유 검사 경로로 확인했습니다. 양쪽 Debug/AndroidTest APK·앱 Release, 앱 Debug/Release·호스트 Debug Lint(이슈0), 패키징/DEX 격리·공백 검사를 통과했습니다. 직전894개와 그 이전866개 기록은 별도 이력입니다. 이것은 합성 scalar/가짜 시간·callback 시험이며 실제 Android 조회 일관성·실제 Job.cancel·성능 측정 결과가 아닙니다.
 
 ## 7. TIME_LIMIT와 TARGET_MISSING
 
