@@ -15,4 +15,4 @@ dependencyResolutionManagement {
 }
 
 rootProject.name = "CloseForYou"
-include(":app", ":capture-test-host")
+include(":app", ":capture-test-host", ":popup-test-app")

@@ -1,0 +1,64 @@
+name: 버그 보고
+description: 닫아줄게 앱·시험 도구의 오동작을 보고합니다.
+title: "[버그] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **개인정보 주의**: 실제 화면 글자·계정·결제 정보·실제 앱 스크린샷을 올리지 마세요.
+        팝업 재현 앱(`:popup-test-app`)의 시나리오 ID(예: P06)와 고정 코드로 설명해 주세요.
+  - type: dropdown
+    id: area
+    attributes:
+      label: 영역
+      options:
+        - A 코어(감지·캡처·OCR·실행 게이트)
+        - B 분류·안전 판단
+        - C UI·음성·TalkBack
+        - D 기억·QA·시험 도구
+        - 잘 모르겠음
+    validations:
+      required: true
+  - type: dropdown
+    id: severity
+    attributes:
+      label: 심각도
+      description: 금지된 자동 클릭·민감 화면 캡처는 무조건 "안전"입니다.
+      options:
+        - 안전(금지 동작 실행, 민감 정보 노출)
+        - 높음(기능 사용 불가)
+        - 보통
+        - 낮음
+    validations:
+      required: true
+  - type: input
+    id: scenario
+    attributes:
+      label: 시나리오 ID
+      placeholder: "P06, N03, W02 또는 '해당 없음'"
+  - type: textarea
+    id: steps
+    attributes:
+      label: 재현 순서
+      placeholder: "1. 팝업 재현 앱에서 P06 열기\n2. ..."
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: 기대 동작 / 실제 동작
+      description: 정답지(docs/POPUP_TEST_APP.md)와 비교해 적어 주세요.
+    validations:
+      required: true
+  - type: textarea
+    id: log
+    attributes:
+      label: PopupTest 로그
+      description: "`adb logcat -s PopupTest` 결과(시나리오:버튼만 나옵니다)."
+      render: text
+  - type: input
+    id: environment
+    attributes:
+      label: 기기 / Android / TalkBack 버전 / 커밋
+      placeholder: "예: Galaxy S23 / 15 / 16.0 / 1a2b3c4"
