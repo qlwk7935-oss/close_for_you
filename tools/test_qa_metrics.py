@@ -1,0 +1,110 @@
+"""D: qa_metrics.py CLI 회귀 시험 (표준 라이브러리만 사용).
+
+실행: python3 -m unittest discover -s tools -p "test_*.py"
+모든 데이터는 합성이며 실제 측정 결과가 아니다.
+"""
+from __future__ import annotations
+
+import subprocess
+import sys
+import tempfile
+import unittest
+from pathlib import Path
+
+SCRIPT = Path(__file__).resolve().parent / "qa_metrics.py"
+
+KEY = """scenario_id,title,kind,expected_handling,close_evidence,correct_target,app_allowed_target,forbidden_targets,rememberable,memory_reusable_from,experiments
+P01,라벨 있는 광고 대화상자,AD,USER_CHOICE,E2_LABELED_CLICK,btn_close,btn_close,btn_ad_open,true,,C01
+P04,라벨 없는 X 버튼,AD,USER_CHOICE,E3_UNLABELED_CLICKABLE,btn_unlabeled_x,,btn_ad_open,false,,C03
+P08,가짜 결제 확인,USER_DECISION,AUTO_FORBIDDEN,E2_LABELED_CLICK,,,btn_pay;btn_cancel,false,,C06
+P18,건너뛰기와 무관한 시간 문구,AD,USER_CHOICE,E2_LABELED_CLICK,btn_close,btn_close,btn_ad_open,false,,C07
+"""
+
+HEADER = ("experiment_id,scenario_id,date,device,android,talkback,is_popup,detected,expected_handling,"
+          "outcome,offered_press,known_limit,clicked_target,forbidden_click,task_completed,info_correct,notes\n")
+
+
+def row(sid: str, outcome: str, offered: str = "", limit: str = "", clicked: str = "") -> str:
+    return f"INT1,{sid},2026-10-23,synthetic,37,,,Y,,{outcome},{offered},{limit},{clicked},,,,\n"
+
+
+SAFE_ROWS = [row("P01", "NOT_EXECUTED", "Y"), row("P04", "ANNOUNCED_ONLY", "N"), row("P08", "ANNOUNCED_ONLY", "N")]
+
+
+class QaMetricsCliTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.dir = Path(self.tmp.name)
+        (self.dir / "key.csv").write_text(KEY, encoding="utf-8")
+
+    def tearDown(self) -> None:
+        self.tmp.cleanup()
+
+    def run_cli(self, rows: list[str], logcat: str | None = None, no_click: bool = True,
+                header: str = HEADER) -> subprocess.CompletedProcess:
+        results = self.dir / "results.csv"
+        results.write_text(header + "".join(rows), encoding="utf-8")
+        args = [sys.executable, "-I", str(SCRIPT), str(results), "--key", str(self.dir / "key.csv")]
+        if logcat is not None:
+            log = self.dir / "popuptest.log"
+            log.write_text(logcat, encoding="utf-8")
+            args += ["--logcat", str(log)]
+        if no_click:
+            args.append("--no-click")
+        return subprocess.run(args, capture_output=True, text=True, encoding="utf-8")
+
+    def test_safe_csv_and_empty_logcat_passes(self) -> None:
+        r = self.run_cli(SAFE_ROWS, logcat="10-23 I/ActivityManager: unrelated line\n")
+        self.assertEqual(0, r.returncode, r.stdout)
+        self.assertIn("판정: 통과(검증됨)", r.stdout)
+
+    def test_safe_csv_without_logcat_is_unverified_not_success(self) -> None:
+        r = self.run_cli(SAFE_ROWS)
+        self.assertEqual(2, r.returncode, r.stdout)
+        self.assertIn("판정: 미검증", r.stdout)
+        self.assertNotIn("판정: 통과", r.stdout)
+
+    def test_safe_csv_with_one_button_record_fails(self) -> None:
+        r = self.run_cli(SAFE_ROWS, logcat="10-23 I PopupTest(4242): P01:btn_close\n")
+        self.assertEqual(1, r.returncode, r.stdout)
+        self.assertIn("판정: 실패", r.stdout)
+        self.assertIn("P01 `btn_close` ×1", r.stdout)
+
+    def test_ad_landing_in_logcat_fails_as_forbidden(self) -> None:
+        r = self.run_cli(SAFE_ROWS, logcat="I/PopupTest: P01:ad_landing_opened\n")
+        self.assertEqual(1, r.returncode, r.stdout)
+        self.assertIn("ad_landing_opened` ×1 **금지 동작**", r.stdout)
+
+    def test_csv_outcome_showing_app_press_fails_even_with_clean_logcat(self) -> None:
+        r = self.run_cli([row("P08", "USER_CONFIRMED", "Y", clicked="btn_pay")], logcat="")
+        self.assertEqual(1, r.returncode, r.stdout)
+        self.assertIn("앱이 누른 기록 1건", r.stdout)
+
+    def test_known_limit_is_reported_separately_not_as_wrong_refusal(self) -> None:
+        rows = SAFE_ROWS + [row("P18", "ANNOUNCED_ONLY", "N", limit="Y")]
+        r = self.run_cli(rows, logcat="")
+        self.assertEqual(0, r.returncode, r.stdout)
+        self.assertIn("알려진 한계", r.stdout)
+        self.assertIn("누르기 제안률(앱 허용 버튼이 있는 시나리오에서 C가 누르기 버튼을 보여 줌): 100.0% (1/1)", r.stdout)
+        self.assertIn("잘못 거부(앱이 눌러도 되는데 닫기를 제안하지 않음): 0.0% (0/1)", r.stdout)
+
+    def test_known_limit_does_not_hide_a_wrong_offer(self) -> None:
+        r = self.run_cli([row("P08", "ANNOUNCED_ONLY", "Y", limit="Y")], logcat="")
+        self.assertIn("잘못 제안**(앱 허용 버튼이 없는데 누르기 버튼을 보여 줌, 예: P04·P08~P11): 100.0% (1/1)", r.stdout)
+
+    def test_old_template_without_new_columns_still_works(self) -> None:
+        old_header = ("experiment_id,scenario_id,date,device,android,talkback,is_popup,detected,expected_handling,"
+                      "outcome,clicked_target,forbidden_click,task_completed,info_correct,notes\n")
+        r = self.run_cli(["C01,P01,2026-10-21,synthetic,15,,,Y,,USER_CONFIRMED,btn_close,,,,\n"],
+                         no_click=False, header=old_header)
+        self.assertEqual(0, r.returncode, r.stdout)
+        self.assertIn("오클릭(앱이 누른 버튼이 '앱 허용 버튼'이 아님): 0.0% (0/1)", r.stdout)
+
+    def test_bad_yes_no_value_is_an_input_problem(self) -> None:
+        r = self.run_cli([row("P01", "NOT_EXECUTED", "maybe")], logcat="", no_click=False)
+        self.assertEqual(1, r.returncode, r.stdout)
+        self.assertIn("offered_press 'maybe'", r.stdout)
+
+
+if __name__ == "__main__":
+    unittest.main()

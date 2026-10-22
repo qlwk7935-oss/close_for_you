@@ -105,6 +105,33 @@ class ScenarioCatalogTest {
         }
     }
 
+    /** P16·P18: 시간이 흐르며 글자가 바뀌는 화면은 지문이 매번 달라 기억 대상이 아니다. */
+    @Test
+    fun timeVaryingScreensAreNotRemembered() {
+        listOf("P16", "P18").forEach { assertFalse(it, ScenarioCatalog.find(it)!!.rememberable) }
+        assertTrue(ScenarioCatalog.VIDEO_SKIP_AFTER_SECONDS in 1..10)
+        assertTrue(ScenarioCatalog.SALE_COUNTDOWN_SECONDS > ScenarioCatalog.VIDEO_SKIP_AFTER_SECONDS)
+    }
+
+    /** P17: 건너뛰기는 금지 버튼은 아니지만 정답도 아니다. 기억은 닫기에만 맞아야 한다. */
+    @Test
+    fun closeAndSkipTogetherTargetsCloseOnly() {
+        val s = ScenarioCatalog.find("P17")!!
+        assertEquals("btn_close", s.correctTargetId)
+        assertEquals("btn_close", s.appAllowedTargetId)
+        assertFalse("btn_skip" in s.forbiddenTargetIds)
+        assertTrue(s.rememberable)
+    }
+
+    /** P16의 정답은 카운트다운 뒤 생기는 건너뛰기 버튼이다. */
+    @Test
+    fun videoAdTargetIsSkip() {
+        val s = ScenarioCatalog.find("P16")!!
+        assertEquals(PopupSurface.VIDEO_OVERLAY, s.surface)
+        assertEquals("btn_skip", s.appAllowedTargetId)
+        assertTrue("btn_ad_open" in s.forbiddenTargetIds)
+    }
+
     @Test
     fun everyScenarioMapsToAnExperiment() {
         all.forEach { assertTrue(it.id, it.experiments.isNotEmpty()) }

@@ -45,6 +45,8 @@ class PopupRuleDatabaseTest {
         assertNull(repository.findExact(key.copy(appVersionCode = 2), 150))
 
         assertTrue(repository.recordFailure("rule-1"))
+        assertTrue(repository.recordFailure("rule-1"))
+        assertEquals(1, repository.observeRules().first().single().failureCount)
         assertNull(repository.findExact(key, 150))
 
         repository.save(rule())
@@ -82,6 +84,30 @@ class PopupRuleDatabaseTest {
         repository.deleteAll()
         assertTrue(repository.observeRules().first().isEmpty())
     }
+
+    /** 정리: 만료·만료일 없음·손상 행은 지우고, 해제·실패 규칙은 만료 전까지 남긴다. */
+    @Test
+    fun cleanUpRemovesExpiredAndUnreadableRowsOnly() = runBlocking {
+        val dao = database.popupRuleDao()
+        dao.replace(row("valid", expiresAt = 300))
+        dao.replace(row("expired", expiresAt = 200))
+        dao.replace(row("no-expiry", expiresAt = null))
+        dao.replace(row("bad-choice", expiresAt = 300).copy(choice = "NOT_A_CHOICE"))
+        dao.replace(row("revoked", expiresAt = 300).copy(enabled = false))
+        dao.replace(row("failed", expiresAt = 300).copy(failureCount = 1))
+
+        assertEquals(RuleCleanUpResult(expired = 2, unreadable = 1), repository.cleanUp(200))
+        assertEquals(
+            listOf("failed", "revoked", "valid"),
+            repository.observeRules().first().map { it.id }.sorted(),
+        )
+        assertEquals(RuleCleanUpResult(expired = 3, unreadable = 0), repository.cleanUp(300))
+        assertTrue(repository.observeRules().first().isEmpty())
+    }
+
+    private fun row(id: String, expiresAt: Long?) =
+        PopupRuleEntity.from(rule(id = id).copy(key = key.copy(targetFingerprint = id.padEnd(64, '-'))))
+            .copy(expiresAtEpochMillis = expiresAt)
 
     private fun rule(
         id: String = "rule-1",

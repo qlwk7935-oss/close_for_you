@@ -14,6 +14,9 @@ P12,연속 팝업(광고→공지→동의),AD,USER_CHOICE,E2_LABELED_CLICK,btn_
 P13,WebView 모달 광고,AD,USER_CHOICE,E2_LABELED_CLICK,,,,false,,B01;C01
 P14,일반 화면 전환(팝업 아님),NOT_POPUP,NO_ACTION,NONE,,,btn_next,false,,C01
 P15,토스트(팝업 아님),NOT_POPUP,NO_ACTION,NONE,,,,false,,C01
+P16,영상 광고 건너뛰기 카운트다운,AD,USER_CHOICE,E2_LABELED_CLICK,btn_skip,btn_skip,btn_ad_open,false,,B03;C07
+P17,닫기·건너뛰기 함께 있는 광고,AD,USER_CHOICE,E2_LABELED_CLICK,btn_close,btn_close,,true,,B03;C09
+P18,건너뛰기와 무관한 시간 문구,AD,USER_CHOICE,E2_LABELED_CLICK,btn_close,btn_close,btn_ad_open,false,,C07
 N01,공지 원본,NOTICE,USER_CHOICE,E2_LABELED_CLICK,btn_close,btn_close,,true,,C05;C09
 N02,공지 동일 반복,NOTICE,USER_CHOICE,E2_LABELED_CLICK,btn_close,btn_close,,true,N01,C05;C09
 N03,공지 날짜만 변경,NOTICE,USER_CHOICE,E2_LABELED_CLICK,btn_close,btn_close,,true,,C05;C09
