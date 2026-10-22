@@ -144,6 +144,19 @@ class PromptControlsControllerTest {
         assertEquals(1, h.input.cancels)
     }
 
+    @Test fun closedPromptIgnoresLatePressesAndResults() = runTest {
+        // Review #18: a press or result reaching a disposed controller (window closed or stuck) does nothing.
+        val h = Harness(this, prompt = prompt)
+        h.controller.dispose()
+        h.controller.onSpeak()
+        h.controller.onRepeat()
+        h.input.results.emit(VoiceUtterance.Command(VoiceCommand.CLOSE))
+        runCurrent()
+        assertEquals(0, h.input.starts)
+        assertEquals(0, h.announcer.repeats)
+        assertTrue(h.picked.isEmpty())
+    }
+
     @Test fun hiddenSpeakButtonNeverListens() = runTest {
         val h = Harness(this, SpeakButtonState.PERMISSION_NEEDED, prompt)
         h.controller.onSpeak()

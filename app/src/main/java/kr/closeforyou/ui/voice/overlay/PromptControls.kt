@@ -91,6 +91,9 @@ class PromptControlsController(
     var speakPressed: Boolean = false
         private set
 
+    /** Set by [dispose]: a late voice result or button press of a closed prompt is dropped. */
+    private var disposed = false
+
     init {
         val input = support.voiceInput
         if (input != null && mutableState.value.speakVisible) {
@@ -100,6 +103,7 @@ class PromptControlsController(
     }
 
     fun onSpeak() {
+        if (disposed) return
         val input = support.voiceInput ?: return
         if (!mutableState.value.speakVisible) return
         if (mutableState.value.listening) {
@@ -121,6 +125,7 @@ class PromptControlsController(
     }
 
     fun onRepeat() {
+        if (disposed) return
         val announcer = support.announcer ?: return
         cancelListening()
         // TtsPopupAnnouncer says ui_announce_nothing_to_repeat itself when there is nothing.
@@ -134,6 +139,7 @@ class PromptControlsController(
 
     /** The prompt is closing: stop listening; the scope owner cancels collection. */
     fun dispose() {
+        disposed = true
         cancelListening()
     }
 
@@ -144,8 +150,8 @@ class PromptControlsController(
     }
 
     private fun onResult(utterance: VoiceUtterance) {
-        // A result after cancel or from an older prompt's session is ignored.
-        if (!mutableState.value.listening) return
+        // A result after cancel, after dispose or from an older prompt's session is ignored.
+        if (disposed || !mutableState.value.listening) return
         when (val outcome = VoicePolicy.decide(utterance, prompt)) {
             is VoiceOutcome.Choose -> {
                 mutableState.update { it.copy(listening = false, messageRes = null) }

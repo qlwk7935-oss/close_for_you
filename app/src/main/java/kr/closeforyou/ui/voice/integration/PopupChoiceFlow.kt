@@ -18,6 +18,7 @@ import kr.closeforyou.core.model.ButtonRole
 import kr.closeforyou.core.model.ChoiceKind
 import kr.closeforyou.core.model.PopupAnalysis
 import kr.closeforyou.core.model.PopupSnapshot
+import kr.closeforyou.core.model.SnapshotToken
 import kr.closeforyou.core.model.UserChoice
 import kr.closeforyou.ui.voice.AnnouncementBatcher
 import kr.closeforyou.ui.voice.PressResultSpeech
@@ -30,7 +31,11 @@ import kr.closeforyou.ui.voice.choice.PressableLabelPolicy
 import kr.closeforyou.ui.voice.choice.PromptOptionKind
 import kr.closeforyou.ui.voice.choice.RememberChoiceFeature
 import kr.closeforyou.ui.voice.choice.RememberChoiceSpeech
+import kr.closeforyou.ui.voice.overlay.ChoiceOrigin
 import kr.closeforyou.ui.voice.overlay.ChoicePromptPresenter
+import kr.closeforyou.ui.voice.overlay.OverlayWindowKeeper
+import kr.closeforyou.ui.voice.overlay.PromptAnswer
+import kr.closeforyou.ui.voice.overlay.PromptShowResult
 
 /**
  * A (or B) hands C's choice to the safety path: B's ActionPolicy, then A's single action gate.
@@ -40,6 +45,13 @@ import kr.closeforyou.ui.voice.overlay.ChoicePromptPresenter
  */
 fun interface ChoiceHandler {
     suspend fun handle(choice: UserChoice, analysis: PopupAnalysis): ActionResult?
+
+    /**
+     * What [PopupChoiceFlow] calls: [handle] plus how the person chose (C-internal, not in
+     * core/contract). Override it to record the origin; the default ignores it. Never the words heard.
+     */
+    suspend fun handle(choice: UserChoice, analysis: PopupAnalysis, origin: ChoiceOrigin): ActionResult? =
+        handle(choice, analysis)
 }
 
 /** Resolves C's string resources; injected so the flow can be unit tested without Android. */
@@ -58,6 +70,10 @@ fun interface UiText {
  * - [내용 다시 읽기] speaks the popup text and keeps the prompt open.
  * - A press that did not succeed is announced at once with the next choices; a success is
  *   counted by [batcher]. Nothing is retried (AGENTS 6-6).
+ * - The prompt could not be shown, or its window could not be closed after a choice: this popup
+ *   ends with no choice, [handler] is not called, and one short sentence says so (review #18-1·2).
+ * - Only answers of the prompt generation now on screen are taken; a late tap or voice result of
+ *   an older, closed or failed prompt is dropped (review #18).
  * - [앞으로 항상 닫기] (REMEMBER_EXACT_POPUP, team decision 10/20 (가)): B's policy does not press
  *   for REMEMBER_EXACT_POPUP, so [handler] gets the same token and candidate as CLOSE_ONCE (SKIP_ONCE
  *   for a skip button, as B checks the role). The rule key is prepared by [rememberStore] before
@@ -115,7 +131,16 @@ class PopupChoiceFlow(
                     onMoveToButton(answer.request)
                     null
                 }
-                is Answer.Picked -> afterChoice(prompt, answer.choice, event.snapshot, analysis)
+                is Answer.Picked -> afterChoice(prompt, answer.choice, answer.origin, event.snapshot, analysis)
+                is Answer.NotShown -> {
+                    // The popup is still there for TalkBack; the person handles it directly.
+                    say(token, AnnouncementKind.POPUP_FOUND, R.string.ui_prompt_show_failed)
+                    null
+                }
+                is Answer.Lost -> {
+                    say(token, AnnouncementKind.ACTION_RESULT, R.string.ui_prompt_window_stuck)
+                    null
+                }
             }
             if (source.currentToken() != token) return
         }
@@ -125,6 +150,7 @@ class PopupChoiceFlow(
     private suspend fun afterChoice(
         prompt: ChoicePrompt,
         choice: UserChoice,
+        origin: ChoiceOrigin,
         snapshot: PopupSnapshot,
         analysis: PopupAnalysis,
     ): ChoicePrompt? {
@@ -138,7 +164,7 @@ class PopupChoiceFlow(
         // is gone and the fingerprint cannot find its button. Null still presses once, saves nothing.
         // [팀 확정 필요] prepare/commit live in C's flow for now; where they sit is agreed when A assembles.
         val prepared = if (remember) rememberStore.prepare(choice, snapshot, analysis) else null
-        val result = handler.handle(sent, analysis) ?: return null
+        val result = handler.handle(sent, analysis, origin) ?: return null
         if (!PressResultSpeech.isPressChoice(sent.kind)) return null
         val failure = PressResultSpeech.failureOf(result)
         if (failure == null) {
@@ -200,13 +226,24 @@ class PopupChoiceFlow(
         announcer.announce(AnnouncementRequest(choice.token, AnnouncementKind.ACTION_RESULT, sentence))
     }
 
-    private sealed interface Answer {
-        data class Picked(val choice: UserChoice) : Answer
-        data class Move(val request: MoveToButtonRequest) : Answer
+    private suspend fun say(token: SnapshotToken, kind: AnnouncementKind, resId: Int) {
+        announcer.announce(AnnouncementRequest(token, kind, text.get(resId)))
     }
 
-    /** The prompt currently on screen, and who receives its next tap (null while busy). */
+    private sealed interface Answer {
+        data class Picked(val choice: UserChoice, val origin: ChoiceOrigin) : Answer
+        data class Move(val request: MoveToButtonRequest) : Answer
+
+        /** [ChoicePromptPresenter.present] did not show the prompt (failed or blocked). */
+        data object NotShown : Answer
+
+        /** The person chose but the window could not be closed; the choice was dropped. */
+        data object Lost : Answer
+    }
+
+    /** The prompt currently on screen, its generation, and who receives its next tap (null while busy). */
     private var shown: ChoicePrompt? = null
+    private var shownGeneration = OverlayWindowKeeper.NO_GENERATION
     private var pending: ((Answer) -> Unit)? = null
 
     /**
@@ -222,16 +259,30 @@ class PopupChoiceFlow(
         cont.invokeOnCancellation { pending = null }
         if (shown !== prompt || !presenter.isShowing) {
             shown = prompt
-            presenter.show(prompt, onMoveToButton = { deliver(Answer.Move(it)) }) { deliver(Answer.Picked(it)) }
+            shownGeneration = OverlayWindowKeeper.NO_GENERATION
+            if (presenter.present(prompt, ::deliver) == PromptShowResult.SHOWN) {
+                shownGeneration = presenter.windowState.generation
+            } else {
+                shown = null
+                pending?.invoke(Answer.NotShown)
+            }
         }
     }
 
-    private fun deliver(answer: Answer) {
-        pending?.invoke(answer)
+    /** Drops answers of any other prompt generation (a presenter without generations reports none). */
+    private fun deliver(answer: PromptAnswer) {
+        if (shownGeneration != OverlayWindowKeeper.NO_GENERATION && answer.generation != shownGeneration) return
+        val next = when (answer) {
+            is PromptAnswer.Picked -> Answer.Picked(answer.choice, answer.origin)
+            is PromptAnswer.Move -> Answer.Move(answer.request)
+            is PromptAnswer.Lost -> Answer.Lost
+        }
+        pending?.invoke(next)
     }
 
     private fun closePrompt() {
         shown = null
+        shownGeneration = OverlayWindowKeeper.NO_GENERATION
         pending = null
         presenter.dismiss()
         announcer.stop()

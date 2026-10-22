@@ -28,6 +28,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -63,6 +64,7 @@ import kr.closeforyou.ui.voice.command.VoiceButtonFeature
 import kr.closeforyou.ui.voice.integration.RememberRetention
 import kr.closeforyou.ui.voice.overlay.PromptAnnounceMode
 import java.time.Clock
+import kotlin.coroutines.cancellation.CancellationException
 import java.time.ZoneId
 
 /**
@@ -71,6 +73,7 @@ import java.time.ZoneId
  * [deleteAll] is what [전체 삭제] runs. The default only deletes the rules; the F12 wiring PR (A)
  * passes D's `RuleStorage.repository(context)` and `{ RuleStorage.eraseAll(context) }`, which also
  * destroys the fingerprint key. [clock] decides which rules show as expired (re-read on resume).
+ * [onOpenCleanUp] runs once each time the screen is opened (not on rotation); the default does nothing.
  */
 @Composable
 fun UiVoiceSettingsRoute(
@@ -78,6 +81,9 @@ fun UiVoiceSettingsRoute(
     modifier: Modifier = Modifier,
     deleteAll: suspend () -> Unit = repository::deleteAll,
     clock: Clock = Clock.systemDefaultZone(),
+    // TODO(D #25): after RuleStorage.cleanUp(context) is merged, the wiring passes
+    //  `{ RuleStorage.cleanUp(context.applicationContext) }` here. Not called directly: #25 is not on main yet.
+    onOpenCleanUp: suspend () -> Unit = {},
 ) {
     val context = LocalContext.current
     val preferences = remember { UiVoicePreferences.get(context) }
@@ -89,6 +95,19 @@ fun UiVoiceSettingsRoute(
     val currentDeleteAll by rememberUpdatedState(deleteAll)
     val actions = remember(repository) { RememberedRuleActions(repository) { currentDeleteAll() } }
     var deleteFailed by rememberSaveable { mutableStateOf(false) }
+    var cleanedUp by rememberSaveable { mutableStateOf(false) }
+    val currentCleanUp by rememberUpdatedState(onOpenCleanUp)
+    LaunchedEffect(Unit) {
+        if (cleanedUp) return@LaunchedEffect
+        cleanedUp = true
+        try {
+            currentCleanUp()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            // Tidying only: the list still shows what D has, and the next open tries again.
+        }
+    }
     var now by remember { mutableLongStateOf(clock.millis()) }
     val labelSource = remember { PackageManagerAppLabelSource(context.packageManager) }
     val packages = coreSettings.allowedPackages + rules.map { it.key.packageName }
@@ -228,11 +247,12 @@ fun UiVoiceSettingsScreen(
             Text(stringResource(R.string.ui_settings_rules_empty_help), style = MaterialTheme.typography.bodySmall)
         } else {
             rules.forEach { rule -> RuleRow(rule, appName(rule.key.packageName), nowEpochMillis, zone, onRevoke) }
-            OutlinedButton(
-                onClick = { confirmDeleteAll = true },
-                modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
-            ) { Text(stringResource(R.string.ui_settings_rules_delete_all)) }
         }
+        // Always shown (D's request): rows D could not read are not listed but still need erasing.
+        OutlinedButton(
+            onClick = { confirmDeleteAll = true },
+            modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
+        ) { Text(stringResource(R.string.ui_settings_rules_delete_all)) }
         if (deleteAllFailed) {
             // Polite live region: TalkBack reads it once, focus stays where the person is.
             Text(

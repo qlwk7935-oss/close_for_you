@@ -2,6 +2,7 @@ package kr.closeforyou.ui.voice.integration
 
 import kotlinx.collections.immutable.persistentListOf
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.TestScope
@@ -42,7 +43,15 @@ import kr.closeforyou.ui.voice.choice.ChoicePromptPlanner
 import kr.closeforyou.ui.voice.choice.MoveToButtonRequest
 import kr.closeforyou.ui.voice.choice.PromptOptionKind
 import kr.closeforyou.ui.voice.choice.PromptSelection
+import kr.closeforyou.ui.voice.overlay.ChoiceOrigin
 import kr.closeforyou.ui.voice.overlay.ChoicePromptPresenter
+import kr.closeforyou.ui.voice.overlay.OverlayWindowKeeper
+import kr.closeforyou.ui.voice.overlay.OverlayWindowOps
+import kr.closeforyou.ui.voice.overlay.OverlayWindowState
+import kr.closeforyou.ui.voice.overlay.OverlayWindowStatus
+import kr.closeforyou.ui.voice.overlay.PromptAnswer
+import kr.closeforyou.ui.voice.overlay.PromptShowResult
+import kr.closeforyou.ui.voice.overlay.RemoveOutcome
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -51,36 +60,59 @@ import org.junit.Test
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class PopupChoiceFlowTest {
-    /** Behaves like AccessibilityChoiceOverlay: press/keep close the prompt, read keeps it. */
+    /**
+     * Behaves like AccessibilityChoiceOverlay, on the real [OverlayWindowKeeper]: press/keep close
+     * the prompt, read keeps it, answers of other generations are dropped. [addFails] and
+     * [removeFails] stand in for WindowManager errors.
+     */
     private class FakePresenter : ChoicePromptPresenter {
-        var prompt: ChoicePrompt? = null
+        /** One shown prompt's tap target, kept so a test can tap it late. */
+        class Shown(val prompt: ChoicePrompt, val generation: Long, val onAnswer: (PromptAnswer) -> Unit)
+
         var shows = 0
-        private var onChoice: ((UserChoice) -> Unit)? = null
-        private var onMove: ((MoveToButtonRequest) -> Unit)? = null
-        override val isShowing: Boolean get() = prompt != null
+        var addFails = false
+        var removeFails = false
+        var last: Shown? = null
+        private val keeper = OverlayWindowKeeper(object : OverlayWindowOps<Long> {
+            override fun add(window: Long) {
+                if (addFails) throw IllegalStateException("BadToken")
+            }
+            override fun announceShown(window: Long) = Unit
+            override fun announceDismissed(window: Long) = Unit
+            override fun stop(window: Long) = Unit
+            override fun remove(window: Long, immediate: Boolean) =
+                if (removeFails) RemoveOutcome.FAILED else RemoveOutcome.REMOVED
+            override fun blank(window: Long) = Unit
+            override fun destroy(window: Long) = Unit
+        })
 
-        override fun show(prompt: ChoicePrompt, onMoveToButton: (MoveToButtonRequest) -> Unit, onChoice: (UserChoice) -> Unit) {
-            this.prompt = prompt
-            this.onChoice = onChoice
-            this.onMove = onMoveToButton
-            shows++
+        val prompt: ChoicePrompt? get() = if (isShowing) last?.prompt else null
+        val status: OverlayWindowStatus get() = keeper.status
+        override val isShowing: Boolean get() = keeper.status == OverlayWindowStatus.SHOWING
+        override val windowState get() = OverlayWindowState(keeper.status, keeper.windowGeneration)
+
+        override fun present(prompt: ChoicePrompt, onAnswer: (PromptAnswer) -> Unit): PromptShowResult {
+            val result = keeper.show { it }
+            if (result == PromptShowResult.SHOWN) {
+                last = Shown(prompt, keeper.currentGeneration, onAnswer)
+                shows++
+            }
+            return result
         }
 
-        override fun dismiss() {
-            prompt = null
-        }
+        override fun dismiss() = keeper.dismiss()
 
-        fun tap(kind: PromptOptionKind) {
-            val p = requireNotNull(prompt)
-            when (val s = ChoicePromptPlanner.select(p, p.options.first { it.kind == kind })) {
-                is PromptSelection.Choice -> {
-                    if (s.choice.kind != ChoiceKind.READ_CONTENT) dismiss()
-                    onChoice?.invoke(s.choice)
-                }
-                is PromptSelection.MoveToButton -> {
-                    dismiss()
-                    onMove?.invoke(s.request)
-                }
+        /** Taps [kind] on [target] (default: the prompt shown last), even if it is long gone. */
+        fun tap(kind: PromptOptionKind, origin: ChoiceOrigin = ChoiceOrigin.TAP, target: Shown? = last) {
+            val t = requireNotNull(target)
+            when (val s = ChoicePromptPlanner.select(t.prompt, t.prompt.options.first { it.kind == kind })) {
+                is PromptSelection.Choice -> keeper.deliver(
+                    PromptAnswer.Picked(s.choice, origin, t.generation),
+                    closesWindow = s.choice.kind != ChoiceKind.READ_CONTENT,
+                    onAnswer = t.onAnswer,
+                )
+                is PromptSelection.MoveToButton ->
+                    keeper.deliver(PromptAnswer.Move(s.request, origin, t.generation), closesWindow = true, onAnswer = t.onAnswer)
             }
         }
     }
@@ -132,6 +164,8 @@ class PopupChoiceFlowTest {
         val presenter = FakePresenter()
         val announcer = FakeAnnouncer()
         val handled = mutableListOf<UserChoice>()
+        val origins = mutableListOf<ChoiceOrigin>()
+        var job: Job? = null
         /** Order of handler and store calls (shared with a [FakeStore]). */
         val log = (store as? FakeStore)?.log ?: mutableListOf()
         val flushed = mutableListOf<BatchSummary>()
@@ -150,10 +184,17 @@ class PopupChoiceFlowTest {
             presenter = presenter,
             announcer = announcer,
             batcher = AnnouncementBatcher(scope.backgroundScope, onFlush = { flushed += it }),
-            handler = ChoiceHandler { choice, _ ->
-                handled += choice
-                log += "handle"
-                if (choice.kind == ChoiceKind.KEEP_OPEN) null else ActionResult(choice.token, status, reason = null)
+            handler = object : ChoiceHandler {
+                override suspend fun handle(choice: UserChoice, analysis: PopupAnalysis): ActionResult? {
+                    handled += choice
+                    log += "handle"
+                    return if (choice.kind == ChoiceKind.KEEP_OPEN) null else ActionResult(choice.token, status, reason = null)
+                }
+
+                override suspend fun handle(choice: UserChoice, analysis: PopupAnalysis, origin: ChoiceOrigin): ActionResult? {
+                    origins += origin
+                    return handle(choice, analysis)
+                }
             },
             text = UiText { "res$it" },
             contentText = { "content" },
@@ -175,7 +216,7 @@ class PopupChoiceFlowTest {
         autoClose: Boolean = false,
     ): Harness {
         val h = Harness(this, status, remember, store, autoClose)
-        backgroundScope.launch { h.flow.run() }
+        h.job = backgroundScope.launch { h.flow.run() }
         runCurrent()
         return h
     }
@@ -495,5 +536,116 @@ class PopupChoiceFlowTest {
         assertEquals(ChoiceKind.CLOSE_ONCE, h.handled.single().kind)
         assertTrue(store.saved.isEmpty())
         assertTrue(h.announcer.said.none { it.kind == AnnouncementKind.ACTION_RESULT })
+    }
+
+    // --- Review #18 (A): window failures and late callbacks never reach B/A ---
+
+    @Test fun showFailureEndsPopupWithoutChoice() = runTest {
+        val h = start()
+        h.presenter.addFails = true
+        h.emit(MockPopupFixtures.advertisement())
+        runCurrent()
+        assertFalse(h.presenter.isShowing)
+        assertTrue(h.handled.isEmpty())
+        val said = h.announcer.said.single()
+        assertEquals(AnnouncementKind.POPUP_FOUND, said.kind)
+        assertEquals("res${R.string.ui_prompt_show_failed}", said.text)
+
+        // The next popup is shown normally once adding works again.
+        h.presenter.addFails = false
+        h.emit(MockPopupFixtures.notice())
+        runCurrent()
+        assertTrue(h.presenter.isShowing)
+    }
+
+    @Test fun choiceWhoseWindowCannotCloseIsNotSentAndBlocksNextPrompt() = runTest {
+        val h = start()
+        h.emit(MockPopupFixtures.advertisement())
+        runCurrent()
+        h.presenter.removeFails = true
+        h.presenter.tap(PromptOptionKind.PRESS_CANDIDATE)
+        runCurrent()
+        assertTrue("nothing goes to B/A", h.handled.isEmpty())
+        assertEquals("res${R.string.ui_prompt_window_stuck}", h.announcer.said.single().text)
+        assertEquals(OverlayWindowStatus.REMOVE_FAILED, h.presenter.status)
+
+        // Still stuck: the next popup gets no prompt on top of the old window.
+        h.emit(MockPopupFixtures.notice())
+        runCurrent()
+        assertEquals(1, h.presenter.shows)
+        assertEquals("res${R.string.ui_prompt_show_failed}", h.announcer.said.last().text)
+        assertTrue(h.handled.isEmpty())
+
+        // Removal works again: the retry clears it and the next popup is asked normally.
+        h.presenter.removeFails = false
+        h.emit(MockPopupFixtures.advertisement())
+        runCurrent()
+        assertTrue(h.presenter.isShowing)
+        assertEquals(2, h.presenter.shows)
+    }
+
+    @Test fun lateTapAfterInvalidationIsDropped() = runTest {
+        val h = start()
+        h.emit(MockPopupFixtures.advertisement())
+        runCurrent()
+        val old = h.presenter.last
+        h.source.invalidate(screenVersion = 99)
+        runCurrent()
+        h.presenter.tap(PromptOptionKind.PRESS_CANDIDATE, target = old)
+        runCurrent()
+        assertTrue(h.handled.isEmpty())
+    }
+
+    @Test fun tapOnOlderPromptAfterNewCandidateIsDropped() = runTest {
+        val h = start()
+        h.emit(MockPopupFixtures.advertisement())
+        runCurrent()
+        val old = h.presenter.last
+        h.emit(MockPopupFixtures.notice())
+        runCurrent()
+        h.presenter.tap(PromptOptionKind.KEEP_OPEN, target = old)
+        runCurrent()
+        assertTrue(h.handled.isEmpty())
+
+        h.presenter.tap(PromptOptionKind.KEEP_OPEN)
+        runCurrent()
+        assertEquals(MockPopupFixtures.notice().snapshot.token, h.handled.single().token)
+    }
+
+    @Test fun lateTapAfterFlowCancelledIsDropped() = runTest {
+        // Service onDestroy cancels the flow; removal of the window fails at the same time.
+        val h = start()
+        h.emit(MockPopupFixtures.advertisement())
+        runCurrent()
+        val old = h.presenter.last
+        h.presenter.removeFails = true
+        h.job!!.cancel()
+        runCurrent()
+        assertEquals(OverlayWindowStatus.REMOVE_FAILED, h.presenter.status)
+        h.presenter.tap(PromptOptionKind.PRESS_CANDIDATE, target = old)
+        h.presenter.tap(PromptOptionKind.PRESS_CANDIDATE, origin = ChoiceOrigin.VOICE, target = old)
+        runCurrent()
+        assertTrue(h.handled.isEmpty())
+    }
+
+    @Test fun doubleTapSendsOneChoice() = runTest {
+        val h = start()
+        h.emit(MockPopupFixtures.advertisement())
+        runCurrent()
+        val shown = h.presenter.last
+        h.presenter.tap(PromptOptionKind.PRESS_CANDIDATE, target = shown)
+        h.presenter.tap(PromptOptionKind.PRESS_CANDIDATE, target = shown)
+        runCurrent()
+        assertEquals(1, h.handled.size)
+    }
+
+    @Test fun voiceOriginReachesTheHandler() = runTest {
+        val h = start()
+        h.emit(MockPopupFixtures.advertisement())
+        runCurrent()
+        h.presenter.tap(PromptOptionKind.PRESS_CANDIDATE, origin = ChoiceOrigin.VOICE)
+        runCurrent()
+        assertEquals(listOf(ChoiceOrigin.VOICE), h.origins)
+        assertEquals(ChoiceKind.CLOSE_ONCE, h.handled.single().kind)
     }
 }

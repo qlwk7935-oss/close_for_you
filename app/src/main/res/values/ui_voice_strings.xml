@@ -49,6 +49,10 @@
     <!-- 항상 닫기: 이번 1회 누르기가 성공한 뒤에만 기억한다. "닫았어요"는 묶음 안내가 따로 말한다. 뒤에 ui_remember_auto_close_* 가 붙는다. -->
     <string name="ui_remember_saved">이 팝업과 버튼을 기억해 뒀어요.</string>
     <string name="ui_remember_not_saved">이 팝업을 기억하지 못했어요. 다음에도 물어볼게요.</string>
+    <!-- 선택 창을 띄우지 못함 (창 추가 실패, 또는 이전 창이 안 지워져 새 창을 막음). B/A로 아무것도 보내지 않음 -->
+    <string name="ui_prompt_show_failed">팝업이 나타났지만 선택 창을 띄우지 못했어요. 팝업은 직접 확인해 주세요.</string>
+    <!-- 선택했지만 선택 창이 닫히지 않아 그 선택을 실행하지 않음 -->
+    <string name="ui_prompt_window_stuck">선택 창을 닫지 못해서 고른 것을 실행하지 않았어요. 팝업은 그대로 있어요.</string>
     <string name="ui_remember_auto_close_off">이 앱은 자동 닫기가 꺼져 있어서 다음에도 물어볼게요. 설정에서 켤 수 있어요.</string>
     <string name="ui_remember_auto_close_on">똑같은 팝업이 다시 뜨면 안전 확인을 한 뒤 닫아요. 설정에서 언제든 해제할 수 있어요.</string>
     <string name="ui_choice_read_content">내용 다시 읽기</string>
@@ -109,7 +113,7 @@
     <string name="ui_settings_mic_device_unsupported">이 기기는 기기 안 음성 인식을 지원하지 않아서 음성 명령을 쓸 수 없어요.</string>
     <string name="ui_settings_section_rules">기억한 팝업</string>
     <string name="ui_settings_rules_empty">기억한 팝업이 없어요.</string>
-    <string name="ui_settings_rules_empty_help">기억한 팝업이 생기면 여기에서 하나씩 해제하거나 모두 지울 수 있어요.</string>
+    <string name="ui_settings_rules_empty_help">기억한 팝업이 생기면 여기에서 하나씩 해제할 수 있어요.</string>
     <!-- 앱 이름 · 선택 · 상태. 상태가 이름에 들어가 TalkBack이 한 줄로 읽는다. 화면 글자·지문은 넣지 않는다. -->
     <string name="ui_settings_rule_summary">%1$s · %2$s · %3$s</string>
     <string name="ui_settings_rule_status_on">켜짐, %1$s까지</string>
