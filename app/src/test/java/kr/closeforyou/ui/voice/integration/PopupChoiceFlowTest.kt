@@ -24,11 +24,14 @@ import kr.closeforyou.core.model.ActionStatus
 import kr.closeforyou.core.model.ButtonRole
 import kr.closeforyou.core.model.CloseCandidate
 import kr.closeforyou.core.model.ChoiceKind
+import kr.closeforyou.core.model.ExtractedText
 import kr.closeforyou.core.model.PopupAnalysis
 import kr.closeforyou.core.model.PopupRule
 import kr.closeforyou.core.model.PopupSnapshot
 import kr.closeforyou.core.model.RuleKey
+import kr.closeforyou.core.model.TextSource
 import kr.closeforyou.core.model.UserChoice
+import kr.closeforyou.decision.DecisionVideoAd
 import kr.closeforyou.testing.mock.FixtureOnlyFingerprintProvider
 import kr.closeforyou.testing.mock.InMemoryMockPopupRuleRepository
 import kr.closeforyou.testing.mock.MockPopupFixture
@@ -43,6 +46,8 @@ import kr.closeforyou.ui.voice.choice.ChoicePromptPlanner
 import kr.closeforyou.ui.voice.choice.MoveToButtonRequest
 import kr.closeforyou.ui.voice.choice.PromptOptionKind
 import kr.closeforyou.ui.voice.choice.PromptSelection
+import kr.closeforyou.ui.voice.choice.PromptSummary
+import kr.closeforyou.ui.voice.choice.VideoAdInfo
 import kr.closeforyou.ui.voice.overlay.ChoiceOrigin
 import kr.closeforyou.ui.voice.overlay.ChoicePromptPresenter
 import kr.closeforyou.ui.voice.overlay.OverlayWindowKeeper
@@ -159,8 +164,10 @@ class PopupChoiceFlowTest {
         remember: Boolean = false,
         store: RememberedPopupStore = RememberedPopupStore.NONE,
         autoClose: Boolean = false,
+        videoAd: Boolean = false,
     ) {
         val source = MockSnapshotSource()
+        var videoAdCalls = 0
         val presenter = FakePresenter()
         val announcer = FakeAnnouncer()
         val handled = mutableListOf<UserChoice>()
@@ -201,6 +208,11 @@ class PopupChoiceFlowTest {
             rememberChoicesEnabled = remember,
             rememberStore = store,
             autoCloseEnabledForApp = { autoClose },
+            videoAdOf = {
+                videoAdCalls++
+                VideoAdInfo.from(DecisionVideoAd.inspect(it))
+            },
+            videoAdEnabled = videoAd,
         )
 
         suspend fun emit(f: MockPopupFixture) {
@@ -214,8 +226,9 @@ class PopupChoiceFlowTest {
         remember: Boolean = false,
         store: RememberedPopupStore = RememberedPopupStore.NONE,
         autoClose: Boolean = false,
+        videoAd: Boolean = false,
     ): Harness {
-        val h = Harness(this, status, remember, store, autoClose)
+        val h = Harness(this, status, remember, store, autoClose, videoAd)
         h.job = backgroundScope.launch { h.flow.run() }
         runCurrent()
         return h
@@ -310,6 +323,45 @@ class PopupChoiceFlowTest {
         h.emit(MockPopupFixtures.decision())
         runCurrent()
         assertTrue(h.presenter.prompt!!.options.none { it.kind == PromptOptionKind.PRESS_CANDIDATE })
+    }
+
+    // --- F5 video ad wording (VideoAdAnnouncementFeature, off by default) ---
+
+    private val countdownAd: PopupAnalysis = MockPopupFixtures.videoWithoutAdEvidence().analysis.let { v ->
+        val bounds = v.texts.first().bounds
+        v.copy(
+            texts = persistentListOf(
+                ExtractedText("광고 · 가상 상품", bounds, TextSource.ACCESSIBILITY_TREE, null),
+                ExtractedText("5초 후 건너뛰기", bounds, TextSource.ACCESSIBILITY_TREE, null),
+            ),
+            closeCandidates = persistentListOf(),
+            videoSurfaceObserved = true,
+        )
+    }
+
+    @Test fun videoAdCountdownIsSaidAndNothingIsPressedWhenItEnds() = runTest {
+        val h = start(videoAd = true)
+        h.analysisOverride = countdownAd
+        h.emit(MockPopupFixtures.advertisement())
+        runCurrent()
+        val prompt = h.presenter.prompt!!
+        assertEquals(PromptSummary.LIKELY_VIDEO_AD, prompt.summary)
+        assertEquals(5, prompt.countdownSeconds)
+        assertTrue(prompt.options.none { it.kind == PromptOptionKind.PRESS_CANDIDATE })
+        advanceTimeBy(10_000)
+        runCurrent()
+        assertTrue("no automatic press after the countdown", h.handled.isEmpty())
+        assertTrue(h.presenter.isShowing)
+    }
+
+    @Test fun videoAdFlagOffDoesNotAskBAndKeepsTheOldPrompt() = runTest {
+        val h = start()
+        h.analysisOverride = countdownAd
+        h.emit(MockPopupFixtures.advertisement())
+        runCurrent()
+        assertEquals(PromptSummary.LIKELY_AD, h.presenter.prompt!!.summary)
+        assertNull(h.presenter.prompt!!.videoAd)
+        assertEquals(0, h.videoAdCalls)
     }
 
     // --- [앞으로 항상 닫기] (10/20 (가)): one-time press first, save only after success ---

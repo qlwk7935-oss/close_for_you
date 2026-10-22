@@ -22,6 +22,9 @@
     <!-- "닫을까요?" 선택 창. 분류는 틀릴 수 있으므로 단정하지 않는다. -->
     <string name="ui_choice_pane_title">팝업 안내</string>
     <string name="ui_choice_summary_ad">광고로 보이는 팝업이에요.</string>
+    <!-- F5 (VideoAdAnnouncementFeature, off): hedged; the seconds are only what B read on screen. -->
+    <string name="ui_choice_summary_video_ad">영상 광고로 보이는 팝업이에요.</string>
+    <string name="ui_choice_video_ad_wait">%1$d초 뒤에 넘길 수 있다고 나와요. 지금은 대신 누를 버튼이 없어요.</string>
     <string name="ui_choice_summary_notice">공지로 보이는 팝업이에요.</string>
     <string name="ui_choice_summary_review">확인이 필요한 팝업이에요. 직접 확인해 주세요.</string>
     <string name="ui_choice_summary_unknown">팝업이 떴어요.</string>

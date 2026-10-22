@@ -74,6 +74,25 @@ class CloseForYouAccessibilityService : AccessibilityService() {
 | 고른 뒤 창을 못 닫음 | 선택을 버림(`Lost`). B/A 안 부름. "선택 창을 닫지 못해서 실행하지 않았어요" |
 | 탭·음성 출처 | `ChoiceHandler.handle(choice, analysis, origin)` 3인자 메서드를 override 하면 받음(기본은 무시) |
 
+### 영상 광고 안내 (F5, 기능 꺼짐 — 10/23 추가)
+B의 `DecisionVideoAd.inspect(analysis)`(B #20) 결과를 C가 받는 통로. **core 계약은 바꾸지 않는다.** A 조립이 함수 하나만 넘기면 된다.
+
+```kotlin
+val flow = PopupChoiceFlow(
+    // ... 위와 같음 ...
+    videoAdOf = { analysis -> VideoAdInfo.from(DecisionVideoAd.inspect(analysis)) },   // B 결과 → C 입력
+    // videoAdEnabled 기본값 = VideoAdAnnouncementFeature.enabled (false). 팀 결정 전까지 켜지 않음
+)
+// 직접 띄우는 방법(2장)이라면:
+val prompt = ChoicePromptPlanner.plan(analysis, classification, videoAd = VideoAdInfo.from(DecisionVideoAd.inspect(analysis)))
+```
+
+- `analysis.videoSurfaceObserved`는 A가 채운다. 이것이 false면 B가 영상 광고로 보지 않으므로 `VideoAdInfo.from`이 null → 기존 문장 그대로.
+- 켜면(B가 영상 광고로 보고 분류가 `ADVERTISEMENT`일 때만): 요약 "영상 광고로 보이는 팝업이에요." / B가 화면에서 읽은 카운트다운이 있고 지금 누를 건너뛰기 버튼이 없으면 "N초 뒤에 넘길 수 있다고 나와요. 지금은 대신 누를 버튼이 없어요."(이때 "대신 닫을 수 없어요" 대신 나옴).
+- **누르기 버튼은 플래그와 무관하게 똑같다**: 기존 규칙(B 역할 = 라벨 역할 `SKIP`, E1/E2, 중요 결정 아님)으로만 ['…' 버튼 눌러 주기]. 카운트다운 숫자는 B 값 그대로(C가 세거나 추측하지 않음), 값이 서로 다르면 B가 null → 숫자 안 말함.
+- **카운트다운이 끝나도 C는 기다렸다가 누르지 않는다.** 화면이 바뀌어 건너뛰기 버튼이 생기면 A의 새 팝업 이벤트 → 새 선택 창에서 사람이 고른다.
+- 중요 결정(`USER_DECISION`)이면 영상 문장도 누르기도 없음. `VideoAdInfo`·`VideoAdNotice`에는 화면 글자가 없다.
+
 ## 2. 직접 띄우는 방법 — `ChoicePromptPresenter`
 
 ```kotlin

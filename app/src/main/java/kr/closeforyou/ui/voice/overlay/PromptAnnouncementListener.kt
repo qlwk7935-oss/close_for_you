@@ -81,7 +81,8 @@ object PromptSpeech {
         parts(prompt, detail).joinToString(" ") { context.getString(it.resId, *it.args.toTypedArray()) }
 
     /**
-     * SHORT: summary (+ "대신 닫을 수 없어요" / failed-press result) + where to choose.
+     * SHORT: summary (+ "대신 닫을 수 없어요" or a video ad's countdown wait / failed-press result)
+     * + where to choose.
      * DETAILED adds only facts C already has, never a classification reason: the names of the
      * buttons offered and how many choices the prompt has. Wording stays hedged.
      */
@@ -93,7 +94,13 @@ object PromptSpeech {
             add(SpeechPart(PressResultSpeech.nextRes(failure, prompt.hasMoveOption())))
         } else {
             add(SpeechPart(prompt.summary.textRes()))
-            if (prompt.cannotPressForUser) add(SpeechPart(R.string.ui_choice_cannot_press))
+            val countdown = prompt.countdownSeconds
+            if (countdown != null) {
+                // B's read value only; C does not wait and press when it ends.
+                add(SpeechPart(R.string.ui_choice_video_ad_wait, listOf(countdown)))
+            } else if (prompt.cannotPressForUser) {
+                add(SpeechPart(R.string.ui_choice_cannot_press))
+            }
         }
         if (detail == AnnouncementDetail.DETAILED) {
             prompt.labelsOf(PromptOptionKind.PRESS_CANDIDATE)?.let {

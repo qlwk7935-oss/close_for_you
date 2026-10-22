@@ -15,7 +15,7 @@ import kr.closeforyou.ui.voice.PressFailure
 import kr.closeforyou.ui.voice.PressResultSpeech
 
 /** Hedged summary: a display classification can be wrong, so the sentence never asserts it. */
-enum class PromptSummary { LIKELY_AD, LIKELY_NOTICE, NEEDS_REVIEW, UNKNOWN }
+enum class PromptSummary { LIKELY_AD, LIKELY_VIDEO_AD, LIKELY_NOTICE, NEEDS_REVIEW, UNKNOWN }
 
 /**
  * MOVE_TO_BUTTON appears only while [MoveToButtonFeature.enabled]; it never presses anything.
@@ -53,9 +53,14 @@ data class ChoicePrompt(
     val options: ImmutableList<PromptOption>,
     /** Set on the follow-up prompt shown after the person's own press did not succeed. */
     val pressFailure: PressFailure? = null,
+    /** Set only while [VideoAdAnnouncementFeature] is on and B says video ad. */
+    val videoAd: VideoAdNotice? = null,
 ) {
     override fun toString(): String =
-        "ChoicePrompt(summary=$summary, options=${options.size}, failure=$pressFailure, redacted)"
+        "ChoicePrompt(summary=$summary, options=${options.size}, failure=$pressFailure, videoAd=$videoAd, redacted)"
+
+    /** B's countdown while no skip button can be pressed yet: "wait" replaces "cannot close". */
+    val countdownSeconds: Int? get() = videoAd?.countdownSeconds
 }
 
 /**
@@ -72,6 +77,9 @@ object ChoicePromptPlanner {
     /**
      * [labelPolicy]: only labels the shared contract accepts for the candidate's role get a press
      * button; others fall back to "이 팝업은 대신 닫을 수 없어요". Default is [SharedLabelPolicy].
+     * [videoAd]: B's F5 facts (A passes `VideoAdInfo.from(DecisionVideoAd.inspect(analysis))`).
+     * Used only while [videoAdEnabled] and only for an ADVERTISEMENT. It changes wording only:
+     * the press buttons are the same as without it.
      */
     fun plan(
         analysis: PopupAnalysis,
@@ -79,6 +87,8 @@ object ChoicePromptPlanner {
         labelPolicy: PressableLabelPolicy = SharedLabelPolicy,
         moveToButtonEnabled: Boolean = MoveToButtonFeature.enabled,
         rememberChoicesEnabled: Boolean = RememberChoiceFeature.enabled,
+        videoAd: VideoAdInfo? = null,
+        videoAdEnabled: Boolean = VideoAdAnnouncementFeature.enabled,
     ): ChoicePrompt {
         val pressable = if (classification == PopupClassification.USER_DECISION) {
             emptyList()
@@ -112,12 +122,27 @@ object ChoicePromptPlanner {
         }
         val all = options + remember + movable.map(::moveOption) +
             PromptOption(PromptOptionKind.READ_CONTENT) + PromptOption(PromptOptionKind.KEEP_OPEN) + stopAsking
+        val notice = if (videoAdEnabled && videoAd != null && classification == PopupClassification.ADVERTISEMENT) {
+            videoAdNotice(videoAd, options)
+        } else {
+            null
+        }
         return ChoicePrompt(
             token = analysis.token,
-            summary = summaryOf(classification),
+            summary = if (notice != null) PromptSummary.LIKELY_VIDEO_AD else summaryOf(classification),
             cannotPressForUser = pressable.isEmpty() && classification != PopupClassification.USER_DECISION,
             options = all.toImmutableList(),
+            videoAd = notice,
         )
+    }
+
+    /**
+     * A skip button offered now (C's rule and in B's skip list) ends the wait, so the countdown is
+     * dropped. Otherwise only B's read value is kept, as is; a non-positive value is not spoken.
+     */
+    private fun videoAdNotice(info: VideoAdInfo, offered: List<PromptOption>): VideoAdNotice {
+        val skipNow = offered.any { it.candidateRole == ButtonRole.SKIP && it.candidateId in info.skipCandidateIds }
+        return VideoAdNotice(countdownSeconds = info.countdownSeconds?.takeIf { !skipNow && it > 0 })
     }
 
     /**

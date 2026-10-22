@@ -59,7 +59,10 @@ fun ChoicePromptContent(
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             Text(text = stringResource(prompt.summary.textRes()), style = MaterialTheme.typography.titleMedium)
-            if (prompt.cannotPressForUser) {
+            val countdown = prompt.countdownSeconds
+            if (countdown != null) {
+                Text(text = stringResource(R.string.ui_choice_video_ad_wait, countdown))
+            } else if (prompt.cannotPressForUser) {
                 Text(text = stringResource(R.string.ui_choice_cannot_press))
             }
             prompt.pressFailure?.let { failure ->
@@ -126,6 +129,7 @@ private fun PromptControls(
 
 internal fun PromptSummary.textRes(): Int = when (this) {
     PromptSummary.LIKELY_AD -> R.string.ui_choice_summary_ad
+    PromptSummary.LIKELY_VIDEO_AD -> R.string.ui_choice_summary_video_ad
     PromptSummary.LIKELY_NOTICE -> R.string.ui_choice_summary_notice
     PromptSummary.NEEDS_REVIEW -> R.string.ui_choice_summary_review
     PromptSummary.UNKNOWN -> R.string.ui_choice_summary_unknown
