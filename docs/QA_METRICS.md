@@ -11,12 +11,13 @@
 | 열 | 값 |
 |---|---|
 | `experiment_id` | 실험 ID (예: C01, C05) |
-| `scenario_id` | 팝업 재현 앱 ID(P01~P15, N01~N07) 또는 팀이 정한 ID |
+| `scenario_id` | 팝업 재현 앱 ID(P01~P18, N01~N07) 또는 팀이 정한 ID |
 | `date`, `device`, `android`, `talkback` | 시행 환경 |
 | `is_popup` | 실제 팝업인지 Y/N. 재현 앱 시나리오는 비우면 정답지에서 채움 |
 | `detected` | 닫아줄게가 팝업으로 감지했는지 Y/N |
 | `expected_handling` | `USER_CHOICE`/`AUTO_FORBIDDEN`/`BLOCK_ANALYSIS`/`NO_ACTION`. 재현 앱은 비우면 자동 |
-| `outcome` | `AUTO_HANDLED`/`USER_CONFIRMED`/`ANNOUNCED_ONLY`/`MISSED`/`BLOCKED`/`NOT_RUN` |
+| `outcome` | `AUTO_HANDLED`/`USER_CONFIRMED`/`NOT_EXECUTED`/`ANNOUNCED_ONLY`/`MISSED`/`BLOCKED`/`NOT_RUN`. `NOT_EXECUTED`는 사용자가 [누르기]를 골랐지만 앱이 일부러 실행하지 않은 경우(클릭 비활성 단계) |
+| `offered_press` | C 선택 창이 누르기 버튼을 보여 줬는지 Y/N(선택). 누르기 제안률·잘못 제안 집계에 씀 |
 | `clicked_target` | 실제로 눌린 버튼 리소스 ID(재현 앱 로그의 값) |
 | `forbidden_click` | 금지 버튼이 눌렸는지 Y/N. 재현 앱은 비우면 `clicked_target`과 정답지로 판정 |
 | `task_completed`, `info_correct` | 사용자 과제 완료·내용 이해 정답 Y/N(C12) |
@@ -30,9 +31,11 @@ python3 tools/qa_metrics.py 결과.csv --logcat popuptest.log  # 재현 앱 버�
 adb logcat -s PopupTest > popuptest.log                       # 로그 저장(재현 앱)
 ```
 
-보고서 항목: 감지 정밀도·재현율·오탐·미탐(C01), 위험 클릭률(C06), 앱 판단의 오클릭·잘못 거부(B 분류·후보·정책), 자동 처리 커버리지 전체/지원 기준과 결과 분포(C13), 작업 완료율·내용 이해 정확도(C12), 시나리오별 표, 로그 대조(금지 버튼·광고 페이지 도착 표시). 형식이 틀린 행은 집계에서 빼고 보고서 끝에 표시하며 종료 코드 1을 돌려줍니다.
+보고서 항목: 감지 정밀도·재현율·오탐·미탐(C01), 위험 클릭률(C06), 앱 판단의 오클릭·잘못 거부·누르기 제안률·잘못 제안(B 분류·후보·정책, C 누르기 버튼), 자동 처리 커버리지 전체/지원 기준과 결과 분포(C13), 작업 완료율·내용 이해 정확도(C12), 시나리오별 표, 로그 대조(금지 버튼·광고 페이지 도착 표시). 형식이 틀린 행은 집계에서 빼고 보고서 끝에 표시하며 종료 코드 1을 돌려줍니다.
 
 **오클릭**은 앱이 누른 버튼(`AUTO_HANDLED`·`USER_CONFIRMED`의 `clicked_target`)이 정답지의 `app_allowed_target`과 다른 경우, **잘못 거부**는 `app_allowed_target`이 있는 `USER_CHOICE` 시나리오에서 결과가 `ANNOUNCED_ONLY`·`BLOCKED`인 경우입니다. 라벨 없는 X(P04)·그림 X(P05)는 앱 허용 버튼이 없어서 앱이 누르지 않아도 잘못 거부가 아닙니다. 둘 다 정답지에 있는 시나리오만 셉니다.
+
+**클릭 비활성 단계**(첫 통합 실측)에서는 `--no-click`을 붙입니다. `AUTO_HANDLED`·`USER_CONFIRMED` 행을 안전 실패로 보고하고 종료 코드 1을 돌려줍니다. 기록 방법은 [첫 통합 실측 검증표](FIRST_INTEGRATION_CHECKLIST.md)를 따릅니다.
 
 정답지 CSV [`templates/popup_answer_key.csv`](templates/popup_answer_key.csv)는 `ScenarioCatalog`와 같아야 합니다. `AnswerKeyCsvTest`가 CI에서 두 값을 비교합니다.
 
