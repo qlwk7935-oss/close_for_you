@@ -9,6 +9,8 @@ import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.text.InputType
 import android.view.Gravity
 import android.view.MotionEvent
@@ -31,6 +33,7 @@ import android.widget.Toast
 class PopupScenarioActivity : Activity() {
     private lateinit var scenarioId: String
     private var dialog: Dialog? = null
+    private val handler = Handler(Looper.getMainLooper())
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -55,11 +58,15 @@ class PopupScenarioActivity : Activity() {
             "P13" -> webViewModal()
             "P14" -> normalTransition()
             "P15" -> Toast.makeText(this, R.string.toast_text, Toast.LENGTH_LONG).show()
+            "P16" -> videoAd()
+            "P17" -> closeOrSkipDialog()
+            "P18" -> timeSaleDialog()
             else -> if (scenario.kind == PopupKind.NOTICE) textNotice(scenario.note)
         }
     }
 
     override fun onDestroy() {
+        handler.removeCallbacksAndMessages(null)
         dialog?.dismiss()
         dialog = null
         super.onDestroy()
@@ -359,6 +366,110 @@ class PopupScenarioActivity : Activity() {
                 ))
             },
         ))
+    }
+
+    /** 영상 광고(P16). 재생 시간은 매초 바뀌고, [건너뛰기]는 카운트다운이 끝난 뒤에만 생긴다. */
+    private fun videoAd() {
+        val root = FrameLayout(this)
+        root.addView(backgroundPage())
+        val overlay = FrameLayout(this).apply {
+            setBackgroundColor(Color.BLACK)
+            // 덮개 바깥 터치가 뒤 화면으로 새지 않게 막는다.
+            isClickable = true
+        }
+        val playing = text("").apply { setTextColor(Color.WHITE) }
+        overlay.addView(
+            column(
+                text(getString(R.string.video_title), 20f).apply { setTextColor(Color.WHITE) },
+                playing,
+                button(R.id.btn_ad_open, getString(R.string.ad_open)) {
+                    handler.removeCallbacksAndMessages(null)
+                    openAdLanding()
+                },
+            ),
+            FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.TOP,
+            ),
+        )
+        val corner = FrameLayout(this)
+        val countdown = text("").apply { setTextColor(Color.WHITE) }
+        corner.addView(countdown)
+        overlay.addView(corner, FrameLayout.LayoutParams(
+            FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT,
+            Gravity.BOTTOM or Gravity.END,
+        ).apply { setMargins(px(16), px(16), px(16), px(16)) })
+        root.addView(overlay, FrameLayout.LayoutParams(
+            FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT,
+        ))
+        setContentView(root)
+
+        var elapsed = 0
+        var skipShown = false
+        val tick = object : Runnable {
+            override fun run() {
+                playing.text = getString(R.string.video_playing, elapsed / 60, elapsed % 60)
+                val left = ScenarioCatalog.VIDEO_SKIP_AFTER_SECONDS - elapsed
+                if (left > 0) {
+                    countdown.text = getString(R.string.video_skip_countdown, left)
+                } else if (!skipShown) {
+                    skipShown = true
+                    corner.removeAllViews()
+                    corner.addView(button(R.id.btn_skip, getString(R.string.skip)) {
+                        handler.removeCallbacksAndMessages(null)
+                        root.removeView(overlay)
+                    })
+                }
+                elapsed++
+                handler.postDelayed(this, 1_000)
+            }
+        }
+        tick.run()
+    }
+
+    /** 닫기와 건너뛰기가 함께 있는 광고(P17). 건너뛰기는 다음 광고를 열고, 닫기만 광고를 끝낸다. */
+    private fun closeOrSkipDialog() {
+        showDialog(column(
+            text(getString(R.string.two_ads_first_title), 20f),
+            text(getString(R.string.two_ads_body)),
+            button(R.id.btn_skip, getString(R.string.skip)) {
+                dismiss()
+                showDialog(column(
+                    text(getString(R.string.two_ads_second_title), 20f),
+                    text(getString(R.string.two_ads_body)),
+                    button(R.id.btn_close, getString(R.string.close)) { dismiss() },
+                ))
+            },
+            button(R.id.btn_close, getString(R.string.close)) { dismiss() },
+        ))
+    }
+
+    /** 건너뛰기와 상관없는 시간 문구(P18, B #20 오인 확인). 카운트다운이 끝나도 새 버튼은 생기지 않는다. */
+    private fun timeSaleDialog() {
+        val remaining = text("")
+        showDialog(column(
+            text(getString(R.string.sale_title), 20f),
+            remaining,
+            text(getString(R.string.sale_delivery)),
+            button(R.id.btn_ad_open, getString(R.string.ad_open)) {
+                handler.removeCallbacksAndMessages(null)
+                openAdLanding()
+            },
+            button(R.id.btn_close, getString(R.string.close)) {
+                handler.removeCallbacksAndMessages(null)
+                dismiss()
+            },
+        ))
+        var left = ScenarioCatalog.SALE_COUNTDOWN_SECONDS
+        val tick = object : Runnable {
+            override fun run() {
+                remaining.text = getString(R.string.sale_remaining, left / 60, left % 60)
+                if (left > 0) {
+                    left--
+                    handler.postDelayed(this, 1_000)
+                }
+            }
+        }
+        tick.run()
     }
 
     private fun resultDialog(message: String) {
