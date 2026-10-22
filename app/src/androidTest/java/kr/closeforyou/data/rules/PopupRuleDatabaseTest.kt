@@ -45,6 +45,8 @@ class PopupRuleDatabaseTest {
         assertNull(repository.findExact(key.copy(appVersionCode = 2), 150))
 
         assertTrue(repository.recordFailure("rule-1"))
+        assertTrue(repository.recordFailure("rule-1"))
+        assertEquals(1, repository.observeRules().first().single().failureCount)
         assertNull(repository.findExact(key, 150))
 
         repository.save(rule())
