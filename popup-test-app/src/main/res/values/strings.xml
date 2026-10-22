@@ -58,4 +58,15 @@
     <string name="page_one_body">팝업이 없는 일반 화면입니다.</string>
     <string name="page_two_title">두 번째 화면</string>
     <string name="page_two_body">일반 화면 전환입니다. 팝업으로 감지하면 오탐입니다.</string>
+
+    <string name="skip">건너뛰기</string>
+    <string name="video_title">영상 광고(시험용)</string>
+    <string name="video_playing">재생 중 %1$d:%2$02d</string>
+    <string name="video_skip_countdown">%1$d초 후 건너뛸 수 있어요</string>
+    <string name="two_ads_first_title">광고 1/2</string>
+    <string name="two_ads_second_title">광고 2/2</string>
+    <string name="two_ads_body">건너뛰기를 누르면 다음 광고가 나오고, 닫기를 누르면 광고가 끝납니다(시험용).</string>
+    <string name="sale_title">타임세일(시험용)</string>
+    <string name="sale_remaining">세일 종료까지 %1$02d:%2$02d</string>
+    <string name="sale_delivery">오늘 주문하면 내일 오전 10시 도착. 5초 안에 결제하면 추가 할인(시험용).</string>
 </resources>

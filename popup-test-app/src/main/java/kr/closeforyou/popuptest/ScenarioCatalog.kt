@@ -23,7 +23,7 @@ enum class ExpectedHandling {
 /** 닫기 근거 단계(통합설계 E1~E4). */
 enum class CloseEvidence { E2_LABELED_CLICK, E3_UNLABELED_CLICKABLE, E4_VISUAL_ONLY, NONE }
 
-enum class PopupSurface { DIALOG, SAME_WINDOW_OVERLAY, BOTTOM_BANNER, WEBVIEW, TOAST, FULL_SCREEN }
+enum class PopupSurface { DIALOG, SAME_WINDOW_OVERLAY, BOTTOM_BANNER, WEBVIEW, TOAST, FULL_SCREEN, VIDEO_OVERLAY }
 
 data class PopupScenario(
     val id: String,
@@ -56,6 +56,15 @@ data class PopupScenario(
 object ScenarioCatalog {
     /** 공지 변형(C05) 공통 문구. */
     const val NOTICE_BASE = "서비스 점검 안내: 10월 25일 02:00~04:00 동안 결제 기능을 쓸 수 없습니다."
+
+    /** P16 영상 광고: 이 시간(초)이 지나야 [건너뛰기] 버튼이 생긴다. */
+    const val VIDEO_SKIP_AFTER_SECONDS = 5
+
+    /** P16 빈 영상 표면(VideoView)의 리소스 ID. 재생하지 않으며 영상 광고의 증거가 아니다. */
+    const val VIDEO_SURFACE_ID = "video_surface"
+
+    /** P18 타임세일 남은 시간(초). 건너뛰기와 상관없는 카운트다운이다. */
+    const val SALE_COUNTDOWN_SECONDS = 300
 
     val all: List<PopupScenario> = listOf(
         PopupScenario(
@@ -192,6 +201,33 @@ object ScenarioCatalog {
             keyFacts = emptyList(), rememberable = false,
             memoryReusableFrom = null, experiments = setOf("C01"),
             note = "오탐 확인용. 잠깐 나타나는 토스트.",
+        ),
+        PopupScenario(
+            id = "P16", title = "영상 광고 건너뛰기 카운트다운", surface = PopupSurface.VIDEO_OVERLAY,
+            kind = PopupKind.AD, expected = ExpectedHandling.USER_CHOICE,
+            closeEvidence = CloseEvidence.E2_LABELED_CLICK,
+            correctTargetId = "btn_skip", appAllowedTargetId = "btn_skip", forbiddenTargetIds = setOf("btn_ad_open"),
+            keyFacts = listOf("5초 뒤 건너뛰기 가능"), rememberable = false, memoryReusableFrom = null,
+            experiments = setOf("B03", "C07"),
+            note = "전체 화면 영상 광고(합성). 빈 VideoView(video_surface, 재생 없음)가 있고, 재생 시간이 매초 바뀌며, 5초 카운트다운이 끝나야 '건너뛰기'가 생김. 그 전에는 누를 버튼이 없음. Dialog 없는 앱 자체 덮개라 현행 F1은 후보를 못 잡을 수 있음. 글자가 계속 바뀌어 기억 대상 아님.",
+        ),
+        PopupScenario(
+            id = "P17", title = "닫기·건너뛰기 함께 있는 광고", surface = PopupSurface.DIALOG,
+            kind = PopupKind.AD, expected = ExpectedHandling.USER_CHOICE,
+            closeEvidence = CloseEvidence.E2_LABELED_CLICK,
+            correctTargetId = "btn_close", appAllowedTargetId = "btn_close", forbiddenTargetIds = emptySet(),
+            keyFacts = listOf("건너뛰기는 다음 광고, 닫기는 광고 끝"), rememberable = true, memoryReusableFrom = null,
+            experiments = setOf("B03", "C09"),
+            note = "라벨 있는 버튼이 둘(E2). '건너뛰기'는 두 번째 광고를 열고 '닫기'만 광고를 끝냄. 기억은 '닫기'에만 맞아야 함(F12 후보 여러 개).",
+        ),
+        PopupScenario(
+            id = "P18", title = "건너뛰기와 무관한 시간 문구", surface = PopupSurface.DIALOG,
+            kind = PopupKind.AD, expected = ExpectedHandling.USER_CHOICE,
+            closeEvidence = CloseEvidence.E2_LABELED_CLICK,
+            correctTargetId = "btn_close", appAllowedTargetId = "btn_close", forbiddenTargetIds = setOf("btn_ad_open"),
+            keyFacts = listOf("타임세일 남은 시간은 건너뛰기 카운트다운이 아님"), rememberable = false,
+            memoryReusableFrom = null, experiments = setOf("C07"),
+            note = "세일 종료 카운트다운(매초 변경)과 '5초 안에 결제' 같은 시간 문구가 있지만 건너뛰기와 무관(B #20 오인 확인). 글자가 계속 바뀌어 기억 대상 아님.",
         ),
     ) + noticeVariants()
 
