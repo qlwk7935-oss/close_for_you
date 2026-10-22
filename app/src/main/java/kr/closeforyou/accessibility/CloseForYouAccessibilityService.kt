@@ -51,6 +51,7 @@ class CloseForYouAccessibilityService : AccessibilityService() {
         try {
             initializeConnectedService()
             AccessibilityRuntime.serviceLifecycle.phase(ServiceLifecyclePhase.CONNECTED)
+            EvidenceBlockLog.connected()
         } catch (failure: Exception) {
             disconnect()
             AccessibilityRuntime.serviceLifecycle.phase(ServiceLifecyclePhase.INITIALIZATION_FAILED)
@@ -148,35 +149,55 @@ class CloseForYouAccessibilityService : AccessibilityService() {
             else PopupTrigger.WINDOW_CHANGED
         // All Android objects have been released before this delayed job can run.
         val eventWindowId = event.windowId
-        pendingCapture = serviceScope.launch {
+        val captureDiagnostic = EvidenceBlockLog.beginWork(ServiceWorkKind.CAPTURE)
+        pendingCapture = serviceScope.launchDiagnosed(captureDiagnostic) {
+            captureDiagnostic?.at(ServiceWorkStage.DEBOUNCE)
             delay(DEBOUNCE_MILLIS)
-            choiceIntegration?.awaitSubscription() ?: return@launch
-            if (!freshness.isCurrent(epoch) || touching) return@launch
+            captureDiagnostic?.at(ServiceWorkStage.SUBSCRIPTION)
+            val integration = choiceIntegration
+            if (integration == null) {
+                captureDiagnostic?.outcome(ServiceWorkEnd.INTEGRATION_UNAVAILABLE)
+                return@launchDiagnosed
+            }
+            integration.awaitSubscription()
+            if (!freshness.isCurrent(epoch) || touching) {
+                captureDiagnostic?.outcome(ServiceWorkEnd.CAPTURE_STALE)
+                return@launchDiagnosed
+            }
             val owner = currentCoroutineContext()[Job] ?: throw CancellationException("NO_COLLECTION_OWNER")
-            capture(epoch, trigger, eventWindowId) {
+            capture(epoch, trigger, eventWindowId, captureDiagnostic) {
                 freshness.checkActive(epoch, owner) { connected && !touching }
             }
         }
     }
 
-    private fun capture(epoch: Long, trigger: PopupTrigger, eventWindowId: Int, checkActive: () -> Unit) {
+    private fun capture(epoch: Long, trigger: PopupTrigger, eventWindowId: Int,
+        diagnostic: ServiceWorkDiagnostic?, checkActive: () -> Unit) {
         val trace = CaptureDiagnostics.trace(eventWindowId, epoch)
         val observation = DetectionObservationHook.beginAttempt()
+        diagnostic?.at(ServiceWorkStage.CAPTURE)
         when (val result = collector.capture(this, epoch, trigger, ::packageBlock, trace = trace, checkActive = checkActive)) {
             is CollectionResult.Blocked -> {
+                diagnostic?.captureBlocked(result.reason, result.diagnostic)
                 checkActive()
                 detector.clear()
                 DetectionObservationHook.blocked(result.targetPackage, result.windowId, result.reason, result.diagnostic, observation)
                 AccessibilityRuntime.block(result.reason, epoch)
             }
             is CollectionResult.Ready -> {
-                if (!freshness.isCurrent(epoch) || touching) return
+                if (!freshness.isCurrent(epoch) || touching) {
+                    diagnostic?.outcome(ServiceWorkEnd.CAPTURE_STALE)
+                    return
+                }
+                diagnostic?.at(ServiceWorkStage.F1)
                 val assessment = detector.assess(result.frame)
+                diagnostic?.assessed(assessment)
                 DetectionObservationHook.assessed(result.snapshot.token.packageName, result.snapshot.token.windowId, assessment, observation)
                 if (assessment.disposition != DetectionDisposition.POPUP_CANDIDATE) {
                     // Preserve unknown transition/structure evidence in A diagnostics. Do not
                     // count it as a confirmed popup or capture merely because a screen changed.
                     trace.detail(CaptureDetail.NO_POPUP_SIGNAL)
+                    diagnostic?.outcome(ServiceWorkEnd.F1_NOT_CANDIDATE)
                     return
                 }
                 val signals = assessment.signals
@@ -187,29 +208,42 @@ class CloseForYouAccessibilityService : AccessibilityService() {
                         SystemClock.uptimeMillis()).coerceAtLeast(0))
                     if (freshness.isCurrent(epoch)) invalidate(clearBaseline = false)
                 }
-                evidenceJob = serviceScope.launch {
+                val evidenceDiagnostic = EvidenceBlockLog.beginWork(ServiceWorkKind.EVIDENCE)
+                evidenceJob = serviceScope.launchDiagnosed(evidenceDiagnostic) {
+                    evidenceDiagnostic?.at(ServiceWorkStage.BEGIN)
                     val owner = currentCoroutineContext()[Job] ?: throw CancellationException("NO_EVIDENCE_OWNER")
-                    val operation = AccessibilityRuntime.begin(result.snapshot, owner) ?: return@launch
-                    val blockDiagnostic = EvidenceBlockLog.begin()
+                    val operation = AccessibilityRuntime.begin(result.snapshot, owner)
+                    if (operation == null) {
+                        evidenceDiagnostic?.outcome(ServiceWorkEnd.BEGIN_REJECTED)
+                        return@launchDiagnosed
+                    }
+                    val blockDiagnostic = evidenceDiagnostic?.block
                     var published = false
                     try {
                         val checkEvidence = {
                             freshness.checkActive(epoch, owner) { isCurrent(result.snapshot.token) }
                         }
+                        evidenceDiagnostic?.at(ServiceWorkStage.PIPELINE)
                         when (val evidence = pipeline.analyze(result.snapshot, trace, detectionFrame = result.frame,
                             detectionAssessment = assessment, blockDiagnostic = blockDiagnostic) {
                             verifyScreen(it, trace, checkEvidence, blockDiagnostic)
                         }) {
-                            is EvidenceOutcome.Ready -> if (isCurrent(result.snapshot.token)) {
-                                trace.evidence(evidence.issue)
-                                checkEvidence()
-                                published = AccessibilityRuntime.publish(operation, evidence.snapshot,
-                                    PopupDetection(result.snapshot.token, signals.toPersistentSet(), requiresUserReview = true),
-                                    evidence.analysis, evidence.issue)
-                                if (published) trace.stage(CaptureStage.PUBLISHED)
+                            is EvidenceOutcome.Ready -> {
+                                evidenceDiagnostic?.at(ServiceWorkStage.READY)
+                                if (isCurrent(result.snapshot.token)) {
+                                    trace.evidence(evidence.issue)
+                                    checkEvidence()
+                                    evidenceDiagnostic?.at(ServiceWorkStage.PUBLISH)
+                                    published = AccessibilityRuntime.publish(operation, evidence.snapshot,
+                                        PopupDetection(result.snapshot.token, signals.toPersistentSet(), requiresUserReview = true),
+                                        evidence.analysis, evidence.issue)
+                                    evidenceDiagnostic?.outcome(if (published) ServiceWorkEnd.PUBLISHED else ServiceWorkEnd.PUBLISH_REJECTED)
+                                    if (published) trace.stage(CaptureStage.PUBLISHED)
+                                } else evidenceDiagnostic?.outcome(ServiceWorkEnd.READY_STALE)
                             }
                             is EvidenceOutcome.Blocked -> {
                                 blockDiagnostic?.blocked(evidence.reason, evidence.issue)
+                                evidenceDiagnostic?.outcome(ServiceWorkEnd.EVIDENCE_BLOCKED)
                                 if (isCurrent(result.snapshot.token)) {
                                     trace.evidence(evidence.issue)
                                     AccessibilityRuntime.recordEvidenceIssue(evidence.issue)
@@ -222,6 +256,7 @@ class CloseForYouAccessibilityService : AccessibilityService() {
                         trace.stage(CaptureStage.CANCELLED)
                         throw cancelled
                     } catch (_: Exception) {
+                        evidenceDiagnostic?.exceptionHandled()
                         published = false
                         if (isCurrent(result.snapshot.token)) {
                             trace.detail(CaptureDetail.PIPELINE_FAILED)
@@ -231,10 +266,12 @@ class CloseForYouAccessibilityService : AccessibilityService() {
                             AccessibilityRuntime.block(PrivacyBlockReason.UNREADABLE_TREE, epoch, operation)
                         }
                     } finally {
-                        if (!published || !isActive) AccessibilityRuntime.abandon(operation, epoch)
+                        diagnosedCleanup(evidenceDiagnostic) {
+                            if (!published || !isActive) AccessibilityRuntime.abandon(operation, epoch)
+                        }
                     }
-                    EvidenceBlockLog.report(blockDiagnostic)
                 }
+                diagnostic?.outcome(ServiceWorkEnd.EVIDENCE_SCHEDULED)
             }
         }
     }

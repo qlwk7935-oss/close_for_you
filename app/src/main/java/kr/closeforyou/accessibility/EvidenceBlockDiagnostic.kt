@@ -6,10 +6,11 @@ import kr.closeforyou.core.model.PopupSnapshot
 import kr.closeforyou.core.model.PrivacyBlockReason
 
 internal enum class EvidenceBlockSource {
-    UNSPECIFIED, INCOMPLETE_SNAPSHOT, CURRENT_SCREEN_UNAVAILABLE,
+    UNSPECIFIED, INITIAL_COLLECTION_FAILED, INCOMPLETE_SNAPSHOT, CURRENT_SCREEN_UNAVAILABLE,
     RECOLLECTION_FAILED, SNAPSHOT_MISMATCH, TEXT_PROTECTION,
 }
 internal enum class EvidenceMismatch { NONE, PACKAGE, WINDOW, STRUCTURE, CONTENT, FRAME, WINDOW_SET }
+internal enum class ObservedBlockResult { NONE, CREATED, RETURNED }
 
 /** The original short-circuit comparison, on existing DTOs only. No new Android reads. */
 internal object EvidenceSnapshotComparison {
@@ -40,6 +41,8 @@ internal class EvidenceBlockDiagnostic {
     private var reason: PrivacyBlockReason? = null
     private var issue: EvidenceIssue? = null
     private var reported = false
+    var result = ObservedBlockResult.NONE
+        private set
 
     fun rejected(at: EvidenceBlockSource, field: EvidenceMismatch = EvidenceMismatch.NONE,
         collection: CollectionProtectionDiagnostic? = null) {
@@ -51,24 +54,30 @@ internal class EvidenceBlockDiagnostic {
         finding = collection?.finding ?: CollectionFinding.NONE
     }
 
-    fun blocked(blockReason: PrivacyBlockReason, blockIssue: EvidenceIssue) {
+    fun blocked(blockReason: PrivacyBlockReason, blockIssue: EvidenceIssue?) {
         if (reason != null) return
         reason = blockReason
         issue = blockIssue
+        result = ObservedBlockResult.CREATED
     }
+
+    fun returned() { if (reason != null) result = ObservedBlockResult.RETURNED }
+
+    /** Codes even if cancellation prevented a Blocked result from reaching the service. */
+    fun fields(): String = "SOURCE=${source.name};CHECK=${mismatch.name};" +
+        "REASON=${reason?.name ?: "NONE"};ISSUE=${issue?.name ?: "NONE"};" +
+        "COLLECTION_PHASE=${phase?.name ?: "NONE"};" +
+        "OPERATION=${operation.name};FINDING=${finding.name}"
 
     /** Called after service block/abandon, outside the collection budget. One bounded line.
      * A logging failure is not a new collection failure. Cancellation still propagates.
      */
     fun report(write: (String) -> Unit) {
-        val blockReason = reason ?: return
+        if (reason == null) return
         if (reported) return
         reported = true
         try {
-            write("A_EVIDENCE_BLOCK;SOURCE=${source.name};CHECK=${mismatch.name};" +
-                "REASON=${blockReason.name};ISSUE=${issue?.name ?: "NONE"};" +
-                "COLLECTION_PHASE=${phase?.name ?: "NONE"};" +
-                "OPERATION=${operation.name};FINDING=${finding.name}")
+            write("A_EVIDENCE_BLOCK;${fields()}")
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (_: Exception) {

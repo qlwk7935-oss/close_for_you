@@ -53,6 +53,7 @@ internal class CaptureOcrPipeline(
     ): EvidenceOutcome {
         val result = analyzeChecked(snapshot, trace, detectionFrame, detectionAssessment, protection, blockDiagnostic)
         checkCurrent(snapshot) // Includes every early tree/summary/failure fallback and frame close.
+        if (result is EvidenceOutcome.Blocked) blockDiagnostic?.returned()
         return result
     }
 
@@ -62,15 +63,20 @@ internal class CaptureOcrPipeline(
         checkCurrent(snapshot)
         if (snapshot.completeness != SnapshotCompleteness.COMPLETE) {
             blockDiagnostic?.rejected(EvidenceBlockSource.INCOMPLETE_SNAPSHOT)
+            blockDiagnostic?.blocked(PrivacyBlockReason.UNREADABLE_TREE, EvidenceIssue.PRIVACY_BLOCKED)
             return EvidenceOutcome.Blocked(PrivacyBlockReason.UNREADABLE_TREE, EvidenceIssue.PRIVACY_BLOCKED)
         }
         trace.stage(CaptureStage.F0_A)
         checkCurrent(snapshot)
-        protection(snapshot)?.let { trace.block(it); return EvidenceOutcome.Blocked(it, EvidenceIssue.PRIVACY_BLOCKED) }
+        protection(snapshot)?.let {
+            blockDiagnostic?.blocked(it, EvidenceIssue.PRIVACY_BLOCKED)
+            trace.block(it); return EvidenceOutcome.Blocked(it, EvidenceIssue.PRIVACY_BLOCKED)
+        }
         val tree = treeTexts(snapshot)
         val treeContent = tree.joinToString("\n") { it.text }
         if (PrivacyPolicy.hasSensitiveText(treeContent) || PrivacyPolicy.hasUncertainText(treeContent)) {
             blockDiagnostic?.rejected(EvidenceBlockSource.TEXT_PROTECTION)
+            blockDiagnostic?.blocked(PrivacyBlockReason.SENSITIVE_CONTENT, EvidenceIssue.PRIVACY_BLOCKED)
             trace.block(PrivacyBlockReason.SENSITIVE_CONTENT); return EvidenceOutcome.Blocked(PrivacyBlockReason.SENSITIVE_CONTENT, EvidenceIssue.PRIVACY_BLOCKED)
         }
         trace.stage(CaptureStage.F0_A_PASSED)
@@ -96,6 +102,7 @@ internal class CaptureOcrPipeline(
         var privacyBlocked = false
         fun blocked(reason: PrivacyBlockReason, issue: EvidenceIssue): EvidenceOutcome.Blocked {
             privacyBlocked = true
+            blockDiagnostic?.blocked(reason, issue)
             return EvidenceOutcome.Blocked(reason, issue)
         }
         try {
