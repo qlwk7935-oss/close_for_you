@@ -47,6 +47,20 @@ internal object DecisionKeywords {
     fun isUserDecision(text: String): Boolean =
         userDecisionKo.any { it in text } || userDecisionEn.containsMatchIn(text)
 
+    // R1 (OVERWARNING_STUDY.md): a benefit condition such as "가입하면 포인트", "결제 시 5% 할인".
+    private val benefitCondition = Regex("""하면|하고|\S+\s*시\s|할 때|\band get\b|\bwhen you\b|\bif you\b""", RegexOption.IGNORE_CASE)
+    private val benefitWord = Regex("""할인|쿠폰|포인트|혜택|이벤트|특가|무료|증정|적립|배송|\boff\b|\bfree\b|\bbonus\b|\bcoupon\b""", RegexOption.IGNORE_CASE)
+    // A question or A's fixed summary ("결제 선택 필요") is always a decision, never a mention.
+    private val asksForDecision = Regex("""\?|하시겠|할까요|시겠어요|필요""")
+
+    /**
+     * A sentence that only mentions a decision word as the condition of a benefit: it has a
+     * condition and a benefit word, asks nothing, and is longer than a button name (10 chars).
+     */
+    fun isBenefitMention(text: String): Boolean =
+        text.length > 10 && benefitCondition.containsMatchIn(text) && benefitWord.containsMatchIn(text) &&
+            !asksForDecision.containsMatchIn(text)
+
     fun isDecisionButtonLabel(label: String): Boolean =
         isUserDecision(label) || decisionButtonOnlyKo.any { it in label } ||
             decisionButtonOnlyEn.containsMatchIn(label)

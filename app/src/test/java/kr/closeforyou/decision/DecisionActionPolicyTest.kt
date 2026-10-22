@@ -7,6 +7,7 @@ import kr.closeforyou.core.model.SafetyReason.*
 import kr.closeforyou.testing.mock.MockPopupFixtures
 import kotlinx.collections.immutable.persistentListOf
 import kotlinx.collections.immutable.persistentSetOf
+import kotlinx.collections.immutable.toPersistentList
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
@@ -50,6 +51,29 @@ class DecisionActionPolicyTest {
         assertTrue(IMPORTANT_DECISION in decide(ad.copy(classification = PopupClassification.USER_DECISION), choice = choose(ad)).reasons)
         val trialButton = withCandidate(ad) { it.copy(label = "무료 체험 시작") }
         assertTrue(IMPORTANT_DECISION in decide(trialButton, choice = choose(trialButton)).reasons)
+    }
+
+    @Test fun aDecisionWordOnlyInABenefitConditionNoLongerBlocksTheClose() = runBlocking {
+        // R1 (OVERWARNING_STUDY.md): "가입하면 포인트" is an advertisement, so the person may close it.
+        fun withTexts(vararg texts: String) = ad.copy(
+            texts = texts.map { ExtractedText(it, ad.texts.single().bounds, TextSource.ACCESSIBILITY_TREE, null) }.toPersistentList(),
+            limitations = realLimitations,
+        )
+        val benefit = withTexts("광고", "가입하면 포인트를 드립니다. 시험용 광고입니다.", "닫기")
+        assertEquals(ALLOW_ONCE, decide(benefit, choice = choose(benefit, confirmed = true)).authorization)
+
+        // Everything else that carries a decision word still blocks it.
+        for (blocked in listOf(
+            withTexts("광고", "지금 구매하면 쿠폰 증정", "구매하기", "닫기"),       // a decision button beside the benefit
+            withTexts("광고", "지금 가입하시겠어요? 가입하면 쿠폰 증정", "닫기"),   // a question
+            withTexts("결제 선택 필요"),                                         // A's fixed summary
+            withTexts("광고", "결제 시 할인", "닫기"),                            // a short text: may be a button
+            withTexts("광고 · 가상 상품 구매 안내", "닫기"),                       // a decision word with no benefit condition
+        )) {
+            val decision = decide(blocked, choice = choose(blocked, confirmed = true))
+            assertEquals(blocked.texts.joinToString("|") { it.text }, DENY, decision.authorization)
+            assertTrue(IMPORTANT_DECISION in decision.reasons)
+        }
     }
 
     @Test fun staleScreensAndOldChoicesAreDenied() = runBlocking {

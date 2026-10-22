@@ -44,5 +44,8 @@ class DecisionPopupClassifier : PopupClassifier {
 /** A decision signal in any text, button label or button role. Shared with DecisionActionPolicy. */
 internal fun PopupAnalysis.hasUserDecisionSignal(): Boolean =
     closeCandidates.any { it.role == ButtonRole.USER_DECISION } ||
-        texts.any { DecisionKeywords.isUserDecision(it.text) } ||
+        // A decision word only inside a benefit condition ("가입하면 포인트") is not a decision (R1,
+        // OVERWARNING_STUDY.md); any other text with one, such as a 구매하기 button, a question or
+        // A's fixed summary, still is.
+        texts.any { DecisionKeywords.isUserDecision(it.text) && !DecisionKeywords.isBenefitMention(it.text) } ||
         closeCandidates.any { candidate -> candidate.label?.let(DecisionKeywords::isDecisionButtonLabel) == true }

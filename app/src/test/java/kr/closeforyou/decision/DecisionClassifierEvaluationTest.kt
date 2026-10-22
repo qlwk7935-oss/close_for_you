@@ -76,7 +76,7 @@ class DecisionClassifierEvaluationTest {
     }
 
     private companion object {
-        /** Measured on 2026-10-19 against main 845214a; see CLASSIFIER_EVAL.md. */
-        const val BASELINE_CORRECT = 68
+        /** 68 on 2026-10-19 (main 845214a); 69 after R1 on 2026-10-22. See CLASSIFIER_EVAL.md sections 5 and 11. */
+        const val BASELINE_CORRECT = 69
     }
 }
