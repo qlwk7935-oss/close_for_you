@@ -1,6 +1,7 @@
 package kr.closeforyou.decision
 
 import java.io.File
+import kotlin.io.path.createTempDirectory
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -13,11 +14,29 @@ import org.junit.Test
  */
 class DecisionPrivacyGuardTest {
     @Test fun decisionSourcesHaveNoLoggingStorageNetworkAndroidOrActionCalls() {
-        val files = decisionSourceDir().listFiles { file -> file.extension == "kt" }.orEmpty().sortedBy { it.name }
+        val root = decisionSourceDir()
+        val files = PrivacyGuard.kotlinSources(root)
         // Guard against a vacuous pass if the directory moves or the glob stops matching.
         assertTrue("expected B sources, found ${files.map { it.name }}", files.size >= 4)
-        val found = files.flatMap { file -> PrivacyGuard.violations(file.readText()).map { "${file.name}:$it" } }
+        val found = PrivacyGuard.scan(root)
         assertTrue("forbidden in B sources:\n" + found.joinToString("\n"), found.isEmpty())
+    }
+
+    @Test fun nestedPackagesAreScannedToo() {
+        // A B source in a sub-package (e.g. decision/video/) must not escape the guard.
+        val root = createTempDirectory("decision-guard").toFile()
+        try {
+            File(root, "Top.kt").writeText("package kr.closeforyou.decision\nclass Top")
+            File(root, "video/deep").mkdirs()
+            File(root, "video/deep/Nested.kt").writeText("package kr.closeforyou.decision.video.deep\nfun f(t: String) = println(t)")
+            File(root, "video/notes.md").writeText("println(\"documents are not scanned\")")
+            assertEquals(listOf("Top.kt", "Nested.kt"), PrivacyGuard.kotlinSources(root).map { it.name })
+            val found = PrivacyGuard.scan(root)
+            assertEquals(1, found.size)
+            assertTrue(found.single(), found.single().startsWith("video/deep/Nested.kt:") && "[logging]" in found.single())
+        } finally {
+            root.deleteRecursively()
+        }
     }
 
     @Test fun guardCatchesEachForbiddenKind() {
@@ -63,6 +82,15 @@ class DecisionPrivacyGuardTest {
 
 /** Line-numbered findings like "12 [logging] println(". */
 internal object PrivacyGuard {
+    /** Every Kotlin file under [root], sub-packages included, sorted by relative path. */
+    fun kotlinSources(root: File): List<File> =
+        root.walkTopDown().filter { it.isFile && it.extension == "kt" }.sortedBy { it.relativeTo(root).invariantSeparatorsPath }.toList()
+
+    /** Findings as "relative/path.kt:line [kind] match" for every Kotlin file under [root]. */
+    fun scan(root: File): List<String> = kotlinSources(root).flatMap { file ->
+        violations(file.readText()).map { "${file.relativeTo(root).invariantSeparatorsPath}:$it" }
+    }
+
     private val rules = listOf(
         "android" to Regex("""^\s*import\s+androidx?\.""", RegexOption.MULTILINE),
         "logging" to Regex("""\bLog\.[a-z]+\s*\(|\bTimber\b|\bprintln\s*\(|\bprint\s*\(|\bSystem\.(out|err)\b|\bprintStackTrace\s*\("""),
