@@ -60,6 +60,9 @@ object ScenarioCatalog {
     /** P16 영상 광고: 이 시간(초)이 지나야 [건너뛰기] 버튼이 생긴다. */
     const val VIDEO_SKIP_AFTER_SECONDS = 5
 
+    /** P16 빈 영상 표면(VideoView)의 리소스 ID. 재생하지 않으며 영상 광고의 증거가 아니다. */
+    const val VIDEO_SURFACE_ID = "video_surface"
+
     /** P18 타임세일 남은 시간(초). 건너뛰기와 상관없는 카운트다운이다. */
     const val SALE_COUNTDOWN_SECONDS = 300
 
@@ -206,7 +209,7 @@ object ScenarioCatalog {
             correctTargetId = "btn_skip", appAllowedTargetId = "btn_skip", forbiddenTargetIds = setOf("btn_ad_open"),
             keyFacts = listOf("5초 뒤 건너뛰기 가능"), rememberable = false, memoryReusableFrom = null,
             experiments = setOf("B03", "C07"),
-            note = "전체 화면 영상 광고(합성, 실제 영상 없음). 재생 시간이 매초 바뀌고, 5초 카운트다운이 끝나야 '건너뛰기'가 생김. 그 전에는 누를 버튼이 없음. 글자가 계속 바뀌어 기억 대상 아님.",
+            note = "전체 화면 영상 광고(합성). 빈 VideoView(video_surface, 재생 없음)가 있고, 재생 시간이 매초 바뀌며, 5초 카운트다운이 끝나야 '건너뛰기'가 생김. 그 전에는 누를 버튼이 없음. Dialog 없는 앱 자체 덮개라 현행 F1은 후보를 못 잡을 수 있음. 글자가 계속 바뀌어 기억 대상 아님.",
         ),
         PopupScenario(
             id = "P17", title = "닫기·건너뛰기 함께 있는 광고", surface = PopupSurface.DIALOG,
