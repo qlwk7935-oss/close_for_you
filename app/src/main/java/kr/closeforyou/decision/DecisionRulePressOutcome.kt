@@ -30,11 +30,14 @@ enum class PressOutcome {
  * rule and the screen token of A's result: A's gate makes at most one attempt per token and never
  * retries. Within one instance, a repeated or concurrent delivery of the same failed attempt is
  * recorded once. If [recordFailure] throws (or is cancelled) the attempt is not marked, so a later
- * delivery records it: at least once, which keeps the rule stopped. Not covered, and therefore
- * preconditions for wiring F12 (agreed in the #23 review): A keeps a single instance for the
- * service's lifetime, A's gate keeps one attempt per token, and a duplicate after a process
- * restart is not detected here. D's rule is unusable once failureCount > 0, so an extra
- * increment never re-enables a rule; it only skews the count.
+ * delivery records it: at least once, which keeps the rule stopped.
+ *
+ * Identities (agreed by A, B and D, 2026-10-22): the popup is D's RuleKey, the attempt is the rule
+ * id plus A's screen token, and D stores no attempt id. D's recordFailure is idempotent ("failed"
+ * flag set to 1 instead of a count increment, D PR #25), so a duplicate this class cannot see, such
+ * as one after a process restart or from a second instance, gives the same result in D. This
+ * class's de-duplication stays as defence in depth and is no longer required for correctness once
+ * #25 is merged. A failed rule stays off for good either way.
  */
 class DecisionRulePressOutcome(
     private val rememberedAttempts: Int = 256,
