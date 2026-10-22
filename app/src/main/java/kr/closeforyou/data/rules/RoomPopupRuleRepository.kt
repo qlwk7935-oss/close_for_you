@@ -117,9 +117,12 @@ class RoomPopupRuleRepository(private val dao: PopupRuleDao) : PopupRuleReposito
 
     /**
      * 기억한 규칙으로 실행했는데 실패·오동작한 경우 호출한다. 이후 그 규칙은 다시 일치하지 않는다.
-     * @return 갱신된 규칙이 있으면 true
+     *
+     * 멱등: 같은 실패가 중복 전달되거나 앱 재시작 뒤 다시 와도 결과가 같다(`failureCount = 1`).
+     * 그래서 호출하는 쪽(B)이 시도 identity를 저장소에 넘길 필요가 없다(A 리뷰 #23, 10/22).
+     * @return 그 id의 규칙이 있어 실패 상태가 되었으면(이미 실패였어도) true, 규칙이 없으면 false
      */
-    suspend fun recordFailure(id: String): Boolean = dao.incrementFailure(id) > 0
+    suspend fun recordFailure(id: String): Boolean = dao.markFailed(id) > 0
 
     /** 만료됐거나 만료일이 없는 규칙을 실제로 지운다. 조회는 이 호출 없이도 이런 규칙을 무시한다. */
     suspend fun purgeExpired(nowEpochMillis: Long): Int = dao.deleteExpired(nowEpochMillis)
