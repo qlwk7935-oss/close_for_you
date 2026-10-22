@@ -10,7 +10,7 @@
 
 | 반드시 0건 | 확인 방법 |
 |---|---|
-| 앱이 실제로 누른 버튼(클릭·제스처·자동 닫기) | 재현 앱 logcat에 시험자가 직접 누르지 않은 `시나리오:버튼` 줄이 없음, `qa_metrics.py --no-click` 안전 실패 0 |
+| 앱이 실제로 누른 버튼(클릭·제스처·자동 닫기) | **측정 구간** logcat에 재현 앱 버튼 기록 0줄, `qa_metrics.py --no-click` 판정 **통과(검증됨)** |
 | 광고 페이지 도착(`ad_landing_opened`) | logcat |
 | 위험 화면(P08~P11)에서 누르기 버튼 제안 | C 선택 창 확인, `offered_press=N` |
 | 민감 화면(P11) 분석·안내 | 선택 창·자체 TTS 없음, A 차단 |
@@ -25,14 +25,27 @@
 ./gradlew :app:assembleDebug :popup-test-app:assembleDebug
 adb install -r app/build/outputs/apk/debug/app-debug.apk
 adb install -t popup-test-app/build/outputs/apk/debug/popup-test-app-debug.apk
-adb logcat -c
-adb logcat -s PopupTest > popuptest.log      # 별도 창에서 켜 두기
 ```
 
 1. 닫아줄게 접근성 서비스 켜기, 앱별 허용 목록에 `kr.closeforyou.popuptest` **직접** 추가(초기 목록은 비어 있음).
 2. TalkBack은 사람이 설정에서 켭니다(에뮬레이터 TalkBack 결과는 참고용, "통과"는 실기기만).
-3. 시나리오 열기: `adb shell am start -n kr.closeforyou.popuptest/.PopupScenarioActivity --es scenario P01`
-4. **측정 중에는 시험자가 팝업 버튼을 직접 누르지 않습니다.** 끝낸 뒤 닫을 때는 시스템 뒤로 가기를 쓰거나, 누른 경우 비고에 "사람"이라고 적습니다(logcat에는 누가 눌렀는지 남지 않음).
+
+### 측정 구간 (시행 한 번마다)
+
+logcat에는 누가 눌렀는지 남지 않습니다. 그래서 **시험자가 재현 앱을 만지지 않는 구간만** 저장하고, 그 구간에 기록이 한 줄이라도 있으면 원인과 상관없이 실패로 봅니다.
+
+```bash
+adb logcat -c
+adb logcat -s PopupTest > int1_P01_1.log &          # ① 저장 시작
+adb shell am start -n kr.closeforyou.popuptest/.PopupScenarioActivity --es scenario P01
+# ② 관찰: 감지·선택 창·안내. C 선택 창에서 [누르기]를 골라 비실행 결과까지 확인
+kill %1                                              # ③ 저장 끝 (재현 앱을 만지기 전에)
+# ④ 그다음에 시험자가 뒤로 가기 등으로 팝업을 닫음 (저장 구간 밖)
+```
+
+- 측정 구간 안에서는 재현 앱 화면을 누르지 않습니다. C 선택 창 버튼은 눌러도 됩니다(재현 앱 기록이 남지 않음).
+- 실수로 구간 안에서 재현 앱을 눌렀으면 그 시행은 버리고 다시 합니다.
+- 모든 시행이 끝나면 `cat int1_*.log > popuptest.log`로 합쳐 집계에 넣습니다.
 
 ## 3. 기록
 
@@ -43,6 +56,7 @@ adb logcat -s PopupTest > popuptest.log      # 별도 창에서 켜 두기
 | `detected` | A가 팝업으로 감지해 C 선택 창이 떴는지 Y/N |
 | `outcome` | 선택 창에서 [누르기]를 골랐으면 `NOT_EXECUTED`, 안내만 했으면 `ANNOUNCED_ONLY`, A가 막았으면 `BLOCKED`, 감지 못 했으면 `MISSED` |
 | `offered_press` | C가 누르기 버튼(`'닫기' 버튼 눌러 주기` 등)을 보여 줬는지 Y/N |
+| `known_limit` | 아래 4-1의 "현재 예상(알려진 한계)"대로 나왔으면 Y. 잘못 거부·누르기 제안률에서 빼고 따로 보고합니다 |
 | `clicked_target` | **비워 둡니다.** 이번 단계에 앱이 누른 버튼은 없어야 합니다 |
 | `notes` | 화면 원문 없이. 예: "TTS 0.7초 뒤 1회", "사람이 뒤로 가기로 닫음" |
 
@@ -52,7 +66,15 @@ adb logcat -s PopupTest > popuptest.log      # 별도 창에서 켜 두기
 python3 tools/qa_metrics.py int1_results.csv --logcat popuptest.log --no-click
 ```
 
-`--no-click`은 `AUTO_HANDLED`·`USER_CONFIRMED` 행을 안전 실패로 보고 종료 코드 1을 돌려줍니다. 이 단계에서는 "잘못 거부" 대신 **누르기 제안률**과 **잘못 제안**(앱 허용 버튼이 없는데 누르기 버튼을 보여 줌)을 봅니다.
+`--no-click` 판정은 셋 중 하나입니다.
+
+| 판정 | 종료 코드 | 조건 |
+|---|---|---|
+| **실패** | 1 | 결과 CSV에 `AUTO_HANDLED`·`USER_CONFIRMED` 행, 또는 측정 구간 logcat에 재현 앱 버튼 기록(`ad_landing_opened` 포함) 1줄 이상 |
+| **미검증** | 2 | `--logcat`을 주지 않음. "클릭 0건"이라고 주장할 수 없습니다 |
+| **통과(검증됨)** | 0 | 위 둘 다 아님 |
+
+이 단계에서는 "잘못 거부" 대신 **누르기 제안률**과 **잘못 제안**(앱 허용 버튼이 없는데 누르기 버튼을 보여 줌)을 봅니다. 회귀 시험: `python3 -m unittest discover -s tools -p "test_*.py"`.
 
 ## 4. 시나리오별 기대값
 
@@ -71,11 +93,22 @@ python3 tools/qa_metrics.py int1_results.csv --logcat popuptest.log --no-click
 | P12 연속 팝업 | 3순위 | 창마다 | 광고·공지 ['닫기'], 셋째 동의창 **없음** | 비실행 | 창별 한 줄 | ☐통과 ☐실패 ☐못 봄 |
 | P14 화면 전환 | 3순위 | **아니오**(오탐 확인) | - | - | `ANNOUNCED_ONLY`면 오탐 | ☐통과 ☐실패 ☐못 봄 |
 | P15 토스트 | 3순위 | **아니오** | - | - | 감지되면 오탐 | ☐통과 ☐실패 ☐못 봄 |
-| P16 영상 광고 | 3순위 | 예 | 카운트다운 중 **없음**, 끝난 뒤 ['건너뛰기'] | 비실행 | `NOT_EXECUTED` | ☐통과 ☐실패 ☐못 봄 |
+| P16 영상 광고 | 3순위 | 4-1 참고 | 카운트다운 중 **없음**(필수). 끝난 뒤는 4-1 참고 | - | 4-1 참고 | ☐통과 ☐실패 ☐못 봄 |
 | P17 닫기+건너뛰기 | 3순위 | 예 | 두 개 또는 B 정책에 따라 없음(실측 기록) | 비실행 | `NOT_EXECUTED`/`ANNOUNCED_ONLY` | ☐통과 ☐실패 ☐못 봄 |
-| P18 시간 문구 함정 | 3순위 | 예 | ['닫기']만, **'건너뛰기' 없음**(시간 문구 오인 시 실패, B #20) | 비실행 | `NOT_EXECUTED` | ☐통과 ☐실패 ☐못 봄 |
+| P18 시간 문구 함정 | 3순위 | 예 | **'건너뛰기' 없음**(필수, B #20). '닫기'는 4-1 참고 | - | 4-1 참고 | ☐통과 ☐실패 ☐못 봄 |
 
 1순위만으로도 실측 1차 보고는 가능합니다. 2·3순위는 시간이 되는 만큼 하고 나머지는 "못 봄"으로 둡니다.
+
+### 4-1. 현재 예상과 목표가 다른 칸 (알려진 한계)
+
+B가 API 37 에뮬레이터에서 #26 화면으로 확인한 결과(준영 10/22)입니다. **현재 예상대로 나오면 실패가 아니라 `known_limit=Y`로 기록**하고, 목표 미달로 따로 보고합니다. 통과시키려고 안전 정책(보수적 거부)을 완화하지 않습니다.
+
+| ID | 현재 예상(알려진 한계) | 목표 | 이유 | 이 칸의 실패 |
+|---|---|---|---|---|
+| P16 | 누르기 버튼 **없음**(`ANNOUNCED_ONLY` 또는 `MISSED`) | 카운트다운이 끝난 뒤 ['건너뛰기'] | 앱이 직접 그린 덮개라 Dialog 노드가 없어 현행 A/F1이 후보를 못 잡음(실기기 체크리스트 P8 한계). 영상 표면 신호(`videoSurfaceObserved`)는 A가 아직 채우지 않음 | 카운트다운 중 ['건너뛰기'] 제안, 앱이 누름 |
+| P18 | 누르기 버튼 **없음**(`ANNOUNCED_ONLY`) | ['닫기']만 | 본문 "5초 안에 결제하면" 때문에 B가 결정 필요로 분류, 결정 팝업에는 C가 누르기 버튼을 안 보임(알려진 과잉 경고, 준영 R1 연구) | ['건너뛰기'] 제안(시간 문구를 카운트다운으로 오인), 앱이 누름 |
+
+P16의 빈 영상 표면(`VideoView`, 리소스 ID `video_surface`)은 접근성 트리에 보이는지만 따로 확인합니다(`adb shell uiautomator dump` 결과에 `android.widget.VideoView`와 `video_surface`가 있는지, `docs/POPUP_TEST_APP.md` P16). 빈 표면이 보인다는 것은 영상 재생이나 영상 광고 판정의 증거가 아닙니다.
 
 ## 5. 공통 확인(시나리오와 별개)
 
@@ -98,6 +131,6 @@ A의 원본 F1 시나리오 14개는 현재 `UNOBSERVED=14`이며 F0 완전성�
 
 ## 7. 보고
 
-- 결과 CSV + `qa_metrics.py --no-click` 보고서 + 이 표의 체크 결과를 함께 올립니다.
+- 결과 CSV + 측정 구간 logcat + `qa_metrics.py --no-click` 보고서(판정 포함) + 이 표의 체크 결과를 함께 올립니다. 판정이 **미검증**이면 "클릭 0건 확인"이라고 쓰지 않습니다.
 - 실패는 GitHub 이슈 **버그 보고** 양식. 금지 동작 실행·민감 정보 노출은 심각도 "안전".
 - 실측 1회 결과는 그 환경에서의 관측일 뿐이며, 0건 관측이 영구적인 안전을 뜻하지 않습니다.
