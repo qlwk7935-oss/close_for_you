@@ -8,6 +8,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.onSubscription
 import kr.closeforyou.core.contract.PopupEvent
 import kr.closeforyou.core.contract.SnapshotSource
 import kr.closeforyou.core.contract.EvidenceExtractor
@@ -15,6 +16,7 @@ import kr.closeforyou.core.contract.CaptureCapability
 import kr.closeforyou.core.contract.CaptureAvailability
 import kr.closeforyou.accessibility.capture.EvidenceIssue
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kr.closeforyou.core.model.*
@@ -41,28 +43,23 @@ object AccessibilityRuntime : SnapshotSource, EvidenceExtractor, CaptureCapabili
         replay = 0, extraBufferCapacity = 1, onBufferOverflow = BufferOverflow.DROP_OLDEST,
     )
     override val events: Flow<PopupEvent> = mutableEvents.asSharedFlow()
+    /** Assembly-only readiness hook; invoked after the replay=0 consumer is registered. */
+    internal fun integrationEvents(subscribed: () -> Unit): Flow<PopupEvent> =
+        mutableEvents.onSubscription { subscribed() }
     private val mutableStatus = MutableStateFlow(AccessibilityStatus())
     val status: StateFlow<AccessibilityStatus> = mutableStatus.asStateFlow()
-    @Volatile private var token: SnapshotToken? = null
-    @Volatile private var analysis: PopupAnalysis? = null
-    @Volatile private var expiresAt: Long = 0L
+    private var serviceGuard: ((SnapshotToken) -> Boolean)? = null
+    private val live = LiveEvidenceState(SystemClock::uptimeMillis) { serviceGuard?.invoke(it) == true }
     @Volatile private var captureCapability: CaptureCapability? = null
 
-    @Synchronized override fun currentToken(): SnapshotToken? {
-        if (SystemClock.uptimeMillis() >= expiresAt) {
-            token = null
-            analysis = null
-        }
-        return token
-    }
+    @Synchronized override fun currentToken(): SnapshotToken? = live.currentToken()
 
-    /** B's existing EvidenceExtractor contract; returns only a completed F0-B-filtered result. */
+    /** Completed tree/OCR evidence only, with the same published snapshot and original TTL. */
     override suspend fun extract(snapshot: PopupSnapshot): PopupAnalysis {
         currentCoroutineContext().ensureActive()
-        val result = analysis
-        if (result == null || result.token != snapshot.token || currentToken() != snapshot.token) {
-            throw CancellationException(EvidenceIssue.STALE_SCREEN.name)
-        }
+        val result = synchronized(this) { live.extract(snapshot) }
+            ?: throw CancellationException(EvidenceIssue.STALE_SCREEN.name)
+        currentCoroutineContext().ensureActive()
         return result
     }
 
@@ -71,49 +68,56 @@ object AccessibilityRuntime : SnapshotSource, EvidenceExtractor, CaptureCapabili
 
     internal fun attachCaptureCapability(capability: CaptureCapability?) { captureCapability = capability }
 
-    @Synchronized internal fun begin(candidate: SnapshotToken) {
-        analysis = null
-        expiresAt = SystemClock.uptimeMillis() + CloseForYouAccessibilityService.SNAPSHOT_TTL_MILLIS
-        token = candidate
-    }
+    @Synchronized internal fun begin(snapshot: PopupSnapshot, owner: Job): EvidencePublicationPermit? =
+        live.begin(snapshot) { owner.isCancelled }
 
     internal fun recordEvidenceIssue(issue: EvidenceIssue) {
         mutableStatus.value = mutableStatus.value.copy(lastEvidenceIssue = issue)
     }
 
-    @Synchronized internal fun connect() {
-        token = null
-        analysis = null
-        mutableStatus.value = mutableStatus.value.copy(connected = true, lastBlockReason = null)
+    @Synchronized internal fun abandon(operation: EvidencePublicationPermit, version: Long) {
+        if (!live.discard(operation)) return
+        mutableStatus.value = mutableStatus.value.copy(ocrTextCount = 0)
+        mutableEvents.tryEmit(PopupEvent.Invalidated(version))
+    }
+
+    @Synchronized internal fun connect(guard: (SnapshotToken) -> Boolean) {
+        serviceGuard = guard
+        live.connect()
+        mutableStatus.value = mutableStatus.value.copy(connected = true, lastBlockReason = null, ocrTextCount = 0)
     }
 
     @Synchronized internal fun invalidate(version: Long) {
-        token = null
-        analysis = null
+        if (!live.invalidate(version)) return
         mutableStatus.value = mutableStatus.value.copy(screenVersion = version, ocrTextCount = 0)
         mutableEvents.tryEmit(PopupEvent.Invalidated(version))
     }
 
-    @Synchronized internal fun block(reason: PrivacyBlockReason, version: Long) {
-        token = null
-        analysis = null
+    @Synchronized internal fun block(reason: PrivacyBlockReason, version: Long, operation: EvidencePublicationPermit? = null) {
+        if (!(if (operation == null) live.block(version) else live.block(version, operation))) return
         mutableStatus.value = mutableStatus.value.copy(screenVersion = version, lastBlockReason = reason, ocrTextCount = 0)
         mutableEvents.tryEmit(PopupEvent.Blocked(reason, version))
     }
 
-    @Synchronized internal fun publish(snapshot: PopupSnapshot, detection: PopupDetection, evidence: PopupAnalysis) {
-        if (!mutableStatus.value.connected || currentToken() != snapshot.token || evidence.token != snapshot.token) return
-        analysis = evidence
+    @Synchronized internal fun publish(operation: EvidencePublicationPermit, snapshot: PopupSnapshot,
+        detection: PopupDetection, evidence: PopupAnalysis, issue: EvidenceIssue): Boolean {
+        val count = evidence.texts.count { it.source == TextSource.OCR }
+        if (!live.publish(operation, snapshot, detection, evidence, issue)) return false
+        if (!live.deliver(operation, snapshot) { mutableEvents.tryEmit(PopupEvent.Candidate(snapshot, detection)) }) return false
+        val stillCurrent = currentToken() == snapshot.token
         mutableStatus.value = mutableStatus.value.copy(
-            candidateCount = mutableStatus.value.candidateCount + 1, lastBlockReason = null,
-            ocrTextCount = evidence.texts.count { it.source == TextSource.OCR },
-            lastCompletedOcrTextCount = evidence.texts.count { it.source == TextSource.OCR },
+            candidateCount = mutableStatus.value.candidateCount + 1,
+            lastBlockReason = if (stillCurrent) null else mutableStatus.value.lastBlockReason,
+            lastEvidenceIssue = issue, ocrTextCount = if (stillCurrent) count else 0,
+            lastCompletedOcrTextCount = count,
         )
-        mutableEvents.tryEmit(PopupEvent.Candidate(snapshot, detection))
+        return true
     }
 
     @Synchronized internal fun disconnect(version: Long) {
         captureCapability = null
+        serviceGuard = null
+        live.disconnect()
         invalidate(version)
         mutableStatus.value = mutableStatus.value.copy(connected = false)
     }

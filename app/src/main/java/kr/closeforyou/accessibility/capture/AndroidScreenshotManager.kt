@@ -9,12 +9,15 @@ import android.os.Build
 import android.os.SystemClock
 import android.view.Display
 import androidx.core.graphics.get
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withTimeout
 import kr.closeforyou.app.CorePreferences
+import kr.closeforyou.accessibility.CollectionReleaseBatch
+import kr.closeforyou.accessibility.CollectionResourceSafety
 import kr.closeforyou.accessibility.CaptureApi
 import kr.closeforyou.accessibility.CaptureTrace
 import kr.closeforyou.accessibility.CaptureStage
@@ -44,7 +47,7 @@ internal class BitmapFrame(
     override fun close() { if (ownerClosed.compareAndSet(false, true)) release() }
     @Synchronized private fun release() {
         if (--references == 0) {
-            try { bitmap.eraseColor(Color.TRANSPARENT) } finally { bitmap.recycle(); onReleased() }
+            CollectionResourceSafety.releasePixels({ bitmap.eraseColor(Color.TRANSPARENT) }, { bitmap.recycle() }, onReleased)
         }
     }
 }
@@ -62,23 +65,13 @@ internal class AndroidScreenshotManager(
 
     override fun denial(token: SnapshotToken): EvidenceIssue? {
         if (!connected()) return EvidenceIssue.SERVICE_DISABLED
-        if (!current(token)) return EvidenceIssue.STALE_SCREEN
-        val settings = preferences.currentSettings()
-        if (!settings.collectionEnabled || !settings.captureConsentGranted ||
-            token.packageName !in settings.allowedPackages || token.packageName !in settings.captureAllowedPackages) {
-            return EvidenceIssue.NOT_REQUESTED
-        }
-        if (service.serviceInfo.capabilities and AccessibilityServiceInfo.CAPABILITY_CAN_TAKE_SCREENSHOT == 0) {
-            return EvidenceIssue.CAPABILITY_MISSING
-        }
-        @Suppress("DEPRECATION")
-        if (service.magnificationController.scale != 1f) return EvidenceIssue.REGION_UNCERTAIN
-        return budget.denial()
+        return denialIgnoringBudget(token) ?: budget.denial()
     }
 
     override fun denialTraced(token: SnapshotToken, trace: CaptureTrace): EvidenceIssue? = denial(token).also {
         if (it == EvidenceIssue.REGION_UNCERTAIN) trace.detail(CaptureDetail.MAGNIFIED)
     }
+    override fun ongoingDenial(token: SnapshotToken): EvidenceIssue? = denialIgnoringBudget(token)
     override suspend fun capture(snapshot: PopupSnapshot, region: CaptureRegion): CaptureFrame =
         captureTraced(snapshot, region, CaptureTrace(null))
 
@@ -98,11 +91,18 @@ internal class AndroidScreenshotManager(
                     val windowCapture = Build.VERSION.SDK_INT >= 34
                     val callback = object : AccessibilityService.TakeScreenshotCallback {
                         override fun onSuccess(result: AccessibilityService.ScreenshotResult) {
-                            val buffer = result.hardwareBuffer
+                            val buffer = try { result.hardwareBuffer }
+                            catch (cancelled: CancellationException) { continuation.cancel(cancelled); return }
+                            catch (_: Exception) {
+                                // Unreadable native resource: quarantine the permit, never fabricate pixels.
+                                if (continuation.isActive) continuation.resumeWithException(EvidenceFailure(EvidenceIssue.CAPTURE_FAILED))
+                                return
+                            }
                             var wrapped: Bitmap? = null
                             var cropped: Bitmap? = null
                             var software: Bitmap? = null
                             var frame: BitmapFrame? = null
+                            val sourceCleanupSucceeded = AtomicBoolean()
                             var issue = EvidenceIssue.CAPTURE_FAILED
                             try {
                                 if (!continuation.isActive || denialIgnoringBudget(snapshot.token) != null) {
@@ -134,7 +134,11 @@ internal class AndroidScreenshotManager(
                                 if (!continuation.isActive || denialIgnoringBudget(snapshot.token) != null) {
                                     throw EvidenceFailure(EvidenceIssue.STALE_SCREEN)
                                 }
-                                frame = BitmapFrame(software, region.bounds) { permit.close() }
+                                frame = BitmapFrame(software, region.bounds) {
+                                    if (sourceCleanupSucceeded.get()) permit.close()
+                                }
+                            } catch (cancelled: CancellationException) {
+                                continuation.cancel(cancelled)
                             } catch (failure: EvidenceFailure) {
                                 issue = failure.issue
                             } catch (_: OutOfMemoryError) {
@@ -142,22 +146,44 @@ internal class AndroidScreenshotManager(
                             } catch (_: Exception) {
                                 issue = EvidenceIssue.CAPTURE_FAILED
                             } finally {
+                                val releases = CollectionReleaseBatch()
                                 if (frame == null) {
-                                    software?.let { it.eraseColor(Color.TRANSPARENT); it.recycle() }
-                                    permit.close()
+                                    software?.let { bitmap ->
+                                        releases.attempt { bitmap.eraseColor(Color.TRANSPARENT) }
+                                        releases.attempt { bitmap.recycle() }
+                                    }
                                 }
-                                if (cropped !== wrapped) cropped?.recycle()
-                                wrapped?.recycle()
-                                buffer.close()
-                                trace.bufferReleased()
-                                SyntheticBufferInspection.released(snapshot)
+                                if (cropped !== wrapped) releases.attempt { cropped?.recycle() }
+                                releases.attempt { wrapped?.recycle() }
+                                var sourceClosed = false
+                                releases.attempt { buffer.close(); sourceClosed = true }
+                                if (sourceClosed) {
+                                    releases.attempt { trace.bufferReleased() }
+                                    releases.attempt { SyntheticBufferInspection.released(snapshot) }
+                                }
+                                try {
+                                    releases.finish()
+                                    sourceCleanupSucceeded.set(true)
+                                    if (frame == null) permit.close()
+                                } catch (cancelled: CancellationException) {
+                                    continuation.cancel(cancelled)
+                                    try { frame?.close() } catch (_: Exception) { /* Cancelled: reject pixels. */ }
+                                    frame = null
+                                } catch (_: Exception) {
+                                    // No pixels leave a callback whose cleanup failed. Still drop the owner.
+                                    try { frame?.close() } catch (_: Exception) { /* Result is already rejected. */ }
+                                    frame = null
+                                    issue = EvidenceIssue.CAPTURE_FAILED
+                                }
                             }
                             // Source hardware buffer is already closed before the OCR coroutine resumes.
                             val ready = frame
                             if (ready != null && continuation.isActive) {
-                                continuation.resume(ready, onCancellation = { _, rejected, _ -> rejected.close() })
+                                continuation.resume(ready, onCancellation = { _, rejected, _ ->
+                                    try { rejected.close() } catch (_: Exception) { /* Cancelled: no successful evidence. */ }
+                                })
                             } else {
-                                ready?.close()
+                                try { ready?.close() } catch (_: Exception) { issue = EvidenceIssue.CAPTURE_FAILED }
                                 if (continuation.isActive) continuation.resumeWithException(EvidenceFailure(issue))
                             }
                         }
@@ -187,6 +213,8 @@ internal class AndroidScreenshotManager(
                         } else {
                             service.takeScreenshot(Display.DEFAULT_DISPLAY, service.mainExecutor, callback)
                         }
+                    } catch (cancelled: CancellationException) {
+                        try { permit.close() } finally { continuation.cancel(cancelled) }
                     } catch (_: Exception) {
                         permit.close()
                         if (continuation.isActive) continuation.resumeWithException(EvidenceFailure(EvidenceIssue.CAPTURE_FAILED))
@@ -204,8 +232,13 @@ internal class AndroidScreenshotManager(
     private fun denialIgnoringBudget(token: SnapshotToken): EvidenceIssue? {
         if (!connected() || !current(token)) return EvidenceIssue.STALE_SCREEN
         val s = preferences.currentSettings()
-        return if (!s.collectionEnabled || !s.captureConsentGranted || token.packageName !in s.allowedPackages ||
-            token.packageName !in s.captureAllowedPackages) EvidenceIssue.NOT_REQUESTED else null
+        if (!s.collectionEnabled || !s.captureConsentGranted || token.packageName !in s.allowedPackages ||
+            token.packageName !in s.captureAllowedPackages) return EvidenceIssue.NOT_REQUESTED
+        if (service.serviceInfo.capabilities and AccessibilityServiceInfo.CAPABILITY_CAN_TAKE_SCREENSHOT == 0)
+            return EvidenceIssue.CAPABILITY_MISSING
+        @Suppress("DEPRECATION")
+        if (service.magnificationController.scale != 1f) return EvidenceIssue.REGION_UNCERTAIN
+        return null
     }
 
     private fun hasVisibleVariation(bitmap: Bitmap): Boolean {

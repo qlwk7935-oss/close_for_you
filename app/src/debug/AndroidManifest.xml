@@ -6,6 +6,12 @@
     <!-- C(ui/voice) debug only: push-to-talk voice command test on the preview screen (on-device recognizer). -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <application>
+        <!-- A F1 debug observation; retain main's C debug components unchanged. -->
+        <provider
+            android:name="kr.closeforyou.accessibility.testing.SyntheticDetectionTestProvider"
+            android:authorities="${applicationId}.syntheticdetectiontest"
+            android:exported="true"
+            android:permission="kr.closeforyou.permission.SYNTHETIC_CAPTURE_TEST" />
         <!-- Only debug builds. No image/text IPC, no service activation or arbitrary app selection. -->
         <provider
             android:name="kr.closeforyou.accessibility.testing.SyntheticCaptureTestProvider"

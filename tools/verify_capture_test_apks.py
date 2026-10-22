@@ -66,6 +66,10 @@ def main():
         "Lkr/closeforyou/capturetest/SyntheticPopupActivity;",
         "Lkr/closeforyou/capturetest/SyntheticNoticeKt;",
         "Lkr/closeforyou/capturetest/SyntheticPatternView;",
+        "Lkr/closeforyou/capturetest/DetectionScenarioActivity;",
+        "Lkr/closeforyou/capturetest/SyntheticPlainActivity;",
+        "Lkr/closeforyou/capturetest/MinimalBaselineActivity;",
+        "Lkr/closeforyou/synthetictest/DetectionScenario;",
         "Lkr/closeforyou/synthetictest/PatternMapping;",
         "Lkr/closeforyou/synthetictest/SyntheticDialogControl;",
     ):
@@ -84,6 +88,15 @@ def main():
     require("Lkr/closeforyou/accessibility/capture/ScreenGeometryInstrumentedTest;" in tests, "Window-context geometry instrumentation missing")
     driver, driver_refs = dex_classes(args.driver_apk)
     require("Lkr/closeforyou/servicetest/ServiceCaptureOptInTest;" in driver, "External service driver missing")
+    require("Lkr/closeforyou/servicetest/ServiceDetectionScenariosOptInTest;" in driver, "External F1 scenario driver missing")
+    require("Lkr/closeforyou/servicetest/CollectionDiagnosticOutput;" in driver, "F1 baseline code formatter missing")
+    require("Lkr/closeforyou/servicetest/DetectionAttemptOutput;" in driver, "F1 attempt code formatter missing")
+    require("Lkr/closeforyou/servicetest/DetectionGeometryOutput;" in driver, "F1 geometry code formatter missing")
+    require("Lkr/closeforyou/servicetest/ServiceBaselineIsolationOptInTest;" in driver, "Independent baseline isolation driver missing")
+    require("Lkr/closeforyou/servicetest/OwnedIsolationGeometry;" in driver, "Owned geometry isolation reader missing")
+    require("Lkr/closeforyou/servicetest/IsolationEvidence;" in driver, "Baseline isolation evidence model missing")
+    require("Lkr/closeforyou/servicetest/SyntheticBaselineBoundsTest;" in driver, "Native baseline bounds probe missing")
+    require("Lkr/closeforyou/servicetest/DetectionObservationReadiness;" in driver, "F1 baseline collection gate missing")
     require("Lkr/closeforyou/servicetest/ServiceBufferGeometryOptInTest;" in driver, "Synthetic buffer geometry instrumentation missing")
     require("Lkr/closeforyou/servicetest/ServiceSyntheticPatternOptInTest;" in driver, "Synthetic landmark instrumentation missing")
     require("Lkr/closeforyou/servicetest/ServiceSyntheticRenderControlsOptInTest;" in driver, "Real Dialog render controls missing")
@@ -97,6 +110,7 @@ def main():
     require("Lkr/closeforyou/accessibility/capture/ServiceCaptureOptInTest;" not in tests,
             "Service integration test still targets/restarts the real service app")
     require("Lkr/closeforyou/accessibility/testing/SyntheticCaptureTestProvider;" in app, "Debug probe missing")
+    require("Lkr/closeforyou/accessibility/testing/SyntheticDetectionTestProvider;" in app, "Debug F1 observer missing")
     require("Lkr/closeforyou/accessibility/testing/SyntheticPatternProbe;" in app, "Debug pattern inspector missing")
     require("Lkr/closeforyou/synthetictest/PatternMapping;" in app, "Debug pattern matcher missing")
     if args.release_apk:

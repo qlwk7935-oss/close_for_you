@@ -1,0 +1,4 @@
+<resources>
+    <item name="priority_first" type="id" />
+    <item name="priority_later" type="id" />
+</resources>
