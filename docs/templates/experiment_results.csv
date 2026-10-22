@@ -1,2 +1,2 @@
-experiment_id,scenario_id,date,device,android,talkback,is_popup,detected,expected_handling,outcome,clicked_target,forbidden_click,task_completed,info_correct,notes
-C01,P01,2026-10-21,예시기기,15,16.0,,Y,,USER_CONFIRMED,btn_close,,,,예시 행입니다. 시험 전에 지우세요
+experiment_id,scenario_id,date,device,android,talkback,is_popup,detected,expected_handling,outcome,offered_press,clicked_target,forbidden_click,task_completed,info_correct,notes
+C01,P01,2026-10-21,예시기기,15,16.0,,Y,,USER_CONFIRMED,Y,btn_close,,,,예시 행입니다. 시험 전에 지우세요
