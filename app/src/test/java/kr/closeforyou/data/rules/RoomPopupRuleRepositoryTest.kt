@@ -73,6 +73,21 @@ class RoomPopupRuleRepositoryTest {
         assertFalse(repository.recordFailure("missing"))
     }
 
+    /** A 리뷰 #23: 같은 실패가 여러 번(재시작 뒤 포함) 와도 한 번 기록한 것과 같다. */
+    @Test
+    fun recordFailureIsIdempotent() = runBlocking {
+        val dao = FakePopupRuleDao()
+        val repository = RoomPopupRuleRepository(dao)
+        repository.save(rule())
+        repeat(3) { assertTrue(repository.recordFailure("rule-1")) }
+        assertEquals(1, dao.rows.value.single().failureCount)
+        assertNull(repository.findExact(key, 150))
+
+        // 재시작: 새 저장소 인스턴스로 같은 실패가 다시 와도 그대로다.
+        assertTrue(RoomPopupRuleRepository(dao).recordFailure("rule-1"))
+        assertEquals(1, dao.rows.value.single().failureCount)
+    }
+
     @Test
     fun deleteAllAndPurgeRemoveRows() = runBlocking {
         val repository = RoomPopupRuleRepository(FakePopupRuleDao())
@@ -307,7 +322,7 @@ internal class FakePopupRuleDao : PopupRuleDao() {
 
     override suspend fun disable(id: String): Int = update(id) { it.copy(enabled = false) }
 
-    override suspend fun incrementFailure(id: String): Int = update(id) { it.copy(failureCount = it.failureCount + 1) }
+    override suspend fun markFailed(id: String): Int = update(id) { it.copy(failureCount = 1) }
 
     override suspend fun deleteExpired(now: Long): Int {
         val before = rows.value.size
