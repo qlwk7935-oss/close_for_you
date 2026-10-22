@@ -92,8 +92,12 @@ abstract class PopupRuleDao {
     @Query("UPDATE popup_rules SET enabled = 0 WHERE id = :id")
     abstract suspend fun disable(id: String): Int
 
-    @Query("UPDATE popup_rules SET failureCount = failureCount + 1 WHERE id = :id")
-    abstract suspend fun incrementFailure(id: String): Int
+    /**
+     * 실패 표시. 횟수를 더하지 않고 1로 설정해 같은 실패가 여러 번(재시작 뒤 포함) 와도 결과가 같다(멱등).
+     * 실패가 한 번이라도 있으면 규칙은 다시 일치하지 않으므로 횟수는 의미가 없다.
+     */
+    @Query("UPDATE popup_rules SET failureCount = 1 WHERE id = :id")
+    abstract suspend fun markFailed(id: String): Int
 
     /**
      * 만료된 행과 만료일이 없는 행을 지운다. 만료일 없는 행은 저장이 거부되므로 정상 경로로는 생기지 않고,
