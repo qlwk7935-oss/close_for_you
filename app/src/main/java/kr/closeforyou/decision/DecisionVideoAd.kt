@@ -50,11 +50,15 @@ object DecisionVideoAd {
         )
     }
 
-    /** A countdown in one text, e.g. "5초 후 건너뛰기", "건너뛰기까지 5초", "Skip ad in 5s". */
+    /**
+     * A skip countdown in one text, e.g. "5초 후 건너뛰기", "건너뛰기까지 5초", "Skip ad in 5s".
+     * The same text must say it is about skipping (건너뛰기·스킵·skip), and a text with a decision
+     * word ("5초 후 결제") is never a skip wait, so no unrelated time is announced as one.
+     */
     internal fun countdownIn(text: String): Int? {
         val normalized = Normalizer.normalize(text, Normalizer.Form.NFKC).lowercase()
-        val match = KOREAN_AFTER.find(normalized) ?: KOREAN_UNTIL.find(normalized)
-            ?: ENGLISH_SKIP_IN.find(normalized)?.takeIf { "skip" in normalized }
+        if (!SKIP_CONTEXT.containsMatchIn(normalized) || DecisionKeywords.isDecisionButtonLabel(normalized)) return null
+        val match = KOREAN_AFTER.find(normalized) ?: KOREAN_UNTIL.find(normalized) ?: ENGLISH_SKIP_IN.find(normalized)
         return match?.groupValues?.get(1)?.toIntOrNull()?.takeIf { it in 1..MAX_SECONDS }
     }
 
@@ -65,7 +69,8 @@ object DecisionVideoAd {
 
     private val CLASSIFIER = DecisionPopupClassifier()
     private const val MAX_SECONDS = 300
-    private val KOREAN_AFTER = Regex("""(?<!\d)(\d{1,3})\s*초\s*(?:후|뒤)""")
+    private val SKIP_CONTEXT = Regex("""건너\s*뛰|건너\s*뛸|스킵|\bskip""")
+    private val KOREAN_AFTER =Regex("""(?<!\d)(\d{1,3})\s*초\s*(?:후|뒤)""")
     private val KOREAN_UNTIL = Regex("""까지\s*(\d{1,3})\s*초""")
     private val ENGLISH_SKIP_IN = Regex("""\bin\s+(\d{1,3})\s*(?:s|sec|secs|second|seconds)?\b""")
 }

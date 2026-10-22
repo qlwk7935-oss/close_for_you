@@ -50,6 +50,23 @@ class DecisionVideoAdTest {
         }
     }
 
+    @Test fun timesUnrelatedToSkippingAreNotSkipCountdowns() {
+        // Review on #20 (A): only a wait for skipping may be announced as one.
+        for (value in listOf(
+            "5초 후 결제", "가입까지 5초", "5초 후", "3초 뒤 자동으로 다음 영상", "다음 영상까지 5초",
+            "5초 후 결제 건너뛰기", "구독하면 3초 뒤 건너뛸 수 있어요", "Pay in 5 seconds", "Skip in 5 and start free trial",
+            "Next video in 5s", "5초 후 앱 설치",
+        )) {
+            assertNull(value, DecisionVideoAd.countdownIn(value))
+        }
+        // A screen that shows only an unrelated time reports no skip wait at all.
+        val report = DecisionVideoAd.inspect(analysis(text("광고"), text("5초 후 결제"), text("다음 영상까지 3초")))
+        assertNull(report.countdownSeconds)
+        assertNull(report.countdownSource)
+        // ...and an unrelated time next to a real skip countdown does not make them disagree.
+        assertEquals(5, DecisionVideoAd.inspect(analysis(text("광고"), text("다음 영상까지 3초"), text("5초 후 건너뛰기"))).countdownSeconds)
+    }
+
     @Test fun conflictingCountdownsAreNotAnnounced() {
         val one = DecisionVideoAd.inspect(analysis(text("광고"), text("5초 후 건너뛰기"), text("5초 후 건너뛰기", TextSource.OCR)))
         assertEquals(5, one.countdownSeconds)
