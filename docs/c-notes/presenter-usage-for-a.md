@@ -103,18 +103,25 @@ overlay.dismiss()
 
 ## 4. 설정 화면 — 기억 목록 (F12 연결)
 
-C 설정 화면은 같은 `app` 모듈이라 D의 `RuleStorage`를 바로 넘길 수 있다. 기본값은 바꾸지 않았다(지금은 debug 미리보기만 메모리 Mock 사용). 실제 연결은 A의 F12 연결 PR에서 아래처럼 넘긴다.
+C 설정 화면은 같은 `app` 모듈이라 D의 `RuleStorage`를 바로 쓸 수 있다. D #15(Room)·#25(`cleanUp`)가 main에 있으므로 C가 묶음 하나로 만들어 두었다(`settings/RoomBackedRuleSettings.kt`). A는 `MainActivity`에 한 줄만 붙이면 된다.
 
 ```kotlin
+// MainActivity.setContent { ... } 안
+RoomBackedUiVoiceSettingsRoute()
+
+// 같은 뜻을 풀어 쓰면
 val context = LocalContext.current
-UiVoiceSettingsRoute(
-    repository = remember { RuleStorage.repository(context) },          // 서비스와 같은 DB
-    deleteAll = { RuleStorage.eraseAll(context.applicationContext) },  // 규칙 + 지문 키 폐기
-)
+val storage = remember { RoomBackedRuleSettings.create(context) }
+UiVoiceSettingsRoute(storage)
+// = repository     = RuleStorage.repository(context)    서비스와 같은 DB
+//   deleteAll      = { RuleStorage.eraseAll(context) }   규칙 + 지문 키 폐기
+//   onOpenCleanUp  = { RuleStorage.cleanUp(context) }    열 때 1번, 만료·손상 행 정리
 ```
 
-- `deleteAll`을 넘기지 않으면 `repository.deleteAll()`만 부른다(지문 키는 남음). Room 연결 때는 꼭 `eraseAll`을 넘긴다.
-- [전체 삭제]는 **목록이 비어 있어도 항상 보인다**(D가 못 읽은 행도 지울 수 있게, 10/22 동준 부탁). 누르면 확인 창 뒤 넘긴 함수를 1번만 부른다(진행 중 두 번 눌러도 무시).
-- `onOpenCleanUp: suspend () -> Unit`(기본: 아무것도 안 함) — 설정 화면을 열 때 1번(화면 회전 때는 다시 안 함). **D #25 `RuleStorage.cleanUp(context)`가 main에 들어오면** `onOpenCleanUp = { RuleStorage.cleanUp(context.applicationContext) }`로 연결한다. 실패해도 화면은 그대로이고 다음에 열 때 다시 한다. 실패하면 "기억을 지우지 못했어요"를 보이고 다시 누를 수 있다.
+- debug 미리보기(`ChoicePreviewActivity`)는 그대로 메모리 Mock(`DebugRules.repository`)과 가짜 규칙을 쓴다. 가짜 규칙은 실제 DB에 들어가지 않는다.
+- `eraseAll`·`cleanUp`은 `Dispatchers.IO`에서 돈다(Keystore 키 폐기가 Room 호출이 아니어서).
+- `deleteAll`을 넘기지 않는 옛 방식(`UiVoiceSettingsRoute(repository)`)은 `repository.deleteAll()`만 부른다(지문 키는 남음). Room 연결 때는 위 묶음을 쓴다.
+- `cleanUp`이 실패해도 화면은 그대로 열리고, 로그는 남기지 않으며(원문 없음), 다음에 열 때 다시 한다. `cleanUp` 결과(지운 개수)는 C가 쓰지 않는다.
+- [전체 삭제]는 **목록이 비어 있어도 항상 보인다**(D가 못 읽은 행도 지울 수 있게, 10/22 동준 부탁). 누르면 확인 창 뒤 넘긴 함수를 1번만 부른다(진행 중 두 번 눌러도 무시). 실패하면 "기억을 지우지 못했어요"를 보이고 다시 누를 수 있다.
 - 목록 상태는 `RuleStatusPolicy.statusOf(rule, now)`: 해제됨(`enabled=false`) → 꺼짐·실패(`failureCount>0`) → 꺼짐(만료일 없음·다른 스키마·저장 시각보다 이전) → 만료됨(`now ≥ expiresAt`) → 켜짐. D의 `RuleValidity.isUsable`과 같은 경계다. 만료·실패 규칙도 [해제]·[전체 삭제] 대상.
 - 시각은 `clock: Clock`(기본 `Clock.systemDefaultZone()`)으로 주입하고 화면에 돌아올 때 다시 읽는다. 날짜는 기기 로케일("11월 13일까지").

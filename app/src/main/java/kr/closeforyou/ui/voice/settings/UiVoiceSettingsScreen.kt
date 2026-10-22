@@ -69,10 +69,11 @@ import java.time.ZoneId
 
 /**
  * Stateful entry: C settings plus A's pause state (read only) and D's remembered rules.
- * The repository is whatever D provides; today the debug screen passes the in-memory mock.
- * [deleteAll] is what [전체 삭제] runs. The default only deletes the rules; the F12 wiring PR (A)
- * passes D's `RuleStorage.repository(context)` and `{ RuleStorage.eraseAll(context) }`, which also
- * destroys the fingerprint key. [clock] decides which rules show as expired (re-read on resume).
+ * The repository is whatever is passed; the debug screen passes the in-memory mock, and the real
+ * app uses [RoomBackedRuleSettings] (D's Room, `eraseAll`, `cleanUp`).
+ * [deleteAll] is what [전체 삭제] runs. The default only deletes the rules; D's
+ * `RuleStorage.eraseAll(context)` also destroys the fingerprint key.
+ * [clock] decides which rules show as expired (re-read on resume).
  * [onOpenCleanUp] runs once each time the screen is opened (not on rotation); the default does nothing.
  */
 @Composable
@@ -81,8 +82,6 @@ fun UiVoiceSettingsRoute(
     modifier: Modifier = Modifier,
     deleteAll: suspend () -> Unit = repository::deleteAll,
     clock: Clock = Clock.systemDefaultZone(),
-    // TODO(D #25): after RuleStorage.cleanUp(context) is merged, the wiring passes
-    //  `{ RuleStorage.cleanUp(context.applicationContext) }` here. Not called directly: #25 is not on main yet.
     onOpenCleanUp: suspend () -> Unit = {},
 ) {
     val context = LocalContext.current
