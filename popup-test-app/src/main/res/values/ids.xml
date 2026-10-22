@@ -13,5 +13,6 @@
     <item name="btn_deny" type="id" />
     <item name="btn_login" type="id" />
     <item name="btn_next" type="id" />
+    <item name="btn_skip" type="id" />
     <item name="field_password" type="id" />
 </resources>
