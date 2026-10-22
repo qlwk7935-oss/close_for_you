@@ -25,6 +25,7 @@ import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
+import android.widget.VideoView
 
 /**
  * D: 합성 팝업 재현 화면. 실제 결제·권한·로그인·네트워크 동작은 하지 않는다.
@@ -377,6 +378,12 @@ class PopupScenarioActivity : Activity() {
             // 덮개 바깥 터치가 뒤 화면으로 새지 않게 막는다.
             isClickable = true
         }
+        // 빈 영상 표면(재생 소스 없음). A의 영상 표면 관측 경로를 확인하려는 것일 뿐,
+        // 영상 재생이나 영상 광고 판정의 증거가 아니다.
+        overlay.addView(VideoView(this).apply {
+            id = R.id.video_surface
+            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_YES
+        }, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, px(200), Gravity.CENTER))
         val playing = text("").apply { setTextColor(Color.WHITE) }
         overlay.addView(
             column(
