@@ -17,7 +17,7 @@ import org.junit.Assert.fail
 import org.junit.Test
 
 /**
- * 저장소 로직(매핑·이중 확인·교체·철회) 단위 시험. 실제 SQL은 androidTest의
+ * 저장소 로직(매핑·이중 확인·교체·철회·정리) 단위 시험. 실제 SQL은 androidTest의
  * PopupRuleDatabaseTest가 같은 시나리오로 검사한다.
  */
 class RoomPopupRuleRepositoryTest {
@@ -71,6 +71,21 @@ class RoomPopupRuleRepositoryTest {
         assertTrue(repository.recordFailure("rule-1"))
         assertNull(repository.findExact(key, 150))
         assertFalse(repository.recordFailure("missing"))
+    }
+
+    /** A 리뷰 #23: 같은 실패가 여러 번(재시작 뒤 포함) 와도 한 번 기록한 것과 같다. */
+    @Test
+    fun recordFailureIsIdempotent() = runBlocking {
+        val dao = FakePopupRuleDao()
+        val repository = RoomPopupRuleRepository(dao)
+        repository.save(rule())
+        repeat(3) { assertTrue(repository.recordFailure("rule-1")) }
+        assertEquals(1, dao.rows.value.single().failureCount)
+        assertNull(repository.findExact(key, 150))
+
+        // 재시작: 새 저장소 인스턴스로 같은 실패가 다시 와도 그대로다.
+        assertTrue(RoomPopupRuleRepository(dao).recordFailure("rule-1"))
+        assertEquals(1, dao.rows.value.single().failureCount)
     }
 
     @Test
@@ -152,6 +167,67 @@ class RoomPopupRuleRepositoryTest {
         assertTrue("redacted" in PopupRuleEntity.from(original).toString())
     }
 
+    // ---- 정리(cleanUp), 팀 제안 10/22: A 서비스 시작·C 설정 화면 열 때 호출 ----
+
+    @Test
+    fun cleanUpRemovesExpiredMissingExpiryAndUnreadableRows() = runBlocking {
+        val dao = FakePopupRuleDao()
+        dao.rows.value = listOf(
+            row("valid", expiresAt = 300),
+            row("expired", expiresAt = 200),
+            row("no-expiry", expiresAt = null),
+            row("bad-choice", expiresAt = 300).copy(choice = "NOT_A_CHOICE"),
+        )
+        val result = RoomPopupRuleRepository(dao).cleanUp(200)
+        assertEquals(RuleCleanUpResult(expired = 2, unreadable = 1), result)
+        assertEquals(3, result.total)
+        assertEquals(listOf("valid"), dao.rows.value.map { it.id })
+    }
+
+    @Test
+    fun cleanUpKeepsRevokedFailedAndOtherSchemaRowsUntilExpiry() = runBlocking {
+        val dao = FakePopupRuleDao()
+        dao.rows.value = listOf(
+            row("revoked", expiresAt = 300).copy(enabled = false),
+            row("failed", expiresAt = 300).copy(failureCount = 1),
+            row("future-schema", expiresAt = 300).copy(schemaVersion = 2),
+        )
+        val repository = RoomPopupRuleRepository(dao)
+        assertEquals(RuleCleanUpResult(expired = 0, unreadable = 0), repository.cleanUp(200))
+        assertEquals(3, repository.observeRules().first().size)
+
+        // 만료되면 상태와 상관없이 지운다.
+        assertEquals(RuleCleanUpResult(expired = 3, unreadable = 0), repository.cleanUp(300))
+        assertTrue(dao.rows.value.isEmpty())
+    }
+
+    /** C 리뷰 ①: 손상 행만 남으면 목록은 비어 보이지만 행은 남는다. 정리 후에는 실제로도 비어야 한다. */
+    @Test
+    fun cleanUpMakesAnEmptyListMatchTheStorage() = runBlocking {
+        val dao = FakePopupRuleDao()
+        dao.rows.value = listOf(row("bad", expiresAt = 300).copy(choice = "NOT_A_CHOICE"))
+        val repository = RoomPopupRuleRepository(dao)
+        assertTrue(repository.observeRules().first().isEmpty())
+        assertEquals(1, dao.rows.value.size)
+
+        assertEquals(1, repository.cleanUp(200).unreadable)
+        assertTrue(dao.rows.value.isEmpty())
+    }
+
+    @Test
+    fun cleanUpOnAnEmptyStoreDoesNothing() = runBlocking {
+        assertEquals(RuleCleanUpResult(0, 0), RoomPopupRuleRepository(FakePopupRuleDao()).cleanUp(200))
+    }
+
+    @Test
+    fun unreadableRowsAreDeletedInSmallBatches() = runBlocking {
+        val dao = FakePopupRuleDao()
+        dao.rows.value = (1..1_200).map { row("bad-$it", expiresAt = 300).copy(choice = "NOT_A_CHOICE") }
+        assertEquals(1_200, RoomPopupRuleRepository(dao).cleanUp(200).unreadable)
+        assertTrue(dao.rows.value.isEmpty())
+        assertTrue(dao.largestDeleteBatch in 1..500)
+    }
+
     private fun assertRejected(expected: RuleRejection, block: suspend (RoomPopupRuleRepository) -> Unit) {
         val dao = FakePopupRuleDao()
         try {
@@ -162,6 +238,10 @@ class RoomPopupRuleRepositoryTest {
         }
         assertTrue(dao.rows.value.isEmpty())
     }
+
+    /** 키가 겹치지 않는 행. 정리 시험에서 DAO 행을 직접 넣을 때 쓴다. */
+    private fun row(id: String, expiresAt: Long?) =
+        PopupRuleEntity.from(rule(id = id, target = id.padEnd(64, '-'))).copy(expiresAtEpochMillis = expiresAt)
 
     private fun rule(
         id: String = "rule-1",
@@ -184,6 +264,10 @@ class RoomPopupRuleRepositoryTest {
 internal class FakePopupRuleDao : PopupRuleDao() {
     val rows = MutableStateFlow<List<PopupRuleEntity>>(emptyList())
 
+    /** [deleteByIds] 한 번에 받은 ID 수의 최댓값. */
+    var largestDeleteBatch = 0
+        private set
+
     override suspend fun findUsable(
         packageName: String,
         appVersionCode: Long,
@@ -203,6 +287,8 @@ internal class FakePopupRuleDao : PopupRuleDao() {
     override fun observeAll(): Flow<List<PopupRuleEntity>> =
         rows.map { list -> list.sortedWith(compareByDescending<PopupRuleEntity> { it.createdAtEpochMillis }.thenBy { it.id }) }
 
+    override suspend fun getAll(): List<PopupRuleEntity> = rows.value
+
     override suspend fun insert(entity: PopupRuleEntity) {
         check(rows.value.none { it.id == entity.id || sameKey(it, entity) }) { "unique constraint" }
         rows.value = rows.value + entity
@@ -210,6 +296,14 @@ internal class FakePopupRuleDao : PopupRuleDao() {
 
     override suspend fun deleteById(id: String) {
         rows.value = rows.value.filterNot { it.id == id }
+    }
+
+    override suspend fun deleteByIds(ids: List<String>): Int {
+        largestDeleteBatch = maxOf(largestDeleteBatch, ids.size)
+        val before = rows.value.size
+        val doomed = ids.toSet()
+        rows.value = rows.value.filterNot { it.id in doomed }
+        return before - rows.value.size
     }
 
     override suspend fun deleteByKey(
@@ -228,11 +322,11 @@ internal class FakePopupRuleDao : PopupRuleDao() {
 
     override suspend fun disable(id: String): Int = update(id) { it.copy(enabled = false) }
 
-    override suspend fun incrementFailure(id: String): Int = update(id) { it.copy(failureCount = it.failureCount + 1) }
+    override suspend fun markFailed(id: String): Int = update(id) { it.copy(failureCount = 1) }
 
     override suspend fun deleteExpired(now: Long): Int {
         val before = rows.value.size
-        rows.value = rows.value.filterNot { row -> row.expiresAtEpochMillis.let { it != null && it <= now } }
+        rows.value = rows.value.filterNot { row -> row.expiresAtEpochMillis.let { it == null || it <= now } }
         return before - rows.value.size
     }
 
