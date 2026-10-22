@@ -70,13 +70,13 @@ object ChoicePromptPlanner {
     private val pressableEvidence = setOf(EvidenceLevel.E1_DISMISS, EvidenceLevel.E2_LABELED_NODE)
 
     /**
-     * [labelPolicy]: only labels A's gate accepts get a press button; others fall back to
-     * "이 팝업은 대신 닫을 수 없어요". Default is C's temporary copy of A's list (REPLACE-WITH-CONTRACT).
+     * [labelPolicy]: only labels the shared contract accepts for the candidate's role get a press
+     * button; others fall back to "이 팝업은 대신 닫을 수 없어요". Default is [SharedLabelPolicy].
      */
     fun plan(
         analysis: PopupAnalysis,
         classification: PopupClassification,
-        labelPolicy: PressableLabelPolicy = AGateLabelPolicy,
+        labelPolicy: PressableLabelPolicy = SharedLabelPolicy,
         moveToButtonEnabled: Boolean = MoveToButtonFeature.enabled,
         rememberChoicesEnabled: Boolean = RememberChoiceFeature.enabled,
     ): ChoicePrompt {
@@ -186,7 +186,7 @@ object ChoicePromptPlanner {
         else -> throw IllegalArgumentException("Role $role cannot be pressed for the user")
     }
 
-    /** B's role must agree with the label's role (B draft v1 §11: `roleOf(label) == candidate.role`). */
+    /** B's role must agree with the label's role (`ButtonLabelRules.roleOf(label) == candidate.role`). */
     private fun isPressable(candidate: CloseCandidate, labelPolicy: PressableLabelPolicy): Boolean =
         candidate.role in pressableRoles &&
             candidate.evidence in pressableEvidence &&

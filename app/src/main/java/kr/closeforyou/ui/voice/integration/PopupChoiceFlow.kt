@@ -22,7 +22,6 @@ import kr.closeforyou.core.model.SnapshotToken
 import kr.closeforyou.core.model.UserChoice
 import kr.closeforyou.ui.voice.AnnouncementBatcher
 import kr.closeforyou.ui.voice.PressResultSpeech
-import kr.closeforyou.ui.voice.choice.AGateLabelPolicy
 import kr.closeforyou.ui.voice.choice.ChoicePrompt
 import kr.closeforyou.ui.voice.choice.ChoicePromptPlanner
 import kr.closeforyou.ui.voice.choice.MoveToButtonFeature
@@ -31,6 +30,7 @@ import kr.closeforyou.ui.voice.choice.PressableLabelPolicy
 import kr.closeforyou.ui.voice.choice.PromptOptionKind
 import kr.closeforyou.ui.voice.choice.RememberChoiceFeature
 import kr.closeforyou.ui.voice.choice.RememberChoiceSpeech
+import kr.closeforyou.ui.voice.choice.SharedLabelPolicy
 import kr.closeforyou.ui.voice.overlay.ChoiceOrigin
 import kr.closeforyou.ui.voice.overlay.ChoicePromptPresenter
 import kr.closeforyou.ui.voice.overlay.OverlayWindowKeeper
@@ -93,7 +93,7 @@ class PopupChoiceFlow(
     private val text: UiText,
     private val contentText: (PopupAnalysis) -> String,
     private val onMoveToButton: (MoveToButtonRequest) -> Unit = {},
-    private val labelPolicy: PressableLabelPolicy = AGateLabelPolicy,
+    private val labelPolicy: PressableLabelPolicy = SharedLabelPolicy,
     private val moveToButtonEnabled: Boolean = MoveToButtonFeature.enabled,
     private val rememberChoicesEnabled: Boolean = RememberChoiceFeature.enabled,
     private val rememberStore: RememberedPopupStore = RememberedPopupStore.NONE,
