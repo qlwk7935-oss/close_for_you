@@ -190,12 +190,16 @@ class CloseForYouAccessibilityService : AccessibilityService() {
                 evidenceJob = serviceScope.launch {
                     val owner = currentCoroutineContext()[Job] ?: throw CancellationException("NO_EVIDENCE_OWNER")
                     val operation = AccessibilityRuntime.begin(result.snapshot, owner) ?: return@launch
+                    val blockDiagnostic = EvidenceBlockLog.begin()
                     var published = false
                     try {
                         val checkEvidence = {
                             freshness.checkActive(epoch, owner) { isCurrent(result.snapshot.token) }
                         }
-                        when (val evidence = pipeline.analyze(result.snapshot, trace, detectionFrame = result.frame, detectionAssessment = assessment) { verifyScreen(it, trace, checkEvidence) }) {
+                        when (val evidence = pipeline.analyze(result.snapshot, trace, detectionFrame = result.frame,
+                            detectionAssessment = assessment, blockDiagnostic = blockDiagnostic) {
+                            verifyScreen(it, trace, checkEvidence, blockDiagnostic)
+                        }) {
                             is EvidenceOutcome.Ready -> if (isCurrent(result.snapshot.token)) {
                                 trace.evidence(evidence.issue)
                                 checkEvidence()
@@ -204,10 +208,13 @@ class CloseForYouAccessibilityService : AccessibilityService() {
                                     evidence.analysis, evidence.issue)
                                 if (published) trace.stage(CaptureStage.PUBLISHED)
                             }
-                            is EvidenceOutcome.Blocked -> if (isCurrent(result.snapshot.token)) {
-                                trace.evidence(evidence.issue)
-                                AccessibilityRuntime.recordEvidenceIssue(evidence.issue)
-                                AccessibilityRuntime.block(evidence.reason, epoch, operation)
+                            is EvidenceOutcome.Blocked -> {
+                                blockDiagnostic?.blocked(evidence.reason, evidence.issue)
+                                if (isCurrent(result.snapshot.token)) {
+                                    trace.evidence(evidence.issue)
+                                    AccessibilityRuntime.recordEvidenceIssue(evidence.issue)
+                                    AccessibilityRuntime.block(evidence.reason, epoch, operation)
+                                }
                             }
                         }
                     } catch (cancelled: CancellationException) {
@@ -226,6 +233,7 @@ class CloseForYouAccessibilityService : AccessibilityService() {
                     } finally {
                         if (!published || !isActive) AccessibilityRuntime.abandon(operation, epoch)
                     }
+                    EvidenceBlockLog.report(blockDiagnostic)
                 }
             }
         }
@@ -238,21 +246,24 @@ class CloseForYouAccessibilityService : AccessibilityService() {
 
     /** F0-A again before/after capture and after async OCR, using fresh framework nodes. */
     private fun verifyScreen(snapshot: PopupSnapshot, trace: CaptureTrace = CaptureTrace(null),
-        checkActive: () -> Unit = {}): PrivacyBlockReason? {
+        checkActive: () -> Unit = {}, blockDiagnostic: EvidenceBlockDiagnostic? = null): PrivacyBlockReason? {
         checkActive()
-        if (!isCurrent(snapshot.token)) return PrivacyBlockReason.UNREADABLE_TREE
+        if (!isCurrent(snapshot.token)) {
+            blockDiagnostic?.rejected(EvidenceBlockSource.CURRENT_SCREEN_UNAVAILABLE)
+            return PrivacyBlockReason.UNREADABLE_TREE
+        }
         val s = preferences.currentSettings()
         val isolation = s.captureConsentGranted && snapshot.token.packageName in s.captureAllowedPackages
         return when (val fresh = collector.capture(this, snapshot.token.captureEpoch, snapshot.trigger,
             ::packageBlock, requireCaptureIsolation = isolation, trace = trace, checkActive = checkActive)) {
-            is CollectionResult.Blocked -> fresh.reason
+            is CollectionResult.Blocked -> {
+                blockDiagnostic?.rejected(EvidenceBlockSource.RECOLLECTION_FAILED, collection = fresh.diagnostic)
+                fresh.reason
+            }
             is CollectionResult.Ready -> {
-                val a = snapshot.token
-                val b = fresh.snapshot.token
-                if (a.packageName != b.packageName || a.windowId != b.windowId ||
-                    a.structureDigest != b.structureDigest || a.contentDigest != b.contentDigest ||
-                    snapshot.screenBounds != fresh.snapshot.screenBounds ||
-                    snapshot.windows.toSet() != fresh.snapshot.windows.toSet()) {
+                val mismatch = EvidenceSnapshotComparison.firstMismatch(snapshot, fresh.snapshot)
+                if (mismatch != EvidenceMismatch.NONE) {
+                    blockDiagnostic?.rejected(EvidenceBlockSource.SNAPSHOT_MISMATCH, mismatch)
                     trace.detail(CaptureDetail.SCREEN_CHANGED)
                     PrivacyBlockReason.UNREADABLE_TREE
                 } else null

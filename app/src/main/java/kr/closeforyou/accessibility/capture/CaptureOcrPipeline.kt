@@ -13,6 +13,8 @@ import kr.closeforyou.accessibility.PrivacyPolicy
 import kr.closeforyou.accessibility.CaptureTrace
 import kr.closeforyou.accessibility.CaptureStage
 import kr.closeforyou.accessibility.CaptureDetail
+import kr.closeforyou.accessibility.EvidenceBlockDiagnostic
+import kr.closeforyou.accessibility.EvidenceBlockSource
 import kr.closeforyou.core.contract.CaptureCapability
 import kr.closeforyou.core.model.*
 
@@ -46,24 +48,29 @@ internal class CaptureOcrPipeline(
         trace: CaptureTrace = CaptureTrace(null),
         detectionFrame: DetectionFrame? = null,
         detectionAssessment: DetectionAssessment? = null,
+        blockDiagnostic: EvidenceBlockDiagnostic? = null,
         protection: (PopupSnapshot) -> PrivacyBlockReason? = preflight,
     ): EvidenceOutcome {
-        val result = analyzeChecked(snapshot, trace, detectionFrame, detectionAssessment, protection)
+        val result = analyzeChecked(snapshot, trace, detectionFrame, detectionAssessment, protection, blockDiagnostic)
         checkCurrent(snapshot) // Includes every early tree/summary/failure fallback and frame close.
         return result
     }
 
     private suspend fun analyzeChecked(snapshot: PopupSnapshot, trace: CaptureTrace, detectionFrame: DetectionFrame?,
-        detectionAssessment: DetectionAssessment?, protection: (PopupSnapshot) -> PrivacyBlockReason?): EvidenceOutcome {
+        detectionAssessment: DetectionAssessment?, protection: (PopupSnapshot) -> PrivacyBlockReason?,
+        blockDiagnostic: EvidenceBlockDiagnostic?): EvidenceOutcome {
         checkCurrent(snapshot)
-        if (snapshot.completeness != SnapshotCompleteness.COMPLETE)
+        if (snapshot.completeness != SnapshotCompleteness.COMPLETE) {
+            blockDiagnostic?.rejected(EvidenceBlockSource.INCOMPLETE_SNAPSHOT)
             return EvidenceOutcome.Blocked(PrivacyBlockReason.UNREADABLE_TREE, EvidenceIssue.PRIVACY_BLOCKED)
+        }
         trace.stage(CaptureStage.F0_A)
         checkCurrent(snapshot)
         protection(snapshot)?.let { trace.block(it); return EvidenceOutcome.Blocked(it, EvidenceIssue.PRIVACY_BLOCKED) }
         val tree = treeTexts(snapshot)
         val treeContent = tree.joinToString("\n") { it.text }
         if (PrivacyPolicy.hasSensitiveText(treeContent) || PrivacyPolicy.hasUncertainText(treeContent)) {
+            blockDiagnostic?.rejected(EvidenceBlockSource.TEXT_PROTECTION)
             trace.block(PrivacyBlockReason.SENSITIVE_CONTENT); return EvidenceOutcome.Blocked(PrivacyBlockReason.SENSITIVE_CONTENT, EvidenceIssue.PRIVACY_BLOCKED)
         }
         trace.stage(CaptureStage.F0_A_PASSED)
@@ -117,7 +124,11 @@ internal class CaptureOcrPipeline(
             screenshots.ongoingDenial(snapshot.token)?.let { return partial(it) }
             trace.stage(CaptureStage.F0_B)
             when (OcrPrivacyReview.review(lines, region.bounds)) {
-                PrivacyReview.SENSITIVE -> { trace.block(PrivacyBlockReason.SENSITIVE_CONTENT); return blocked(PrivacyBlockReason.SENSITIVE_CONTENT, EvidenceIssue.PRIVACY_BLOCKED) }
+                PrivacyReview.SENSITIVE -> {
+                    blockDiagnostic?.rejected(EvidenceBlockSource.TEXT_PROTECTION)
+                    trace.block(PrivacyBlockReason.SENSITIVE_CONTENT)
+                    return blocked(PrivacyBlockReason.SENSITIVE_CONTENT, EvidenceIssue.PRIVACY_BLOCKED)
+                }
                 PrivacyReview.UNCERTAIN -> return partial(EvidenceIssue.PRIVACY_UNCERTAIN)
                 PrivacyReview.TEXT_CHECK_PASSED -> Unit
             }

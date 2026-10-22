@@ -19,6 +19,94 @@ import org.junit.Test
 @OptIn(ExperimentalCoroutinesApi::class)
 class CaptureOcrPipelineTest {
     private val box = ScreenBounds(100, 500, 900, 560)
+    private fun blockLine(diagnostic: EvidenceBlockDiagnostic, outcome: EvidenceOutcome): String? {
+        if (outcome is EvidenceOutcome.Blocked) diagnostic.blocked(outcome.reason, outcome.issue)
+        var line: String? = null
+        diagnostic.report { line = it }
+        return line
+    }
+
+    @Test fun diagnosticReportsRecollectionBlockWithoutAdditionalCaptureOrPreflight() = runTest {
+        val diagnostic = EvidenceBlockDiagnostic(); val shots = Shots(); var checks = 0
+        val result = CaptureOcrPipeline(shots, OcrPort { error("NO_OCR") }, { true }, {
+            checks++
+            diagnostic.rejected(EvidenceBlockSource.RECOLLECTION_FAILED)
+            PrivacyBlockReason.PASSWORD
+        }).analyze(imagePopup(), blockDiagnostic = diagnostic)
+        assertEquals(EvidenceOutcome.Blocked(PrivacyBlockReason.PASSWORD, EvidenceIssue.PRIVACY_BLOCKED), result)
+        assertEquals(1, checks); assertEquals(0, shots.calls)
+        assertTrue(blockLine(diagnostic, result)!!.contains("SOURCE=RECOLLECTION_FAILED;CHECK=NONE;REASON=PASSWORD"))
+    }
+
+    @Test fun actualPipelineUsesRecordedDtoMismatchAndStillBlocksBeforeCapture() = runTest {
+        val snapshot = imagePopup(); val diagnostic = EvidenceBlockDiagnostic(); val shots = Shots()
+        val fresh = snapshot.copy(token = snapshot.token.copy(contentDigest = "synthetic-new-content"))
+        val result = CaptureOcrPipeline(shots, OcrPort { error("NO_OCR") }, { true }, {
+            val mismatch = EvidenceSnapshotComparison.firstMismatch(it, fresh)
+            if (mismatch != EvidenceMismatch.NONE) {
+                diagnostic.rejected(EvidenceBlockSource.SNAPSHOT_MISMATCH, mismatch)
+                PrivacyBlockReason.UNREADABLE_TREE
+            } else null
+        }).analyze(snapshot, blockDiagnostic = diagnostic)
+        assertEquals(EvidenceOutcome.Blocked(PrivacyBlockReason.UNREADABLE_TREE, EvidenceIssue.PRIVACY_BLOCKED), result)
+        assertEquals(0, shots.calls)
+        assertTrue(blockLine(diagnostic, result)!!.contains("SOURCE=SNAPSHOT_MISMATCH;CHECK=CONTENT"))
+    }
+
+    @Test fun actualTreeProtectionRecordsCodesButNeverItsText() = runTest {
+        val snapshot = imagePopup().let { it.copy(nodes = it.nodes.map { node ->
+            node.copy(text = "synthetic-private password", contentDescription = null)
+        }.toPersistentList()) }
+        val diagnostic = EvidenceBlockDiagnostic(); val shots = Shots()
+        val result = CaptureOcrPipeline(shots, OcrPort { error("NO_OCR") }, { true }, { null })
+            .analyze(snapshot, blockDiagnostic = diagnostic)
+        assertEquals(EvidenceOutcome.Blocked(PrivacyBlockReason.SENSITIVE_CONTENT, EvidenceIssue.PRIVACY_BLOCKED), result)
+        val line = blockLine(diagnostic, result)!!
+        assertTrue(line.contains("SOURCE=TEXT_PROTECTION"))
+        assertFalse(line.contains("synthetic-private")); assertFalse(line.contains("password"))
+        assertEquals(0, shots.calls)
+    }
+
+    @Test fun diagnosticDoesNotTurnOcrOffTreeReadyIntoBlockedOrProduceALine() = runTest {
+        val snapshot = imagePopup(); val shots = Shots().also { it.issue = EvidenceIssue.NOT_REQUESTED }
+        var checks = 0
+        val pipeline = CaptureOcrPipeline(shots, OcrPort { error("NO_OCR") }, { true }, { checks++; null })
+        val expected = pipeline.analyze(snapshot)
+        val diagnostic = EvidenceBlockDiagnostic()
+        val actual = pipeline.analyze(snapshot, blockDiagnostic = diagnostic)
+        assertEquals(expected, actual); assertTrue(actual is EvidenceOutcome.Ready)
+        assertEquals(2, checks); assertEquals(0, shots.calls)
+        assertNull(blockLine(diagnostic, actual))
+    }
+
+    @Test fun diagnosticCannotConvertCancelledPreflightIntoBlockedOrAReport() = runTest {
+        val diagnostic = EvidenceBlockDiagnostic(); val cancelled = kotlinx.coroutines.CancellationException("synthetic-private")
+        try {
+            CaptureOcrPipeline(Shots(), OcrPort { error("NO_OCR") }, { true }, { throw cancelled })
+                .analyze(imagePopup(), blockDiagnostic = diagnostic)
+            fail("CANCELLATION_LOST")
+        } catch (caught: kotlinx.coroutines.CancellationException) {
+            assertSame(cancelled, caught)
+        }
+        diagnostic.report { fail("CANCELLED_WORK_REPORTED_AS_BLOCKED") }
+    }
+
+    @Test fun actualOcrProtectionUsesOnlyTextProtectionCode() = runTest {
+        val diagnostic = EvidenceBlockDiagnostic()
+        val result = CaptureOcrPipeline(Shots(), OcrPort { listOf(OcrLine("password", box)) }, { true }, { null })
+            .analyze(imagePopup(), blockDiagnostic = diagnostic)
+        assertEquals(EvidenceOutcome.Blocked(PrivacyBlockReason.SENSITIVE_CONTENT, EvidenceIssue.PRIVACY_BLOCKED), result)
+        assertTrue(blockLine(diagnostic, result)!!.contains("SOURCE=TEXT_PROTECTION"))
+    }
+
+    @Test fun incompleteSnapshotStillBlocksAndHasItsOwnDiagnosticCode() = runTest {
+        val diagnostic = EvidenceBlockDiagnostic(); val shots = Shots(); var checks = 0
+        val result = CaptureOcrPipeline(shots, OcrPort { error("NO_OCR") }, { true }, { checks++; null })
+            .analyze(imagePopup().copy(completeness = SnapshotCompleteness.TRUNCATED), blockDiagnostic = diagnostic)
+        assertTrue(blockLine(diagnostic, result)!!.contains("SOURCE=INCOMPLETE_SNAPSHOT"))
+        assertEquals(0, checks); assertEquals(0, shots.calls)
+    }
+
     @Test fun incompleteSnapshotNeverReachesCaptureOrOcr() = runTest {
         val shots = Shots(); var preflights = 0
         val result = CaptureOcrPipeline(shots, OcrPort { error("NO_OCR") }, { true }, { preflights++; null })
