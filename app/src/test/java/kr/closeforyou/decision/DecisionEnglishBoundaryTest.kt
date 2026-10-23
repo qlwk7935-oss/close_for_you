@@ -42,7 +42,13 @@ internal object EnglishBoundaryCases {
         "ADD 버튼 안내" to PopupClassification.NOTICE,
         "payday 안내" to PopupClassification.NOTICE,
         "read me" to PopupClassification.UNKNOWN,
+        // "_" is a word character as in \b: identifiers do not match (PR #37 review).
+        "AD_banner" to PopupClassification.UNKNOWN,
+        "_AD" to PopupClassification.UNKNOWN,
+        "sponsored_campaign" to PopupClassification.UNKNOWN,
+        "pay_day 안내" to PopupClassification.NOTICE,
+        "sign_up 안내" to PopupClassification.NOTICE,
     )
-    val riskyLabels: List<Pair<String, Boolean>> = listOf("ok버튼" to true, "install하기" to true, "okay" to true, "booking" to false)
-    val countdowns: List<Pair<String, Int?>> = listOf("skip in 5초" to 5, "Skip Ad in 7s" to 7, "Skip in 12 seconds" to 12, "skip in 5000" to null)
+    val riskyLabels: List<Pair<String, Boolean>> = listOf("ok버튼" to true, "install하기" to true, "okay" to true, "booking" to false, "ok_button" to false)
+    val countdowns: List<Pair<String, Int?>> = listOf("skip in 5초" to 5, "Skip Ad in 7s" to 7, "Skip in 12 seconds" to 12, "skip in 5000" to null, "skip_in 5" to null)
 }

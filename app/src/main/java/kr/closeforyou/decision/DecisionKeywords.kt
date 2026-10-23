@@ -10,8 +10,10 @@ import kr.closeforyou.core.model.ButtonRole
 internal object DecisionKeywords {
     // English word boundaries in ASCII, not `\b`: next to Hangul, `\b` holds on the JDK but not on
     // Android's ICU engine, so "sign up하기" or "AD광고" were missed on phones while JVM tests passed.
-    private const val EN_START = "(?<![a-z0-9])"
-    private const val EN_END = "(?![a-z0-9])"
+    // `_` stays a word character as in `\b`, so identifiers such as "AD_banner" or "pay_day" still
+    // do not match (PR #37 review).
+    private const val EN_START = "(?<![a-z0-9_])"
+    private const val EN_END = "(?![a-z0-9_])"
 
     // Design 3-1 grade D, F7 decision signals (계정·개인정보) and A's fixed summaries
     // (e.g. "결제 선택 필요"). "설치" is grade P (navigation), so an install advertisement stays one.
@@ -42,7 +44,7 @@ internal object DecisionKeywords {
 
     private val advertisementKo = listOf("광고", "스폰서", "협찬", "프로모션", "특가", "쿠폰")
     // Upper-case only, so ordinary words containing "ad" are not advertisements.
-    private val advertisementUpperEn = Regex("(?<![A-Za-z0-9])AD(?![A-Za-z0-9])")
+    private val advertisementUpperEn = Regex("(?<![A-Za-z0-9_])AD(?![A-Za-z0-9_])")
     private val advertisementEn = Regex("$EN_START(ads|sponsored|advertisement)$EN_END", RegexOption.IGNORE_CASE)
 
     private val noticeKo = listOf("점검", "공지", "안내", "알림", "업데이트", "변경")
