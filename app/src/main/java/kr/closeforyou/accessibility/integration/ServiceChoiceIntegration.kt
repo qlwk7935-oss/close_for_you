@@ -32,7 +32,7 @@ internal class ServiceChoiceIntegration private constructor(
     private val settings = UiVoicePreferences.get(service)
     private val announcer = CurrentChoiceAnnouncer(tts,
         { if (closed || failed || presentationHealth.failed) null else AccessibilityRuntime.currentToken() }, history::clear)
-    private val tracker = OwnedOverlayTracker(service)
+    private val tracker = OwnedOverlayTracker(service, ChoiceFlowLog.overlayEvents())
     private val listenerJob = SupervisorJob(scope.coroutineContext[Job])
     private val listenerScope = CoroutineScope(scope.coroutineContext + listenerJob + choiceFailureHandler {
         failed = true
@@ -152,36 +152,21 @@ internal class ServiceChoiceIntegration private constructor(
 }
 
 /** Only a newly created, live, owned C overlay can be bound. Package identity alone is insufficient. */
-private class OwnedOverlayTracker(private val service: AccessibilityService) {
+private class OwnedOverlayTracker(private val service: AccessibilityService,
+    private val diagnostic: OverlayEventDiagnostic?) {
     private val binding = OwnedOverlayBinding()
     private var unhealthy = false
     fun beforeShow(): Set<Int>? { forget(); return readOwnedIds() }
     fun afterShow(before: Set<Int>?, token: SnapshotToken, generation: Long) {
         binding.expect(before, token, generation)
+        diagnostic?.arm()
     }
-    fun forget() { binding.clear() }
-    fun shouldIgnore(event: AccessibilityEvent, state: OverlayWindowState): Boolean {
-        if (!OwnedOverlayEventPolicy.mayTrack(state)) return false
-        val kind = when (event.eventType) {
-            AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED -> OverlayEventKind.CONTENT
-            AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED -> OverlayEventKind.WINDOW_STATE
-            AccessibilityEvent.TYPE_VIEW_FOCUSED, AccessibilityEvent.TYPE_VIEW_ACCESSIBILITY_FOCUSED,
-            AccessibilityEvent.TYPE_VIEW_ACCESSIBILITY_FOCUS_CLEARED -> OverlayEventKind.FOCUS
-            AccessibilityEvent.TYPE_WINDOWS_CHANGED -> {
-                val harmless = AccessibilityEvent.WINDOWS_CHANGE_ADDED or AccessibilityEvent.WINDOWS_CHANGE_BOUNDS or
-                    AccessibilityEvent.WINDOWS_CHANGE_LAYER or AccessibilityEvent.WINDOWS_CHANGE_TITLE
-                if (event.windowChanges != 0 && event.windowChanges and harmless.inv() == 0)
-                    OverlayEventKind.OWN_WINDOW_LAYOUT else OverlayEventKind.UNKNOWN
-            }
-            else -> OverlayEventKind.INTERACTION // Touch/click/scroll/unknown remain invalidating.
-        }
-        if (kind == OverlayEventKind.INTERACTION || kind == OverlayEventKind.UNKNOWN) return false
-        val pkg = event.packageName?.toString()
-        val current = AccessibilityRuntime.currentToken()
-        val owns = binding.matches(event.windowId, readOwnedIds(), current, state.generation)
-        return OwnedOverlayEventPolicy.mayIgnore(kind, owns, owns,
-            pkg == service.packageName, pkg == null, current != null)
-    }
+    fun forget() { binding.clear(); diagnostic?.disarm() }
+    fun shouldIgnore(event: AccessibilityEvent, state: OverlayWindowState): Boolean = inspectOwnedOverlayEvent(
+        state, { event.eventType }, { event.windowChanges }, { event.packageName?.toString() },
+        { AccessibilityRuntime.currentToken() },
+        { current, observation -> binding.matches(event.windowId, readOwnedIds(), current, state.generation, observation) },
+        { service.packageName }, diagnostic)
     @Suppress("DEPRECATION")
     private fun readOwnedIds(): Set<Int>? {
         if (unhealthy) return null

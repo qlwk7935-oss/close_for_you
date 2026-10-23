@@ -9,4 +9,7 @@ internal object ChoiceFlowLog {
     fun create(): ChoiceFlowDiagnostic? = ChoiceFlowDiagnostic { point, detail, cause ->
         Log.i("A_ChoiceFlow", "A_CHOICE_FLOW;POINT=${point.name};DETAIL=${detail.name};CAUSE=${cause.name}")
     }
+    fun overlayEvents(): OverlayEventDiagnostic? = OverlayEventDiagnostic { event, reason ->
+        Log.i("A_OverlayEvent", "A_OVERLAY_EVENT;VERSION=V4;EVENT=${event.name};REASON=${reason.name}")
+    }
 }

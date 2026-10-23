@@ -199,4 +199,74 @@ Debug/Release·AndroidTest APK 빌드, 앱 Debug/Release·호스트 Debug Lint �
 패키징·DEX 격리, Release port bytecode의 즉시 return/null 반환, Debug APK의 V3 로그 표식
 존재 및 Release APK의 표식 부재, 공백·A 소유 변경 범위 검사를 확인했다.
 Android 실제 표시·Logcat 전달·P01 실행 결과가 아니며 커밋·푸시·PR 변경은 하지 않는다.
+
+## V4 — 표시 중 이벤트 필터의 첫 거부 경계
+
+V2/V3의 로그 형식·발행·표시·무효화 동작은 그대로 유지한다. V4는 Debug의 별도 태그
+`A_OverlayEvent`를 사용한다. C의 실제 present()가 SHOWN을 반환한 기존 afterShow 경계에서만
+보고를 준비하고, 기존 mayTrack이 인정하는 SHOWING/양수 세대 상태에서 판정한 **첫 거부
+이벤트에 최대 한 줄**을 출력한다. 허용 이벤트에는 출력하지 않는다. dismiss/beforeShow의
+기존 forget 경계에서 보고를 중지하며 새 SHOWN에서만 다시 준비한다. sink 실패도 재출력하지 않는다.
+Release의 overlayEvents()는 null이고 formatter/Logcat sink가 없다.
+
+다음은 **형식 예시이며 Android 실측 결과가 아니다.**
+
+```text
+A_OVERLAY_EVENT;VERSION=V4;EVENT=WINDOWS_CHANGED;REASON=MASK_UNSUPPORTED
+```
+
+EVENT는 WINDOWS_CHANGED / FOCUS / CONTENT_CHANGED / WINDOW_STATE_CHANGED / OTHER다.
+OTHER는 위 네 범주 밖이라는 뜻이며, 사용자 상호작용이나 C 이벤트라고 추정하지 않는다.
+FOCUS는 TYPE_VIEW_FOCUSED/TYPE_VIEW_ACCESSIBILITY_FOCUSED/CLEARED의 범주다.
+WINDOWS_CHANGE_FOCUSED 비트는 이와 다른 WINDOWS_CHANGED 마스크 검사 대상이며 기존처럼 거부된다.
+
+| REASON | 기존 분기에서 확인한 좁은 의미 |
+| --- | --- |
+| MASK_UNSUPPORTED | WINDOWS_CHANGED의 변경 비트가 0이거나 기존 허용 마스크 조건에 불합격. 소유권 조회 전 반환이므로 C 소유 여부는 미검사 |
+| OWNERSHIP_NOT_CHECKED | 기존 INTERACTION 분류의 조기 반환. package/current/window 조회를 하지 않음 |
+| BEFORE_SET_UNAVAILABLE | binding의 이전 창 기준이 없음. 그 이유가 최초 조회 실패인지 clear/유효하지 않은 등록인지까지 추정하지 않음 |
+| OWNED_WINDOW_UNCONFIRMED | binding에 전달된 live 집합이 null/상한 초과이거나 고유한 새 창을 특정할 수 없음. root/title 미관측 중 어느 것 때문인지 확정하지 않음 |
+| BINDING_MISMATCH | 기존 binding 세대·토큰·이벤트 창·기존 결합 창과 live 집합의 조건 불일치 |
+| PACKAGE_UNCONFIRMED | binding 통과 후 기존 package 조건 실패. 패키지가 null인지 다른 값인지 출력하지 않음 |
+| CURRENT_UNAVAILABLE | 실제 token 비교에서 실패했고 기존 current 값이 null이거나, policy의 current 조건 자체가 실패. TTL·설정 등 근본 원인은 미확정 |
+| UNKNOWN | 더 구체적인 거부 근거가 없음. 다른 로그의 원인을 가져와 채우지 않음 |
+
+첫 반환 분기를 우선한다. 예를 들어 before 기준이 없고 current도 null이면
+BEFORE_SET_UNAVAILABLE이며, 이를 CURRENT_UNAVAILABLE로 바꾸지 않는다.
+MASK_UNSUPPORTED에서는 소유 창인지 확인하지 않았으므로 OWNED_WINDOW_UNCONFIRMED를
+함께 추정하지 않는다. V4는 필터가 false를 반환하는 경계를 보여줄 뿐 이후 실제 EVENT 무효화나
+dismiss/물리적 제거 완료를 인증하지 않는다. 해당 후속 경계는 V3와 구분해 읽는다.
+
+실제 Android tracker와 JVM은 같은 inline inspectOwnedOverlayEvent(), binding.matches(),
+mayIgnore()를 호출한다. eventType → (해당 시 기존 windowChanges 1/2회) → package → current
+→ event.windowId → 기존 window/root 조회·해제 → 기존 generation 값 → service.packageName
+순서를 유지한다. 마스크/INTERACTION 조기 반환에서는 이후 getter를 추가하지 않는다.
+추가 수집·getter·OCR·시계 조회·서비스/provider IPC·polling·재시도·재발행은 없다.
+원래 허용 마스크, predicate의 단락 평가, binding 갱신·해제·최종 반환값도 그대로다.
+V4의 enum은 진단용이며 성공 판정이나 이벤트 제외 근거로 사용하지 않는다.
+
+표시 함수 반환과 현재 상태가 맞지 않거나 서비스/presentation health가 이미 차단됐으면
+기존 외부 guard에서 반환하므로 V4가 없을 수 있다. 실제 getter가 중간에 예외를 던져 반환하지
+못한 경우에도 새로운 catch나 진단용 조회를 추가하지 않는다. 창 조회 내부의 기존 예외/해제 실패는
+기존 null/fail-closed 경로로 남고 V4는 이를 근본 원인별로 분해하지 않는다.
+
+진단 객체는 boolean과 고정 enum만 보유한다. 원시 이벤트·패키지·창 ID·토큰·좌표·예외·
+timestamp를 보존하거나 출력하지 않는다. sink의 일반 예외/취소 예외만 기존 diagnosticWrite로
+격리하고 실제 작업의 예외·취소·정리는 그대로 전파한다. 로그 비용은 0이 아니며 판정과 Android
+상태를 원자적으로 결합하지 않는다. 첫 거부 이후 이벤트나 여러 프롬프트를 식별자 없이 한 시도로
+연결할 수 없다. C 실제 픽셀 표시·제거·TalkBack 동작과 해당 이벤트의 실제 발생원은 Android 미검증이다.
+이번 V4 작업에서 Android/에뮬레이터/P01은 실행하지 않는다.
+
+### V4 로컬 검증 (2026-10-23)
+
+신규29개를 포함한 대상 JVM91개 통과. 실제 tracker와 같은 inline 판정 경계로 getter 순서·
+횟수·조기 반환, 거부 코드·첫 분기 우선, 1회 보고·sink 실패, 작업 예외/취소 전파와 finally,
+null 진단 포트의 동등성을 검사했다. 기존 mayIgnore 식과 전체 boolean 입력 조합도 비교했다.
+JDK17/offline 전체 JVM1,606개(앱1,145·호스트443·합성 팝업 앱18), 실패·오류·skip0.
+Debug/Release·AndroidTest APK 빌드 및 앱 Debug/Release·호스트 Debug Lint 통과(이슈0).
+추가 합성 팝업 앱 Lint는 기존 TypographyFractions/SetTextI18n 경고2건, 오류0이다.
+패키징·DEX 격리, Debug의 V3/V4 로그 표식 존재·Release의 부재, Release null 반환 bytecode,
+추적/미추적 파일 공백 검사와 변경 범위를 확인했다. 기존 readOwnedIds의 조회·해제 본문과
+서비스/런타임/세션·수집기·Manifest·gradle.properties는 그대로다. Android 실제 getter/recycle·
+창 표시·이벤트 발생원·P01은 이 검증으로 입증하지 않는다. 커밋·푸시·PR 변경은 하지 않는다.
 JVM 합성 회귀는 Android Binder·실제 P01 차단 원인·Logcat 실측을 대신하지 않는다.

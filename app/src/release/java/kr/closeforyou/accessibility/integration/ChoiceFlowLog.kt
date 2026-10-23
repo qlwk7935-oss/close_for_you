@@ -4,4 +4,5 @@ package kr.closeforyou.accessibility.integration
 internal object ChoiceFlowLog {
     fun connected() = Unit
     fun create(): ChoiceFlowDiagnostic? = null
+    fun overlayEvents(): OverlayEventDiagnostic? = null
 }

@@ -1,5 +1,6 @@
 package kr.closeforyou.accessibility.integration
 
+import android.view.accessibility.AccessibilityEvent
 import kr.closeforyou.core.model.SnapshotToken
 import kr.closeforyou.ui.voice.overlay.OverlayWindowState
 import kr.closeforyou.ui.voice.overlay.OverlayWindowStatus
@@ -11,11 +12,74 @@ internal object OwnedOverlayEventPolicy {
     fun mayTrack(state: OverlayWindowState): Boolean =
         state.status == OverlayWindowStatus.SHOWING && state.generation > 0L
     fun mayIgnore(kind: OverlayEventKind, boundWindow: Boolean, liveOwnership: Boolean,
-        packageMatches: Boolean, packageMissing: Boolean, currentToken: Boolean): Boolean =
-        boundWindow && liveOwnership && currentToken &&
-            (packageMatches || (packageMissing && kind == OverlayEventKind.OWN_WINDOW_LAYOUT)) &&
-            kind in setOf(OverlayEventKind.CONTENT, OverlayEventKind.WINDOW_STATE,
-                OverlayEventKind.OWN_WINDOW_LAYOUT, OverlayEventKind.FOCUS)
+        packageMatches: Boolean, packageMissing: Boolean, currentToken: Boolean,
+        diagnostic: OverlayEventDiagnostic? = null): Boolean {
+        if (!boundWindow || !liveOwnership) {
+            diagnostic?.bindingRefused(currentToken)
+            return false
+        }
+        if (!currentToken) { diagnostic?.rejected(OverlayEventRejection.CURRENT_UNAVAILABLE); return false }
+        if (!(packageMatches || (packageMissing && kind == OverlayEventKind.OWN_WINDOW_LAYOUT))) {
+            diagnostic?.rejected(OverlayEventRejection.PACKAGE_UNCONFIRMED)
+            return false
+        }
+        if (kind !in setOf(OverlayEventKind.CONTENT, OverlayEventKind.WINDOW_STATE,
+                OverlayEventKind.OWN_WINDOW_LAYOUT, OverlayEventKind.FOCUS)) {
+            diagnostic?.rejected(OverlayEventRejection.UNKNOWN)
+            return false
+        }
+        return true
+    }
+}
+
+/** Same lazy read order as the Android tracker. Inline callbacks retain no framework objects.
+ * JVM regressions use this exact driver boundary, including both original windowChanges reads.
+ */
+internal inline fun inspectOwnedOverlayEvent(
+    state: OverlayWindowState,
+    eventType: () -> Int,
+    windowChanges: () -> Int,
+    packageName: () -> String?,
+    currentToken: () -> SnapshotToken?,
+    liveBinding: (SnapshotToken?, OverlayEventDiagnostic?) -> Boolean,
+    ownPackageName: () -> String,
+    diagnostic: OverlayEventDiagnostic?,
+): Boolean {
+    if (!OwnedOverlayEventPolicy.mayTrack(state)) return false
+    val category = when (eventType()) {
+        AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED -> OverlayEventCategory.CONTENT_CHANGED
+        AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED -> OverlayEventCategory.WINDOW_STATE_CHANGED
+        AccessibilityEvent.TYPE_VIEW_FOCUSED, AccessibilityEvent.TYPE_VIEW_ACCESSIBILITY_FOCUSED,
+        AccessibilityEvent.TYPE_VIEW_ACCESSIBILITY_FOCUS_CLEARED -> OverlayEventCategory.FOCUS
+        AccessibilityEvent.TYPE_WINDOWS_CHANGED -> OverlayEventCategory.WINDOWS_CHANGED
+        else -> OverlayEventCategory.OTHER
+    }
+    diagnostic?.begin(category)
+    val kind = when (category) {
+        OverlayEventCategory.CONTENT_CHANGED -> OverlayEventKind.CONTENT
+        OverlayEventCategory.WINDOW_STATE_CHANGED -> OverlayEventKind.WINDOW_STATE
+        OverlayEventCategory.FOCUS -> OverlayEventKind.FOCUS
+        OverlayEventCategory.WINDOWS_CHANGED -> {
+            val harmless = AccessibilityEvent.WINDOWS_CHANGE_ADDED or AccessibilityEvent.WINDOWS_CHANGE_BOUNDS or
+                AccessibilityEvent.WINDOWS_CHANGE_LAYER or AccessibilityEvent.WINDOWS_CHANGE_TITLE
+            if (windowChanges() != 0 && windowChanges() and harmless.inv() == 0)
+                OverlayEventKind.OWN_WINDOW_LAYOUT else OverlayEventKind.UNKNOWN
+        }
+        OverlayEventCategory.OTHER -> OverlayEventKind.INTERACTION
+    }
+    if (kind == OverlayEventKind.INTERACTION || kind == OverlayEventKind.UNKNOWN) {
+        diagnostic?.rejected(if (kind == OverlayEventKind.UNKNOWN) OverlayEventRejection.MASK_UNSUPPORTED
+            else OverlayEventRejection.OWNERSHIP_NOT_CHECKED)
+        diagnostic?.completed(false)
+        return false
+    }
+    val pkg = packageName()
+    val current = currentToken()
+    val owns = liveBinding(current, diagnostic)
+    val ignored = OwnedOverlayEventPolicy.mayIgnore(kind, owns, owns,
+        pkg == ownPackageName(), pkg == null, current != null, diagnostic)
+    diagnostic?.completed(ignored)
+    return ignored
 }
 
 /** Window identity is bound only from a new, uniquely owned window, including delayed add events. */
@@ -30,13 +94,34 @@ internal class OwnedOverlayBinding {
             before = ownedBeforeShow.toSet(); token = current; generation = currentGeneration
         }
     }
-    fun matches(eventWindow: Int, liveOwned: Set<Int>?, current: SnapshotToken?, currentGeneration: Long): Boolean {
-        val previous = before ?: return false
-        if (generation <= 0L || generation != currentGeneration || token == null || token != current || liveOwned == null || liveOwned.size > 32) return false
+    fun matches(eventWindow: Int, liveOwned: Set<Int>?, current: SnapshotToken?, currentGeneration: Long,
+        diagnostic: OverlayEventDiagnostic? = null): Boolean {
+        val previous = before ?: run {
+            diagnostic?.bindingRejected(OverlayBindingRejection.BEFORE_SET_UNAVAILABLE)
+            return false
+        }
+        if (generation <= 0L || generation != currentGeneration || token == null) {
+            diagnostic?.bindingRejected(OverlayBindingRejection.BINDING_MISMATCH); return false
+        }
+        if (token != current) {
+            diagnostic?.bindingRejected(OverlayBindingRejection.TOKEN_MISMATCH); return false
+        }
+        if (liveOwned == null || liveOwned.size > 32) {
+            diagnostic?.bindingRejected(OverlayBindingRejection.OWNED_WINDOW_UNCONFIRMED); return false
+        }
         val known = bound
-        if (known != null) return eventWindow == known && known in liveOwned
-        val created = liveOwned.filter { it !in previous }.singleOrNull() ?: return false
-        if (eventWindow != created) return false
+        if (known != null) {
+            val matches = eventWindow == known && known in liveOwned
+            if (!matches) diagnostic?.bindingRejected(OverlayBindingRejection.BINDING_MISMATCH)
+            return matches
+        }
+        val created = liveOwned.filter { it !in previous }.singleOrNull() ?: run {
+            diagnostic?.bindingRejected(OverlayBindingRejection.OWNED_WINDOW_UNCONFIRMED)
+            return false
+        }
+        if (eventWindow != created) {
+            diagnostic?.bindingRejected(OverlayBindingRejection.BINDING_MISMATCH); return false
+        }
         bound = created
         return true
     }
