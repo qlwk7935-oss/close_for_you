@@ -27,6 +27,7 @@ internal class ServiceChoiceIntegration private constructor(
     private val history: AnnouncementHistory,
     private val tts: TtsPopupAnnouncer,
 ) {
+    private val diagnostic = ChoiceFlowLog.create()
     private val subscription = ChoiceSubscription()
     private val settings = UiVoicePreferences.get(service)
     private val announcer = CurrentChoiceAnnouncer(tts,
@@ -96,7 +97,7 @@ internal class ServiceChoiceIntegration private constructor(
     }
     private val session = NonExecutingChoiceSession(source, AccessibilityRuntime, presenter, controlsAnnouncer,
         userInteracting, { tts.announcementAvailable }, SystemClock::uptimeMillis,
-        UiText(service::getString), { PromptSpeech.content(service, it) }, resources, presentationHealth)
+        UiText(service::getString), { PromptSpeech.content(service, it) }, resources, presentationHealth, diagnostic)
 
     fun start() {
         check(job == null) { "CHOICE_SESSION_ALREADY_STARTED" }
@@ -111,7 +112,8 @@ internal class ServiceChoiceIntegration private constructor(
         subscription.await()
         if (closed || failed || presentationHealth.failed || job?.isActive != true) throw CancellationException("CHOICE_SESSION_UNAVAILABLE")
     }
-    fun invalidate() {
+    fun invalidate(cause: ChoiceInvalidationCause = ChoiceInvalidationCause.UNKNOWN) {
+        diagnostic?.record(ChoiceFlowPoint.INVALIDATED, ChoiceFlowDetail.SERVICE_BOUNDARY, cause)
         // Retire callbacks before C dismiss/stop can reenter, even before Runtime is invalidated.
         session.invalidate()
         val clean = ChoiceResources(listOf({ presenter.dismiss() }, { announcer.stop() })).close()
@@ -119,8 +121,9 @@ internal class ServiceChoiceIntegration private constructor(
     }
     fun shouldIgnore(event: AccessibilityEvent): Boolean = !closed && !failed && !presentationHealth.failed &&
         OwnedOverlayEventPolicy.mayTrack(overlay.windowState) && tracker.shouldIgnore(event, overlay.windowState)
-    fun close() {
+    fun close(cause: ChoiceInvalidationCause = ChoiceInvalidationCause.UNKNOWN) {
         if (closed) return
+        diagnostic?.record(ChoiceFlowPoint.INVALIDATED, ChoiceFlowDetail.SERVICE_BOUNDARY, cause)
         closed = true
         job?.cancel()
         session.close()

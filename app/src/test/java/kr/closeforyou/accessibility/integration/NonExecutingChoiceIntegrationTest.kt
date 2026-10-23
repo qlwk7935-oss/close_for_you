@@ -71,13 +71,15 @@ class NonExecutingChoiceIntegrationTest {
         override suspend fun repeatLast() = AnnouncementReceipt(AnnouncementState.TTS_COMPLETED)
         override fun stop() { stops++ }
     }
-    private class Harness(val scope: TestScope, val health: ChoicePresentationHealth = ChoicePresentationHealth()) {
+    private class Harness(val scope: TestScope, val health: ChoicePresentationHealth = ChoicePresentationHealth(),
+        diagnostic: ChoiceFlowDiagnostic? = null) {
         var allowed = true; var interacting = false; var extractions = 0
         var extractionWait: CompletableDeferred<Unit>? = null
         val live = LiveEvidenceState({ 1_000 + scope.testScheduler.currentTime }, { allowed })
         val bus = MutableSharedFlow<PopupEvent>(replay = 0, extraBufferCapacity = 1,
             onBufferOverflow = BufferOverflow.DROP_OLDEST)
         val subscription = ChoiceSubscription()
+        var lastCandidate: PopupEvent.Candidate? = null
         val presenter = Presenter(); val speech = Speech(); var cleanup = 0
         val source = object : SnapshotSource {
             override val events = bus.onSubscription { subscription.subscribed() }
@@ -92,7 +94,7 @@ class NonExecutingChoiceIntegrationTest {
         }
         val session = NonExecutingChoiceSession(source, extractor, presenter, speech, { interacting }, { true },
             { 1_000 + scope.testScheduler.currentTime }, UiText { "CODE_$it" }, { "SYNTHETIC_BODY" },
-            ChoiceResources(listOf({ presenter.dismiss() }, { speech.stop() }, { cleanup++ })), health)
+            ChoiceResources(listOf({ presenter.dismiss() }, { speech.stop() }, { cleanup++ })), health, diagnostic)
         var failureCode: String? = null
         val job = scope.backgroundScope.launch(start = CoroutineStart.UNDISPATCHED) {
             try { session.run() }
@@ -109,9 +111,104 @@ class NonExecutingChoiceIntegrationTest {
             live.connect(); live.invalidate(version)
             val permit = requireNotNull(live.begin(snapshot))
             check(live.publish(permit, snapshot, detection, f.analysis.copy(token = token), EvidenceIssue.NONE))
-            check(live.deliver(permit, snapshot) { bus.tryEmit(PopupEvent.Candidate(snapshot, detection)) })
+            val candidate = PopupEvent.Candidate(snapshot, detection)
+            lastCandidate = candidate
+            check(live.deliver(permit, snapshot) { bus.tryEmit(candidate) })
             scope.runCurrent()
         }
+    }
+    private class Observations {
+        val points = mutableListOf<ChoiceFlowPoint>()
+        val details = mutableListOf<ChoiceFlowDetail>()
+        val causes = mutableListOf<ChoiceInvalidationCause>()
+        val diagnostic = ChoiceFlowDiagnostic { point, detail, cause ->
+            points += point; details += detail; causes += cause
+        }
+    }
+    @Test fun v3ObservesRealCandidateWiringClassifierAndGuardedCPresentationInOrder() = runTest {
+        val o = Observations(); val h = Harness(this, diagnostic = o.diagnostic)
+        h.emit()
+        assertEquals(listOf(ChoiceFlowPoint.CANDIDATE_RECEIVED, ChoiceFlowPoint.CURRENT_ACCEPTED,
+            ChoiceFlowPoint.CLASSIFIED, ChoiceFlowPoint.PRESENT_REQUESTED, ChoiceFlowPoint.SHOWN), o.points)
+        assertNotNull(h.presenter.prompt)
+        assertEquals(0, h.session.executor.reviews)
+    }
+    @Test fun v3RejectsStaleCandidateBeforeBOrC() = runTest {
+        val o = Observations(); val h = Harness(this, diagnostic = o.diagnostic)
+        h.emit(); o.points.clear(); o.details.clear()
+        h.live.invalidate(2)
+        h.bus.tryEmit(h.lastCandidate!!); runCurrent()
+        assertEquals(listOf(ChoiceFlowPoint.CANDIDATE_RECEIVED, ChoiceFlowPoint.CURRENT_REJECTED), o.points)
+        assertEquals(ChoiceFlowDetail.TOKEN_MISMATCH, o.details.last())
+        assertEquals(1, h.presenter.shows)
+    }
+    @Test fun v3DuplicateRemainsRejectedWithoutAnotherClassificationOrShow() = runTest {
+        val o = Observations(); val h = Harness(this, diagnostic = o.diagnostic)
+        h.emit(); o.points.clear(); o.details.clear()
+        h.bus.tryEmit(h.lastCandidate!!); runCurrent()
+        assertEquals(listOf(ChoiceFlowPoint.CANDIDATE_RECEIVED, ChoiceFlowPoint.CURRENT_REJECTED), o.points)
+        assertEquals(ChoiceFlowDetail.DUPLICATE, o.details.last())
+        assertEquals(1, h.presenter.shows)
+    }
+    @Test fun v3InvalidSignalCannotBePromotedByTheDiagnostic() = runTest {
+        val o = Observations(); val h = Harness(this, diagnostic = o.diagnostic)
+        h.emit(signals = persistentSetOf(PopupSignal.INSUFFICIENT_EVIDENCE))
+        assertTrue(o.points.contains(ChoiceFlowPoint.CURRENT_REJECTED))
+        assertEquals(ChoiceFlowDetail.INVALID_CANDIDATE, o.details.last())
+        assertFalse(o.points.contains(ChoiceFlowPoint.CLASSIFIED)); assertEquals(0, h.presenter.shows)
+    }
+    @Test fun v3TtlDuringExtractionNeverLogsClassifiedOrShown() = runTest {
+        val o = Observations(); val h = Harness(this, diagnostic = o.diagnostic)
+        h.extractionWait = CompletableDeferred(); h.emit()
+        advanceTimeBy(5_000); h.extractionWait!!.complete(Unit); runCurrent()
+        assertFalse(o.points.contains(ChoiceFlowPoint.CLASSIFIED))
+        assertFalse(o.points.contains(ChoiceFlowPoint.SHOWN)); assertEquals(0, h.presenter.shows)
+        h.job.cancelAndJoin()
+        assertEquals(1, h.cleanup)
+    }
+    @Test fun v3ReceivedInvalidationHasUnknownCauseAndClosesRealFlowPrompt() = runTest {
+        val o = Observations(); val h = Harness(this, diagnostic = o.diagnostic); h.emit()
+        h.live.invalidate(2); h.bus.tryEmit(PopupEvent.Invalidated(2)); runCurrent()
+        val i = o.points.indexOf(ChoiceFlowPoint.INVALIDATED)
+        assertTrue(i >= 0); assertEquals(ChoiceFlowDetail.CONSUMER_BOUNDARY, o.details[i])
+        assertEquals(ChoiceInvalidationCause.UNKNOWN, o.causes[i]); assertNull(h.presenter.prompt)
+    }
+    @Test fun v3RealGuardPropagatesCFailedResultWithoutShown() = runTest {
+        val o = Observations(); val h = Harness(this, diagnostic = o.diagnostic)
+        h.presenter.nextResult = PromptShowResult.FAILED; h.emit()
+        assertTrue(o.points.contains(ChoiceFlowPoint.PRESENT_REQUESTED)); assertTrue(o.points.contains(ChoiceFlowPoint.FAILED))
+        assertFalse(o.points.contains(ChoiceFlowPoint.SHOWN)); assertTrue(h.health.failed)
+    }
+    @Test fun v3RealGuardPropagatesCBlockedResultWithoutShown() = runTest {
+        val o = Observations(); val h = Harness(this, diagnostic = o.diagnostic)
+        h.presenter.nextResult = PromptShowResult.BLOCKED; h.emit()
+        assertTrue(o.points.contains(ChoiceFlowPoint.BLOCKED)); assertFalse(o.points.contains(ChoiceFlowPoint.SHOWN))
+        assertTrue(h.health.failed)
+    }
+    @Test fun v3SinkCancellationCannotCancelCandidateWorkOrSkipCleanup() = runTest {
+        val h = Harness(this, diagnostic = ChoiceFlowDiagnostic { _, _, _ -> throw CancellationException("SYNTHETIC_SECRET") })
+        h.emit(); assertNotNull(h.presenter.prompt); assertTrue(h.job.isActive)
+        h.job.cancelAndJoin(); assertEquals(1, h.cleanup); assertNull(h.presenter.prompt)
+    }
+    @Test fun v3SinkExceptionCannotChangeNormalFlowOrExecutorResult() = runTest {
+        val h = Harness(this, diagnostic = ChoiceFlowDiagnostic { _, _, _ -> throw IllegalStateException("SYNTHETIC_SECRET") })
+        h.emit(); assertNotNull(h.presenter.prompt)
+        h.presenter.pick(PromptOptionKind.PRESS_CANDIDATE); runCurrent()
+        assertEquals(1, h.session.executor.reviews)
+        assertEquals(PressFailure.NOT_PRESSED, h.presenter.prompt?.pressFailure)
+        h.job.cancelAndJoin(); assertEquals(1, h.cleanup)
+    }
+    @Test fun v3ActualCancellationStillClosesResourcesAndReportsCancellation() = runTest {
+        val o = Observations(); val h = Harness(this, diagnostic = o.diagnostic)
+        h.emit(); h.job.cancelAndJoin()
+        assertTrue(h.job.isCancelled); assertTrue(o.points.contains(ChoiceFlowPoint.SESSION_CANCELLED))
+        assertEquals(1, h.cleanup); assertNull(h.presenter.prompt)
+    }
+    @Test fun v3RemoveFailureStillAttemptsRemainingResources() = runTest {
+        val o = Observations(); val h = Harness(this, diagnostic = o.diagnostic)
+        h.emit(); h.presenter.dismissFailure = IllegalStateException("SYNTHETIC_SECRET")
+        h.job.cancelAndJoin()
+        assertTrue(h.health.failed); assertEquals(1, h.cleanup); assertTrue(h.job.isCancelled)
     }
     @Test fun replayZeroConsumerRegistersBeforeFirstActualStatePublication() = runTest {
         val h = Harness(this); runCurrent(); h.subscription.await()

@@ -184,6 +184,7 @@ internal class NonExecutingChoiceSession(
     private val contentText: (PopupAnalysis) -> String,
     private val resources: ChoiceResources,
     private val presentationHealth: ChoicePresentationHealth = ChoicePresentationHealth(),
+    private val diagnostic: ChoiceFlowDiagnostic? = null,
 ) {
     private var accepted: SnapshotToken? = null
     private var lastDelivered: SnapshotToken? = null
@@ -194,11 +195,19 @@ internal class NonExecutingChoiceSession(
             if (!closed && !presentationHealth.failed) source.currentToken()?.takeIf { it == accepted } else null
         override val events = flow {
             source.events.collect { event ->
-                if (closed || presentationHealth.failed) return@collect
+                if (event is PopupEvent.Candidate) diagnostic?.record(ChoiceFlowPoint.CANDIDATE_RECEIVED)
+                if (closed || presentationHealth.failed) {
+                    if (event is PopupEvent.Candidate)
+                        diagnostic?.record(ChoiceFlowPoint.CURRENT_REJECTED, ChoiceFlowDetail.SESSION_UNAVAILABLE)
+                    return@collect
+                }
                 when (event) {
                     is PopupEvent.Candidate -> {
                         val token = event.snapshot.token
-                        if (source.currentToken() != token) return@collect
+                        if (source.currentToken() != token) {
+                            diagnostic?.record(ChoiceFlowPoint.CURRENT_REJECTED, ChoiceFlowDetail.TOKEN_MISMATCH)
+                            return@collect
+                        }
                         val signals = event.detection.signals
                         val now = clock()
                         val valid = event.snapshot.completeness == SnapshotCompleteness.COMPLETE &&
@@ -208,14 +217,19 @@ internal class NonExecutingChoiceSession(
                             event.snapshot.capturedAtUptimeMillis >= 0 && now >= event.snapshot.capturedAtUptimeMillis &&
                             now - event.snapshot.capturedAtUptimeMillis < 5_000
                         if (!valid) {
+                            diagnostic?.record(ChoiceFlowPoint.CURRENT_REJECTED, ChoiceFlowDetail.INVALID_CANDIDATE)
                             accepted = null
                             emit(PopupEvent.Blocked(PrivacyBlockReason.UNREADABLE_TREE, token.screenVersion))
                         } else if (lastDelivered != token) {
                             accepted = token; lastDelivered = token
+                            diagnostic?.record(ChoiceFlowPoint.CURRENT_ACCEPTED)
                             emit(event)
+                        } else {
+                            diagnostic?.record(ChoiceFlowPoint.CURRENT_REJECTED, ChoiceFlowDetail.DUPLICATE)
                         }
                     }
                     is PopupEvent.Blocked, is PopupEvent.Invalidated -> {
+                        diagnostic?.record(ChoiceFlowPoint.INVALIDATED, ChoiceFlowDetail.CONSUMER_BOUNDARY)
                         accepted = null
                         lastDelivered = null
                         emit(event)
@@ -235,13 +249,20 @@ internal class NonExecutingChoiceSession(
         val batch = AnnouncementBatcher(this, onFlush = { /* No executed actions can be batched. */ })
         batcher = batch
         try {
-            PopupChoiceFlow(wiring.source, wiring.extractor, DecisionPopupClassifier(), safePresenter,
+            PopupChoiceFlow(wiring.source, wiring.extractor, diagnosedClassifier(DecisionPopupClassifier(), diagnostic),
+                diagnosedPresenter(safePresenter, diagnostic),
                 announcer, batch, object : ChoiceHandler {
                     override suspend fun handle(choice: UserChoice, analysis: PopupAnalysis) = reviewChoice(choice, analysis)
                     override suspend fun handle(choice: UserChoice, analysis: PopupAnalysis, origin: ChoiceOrigin) =
                         reviewChoice(choice, analysis) // C metadata is not a proof of user authorization.
                 }, text, contentText, moveToButtonEnabled = false, rememberChoicesEnabled = false,
                 rememberStore = RememberedPopupStore.NONE, autoCloseEnabledForApp = { false }).run()
+        } catch (cancelled: CancellationException) {
+            diagnostic?.record(ChoiceFlowPoint.SESSION_CANCELLED)
+            throw cancelled
+        } catch (failure: Exception) {
+            diagnostic?.record(ChoiceFlowPoint.SESSION_EXCEPTION)
+            throw failure
         } finally {
             runOwner = null
             withContext(NonCancellable) { close() }

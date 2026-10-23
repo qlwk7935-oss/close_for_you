@@ -128,4 +128,75 @@ P01 이벤트·C 창·Logcat 전달 성공을 JVM에서 재현했다고 주장�
 
 NOT_EXECUTED / attempted=false / productionReady=false, F0 정책·수집 예산·기존
 거부 조건·원본 14개·Dialog/레이아웃 시험·provider 보안 계약은 그대로 유지한다.
+
+## V3 — A 소비자 → B 분류 → C 표시 경계
+
+V2의 활성/작업 종료/차단 진단은 변경하지 않는다. V3는 별도 Debug 태그
+`A_ChoiceFlow`를 사용하며 연결 성공 시 `A_CHOICE_DEBUG;STATE=ENABLED;VERSION=V3`를
+한 번 출력한다. Release의 `ChoiceFlowLog`는 null/no-op이고 Logcat sink와 아래 문자열
+formatter가 없다. A 소유 코드만 수정하며 B/C 원본과 공통 계약은 변경하지 않는다.
+
+다음은 **형식 예시이며 실제 Android 관측 결과가 아니다.**
+
+```text
+A_CHOICE_FLOW;POINT=CANDIDATE_RECEIVED;DETAIL=NONE;CAUSE=UNKNOWN
+A_CHOICE_FLOW;POINT=CURRENT_ACCEPTED;DETAIL=NONE;CAUSE=UNKNOWN
+A_CHOICE_FLOW;POINT=CLASSIFIED;DETAIL=NONE;CAUSE=UNKNOWN
+A_CHOICE_FLOW;POINT=PRESENT_REQUESTED;DETAIL=NONE;CAUSE=UNKNOWN
+A_CHOICE_FLOW;POINT=SHOWN;DETAIL=NONE;CAUSE=UNKNOWN
+A_CHOICE_FLOW;POINT=INVALIDATED;DETAIL=SERVICE_BOUNDARY;CAUSE=EVENT
+```
+
+- `CANDIDATE_RECEIVED`: A 통합 소비자가 실제 Candidate를 받았다. 발행 로그만으로 이 단계를 추정하지 않는다.
+- `CURRENT_ACCEPTED`: 기존 토큰·완전성·신호·원래 TTL·중복 검사에 통과해 하류로 전달하는 경계다.
+  이후 화면 현재성이 계속 유지된다는 인증은 아니다.
+- `CURRENT_REJECTED`: 기존 거부 분기에서 `SESSION_UNAVAILABLE / TOKEN_MISMATCH /
+  INVALID_CANDIDATE / DUPLICATE`를 기록한다. TOKEN_MISMATCH가 TTL 때문인지는 추정하지 않는다.
+- `CLASSIFIED`: 실제 `DecisionPopupClassifier.classify()`가 정상 반환했다. 후보 생성 개수나 실행 허가를 뜻하지 않는다.
+- `PRESENT_REQUESTED`: C를 감싸는 A의 기존 GuardedChoicePresenter에 표시를 요청했다.
+  `SHOWN / BLOCKED / FAILED`는 이 **A 가드 포함 표시 함수**의 실제 반환값이다.
+  BLOCKED/FAILED만으로 C 내부까지 호출됐다고 단정하지 않는다.
+- `SHOWN`은 함수의 반환 관측이며 실제 픽셀 표시·유지·TTS 재생·사용자 인지를 입증하지 않는다.
+  표시 도중 또는 직후 무효화될 수 있다. 실제 예외/취소는 반환 FAILED로 꾸미지 않고
+  `PRESENT_EXCEPTION / PRESENT_CANCELLED`를 기록한 뒤 원래 예외를 그대로 전파한다.
+- `SESSION_CANCELLED / SESSION_EXCEPTION`은 기존 flow 본문이 해당 예외로 종료되는 경계다.
+  뒤의 기존 finally 정리는 그대로 수행하며, 이 표식은 정리 완료 인증이 아니다.
+
+`INVALIDATED;DETAIL=SERVICE_BOUNDARY`는 기존 A invalidate/close 호출 경계다.
+EVENT는 기존 접근성 이벤트 무효화, TTL은 기존 만료 coroutine, POLICY는 설정 observer,
+SERVICE는 연결 초기화·interrupt·configuration callback·disconnect/재연결 정리 경계다.
+이는 원인 **경계** 분류이며 특정 Android 창이나 근본 원인 규명은 아니다.
+`DETAIL=CONSUMER_BOUNDARY;CAUSE=UNKNOWN`은 실제 Blocked/Invalidated 이벤트 수신이다.
+공통 이벤트에 원인 정보가 없으므로 앞선 서비스 로그의 원인을 임의로 복사하지 않는다.
+나머지 close 경계도 확정할 수 없으면 UNKNOWN으로 유지한다. 서비스와 소비자 양쪽에서
+동일한 무효화의 로그가 나올 수 있으므로 줄 수를 고유 사건 수로 해석하지 않는다.
+
+진단에는 enum 외 입력과 화면 객체·예외 저장소·시계가 없다. 추가 수집/getter/OCR/IPC,
+시계 조회, Flow 재발행, 재시도, suspend 작업을 넣지 않는다. 비중단 sink 예외(진단 sink가
+던진 CancellationException 포함)는 진단 경계에서만 격리한다. 실제 classify/present/flow의
+취소·예외와 기존 finally 순서는 그대로 유지한다. Debug 로그 비용은 0이 아니므로
+타이밍에 영향이 없다고 주장하지 않는다. Release는 진단과 래퍼를 생성하지 않는다.
+
+V3에도 식별자가 없다. 연속 후보·재연결·서로 다른 작업의 로그를 한 시도로 연결하거나,
+V2 PUBLISHED와 특정 V3 행의 원자적 결합을 주장하지 않는다. 로그 유실, 구독 전 유실,
+DROP_OLDEST, 바인더 정지, 발행 후 현재성 변경, sink 실패는 일부 로그 부재만으로
+완전히 구별되지 않는다. SHOWN 이후 실제 창 제거 시점·C 내부 실패 원인·B 후보 개수·
+정확한 남은 TTL도 출력하지 않는다. 무효화 원인을 얻으려고 Android 객체를 추가 조회하지 않는다.
+
+JVM은 실제 NonExecutingChoiceSession → B wiring/classifier → C PopupChoiceFlow → A 표시 가드와
+같은 V3 래퍼를 사용한다. Android View/WindowManager 대신 fake presenter/speech를 쓴다.
+Debug/Release 빌드와 Lint/DEX 검사는 Android P01 계측 성공의 증거가 아니다.
+이번 작업에서는 Android/에뮬레이터/P01을 실행하지 않으며 수동 재시험도 요구하지 않는다.
+
+### V3 로컬 검증 (2026-10-23)
+
+JDK17/offline에서 신규 회귀23개를 포함한 대상 JVM62개와 전체 JVM1,577개
+(앱1,116·호스트443·합성 팝업 앱18)를 실제 실행해 실패·오류·skip0을 확인했다.
+TTL 회귀 작성 중 후보 처리 취소와 세션 전체 종료의 수명을 혼동한 cleanup 기대값을
+수정한 뒤 대상·전체 시험을 재검증했다. 운영 TTL/취소 조건은 바꾸지 않았다.
+Debug/Release·AndroidTest APK 빌드, 앱 Debug/Release·호스트 Debug Lint 통과(이슈0).
+추가 합성 팝업 앱 Lint는 오류0, 기존 TypographyFractions/SetTextI18n 경고2건이다.
+패키징·DEX 격리, Release port bytecode의 즉시 return/null 반환, Debug APK의 V3 로그 표식
+존재 및 Release APK의 표식 부재, 공백·A 소유 변경 범위 검사를 확인했다.
+Android 실제 표시·Logcat 전달·P01 실행 결과가 아니며 커밋·푸시·PR 변경은 하지 않는다.
 JVM 합성 회귀는 Android Binder·실제 P01 차단 원인·Logcat 실측을 대신하지 않는다.

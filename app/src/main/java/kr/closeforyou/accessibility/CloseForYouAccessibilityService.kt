@@ -18,6 +18,8 @@ import kr.closeforyou.accessibility.capture.CaptureOcrPipeline
 import kr.closeforyou.accessibility.capture.KoreanMlKitOcr
 import kr.closeforyou.accessibility.capture.EvidenceOutcome
 import kr.closeforyou.accessibility.capture.EvidenceIssue
+import kr.closeforyou.accessibility.integration.ChoiceFlowLog
+import kr.closeforyou.accessibility.integration.ChoiceInvalidationCause
 import kr.closeforyou.core.model.*
 
 /** A owns nodes, privacy preflight and candidate detection; no external action is performed. */
@@ -52,6 +54,7 @@ class CloseForYouAccessibilityService : AccessibilityService() {
             initializeConnectedService()
             AccessibilityRuntime.serviceLifecycle.phase(ServiceLifecyclePhase.CONNECTED)
             EvidenceBlockLog.connected()
+            ChoiceFlowLog.connected()
         } catch (failure: Exception) {
             disconnect()
             AccessibilityRuntime.serviceLifecycle.phase(ServiceLifecyclePhase.INITIALIZATION_FAILED)
@@ -61,7 +64,7 @@ class CloseForYouAccessibilityService : AccessibilityService() {
 
     private fun initializeConnectedService() {
         ruleCleanup.close()
-        choiceIntegration?.close()
+        choiceIntegration?.close(ChoiceInvalidationCause.SERVICE)
         choiceIntegration = null
         collector.resetGeometry()
         serviceScope.cancel()
@@ -83,13 +86,13 @@ class CloseForYouAccessibilityService : AccessibilityService() {
             touching || !connected
         }
         choiceIntegration?.start()
-        invalidate(clearBaseline = true)
+        invalidate(clearBaseline = true, cause = ChoiceInvalidationCause.SERVICE)
         val application = applicationContext
         ruleCleanup.start(serviceScope) { kr.closeforyou.data.RuleStorage.cleanUp(application); Unit }
         settingsObserver = serviceScope.launch {
             preferences.state.collect {
                 DetectionObservationHook.policyChanged()
-                invalidate(clearBaseline = true)
+                invalidate(clearBaseline = true, cause = ChoiceInvalidationCause.POLICY)
                 if (!it.consentGranted) AccessibilityRuntime.block(PrivacyBlockReason.NO_CONSENT, freshness.version)
                 else if (it.paused) AccessibilityRuntime.block(PrivacyBlockReason.PAUSED, freshness.version)
             }
@@ -114,7 +117,7 @@ class CloseForYouAccessibilityService : AccessibilityService() {
             AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED, AccessibilityEvent.TYPE_WINDOWS_CHANGED -> DetectionInput.WINDOW
             else -> DetectionInput.INTERACTION
         })
-        val epoch = invalidate(clearBaseline = false)
+        val epoch = invalidate(clearBaseline = false, cause = ChoiceInvalidationCause.EVENT)
         if (eventType == AccessibilityEvent.TYPE_TOUCH_INTERACTION_START ||
             eventType == AccessibilityEvent.TYPE_TOUCH_EXPLORATION_GESTURE_START) {
             touching = true
@@ -206,7 +209,7 @@ class CloseForYouAccessibilityService : AccessibilityService() {
                 expiry = serviceScope.launch {
                     delay((result.snapshot.capturedAtUptimeMillis + SNAPSHOT_TTL_MILLIS -
                         SystemClock.uptimeMillis()).coerceAtLeast(0))
-                    if (freshness.isCurrent(epoch)) invalidate(clearBaseline = false)
+                    if (freshness.isCurrent(epoch)) invalidate(clearBaseline = false, cause = ChoiceInvalidationCause.TTL)
                 }
                 val evidenceDiagnostic = EvidenceBlockLog.beginWork(ServiceWorkKind.EVIDENCE)
                 evidenceJob = serviceScope.launchDiagnosed(evidenceDiagnostic) {
@@ -313,7 +316,7 @@ class CloseForYouAccessibilityService : AccessibilityService() {
             it.allowedPackages, inputMethodPackages)
     }
 
-    private fun invalidate(clearBaseline: Boolean): Long {
+    private fun invalidate(clearBaseline: Boolean, cause: ChoiceInvalidationCause = ChoiceInvalidationCause.UNKNOWN): Long {
         pendingCapture?.cancel()
         pendingCapture = null
         evidenceJob?.cancel()
@@ -322,18 +325,21 @@ class CloseForYouAccessibilityService : AccessibilityService() {
         expiry = null
         if (clearBaseline) detector.clear()
         return freshness.invalidate().also {
-            choiceIntegration?.invalidate()
+            choiceIntegration?.invalidate(cause)
             AccessibilityRuntime.invalidate(it)
         }
     }
 
-    override fun onInterrupt() { DetectionObservationHook.policyChanged(); invalidate(clearBaseline = true) }
+    override fun onInterrupt() {
+        DetectionObservationHook.policyChanged()
+        invalidate(clearBaseline = true, cause = ChoiceInvalidationCause.SERVICE)
+    }
 
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
         DetectionObservationHook.policyChanged()
         collector.resetGeometry()
-        invalidate(clearBaseline = true)
+        invalidate(clearBaseline = true, cause = ChoiceInvalidationCause.SERVICE)
     }
 
     override fun onUnbind(intent: Intent?): Boolean {
@@ -353,10 +359,10 @@ class CloseForYouAccessibilityService : AccessibilityService() {
         AccessibilityRuntime.serviceLifecycle.phase(ServiceLifecyclePhase.UNBOUND)
         connected = false
         touching = false
-        choiceIntegration?.close()
+        choiceIntegration?.close(ChoiceInvalidationCause.SERVICE)
         choiceIntegration = null
         settingsObserver?.cancel()
-        invalidate(clearBaseline = true)
+        invalidate(clearBaseline = true, cause = ChoiceInvalidationCause.SERVICE)
         AccessibilityRuntime.disconnect(freshness.version)
         serviceScope.cancel()
     }
