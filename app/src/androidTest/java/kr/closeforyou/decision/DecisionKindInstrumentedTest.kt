@@ -3,6 +3,7 @@ package kr.closeforyou.decision
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import kr.closeforyou.core.model.ExtractedText
 import kr.closeforyou.core.model.PopupAnalysis
+import kr.closeforyou.core.model.PopupClassification
 import kr.closeforyou.core.model.ScreenBounds
 import kr.closeforyou.core.model.SnapshotToken
 import kr.closeforyou.core.model.TextSource
@@ -49,6 +50,30 @@ class DecisionKindInstrumentedTest {
         listOf("Selected items 50% off") to DecisionKind.ADVERTISEMENT,
         listOf("You have won a prize", "Close") to DecisionKind.SUSPICIOUS,
     )
+
+    // Same table as EnglishBoundaryCases in the JVM DecisionEnglishBoundaryTest (today's classifier).
+    private val display = listOf(
+        "sign up하기" to PopupClassification.USER_DECISION,
+        "allow알림" to PopupClassification.USER_DECISION,
+        "Premium login하세요" to PopupClassification.USER_DECISION,
+        "AD운동화 특별전" to PopupClassification.ADVERTISEMENT,
+        "sponsored콘텐츠" to PopupClassification.ADVERTISEMENT,
+        "ADD 버튼 안내" to PopupClassification.NOTICE,
+        "payday 안내" to PopupClassification.NOTICE,
+        "read me" to PopupClassification.UNKNOWN,
+    )
+    private val riskyLabels = listOf("ok버튼" to true, "install하기" to true, "okay" to true, "booking" to false)
+    private val countdowns = listOf("skip in 5초" to 5, "Skip Ad in 7s" to 7, "Skip in 12 seconds" to 12, "skip in 5000" to null)
+
+    @Test fun todaysClassifierCatchesEnglishNextToHangulOnAndroid() {
+        val wrong = display.withIndex().filter { (_, case) ->
+            DecisionPopupClassifier().displayClassification(PopupAnalysis(token, texts = listOf(
+                ExtractedText(case.first, ScreenBounds(0, 0, 100, 100), TextSource.ACCESSIBILITY_TREE, null)).toPersistentList())) != case.second
+        }.map { "display ${it.index}" } +
+            riskyLabels.withIndex().filter { (_, c) -> DecisionKeywords.isRiskyButtonLabel(c.first) != c.second }.map { "label ${it.index}" } +
+            countdowns.withIndex().filter { (_, c) -> DecisionVideoAd.countdownIn(c.first) != c.second }.map { "countdown ${it.index}" }
+        assertTrue("wrong: $wrong", wrong.isEmpty())
+    }
 
     @Test fun everyCaseGetsTheSameKindOnAndroid() {
         val wrong = cases.withIndex().filter { (_, case) -> kindOf(*case.first.toTypedArray()) != case.second }.map { "case ${it.index}" }
