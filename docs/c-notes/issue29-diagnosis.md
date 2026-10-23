@@ -1,97 +1,127 @@
-# 이슈 #29 진단 — C 선택 창이 뜬 직후 무효화되는 원인 (C 단독, 2026-10-23)
+# 이슈 #29 진단 — C 선택 창이 뜬 직후 무효화되는 원인 (C 단독, 2026-10-23, 2차 갱신)
 
 > 대상: qlwk7935-oss/close_for_you#29 (A→B→C 비실행 통합에서 C 선택 창이 P01 위에 다 그려진 뒤 약 0.2초 만에 사라짐)
-> 환경: 에뮬레이터 AVD `Pixel_8` (API 37, Play 이미지), 재현 앱 P01, C debug 시험 서비스. **A 서비스는 켜지 않았고 A·B·D·core 코드는 바꾸지 않았다.**
-> 기록은 숫자·enum·참/거짓만이다. 화면 글자·창 제목 글자·노드 내용은 기록하지 않았다.
+> 근거: ① C debug 시험 서비스로 에뮬레이터 `Pixel_8`(API 37) 7회 실측, ② A V5 브랜치 `transfer/a-overlay-binding-detail-v5-20261023`(947ee73) 코드 읽기(수정 없음).
+> A 서비스로 P01을 실제 재현하는 것은 **하지 못했다**(아래 5절).
+> 기록은 숫자·enum·참/거짓만이다. 창 id·패키지 이름 원값, 화면 글자, 창 제목 글자는 문서와 로그에 남기지 않는다. 창은 "C 창 / 이전 C 창 / 대상 앱 창 / 시스템 창"처럼 상대 표기만 쓴다.
 
 ## 1. 결론
 
-**원인은 ① 순서다.** C 창이 `addView`로 뜬 직후에는 `getWindows()`에 C 창이 아직 없다. 그래서 계약대로 "show 직후 `update()`"를 해도 C 창 id를 모르고(`-1`), C 창에서 처음 오는 `TYPE_WINDOW_STATE_CHANGED` 2개가 **`TYPE_WINDOWS_CHANGED`(창 추가)보다 먼저** 도착한다. 이 순간 `OwnOverlayWindowTracker.isOwnOverlayWindowEvent()`는 보수적으로 `false`를 돌려주므로, A는 이 이벤트를 "C 창이 아닌 창의 변화"로 처리한다.
+**C 창 결합은 성공한다. 그 뒤 C 창이 아닌 다른 창에서 온 이벤트 1개를 A가 화면 변화로 보고 토큰을 무효화하는 것이 직접 원인이다.** 그 다른 창이 무엇인지(대상 앱 P01 창인지, 시스템 창인지)는 아직 확정하지 못했다.
 
-- ② id 차이: **아니다.** 7회 모두 `event.windowId`와 `getWindows()`의 C 창 id가 같았다 (30=30, 34=34 …).
-- ③ 제목·종류·패키지 불일치: **아니다.** C 창이 목록에 나타난 뒤에는 7회 모두 `type=ACCESSIBILITY_OVERLAY`, 루트 패키지=우리, 제목=고정 제목 일치로 정확히 1개가 매치됐다.
-- 창 자체는 사라지지 않는다: 시험 서비스(무효화 안 함)에서는 7회 모두 3초 뒤에도 `SHOWING`이고 `dumpsys window`에 `ty=ACCESSIBILITY_OVERLAY`, `isVisible=true`로 남았다. → 우진 영상의 "사라짐"은 A의 무효화 → `dismiss()` 경로로 보는 것이 맞다.
+1차 결론("① 순서 — C 창 id를 몰라서 C 창 이벤트를 놓친다")은 **C 계약 문서의 방식**(show 직후와 `TYPE_WINDOWS_CHANGED` 때만 `update()`)을 따를 때의 이야기였다. **A V5는 그 방식을 쓰지 않는다.** 그래서 1차 결론은 A 통합의 원인이 아니다. 아래에 정정한다.
 
-우진 로그의 `INVALIDATED;CAUSE=EVENT` → `BOUND_EVENT_WINDOW_MISMATCH`는 "A가 토큰에 묶은 창(P01 창) id ≠ 이벤트 창(C 창) id"로 읽힌다. 위 관측과 맞지만, **A 코드(우진 로컬, 미push)를 보지 못해서 이 해석은 추정이다.**
+### A V5가 실제로 하는 일 (코드로 확인)
+`accessibility/integration/ServiceChoiceIntegration.kt`, `OwnedOverlayEventPolicy.kt`, `CloseForYouAccessibilityService.kt`
+1. `present()` 직전: `readOwnedIds()`로 "C 창처럼 보이는 창" 집합(before)을 읽는다.
+   - 조건: 종류 `ACCESSIBILITY_OVERLAY`, 기본 디스플레이, 루트 노드의 패키지가 우리, 루트의 창 id가 그 창과 같음, 제목이 고정 제목.
+2. `SHOWN`이면 `binding.expect(before, 토큰, 세대)`를 한다. **C의 `OwnOverlayWindowTracker.update()`는 쓰지 않는다.**
+3. 이벤트마다(C 창이 `SHOWING`일 때) 이벤트를 종류별로 나눈다.
+   - 내용 변화 / 창 상태 변화 / 포커스 / `WINDOWS_CHANGED` 중 추가·크기·층·제목 변화만: 그 순간 `readOwnedIds()`를 다시 읽어 결합을 검사한다.
+   - 그 밖(클릭·터치·스크롤, 창 제거·활성 변화가 섞인 `WINDOWS_CHANGED` 등): 바로 "무시 안 함"이 된다.
+4. 결합 검사 (`OwnedOverlayBinding.matches`)
+   - 아직 결합 전: (지금 집합 − before)가 정확히 1개이고 이벤트 창이 그 창이면 **결합**하고 무시한다.
+   - 결합 후: 이벤트 창이 결합된 창과 다르면 `BOUND_EVENT_WINDOW_MISMATCH`로 거부한다. 같아도 그 창이 지금 목록에 없으면 거부한다(`BOUND_WINDOW_NOT_LIVE`).
+5. 무시되지 않은 이벤트는 서비스에서 **그대로 `invalidate(EVENT)`** 된다. 그러면 C 창이 `dismiss`되고, 재질문은 금지다.
+6. A의 디버그 로그(`A_OverlayEvent`)는 표시 1회당 **처음 거부된 이벤트 1개만** 남긴다. 남기는 것은 `EVENT`(종류), `REASON`, `BINDING_DETAIL`뿐이고, 어느 창이었는지는 남기지 않는다.
 
-## 2. 진단 방법
+### 우리 7회 실측과 우진 로그가 맞는 이유
+- A는 이벤트 때 창 목록을 다시 읽는다. 이것은 1차 문서의 "제안 1"과 같은 방식이다.
+- 우리 7회에서 **C 창 이벤트를 처리하는 시점에는 7/7 모두 C 창이 이미 목록에 있었다.** 그래서 이벤트 때 다시 읽는 판정(`ownFresh`)은 C 창 이벤트를 전부 맞혔다.
+  - 그렇다면 A도 C 창의 첫 이벤트에서 결합에 성공한다.
+  - 우진 로그의 `BOUND_EVENT_WINDOW_MISMATCH`("이미 결합된 C 창과 이벤트 창이 다름")도 결합이 적어도 한 번 성공했다는 뜻이다.
+- 같은 7회에서 C 창에서 온 이벤트(패키지=우리)는 **7/7 모두 이벤트 창 = 목록의 C 창**이었다. C 창이 자기 이벤트를 다른 창 id로 보내는 일은 없었다(1차의 ② 아님 유지).
+- 따라서 `BOUND_EVENT_WINDOW_MISMATCH`를 일으킨 이벤트는 **C 창이 아닌 창**에서 온 내용·상태·포커스 이벤트, 또는 그 창의 추가·크기·층·제목 변화이다.
+  - 그 이벤트는 A 설계대로 "화면이 바뀜"으로 처리되어 무효화된다.
+  - 이것은 A 결합 로직의 오판이 아니라 **무효화 범위**의 문제다.
 
-- `app/src/debug/.../ui/voice/debug/C29OverlayDiagnostics.kt` (debug 전용). `ChoicePreviewActivity`에 `--ez ui_debug_c29_diag true`를 줄 때만 켜진다.
-- 켜지면 시험 서비스가 **A와 같은** 이벤트 종류(A의 `accessibility_service_config.xml` 목록 그대로), `flagReportViewIds|flagRetrieveInteractiveWindows`, `notificationTimeout=0`, 모든 패키지로 `setServiceInfo`를 잠시 바꾸고, 3초 뒤 원래 설정으로 되돌린다.
-- show 직후와 이후 1초 동안 이벤트마다 한 줄(logcat 태그 `C29Diag`):
-  - `th`: show 기준 처리 시각(ms), `te`: show 기준 `event.eventTime`(ms)
-  - `ev`, `wid`(=`event.windowId`), `evOwnPkg`(이벤트 패키지가 우리인지), `chg`(contentChangeTypes), `wchg`(windowChanges: 1=추가, 2=제거)
-  - `wins`: 그 시점 `getWindows()`의 각 창 `id:종류/L층/own=루트 패키지가 우리인지/title=match|other|null`
-  - `ownA`: **A 방식**(show 직후 + `TYPE_WINDOWS_CHANGED` 때만 `update`) 트래커의 판정 — 이벤트를 받은 그 순간 값
-  - `ownFresh`: **제안 1 방식**(이벤트마다 `getWindows()`로 `update` 후 판정)
-- `C29OverlayDiagnostics`는 main의 `OwnOverlayWindowTracker`를 **그대로** 쓴다(main 코드 변경 없음).
-- 순서: `ChoicePreviewActivity`(시나리오 0 = 광고 픽스처, 진단 켬) → 1.5초 뒤 `PopupScenarioActivity --es scenario P01` → 5초 타이머에 C 창이 P01 위에 뜸 → 6.5초 뒤 `dumpsys window`.
-- 7회: TalkBack 켬 4회(1~4), TalkBack 끔 3회(5~7).
+### 그 "다른 창" 후보
+| 후보 | 근거 | 확정 여부 |
+|---|---|---|
+| 대상 앱(P01) 창이 아직 바뀌는 중 (대화상자 등장 애니메이션 끝, 레이아웃, 포커스) | A는 감지·분류 직후 바로 띄운다. 우리 시험은 P01이 3.5초 이상 안정된 뒤 띄워서 P01 이벤트가 0개였다 → 이 경우를 재현하지 못함 | 미확정 |
+| 시스템 창(상태 표시줄 등)의 내용 변화 | 7회 중 1회(3회차)에 show 뒤 약 0.68초·0.79초에 시스템 창 내용 변화 2개 | 가능성 있음 |
+| TalkBack 접근성 포커스 이벤트(앱 창) | 이번 유효 7회에서는 관측 0 | 낮음 |
+| 다른 창의 층·크기 변화(`WINDOWS_CHANGED`) | 7회 동안 다른 창의 층·크기 변화 0 | 낮음 |
 
-## 3. 회차별 결과 (show 직후 1초)
+## 2. 진단 방법 (C 단독)
+- `app/src/debug/.../ui/voice/debug/C29OverlayDiagnostics.kt` (debug 전용, adb extra로만 켜짐)
+  - 표시 모드 `--ez ui_debug_c29_diag true`
+  - 관찰 모드 `--el ui_debug_c29_watch_ms <ms>`: C 창을 띄우지 않고 이벤트만 기록. A 서비스 옆에서 쓰려고 만들었으나 이번에는 쓰지 못함.
+- 켜지면 시험 서비스가 **A와 같은** 이벤트 종류·플래그(`flagReportViewIds|flagRetrieveInteractiveWindows`, `notificationTimeout=0`, 모든 패키지)로 `setServiceInfo`를 잠시 바꾸고, 끝나면 되돌린다.
+- 한 줄에 남기는 것(logcat 태그 `C29Diag`)
+  - 경과 ms, 이벤트 종류, 이벤트 창(**회차 안 임시 순번** `w1, w2…`)
+  - 패키지가 우리인지(bool), `contentChangeTypes`·`windowChanges` 숫자
+  - 그 순간 창 목록(순번·종류·층·우리 루트 여부·제목 일치/다름/없음)
+  - 계약 방식 판정(`ownA`), 이벤트 때 다시 읽는 판정(`ownFresh`)
+- **창 id 원값은 기록하지 않는다**(2차 갱신부터). 1차 7회 로그에는 숫자 id가 있었다. 아래 표는 상대 표기로 바꿨고, 원 로그 파일은 저장소에 넣지 않았다.
 
-| 회 | TalkBack | show 직후 `getWindows()` | show 직후 A 트래커 id | 새 C 창 id | C 창 첫 이벤트 (th / te, 종류) | 그때 `ownA` | A 트래커가 id를 안 시점 (th, 이벤트) | `ownA=false`인 C 창 이벤트 | `ownFresh` 오판 | 3초 뒤 창 |
-|---|---|---|---|---|---|---|---|---|---|---|
-| 1 | 켬 | C 창 없음 (SYS 6, APP 28) | -1 | 30 | 395 / 317, STATE_CHANGED | false | 410, WINDOWS_CHANGED(추가) | 2 | 0 | 있음 |
-| 2 | 켬 | **이전 C 창 30**(own=0) + SYS + APP | -1 | 34 | 386 / 355, STATE_CHANGED | false | 399, WINDOWS_CHANGED(추가) | 2 | 0 | 있음 |
-| 3 | 켬 | 이전 C 창 34(own=0) + … | -1 | 38 | 422 / 379, STATE_CHANGED | false | 447, WINDOWS_CHANGED(추가) | 2 | 0 | 있음 |
-| 4 | 켬 | 이전 C 창 38(own=0) + … | -1 | 42 | 480 / 433, STATE_CHANGED | false | 509, WINDOWS_CHANGED(추가) | 2 | 0 | 있음 |
-| 5 | 끔 | 이전 C 창 42(own=0) + … | -1 | 46 | 412 / 368, STATE_CHANGED | false | 425, WINDOWS_CHANGED(추가) | 2 | 0 | 있음 |
-| 6 | 끔 | 이전 C 창 46(own=0) + … | -1 | 50 | 418 / 380, STATE_CHANGED | false | 439, WINDOWS_CHANGED(추가) | 2 | 0 | 있음 |
-| 7 | 끔 | 이전 C 창 50(own=0) + … | -1 | 54 | 502 / 363, STATE_CHANGED | **true** | 488, WINDOWS_CHANGED(**이전 창 50 제거**) | 0 | 0 | 있음 |
+## 3. 회차별 결과 (show 직후 1초, 1차 실측 7회)
+P01을 연 지 3.5초 뒤 C 창 표시. 1~4회 TalkBack 켬, 5~7회 끔.
 
-- show 직후 A 트래커 id는 **7회 모두 -1**.
-- 7회 중 **6회**는 C 창의 첫 `STATE_CHANGED` 2개가 A 방식으로는 "C 창 아님"이었다. 7회차만 이전 C 창의 "제거" 이벤트가 늦게 처리되면서 그때 읽은 `getWindows()`에 새 C 창이 이미 있어 우연히 맞았다. → 운에 달린 순서 경쟁이다.
-- `ownFresh`(이벤트마다 다시 읽기)는 **7회 모두** C 창 이벤트를 전부 C 창으로, C 창이 아닌 이벤트(SYS 창 6의 변화, 이전 C 창의 제거 이벤트)는 전부 C 창이 아닌 것으로 판정했다(오판 0).
-- 이벤트 도착은 show 뒤 약 0.4~0.5초(에뮬레이터). 우진 실측의 약 0.2초와 차이는 기기·A 처리 시간 차이로 본다.
-- `te`가 `th`보다 100~200ms 앞선 이벤트가 있다(같은 창의 두 번째 STATE_CHANGED). 시스템이 이벤트를 모아 늦게 보내는 것으로 보인다.
+| 회 | show 직후 목록에 C 창 | show 직후 목록에 이전 C 창(루트 없음) | C 창 첫 이벤트 처리 (ms) | 그때 목록에 C 창 | C 창 이벤트의 창 = 목록의 C 창 | 계약 방식(`ownA`)으로 놓친 C 창 이벤트 | 다시 읽기(`ownFresh`) 오판 | C 창이 아닌 창의 이벤트 (1초 안) | 3초 뒤 창 |
+|---|---|---|---|---|---|---|---|---|---|
+| 1 | 없음 | 없음(첫 회) | 395 | 있음 | 같음 | 2 | 0 | 0 | 있음 |
+| 2 | 없음 | 있음 | 386 | 있음 | 같음 | 2 | 0 | 이전 C 창 제거 1 | 있음 |
+| 3 | 없음 | 있음 | 422 | 있음 | 같음 | 2 | 0 | 이전 C 창 제거 1, 시스템 창 내용 2 | 있음 |
+| 4 | 없음 | 있음 | 480 | 있음 | 같음 | 2 | 0 | 이전 C 창 제거 1 | 있음 |
+| 5 | 없음 | 있음 | 412 | 있음 | 같음 | 2 | 0 | 이전 C 창 제거 1 | 있음 |
+| 6 | 없음 | 있음 | 418 | 있음 | 같음 | 2 | 0 | 이전 C 창 제거 1 | 있음 |
+| 7 | 없음 | 있음 | 502 | 있음 | 같음 | 0 | 0 | 이전 C 창 제거 1 | 있음 |
 
-### 추가 발견: 이전 C 창이 잠깐 남아 있음
-2~7회 show 직후 `getWindows()`에 **방금 지운 이전 C 창**(종류·제목은 일치, 루트 노드가 없어 own=0)이 남아 있었고, 그 창의 `WINDOWS_CHANGED(제거)` 이벤트(`wid`=이전 id)가 새 C 창 이벤트보다 먼저 왔다.
-- 지금 트래커는 루트 패키지가 없어 이전 창을 매치하지 않는다(안전). 다만 루트가 아직 읽히는 타이밍이면 이전 창 id를 새 세대로 묶을 수 있다 → 제안 1에서 "C 창이 2개 보이면 매치 안 함" 규칙이 이것을 막는다(`singleOrNull`).
-- A 쪽: 이전 C 창의 "제거" 이벤트도 C 창 이벤트로 인식되지 않는다. 두 번째 팝업부터는 이 이벤트가 새 토큰을 무효화할 수 있다 (A 코드 확인 필요).
+- 무효화하지 않는 시험 서비스에서는 7/7 모두 3초 뒤에도 C 창이 `SHOWING`이었다. `dumpsys window`에서도 `ACCESSIBILITY_OVERLAY`, `isVisible=true`였다.
+  - 그러므로 우진 영상에서 창이 사라진 것은 A의 무효화 → `dismiss` 경로다.
+- "계약 방식으로 놓친 이벤트"는 C 계약 문서대로 쓴 경우의 결과다. A V5는 이 방식을 쓰지 않으므로 #29 원인이 아니다. 다만 C 계약 문서는 고쳐야 한다(4절 제안 3).
 
-## 4. 시험 서비스와 A 서비스의 차이 (확정 못 하는 부분)
+### 이전 C 창의 "제거" 이벤트 (A V5 기준으로 다시 봄)
+- 2~7회에는 show 직후 목록에 방금 지운 이전 C 창이 남아 있었다. 그 창의 `WINDOWS_CHANGED(제거)`는 새 C 창 이벤트보다 먼저 처리됐다.
+- A V5 `readOwnedIds()`는 루트가 없는 창을 빼므로 결합에는 영향이 없다.
+- 그러나 A V5는 "제거"가 섞인 `WINDOWS_CHANGED`를 무시하지 않는다(`MASK_UNSUPPORTED`). 그래서 **이전 C 창을 지운 직후 새 C 창을 띄우는 경우**에는 이 이벤트로 새 토큰이 무효화된다.
+- #29(첫 표시, `BOUND_EVENT_WINDOW_MISMATCH`)의 원인은 아니다. 연속 팝업 때 같은 증상이 날 수 있으니 기록해 둔다.
 
-| 항목 | 이번 진단 | A 서비스 | 영향 |
-|---|---|---|---|
-| 이벤트 종류·플래그·timeout | A 설정과 같게 `setServiceInfo` | XML | 같다고 봄 |
-| `canTakeScreenshot`, `isAccessibilityTool` | 없음 | 있음 | 이벤트 순서에 영향 없을 것으로 봄 (미검증) |
-| show 전후 처리 | 바로 show | OCR·분류(B) 뒤 show, 이벤트마다 A 처리 시간 | 이벤트 도착 간격이 다를 수 있음 |
-| `update()` 호출 시점 | 계약대로 show 직후 + `WINDOWS_CHANGED` | **모름** (A 코드 미공개) | A가 show 직후 `update`를 안 한다면 결과는 같거나 더 나쁨 |
-| 무효화 판단 | 없음 (판정만 기록) | `BOUND_EVENT_WINDOW_MISMATCH` | A의 규칙은 로그 이름으로만 추정 |
-| 기기 | 에뮬레이터 API 37 | 우진 에뮬레이터 API 37 | 실기기(갤럭시 S26, LG)는 미검증 |
+## 4. 제안 (안전장치를 약하게 하지 않는 것)
 
-## 5. 고칠 방법 제안 (안전장치를 약하게 하지 않는 것)
+### 제안 1 (먼저, A) — 거부된 이벤트가 "어느 창"인지 enum으로 남기기
+- `OverlayEventDiagnostic`에 창 id 원값 대신 **관계 enum**을 하나 추가한다.
+  - 예: `TARGET_WINDOW`(토큰의 대상 앱 창), `SYSTEM_WINDOW`, `OTHER_APP_WINDOW`, `INPUT_METHOD`, `OTHER_OVERLAY`, `NOT_IN_LIST`
+- 지금 로그의 `EVENT=` 값(내용/상태/포커스/창 변화)과 합치면 원인이 바로 확정된다.
+- 위험: 없음. 기록만 늘고 판단은 그대로다. 누가: A.
+- 우진에게 먼저 부탁: 이미 남은 로그의 `EVENT=` 값.
 
-### 제안 1 (권장) — id를 모르거나 다르면 그 이벤트 때 `getWindows()`를 다시 읽고 판단
-- C 창이 떠 있고(`windowState != HIDDEN`) 트래커가 id를 모르거나 `event.windowId`가 기억한 id와 다를 때만, 그 자리에서 `getWindows()` → `update()` → `isOwnOverlayWindowEvent()`.
-- 근거: 이번 7회에서 C 창 이벤트 정답률 100%, C 창이 아닌 이벤트 오판 0 (`ownFresh` 열).
-- 안전: 판정 규칙(종류·루트 패키지·고정 제목·정확히 1개·세대·id≥0)은 그대로다. 다른 앱 창은 루트 패키지가 우리일 수 없어서 C 창으로 잘못 볼 수 없다. 판정이 true여도 지금 계약대로 **새 팝업 판정·baseline 초기화에서만** 빼고, 대상 앱 창 변화·사용자 조작·민감 화면 검사는 그대로 둔다.
-- 위험: 다른 앱 이벤트를 놓칠 가능성은 없다(다른 창이면 다시 읽어도 false). 비용은 C 창이 떠 있는 동안 C 창이 아닌 이벤트마다 `getWindows()` 1회 — 매번 하기 싫으면 "id를 모를 때만" + "`wid`가 목록에 처음 보는 id일 때만"으로 줄일 수 있다.
-- 누가: 판정을 쓰는 곳은 A의 이벤트 처리라 **A가 호출**한다. C는 `OwnOverlayWindowTracker`에 "모르면 다시 읽기" 도우미(예: `isOwnOverlayWindowEvent(eventWindowId, overlay) { readWindowFacts() }`)와 JVM 시험을 **별도 PR**로 낼 수 있다.
+### 제안 2 (원인이 대상 앱 창이면, A·B) — 대상 앱 창이 조용해진 뒤에 띄우기
+- 대상 창의 변화가 일정 시간 없을 때만 `present()`한다. 또는 띄우기 직전에 대상 창 상태를 다시 확인한다.
+- 대상 앱이 바뀌면 무효화하는 규칙(AGENTS 6장 7번)은 **그대로**다. 띄우는 시점만 늦춘다.
+- 위험: 안내가 조금 늦어진다. 계속 움직이는 팝업(영상 등)에서는 영영 안 뜰 수 있으므로 상한과 안내가 필요하다. 누가: A(감지·현재성), B(분류 시점).
 
-### 제안 2 — show 직후 C 창 id가 확정될 때까지 "확인 중" 상태
-- `present()`가 `SHOWN`을 돌려준 뒤 C 창 id가 정해질 때까지 A는 C 패키지 이벤트를 무효화 근거로 바로 쓰지 않고, 제안 1처럼 다시 읽어 확정한 뒤 판단한다. C는 `windowState`에 "id 미확정"을 알려 줄 수 있다.
-- 위험: 실질적으로 제안 1과 같다. 시간 기반 유예(예: "show 후 500ms는 무시")로 구현하면 **그 사이 대상 앱 변화를 놓치므로 쓰면 안 된다.**
-- 누가: C(상태 추가) + A(사용). C가 자기 창 id를 직접 얻는 공개 API는 없다(`View`의 접근성 창 id는 숨김 API) → 결국 A의 `getWindows()`가 필요하다.
+### 제안 3 (원인이 시스템 창이면, A·B 결정 사항) — 무효화 범위
+- 상태 표시줄 같은 시스템 창의 변화까지 대상 앱 토큰을 무효화할지는 **A·B 안전 설계 결정**이다.
+- C는 범위를 줄이자고 요구하지 않는다.
+- 줄인다면 조건을 붙여야 한다. "대상 앱 창과 겹치지 않는 시스템 창의 내용 변화만" 같은 식으로 좁게 정하고, 사용자 조작·대상 앱 변화·민감 화면 검사는 그대로 둔다.
+- 위험: 대상 앱 위에 뜬 시스템 대화상자(권한 요청 등)를 놓칠 수 있다. 그래서 겹침 검사가 꼭 필요하다.
 
-### 제안 3 — 이벤트 소스 노드로 확인
-- `event.source?.window`로 그 창의 종류·제목·루트 패키지를 확인.
-- 위험: `TYPE_WINDOWS_CHANGED`는 소스가 없는 경우가 많고, 이벤트마다 노드 IPC가 생긴다. 노드를 오래 들고 있으면 안 된다(AGENTS 5장). 제안 1보다 이점이 없다.
-- 누가: A.
+### 제안 4 (C) — C 계약 문서·트래커 정리
+- `OwnOverlayWindowTracker`의 "show 직후 + `WINDOWS_CHANGED` 때 `update`" 방식은 실측상 첫 C 창 이벤트를 놓친다(7회 중 6회).
+- A V5처럼 "판정할 이벤트 때 다시 읽기"로 계약 문서를 고치거나, A가 쓰지 않는 트래커를 `@Deprecated` 처리한다.
+- C main 코드 변경이므로 **별도 PR**로 한다.
 
 ### 하지 말 것
-- 패키지명만으로 C 창 판단 (A 서비스·C 창·시험 서비스가 같은 패키지 — 리뷰 #18-3에서 이미 버림)
-- show 뒤 일정 시간 모든 이벤트 무시, 무효화 자체를 끄기, 무효화 후 재질문 허용
+- 패키지명만으로 C 창 판단, show 뒤 일정 시간 모든 이벤트 무시, 무효화 끄기, 무효화 후 재질문 허용
+
+## 5. 하지 못한 것·한계
+- **A V5 빌드 + A 서비스로 P01 실제 재현은 하지 못했다.**
+  - A V5 빌드(스크래치 worktree, C debug 진단 파일만 복사)는 성공했다.
+  - 에뮬레이터에서 A 서비스를 켜고 A 동의 설정을 debug 저장소에 쓴 뒤 P01을 여는 실행은 Claude Code 자동 권한 검사가 막았다(사유 "Security Weaken"). 우회하지 않았다.
+  - 그 직후 A 서비스를 끄고 A 설정 파일을 지워 원래대로 되돌렸다.
+- C 단독으로 "P01이 뜬 지 약 1초 뒤 표시"하는 추가 관측을 6회 시도했으나 모두 **무효**다. 이유는 에뮬레이터 부팅 직후 부하(load 30, 시스템 UI 응답 없음 대화상자), C 창 추가 0.4~3.7초, C 창이 P01이 아니라 미리보기 화면 위에 뜬 것이다. 표에 넣지 않았다.
+- 시험 서비스와 A 서비스의 남은 차이: `canTakeScreenshot`·`isAccessibilityTool`, A의 OCR·분류 처리 시간(이벤트 처리 간격이 달라짐). 실기기(LG, 갤럭시 S26)는 미검증이다.
 
 ## 6. 다음 확인 (A와 함께)
-1. A 통합 코드에서 `update()`를 언제 부르는지, `BOUND_EVENT_WINDOW_MISMATCH`가 정확히 어떤 비교인지 우진 확인.
-2. 제안 1을 A 로컬에 넣고 같은 P01 통합을 3회 이상 → `SHOWN` 뒤 `INVALIDATED` 없음 + 대상 앱(P01)을 직접 바꾸면 여전히 무효화되는지(안전 회귀) 확인.
-3. 두 번째 팝업 때 이전 C 창 "제거" 이벤트가 새 토큰을 무효화하는지 확인.
-4. 실기기(LG, 갤럭시 S26)에서 같은 진단 1회 — 이벤트 순서는 기기마다 다를 수 있다.
+1. 우진: 이미 있는 로그의 `A_OverlayEvent ... EVENT=` 값을 알려 주기 → 내용/상태/포커스/창 변화 중 무엇인지.
+2. A: 제안 1 enum을 추가하고 P01 통합 3회 → 거부된 창이 대상 앱 창인지 시스템 창인지 확정.
+3. 확정 결과에 따라 제안 2 또는 3을 A·B가 결정. 대상 앱을 직접 바꾸면 여전히 무효화되는지 안전 회귀 확인.
+4. 연속 팝업에서 이전 C 창 "제거" 이벤트로 무효화되는지 확인(3절).
+5. C: 제안 4 별도 PR.
 
-## 7. 재현 명령 (debug 빌드)
+## 7. 재현 명령 (debug 빌드, C 단독)
 ```
 adb install -r -t app/build/outputs/apk/debug/app-debug.apk
 adb install -r -t popup-test-app/build/outputs/apk/debug/popup-test-app-debug.apk
@@ -100,4 +130,5 @@ adb shell am start -n kr.closeforyou/.ui.voice.debug.ChoicePreviewActivity --ei 
 adb shell am start -n kr.closeforyou.popuptest/.PopupScenarioActivity --es scenario P01
 adb logcat -s C29Diag
 ```
-끝나면 접근성 설정을 원래 값으로 되돌린다. A 서비스(`CloseForYouAccessibilityService`)는 이 진단에 켜지 않는다.
+- 부팅 직후에는 부하가 내려갈 때까지(`/proc/loadavg` 첫 값 6 미만) 기다리고, 화면 잠금을 푼다.
+- 끝나면 접근성 설정을 원래 값으로 되돌린다.

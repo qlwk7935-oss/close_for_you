@@ -8,7 +8,9 @@ import android.util.Log
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityWindowInfo
 import kr.closeforyou.R
+import kr.closeforyou.ui.voice.overlay.ChoiceOverlayIdentity
 import kr.closeforyou.ui.voice.overlay.OverlayWindowState
+import kr.closeforyou.ui.voice.overlay.OverlayWindowStatus
 import kr.closeforyou.ui.voice.overlay.OwnOverlayWindowTracker
 import kr.closeforyou.ui.voice.overlay.WindowFacts
 
@@ -16,13 +18,19 @@ import kr.closeforyou.ui.voice.overlay.WindowFacts
  * Debug-only diagnosis for team issue #29 (C's prompt disappears ~0.2 s after showing in the A→B→C run).
  *
  * While on, the test service temporarily takes A's event types and flags (flagRetrieveInteractiveWindows,
- * notificationTimeout 0, every package) and, for [WATCH_MILLIS] after a show, logs one line per event under
- * [TAG]: elapsed ms, event type, event.windowId, whether the event package is ours, every window of
- * getWindows() (id, type, layer, ours, title-matches) and what [OwnOverlayWindowTracker] answers when
- * updated A's way (after show and on TYPE_WINDOWS_CHANGED only) and when updated at that event.
+ * notificationTimeout 0, every package) and logs one line per event under [TAG]: elapsed ms, event type,
+ * the event window, whether the event package is ours, and every window of getWindows() (type, layer, ours,
+ * title-matches). Two modes:
+ * - show: after the test service's own prompt, for [WATCH_MILLIS]; also what [OwnOverlayWindowTracker]
+ *   answers when updated A's contract way (after show and on TYPE_WINDOWS_CHANGED) and when updated at
+ *   that event.
+ * - watch: no prompt of its own; every event for a while, to see what A's real service receives around
+ *   the prompt A shows (same process, same event types).
  *
- * Numbers, enums and booleans only: no node text, window title, package name or content description is
- * ever logged. Only turned on by the adb extra in ChoicePreviewActivity; the service info is restored after.
+ * Numbers, enums and booleans only. Window ids are never printed: each run numbers the windows it sees
+ * w1, w2, … in order of appearance (comparable within one run only). No node text, window title, package
+ * name or content description is ever logged. Only turned on by adb extras in ChoicePreviewActivity; the
+ * service info is restored after.
  */
 internal class C29OverlayDiagnostics(
     private val service: AccessibilityService,
@@ -41,7 +49,12 @@ internal class C29OverlayDiagnostics(
 
     private var original: AccessibilityServiceInfo? = null
     private var run = 0
-    private var shownAt = NOT_SHOWN
+    private var startedAt = NOT_STARTED
+    private var watching = false
+    private var watchMillis = 0L
+
+    /** Window id → run-local ordinal. Cleared every run; never printed as the raw id. */
+    private val ordinals = LinkedHashMap<Int, Int>()
 
     /** Takes A's event types and flags so getWindows() lists every interactive window. */
     fun arm() {
@@ -59,15 +72,15 @@ internal class C29OverlayDiagnostics(
 
     /** [shownCode]: PromptShowResult ordinal. Call right after AccessibilityChoiceOverlay.present returns. */
     fun onShown(startedAt: Long, shownCode: Int) {
-        run += 1
-        shownAt = startedAt
+        // Elapsed times count from when addView returned; addMs shows how long the add itself took.
+        newRun(SystemClock.uptimeMillis())
+        watching = false
         aStyle = OwnOverlayWindowTracker(ownPackage, ownTitle)
         fresh = OwnOverlayWindowTracker(ownPackage, ownTitle)
-        seenIds.clear()
         val windows = readWindows()
         aStyle.update(windows.map { it.facts }, overlayState())
         Log.i(TAG, "run=$run SHOW addMs=${SystemClock.uptimeMillis() - startedAt} result=$shownCode state=${stateText()} " +
-            "aId=${aId()} wins=${windowsText(windows)}")
+            "aKnows=${bound(aStyle) != null} wins=${windowsText(windows)}")
         handler.postDelayed({ snapshot("END") }, WATCH_MILLIS)
         handler.postDelayed({
             snapshot("STILL")
@@ -75,11 +88,34 @@ internal class C29OverlayDiagnostics(
         }, STILL_MILLIS)
     }
 
+    /** Watch mode: arm now and log every event for [millis] without showing anything. */
+    fun watch(millis: Long) {
+        arm()
+        newRun(SystemClock.uptimeMillis())
+        watching = true
+        watchMillis = millis
+        Log.i(TAG, "run=$run WATCH ms=$millis wins=${windowsText(readWindows())}")
+        handler.postDelayed({
+            snapshot("WATCH_END")
+            disarm()
+        }, millis)
+    }
+
     fun onEvent(event: AccessibilityEvent) {
-        if (shownAt == NOT_SHOWN) return
+        if (startedAt == NOT_STARTED) return
         val now = SystemClock.uptimeMillis()
-        if (now - shownAt > WATCH_MILLIS) return
+        if (now - startedAt > if (watching) watchMillis else WATCH_MILLIS) return
         val windows = readWindows()
+        val head = "run=$run th=${now - startedAt} te=${event.eventTime - startedAt} " +
+            "ev=${AccessibilityEvent.eventTypeToString(event.eventType)} win=${ordinal(event.windowId)} " +
+            "evOwnPkg=${event.packageName?.toString() == ownPackage} chg=${event.contentChangeTypes} wchg=${event.windowChanges}"
+        if (watching) {
+            // A's prompt: what the C rules would call C's window right now (overlay state assumed showing).
+            val prompts = windows.filter { isPromptLike(it.facts) }
+            val inPrompt = prompts.any { it.facts.id == event.windowId && event.windowId >= 0 }
+            Log.i(TAG, "$head prompts=${prompts.size} evInPrompt=$inPrompt wins=${windowsText(windows)}")
+            return
+        }
         val facts = windows.map { it.facts }
         val state = overlayState()
         val ownA = aStyle.isOwnOverlayWindowEvent(event.windowId, state)
@@ -88,41 +124,52 @@ internal class C29OverlayDiagnostics(
         val ownFresh = fresh.isOwnOverlayWindowEvent(event.windowId, state)
         Log.i(
             TAG,
-            "run=$run th=${now - shownAt} te=${event.eventTime - shownAt} ev=${AccessibilityEvent.eventTypeToString(event.eventType)} " +
-                "wid=${event.windowId} evOwnPkg=${event.packageName?.toString() == ownPackage} " +
-                "chg=${event.contentChangeTypes} wchg=${event.windowChanges} " +
-                "ownA=$ownA aIdAfter=${aId()} ownFresh=$ownFresh freshId=${freshId(facts, state)} " +
-                "state=${stateText()} wins=${windowsText(windows)}",
+            "$head ownA=$ownA aAfter=${relation(bound(aStyle), event.windowId)} ownFresh=$ownFresh " +
+                "freshW=${bound(fresh)?.let(::ordinal) ?: "?"} state=${stateText()} wins=${windowsText(windows)}",
         )
     }
 
     fun disarm() {
-        shownAt = NOT_SHOWN
+        startedAt = NOT_STARTED
+        watching = false
         val info = original ?: return
         service.serviceInfo = copyOf(info)
         Log.i(TAG, "disarmed")
     }
 
-    private fun snapshot(label: String) {
-        val windows = readWindows()
-        Log.i(TAG, "run=$run $label th=${SystemClock.uptimeMillis() - shownAt} state=${stateText()} wins=${windowsText(windows)}")
+    private fun newRun(at: Long) {
+        run += 1
+        startedAt = at
+        ordinals.clear()
     }
 
-    private fun aId(): Int = aStyle.boundIdForDiagnosis()
+    private fun snapshot(label: String) {
+        val windows = readWindows()
+        Log.i(TAG, "run=$run $label th=${SystemClock.uptimeMillis() - startedAt} state=${stateText()} wins=${windowsText(windows)}")
+    }
 
-    private fun freshId(facts: List<WindowFacts>, state: OverlayWindowState): Int =
-        OwnOverlayWindowTracker(ownPackage, ownTitle).also { it.update(facts, state) }.boundIdForDiagnosis()
+    /** "same" / "diff" / "unknown": the tracker's window against the event's, without printing either id. */
+    private fun relation(boundId: Int?, eventWindowId: Int): String = when {
+        boundId == null || eventWindowId < 0 -> "unknown"
+        boundId == eventWindowId -> "same"
+        else -> "diff"
+    }
 
     /**
      * The tracker keeps its id private; probe it with the same public call A makes, over every window id
      * seen in this run (so an id bound earlier that has since left getWindows() still shows).
      */
-    private fun OwnOverlayWindowTracker.boundIdForDiagnosis(): Int {
+    private fun bound(tracker: OwnOverlayWindowTracker): Int? {
         val state = overlayState()
-        return seenIds.firstOrNull { isOwnOverlayWindowEvent(it, state) } ?: -1
+        return ordinals.keys.firstOrNull { tracker.isOwnOverlayWindowEvent(it, state) }
     }
 
-    private val seenIds = linkedSetOf<Int>()
+    private fun isPromptLike(window: WindowFacts): Boolean = ChoiceOverlayIdentity.isOwnOverlayWindow(
+        window, ownPackage, ownTitle, OverlayWindowState(OverlayWindowStatus.SHOWING, 1),
+    )
+
+    private fun ordinal(windowId: Int): String =
+        if (windowId < 0) "none" else "w${ordinals.getOrPut(windowId) { ordinals.size + 1 }}"
 
     private class Seen(val facts: WindowFacts, val layer: Int, val titleNull: Boolean)
 
@@ -136,7 +183,7 @@ internal class C29OverlayDiagnostics(
             Log.w(TAG, "getWindows failed: ${e.javaClass.simpleName}")
             emptyList()
         }
-        seen.forEach { seenIds += it.facts.id }
+        seen.forEach { ordinal(it.facts.id) }
         return seen
     }
 
@@ -146,14 +193,14 @@ internal class C29OverlayDiagnostics(
         null
     }
 
-    /** id:type/Llayer/own=0|1/title=match|other|null. The title itself is never printed. */
+    /** wN:type/Llayer/own=0|1/title=match|other|null. Neither the id nor the title itself is printed. */
     private fun windowsText(windows: List<Seen>): String = windows.joinToString(prefix = "[", postfix = "]") {
         val title = when {
             it.titleNull -> "null"
             it.facts.title?.toString() == ownTitle -> "match"
             else -> "other"
         }
-        "${it.facts.id}:${typeName(it.facts.type)}/L${it.layer}/own=${if (it.facts.rootPackageName?.toString() == ownPackage) 1 else 0}/title=$title"
+        "${ordinal(it.facts.id)}:${typeName(it.facts.type)}/L${it.layer}/own=${if (it.facts.rootPackageName?.toString() == ownPackage) 1 else 0}/title=$title"
     }
 
     private fun stateText(): String = overlayState().let { "${it.status}#${it.generation}" }
@@ -178,7 +225,7 @@ internal class C29OverlayDiagnostics(
 
     companion object {
         const val TAG = "C29Diag"
-        private const val NOT_SHOWN = -1L
+        private const val NOT_STARTED = -1L
         private const val WATCH_MILLIS = 1_000L
         private const val STILL_MILLIS = 3_000L
 

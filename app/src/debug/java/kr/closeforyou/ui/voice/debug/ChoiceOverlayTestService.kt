@@ -28,7 +28,7 @@ import java.lang.ref.WeakReference
  * Debug-only C test service: lets the preview screen show the real overlay above other apps.
  * It performs no actions and never invalidates its prompt. The produced UserChoice is only shown
  * on the preview screen. Normally it gets only our own announcement events and ignores them; the
- * issue #29 diagnosis ([C29OverlayDiagnostics], adb extra only) reads window ids, types and layers
+ * issue #29 diagnosis ([C29OverlayDiagnostics], adb extra only) reads window ids, types and layers (logged as run-local numbers)
  * for one show and logs numbers only.
  */
 class ChoiceOverlayTestService : AccessibilityService() {
@@ -94,6 +94,12 @@ class ChoiceOverlayTestService : AccessibilityService() {
         }, delayMillis)
     }
 
+    private fun watchEvents(millis: Long) {
+        if (diagnose) diagnostics.disarm()
+        diagnose = true
+        diagnostics.watch(millis)
+    }
+
     /** Synthetic fixture text only; spoken, never logged. */
     private fun readContent(choice: UserChoice, content: String) {
         val tts = announcer ?: return
@@ -108,13 +114,23 @@ class ChoiceOverlayTestService : AccessibilityService() {
         val connected: StateFlow<Boolean> = mutableConnected.asStateFlow()
         val lastChoice: StateFlow<UserChoice?> = mutableLastChoice.asStateFlow()
 
+        /**
+         * Issue #29 watch mode (adb extra only): shows nothing, logs what this service receives with A's
+         * event types for [millis] under C29Diag. Main thread only. False when the test service is off.
+         */
+        fun watchEvents(millis: Long): Boolean {
+            val service = current?.get() ?: return false
+            service.watchEvents(millis)
+            return true
+        }
+
         /** Main thread only. False when the test service is not turned on. */
         fun scheduleShow(
             prompt: ChoicePrompt,
             content: String,
             delayMillis: Long,
             ttsDelayMillis: Long = PromptAnnouncementListener.DEFAULT_TTS_DELAY_MILLIS,
-            /** Issue #29 diagnosis for this show (adb extra only): logs window ids under C29Diag. */
+            /** Issue #29 diagnosis for this show (adb extra only): logs window facts under C29Diag. */
             diagnose: Boolean = false,
         ): Boolean {
             val service = current?.get() ?: return false
