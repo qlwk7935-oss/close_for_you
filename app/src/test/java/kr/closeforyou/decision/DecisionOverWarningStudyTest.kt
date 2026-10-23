@@ -145,6 +145,12 @@ class DecisionOverWarningStudyTest {
         assertEquals(CURRENT_OVER_WARNINGS, s.overWarning)
     }
 
+    @Test fun productionNowMatchesCandidateR1OnEverySample() {
+        // R1 went into hasUserDecisionSignal (2026-10-22), later narrowed after A's #30 review (only
+        // purchase/membership words, only as the condition itself). On this set both agree sample by sample.
+        for (sample in samples) assertEquals(sample.id, candidateR1(sample.texts), current(sample.texts))
+    }
+
     @Test fun candidateR1RemovesBenefitOverWarningsAndKeepsEveryDecision() {
         val s = score(::candidateR1)
         println("STUDY R1 $s")
@@ -162,7 +168,8 @@ class DecisionOverWarningStudyTest {
     }
 
     private companion object {
-        const val CURRENT_OVER_WARNINGS = 17
+        /** 17 before R1 (study, 2026-10-22); 7 with R1 in production. */
+        const val CURRENT_OVER_WARNINGS = 7
         const val R1_OVER_WARNINGS = 7
         const val R2_OVER_WARNINGS = 5
     }

@@ -78,8 +78,9 @@ class DecisionVideoAdEmulatorTest {
         assertNull(s.report.countdownSeconds)
         assertNull(s.report.countdownSource)
         assertTrue(s.report.skipCandidateIds.isEmpty())
-        // "결제" in the body makes the sale a decision for B today (over-warning, CLASSIFIER_EVAL review 6).
-        assertEquals(PopupClassification.USER_DECISION, s.analysis.classification)
+        // "5초 안에 결제하면 추가 할인" mentions 결제 only as a benefit condition (R1), so it is no longer
+        // a decision; with no word from B's advertisement dictionary it is "unknown", never a decision.
+        assertEquals(PopupClassification.UNKNOWN, s.analysis.classification)
         assertFalse(s.report.advertisementEvidence)
     }
 
