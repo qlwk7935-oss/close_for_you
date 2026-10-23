@@ -24,7 +24,8 @@
             </intent-filter>
         </activity>
         <!-- C(ui/voice): debug-only test service that shows the real "닫을까요?" overlay above other apps.
-             Reads no screen content (canRetrieveWindowContent=false), receives only this app's events, performs no actions. -->
+             Receives only this app's events and performs no actions. canRetrieveWindowContent=true only for the
+             issue #29 diagnosis (adb extra), which logs window ids/types/layers, never screen text. -->
         <service
             android:name="kr.closeforyou.ui.voice.debug.ChoiceOverlayTestService"
             android:exported="true"

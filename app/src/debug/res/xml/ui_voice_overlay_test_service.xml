@@ -1,10 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- C 시험용(debug 전용). 화면 내용을 읽지 않는다: canRetrieveWindowContent=false, 우리 앱 이벤트만 받음. -->
+<!-- C 시험용(debug 전용). 평소에는 우리 앱 안내 이벤트만 받고 무시한다.
+     canRetrieveWindowContent=true는 이슈 #29 진단(adb extra로만 켜짐) 때 창 id·종류·층을 읽기 위해서다.
+     진단 중에만 A와 같은 이벤트·플래그로 잠시 바꾸고(C29OverlayDiagnostics), 숫자만 기록한 뒤 되돌린다. -->
 <accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
     android:accessibilityEventTypes="typeAnnouncement"
     android:accessibilityFeedbackType="feedbackGeneric"
     android:canPerformGestures="false"
-    android:canRetrieveWindowContent="false"
+    android:canRetrieveWindowContent="true"
     android:description="@string/ui_debug_overlay_service_description"
     android:notificationTimeout="100"
     android:packageNames="kr.closeforyou"

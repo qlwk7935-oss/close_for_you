@@ -106,22 +106,25 @@ class ChoicePreviewActivity : ComponentActivity() {
      * singleTop (debug manifest) delivers the extra even when this screen is already in front, and a
      * freshly started process waits briefly for the test service to connect.
      * Optional `--el ui_debug_tts_delay_ms <ms>` changes when our own TTS speaks (default 700).
+     * Optional `--ez ui_debug_c29_diag true` logs window ids for that show under C29Diag (issue #29).
      */
     private fun scheduleOverlayFromIntent(intent: Intent?) {
         val index = intent?.getIntExtra(EXTRA_OVERLAY_SCENARIO, -1) ?: -1
         val fixture = scenarios.getOrNull(index)?.fixture ?: return
         val ttsDelay = intent?.getLongExtra(EXTRA_TTS_DELAY_MS, -1L)?.takeIf { it in 0..MAX_TTS_DELAY_MILLIS }
             ?: PromptAnnouncementListener.DEFAULT_TTS_DELAY_MILLIS
+        val diagnose = intent?.getBooleanExtra(EXTRA_C29_DIAG, false) == true
         // Consume the extras so a configuration change does not show the prompt again.
         intent?.removeExtra(EXTRA_OVERLAY_SCENARIO)
         intent?.removeExtra(EXTRA_TTS_DELAY_MS)
+        intent?.removeExtra(EXTRA_C29_DIAG)
         val prompt = ChoicePromptPlanner.plan(fixture.analysis, fixture.expectedDisplayClassification)
         val content = PromptSpeech.content(this, fixture.analysis)
         lifecycleScope.launch {
             val connected = withTimeoutOrNull(SERVICE_WAIT_MILLIS) {
                 ChoiceOverlayTestService.connected.first { it }
             } == true
-            if (!connected || !ChoiceOverlayTestService.scheduleShow(prompt, content, OVERLAY_DELAY_MILLIS, ttsDelay)) {
+            if (!connected || !ChoiceOverlayTestService.scheduleShow(prompt, content, OVERLAY_DELAY_MILLIS, ttsDelay, diagnose)) {
                 Toast.makeText(this@ChoicePreviewActivity, R.string.ui_debug_overlay_service_off, Toast.LENGTH_LONG).show()
             }
         }
@@ -132,6 +135,7 @@ class ChoicePreviewActivity : ComponentActivity() {
         const val SERVICE_WAIT_MILLIS = 3_000L
         const val EXTRA_TTS_DELAY_MS = "ui_debug_tts_delay_ms"
         const val MAX_TTS_DELAY_MILLIS = 10_000L
+        const val EXTRA_C29_DIAG = "ui_debug_c29_diag"
         /** adb: `--ez ui_debug_open_settings true` opens the settings page directly. */
         const val EXTRA_OPEN_SETTINGS = "ui_debug_open_settings"
     }
