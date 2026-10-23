@@ -111,7 +111,7 @@ internal class ReadOnlyTargetProbe(private val source: TargetProbeSource, privat
             if (candidate.viewId != original.viewId || candidate.bounds != original.bounds ||
                 original.className.isNullOrBlank() ||
                 candidate.evidence !in setOf(EvidenceLevel.E1_DISMISS, EvidenceLevel.E2_LABELED_NODE) ||
-                role(candidate.label) != candidate.role || candidate.role !in setOf(ButtonRole.CLOSE, ButtonRole.SKIP))
+                ButtonLabelRules.roleOf(candidate.label) != candidate.role || candidate.role !in setOf(ButtonRole.CLOSE, ButtonRole.SKIP))
                 throw ProbeFailure(ProbeDenial.INVALID_REFERENCE)
             val window = snapshot.windows.singleOrNull { it.id == token.windowId } ?: throw ProbeFailure(ProbeDenial.INVALID_REFERENCE)
             fun contains(outer: ScreenBounds, inner: ScreenBounds) = outer.right.toLong() > outer.left &&
@@ -172,7 +172,8 @@ internal class ReadOnlyTargetProbe(private val source: TargetProbeSource, privat
                 actions != original.actions || clickable != original.clickable ||
                 enabled != original.enabled || !enabled || !visible) throw ProbeFailure(ProbeDenial.TARGET_CHANGED)
             val labels = listOfNotNull(text, description).filter { it.isNotBlank() }
-            if (labels.isEmpty() || candidate.label !in labels || labels.any { role(it) != candidate.role })
+            if (labels.isEmpty() || candidate.label !in labels ||
+                ButtonLabelRules.judgeNode(text, description).role != candidate.role)
                 throw ProbeFailure(ProbeDenial.TARGET_CHANGED)
             val requiredAction = if (candidate.evidence == EvidenceLevel.E1_DISMISS) NodeAction.DISMISS else NodeAction.CLICK
             if (requiredAction !in original.actions || (requiredAction == NodeAction.CLICK && !original.clickable))
@@ -203,10 +204,5 @@ internal class ReadOnlyTargetProbe(private val source: TargetProbeSource, privat
     companion object {
         val UNPROVEN = setOf(ProbeDenial.EXECUTION_DISABLED, ProbeDenial.WHOLE_F0_UNPROVEN,
             ProbeDenial.POPUP_IDENTITY_UNPROVEN, ProbeDenial.USER_ORIGIN_UNPROVEN)
-        private fun role(label: String?): ButtonRole? = when (label) {
-            "닫기", "창 닫기", "팝업 닫기", "close", "dismiss" -> ButtonRole.CLOSE
-            "건너뛰기", "스킵", "skip" -> ButtonRole.SKIP
-            else -> null
-        }
     }
 }

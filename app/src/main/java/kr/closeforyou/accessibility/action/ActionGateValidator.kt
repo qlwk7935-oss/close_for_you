@@ -1,7 +1,5 @@
 package kr.closeforyou.accessibility.action
 
-import java.text.Normalizer
-import java.util.Locale
 import kr.closeforyou.core.contract.ActionRequest
 import kr.closeforyou.core.model.*
 
@@ -57,7 +55,7 @@ internal class ActionGateValidator {
             else -> null
         }
         reject(expectedAction == null, GateDenial.UNSUPPORTED_EVIDENCE)
-        reject(labelRole(c.label) == null || labelRole(c.label) != c.role,
+        reject(ButtonLabelRules.roleOf(c.label) != c.role,
             GateDenial.BUTTON_MEANING_UNVERIFIED)
 
         val node = context.currentNode
@@ -71,7 +69,7 @@ internal class ActionGateValidator {
         if (node != null) {
             val labels = listOfNotNull(node.text, node.description).filter { it.isNotBlank() }
             reject(labels.isEmpty() || labels.none { it == c.label } ||
-                labels.any { labelRole(it) != c.role }, GateDenial.BUTTON_MEANING_UNVERIFIED)
+                ButtonLabelRules.judgeNode(node.text, node.description).role != c.role, GateDenial.BUTTON_MEANING_UNVERIFIED)
         }
         reject(g == null || g != r.geometry || !contains(g.screen, g.window) ||
             !contains(g.window, g.popup) || node == null || !contains(g.popup, node.bounds),
@@ -80,17 +78,6 @@ internal class ActionGateValidator {
             (node.path != g.popupRootPath && !node.path.startsWith("${g.popupRootPath}/")),
             GateDenial.POPUP_MEMBERSHIP_UNVERIFIED)
         return GateEvaluation(denials.toSet())
-    }
-
-    private fun labelRole(label: String?): ButtonRole? {
-        val normalized = label?.let { Normalizer.normalize(it, Normalizer.Form.NFKC) }
-            ?.lowercase(Locale.ROOT)?.trim() ?: return null
-        // Exact, deliberately narrower than B. No X, punctuation stripping or risky substrings.
-        return when (normalized) {
-            "닫기", "창 닫기", "팝업 닫기", "close", "dismiss" -> ButtonRole.CLOSE
-            "건너뛰기", "스킵", "skip" -> ButtonRole.SKIP
-            else -> null
-        }
     }
 
     private fun contains(outer: ScreenBounds, inner: ScreenBounds): Boolean =

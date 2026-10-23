@@ -37,12 +37,15 @@ class ReadOnlyTargetProbeTest {
         override fun visible() = !hidden
         override fun close() { releases++; onClose(); if (closeFailure) throw IllegalStateException("PRIVATE") }
     }
-    private class Source : TargetProbeSource {
+    private class Source(private val label: String? = null, private val description: String? = null) : TargetProbeSource {
         val base = MockPopupFixtures.notice()
         val token = base.snapshot.token.copy(captureEpoch = 1)
-        val target = base.snapshot.nodes[1].copy(path = "0/0")
+        val target = base.snapshot.nodes[1].copy(path = "0/0",
+            text = label ?: base.snapshot.nodes[1].text,
+            contentDescription = description ?: base.snapshot.nodes[1].contentDescription)
         val snapshot = base.snapshot.copy(token = token, nodes = persistentListOf(base.snapshot.nodes[0].copy(path = "0"), target))
-        var ref: TargetReadReference? = TargetReadReference(snapshot, base.analysis.closeCandidates.single().copy(nodePath = "0/0"), 7)
+        var ref: TargetReadReference? = TargetReadReference(snapshot, base.analysis.closeCandidates.single().copy(
+            nodePath = "0/0", label = label ?: base.analysis.closeCandidates.single().label), 7)
         var runtime = ProbeRuntimeState(7, token, true, true, false, true, false)
         val child = Node(target, token)
         val rootNode = Node(snapshot.nodes[0], token, true).also { it.next = child }
@@ -105,6 +108,25 @@ class ReadOnlyTargetProbeTest {
         val s = Source(); s.child.raw = StringBuilder("close")
         assertTrue(ProbeDenial.TARGET_CHANGED in s.probe().inspect().denials)
     }
+
+    @Test fun sharedLabelsRemainReadOnlyEvenWhenNodeUsesDifferentSafeDescription() = runTest {
+        for (label in listOf("광고 닫기", "ＣＬＯＳＥ")) {
+            val s = Source(label, "close")
+            val result = s.probe().inspect()
+            assertEquals(label, ReadOnlyTargetProbe.UNPROVEN, result.denials)
+            assertFalse(result.productionReady)
+        }
+    }
+
+    @Test fun sharedNodeContractRejectsConflictingOrRiskyDescriptions() = runTest {
+        for (description in listOf("건너뛰기", "동의", "닫기.")) {
+            val s = Source("닫기", description)
+            val result = s.probe().inspect()
+            assertTrue(description, ProbeDenial.TARGET_CHANGED in result.denials)
+            assertFalse(result.productionReady)
+        }
+    }
+
     @Test fun originalTtlBoundaryIsNotRenewedByRead() = runTest {
         val before = Source(); before.now = 5_999
         assertEquals(ReadOnlyTargetProbe.UNPROVEN, before.probe().inspect().denials)
