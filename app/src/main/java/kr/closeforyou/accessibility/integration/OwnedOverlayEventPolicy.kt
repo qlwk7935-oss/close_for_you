@@ -44,6 +44,7 @@ internal inline fun inspectOwnedOverlayEvent(
     liveBinding: (SnapshotToken?, OverlayEventDiagnostic?) -> Boolean,
     ownPackageName: () -> String,
     diagnostic: OverlayEventDiagnostic?,
+    crossinline rejectedWindowClass: () -> OverlayEventWindowClass = { OverlayEventWindowClass.UNKNOWN },
 ): Boolean {
     if (!OwnedOverlayEventPolicy.mayTrack(state)) return false
     val category = when (eventType()) {
@@ -70,7 +71,7 @@ internal inline fun inspectOwnedOverlayEvent(
     if (kind == OverlayEventKind.INTERACTION || kind == OverlayEventKind.UNKNOWN) {
         diagnostic?.rejected(if (kind == OverlayEventKind.UNKNOWN) OverlayEventRejection.MASK_UNSUPPORTED
             else OverlayEventRejection.OWNERSHIP_NOT_CHECKED)
-        diagnostic?.completed(false)
+        diagnostic?.completed(false) { rejectedWindowClass() }
         return false
     }
     val pkg = packageName()
@@ -78,7 +79,7 @@ internal inline fun inspectOwnedOverlayEvent(
     val owns = liveBinding(current, diagnostic)
     val ignored = OwnedOverlayEventPolicy.mayIgnore(kind, owns, owns,
         pkg == ownPackageName(), pkg == null, current != null, diagnostic)
-    diagnostic?.completed(ignored)
+    diagnostic?.completed(ignored) { rejectedWindowClass() }
     return ignored
 }
 

@@ -166,7 +166,14 @@ private class OwnedOverlayTracker(private val service: AccessibilityService,
         state, { event.eventType }, { event.windowChanges }, { event.packageName?.toString() },
         { AccessibilityRuntime.currentToken() },
         { current, observation -> binding.matches(event.windowId, readOwnedIds(), current, state.generation, observation) },
-        { service.packageName }, diagnostic)
+        { service.packageName }, diagnostic,
+        // Runs only after a first rejected decision. Never mutates binding/unhealthy or retains event/token.
+        { classifyWindow(event) })
+    @Suppress("DEPRECATION")
+    private fun classifyWindow(event: AccessibilityEvent): OverlayEventWindowClass = classifyOverlayEventWindow(
+        event.windowId, AccessibilityRuntime.currentToken(), { service.windows },
+        { it.id }, { it.type }, { it.root }, { it.windowId }, { it.packageName?.toString() },
+        { it.recycle() }, { it.recycle() })
     @Suppress("DEPRECATION")
     private fun readOwnedIds(): Set<Int>? {
         if (unhealthy) return null
