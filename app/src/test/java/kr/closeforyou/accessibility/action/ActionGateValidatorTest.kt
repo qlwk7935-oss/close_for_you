@@ -195,6 +195,49 @@ class ActionGateValidatorTest {
         assertFalse(r.productionReady)
     }
 
+
+    @Test fun sharedLabelRulesPreserveSyntheticOnlyPermission() {
+        for (label in listOf("광고 닫기", "close ad", "ＣＬＯＳＥ", "창  닫기")) {
+            val candidate = f.candidate.copy(label = label)
+            // Distinct strings with the same safe role remain valid under judgeNode.
+            val node = f.node.copy(text = label, description = "Close")
+            val context = f.context.copy(
+                registration = f.registration.copy(candidate = candidate, node = node),
+                currentNode = node,
+            )
+            val result = validator.evaluate(f.request.copy(candidate = candidate), context, 100)
+            assertEquals(label, setOf(GateDenial.ANDROID_REVALIDATION_NOT_IMPLEMENTED), result.denials)
+            assertFalse(result.productionReady)
+        }
+    }
+
+    @Test fun sharedNodeLabelConflictOrRiskyDescriptionFailsClosed() {
+        for (description in listOf("건너뛰기", "동의", "확인", "X", "닫기.")) {
+            val node = f.node.copy(text = "닫기", description = description)
+            val context = f.context.copy(
+                registration = f.registration.copy(node = node),
+                currentNode = node,
+            )
+            val result = validator.evaluate(f.request, context, 100)
+            assertTrue(description, GateDenial.BUTTON_MEANING_UNVERIFIED in result.denials)
+            assertFalse(result.productionReady)
+        }
+    }
+
+    @Test fun sharedContractDoesNotIgnorePunctuationInvisibleMarksOrJoinedLabels() {
+        for (label in listOf("[닫기]", "닫기.", "창닫기", "광고건너뛰기", "닫​기", "X", "동의")) {
+            val candidate = f.candidate.copy(label = label)
+            val node = f.node.copy(text = label)
+            val context = f.context.copy(
+                registration = f.registration.copy(candidate = candidate, node = node),
+                currentNode = node,
+            )
+            val result = validator.evaluate(f.request.copy(candidate = candidate), context, 100)
+            assertTrue(label, GateDenial.BUTTON_MEANING_UNVERIFIED in result.denials)
+            assertFalse(result.productionReady)
+        }
+    }
+
     @Test fun printablePrivateContextDoesNotExposeTextCoordinatesOrDigests() {
         val printed = listOf(f.context, f.registration, f.node, f.geometry, f.registration.episode).joinToString()
         listOf("닫기", "example.synthetic", "synthetic-content", "synthetic-structure", "left=", "windowId=", "synthetic:id/").forEach {
