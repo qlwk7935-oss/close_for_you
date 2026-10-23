@@ -4,13 +4,10 @@ import android.accessibilityservice.AccessibilityService
 import android.os.SystemClock
 import android.view.Display
 import android.view.accessibility.AccessibilityEvent
-import android.view.accessibility.AccessibilityNodeInfo
 import android.view.accessibility.AccessibilityWindowInfo
 import kotlinx.coroutines.*
 import kr.closeforyou.R
 import kr.closeforyou.accessibility.AccessibilityRuntime
-import kr.closeforyou.accessibility.CollectionReleaseBatch
-import kr.closeforyou.accessibility.CollectionResourceSafety
 import kr.closeforyou.core.contract.SnapshotSource
 import kr.closeforyou.core.model.SnapshotToken
 import kr.closeforyou.ui.voice.*
@@ -165,7 +162,7 @@ private class OwnedOverlayTracker(private val service: AccessibilityService,
     fun shouldIgnore(event: AccessibilityEvent, state: OverlayWindowState): Boolean = inspectOwnedOverlayEvent(
         state, { event.eventType }, { event.windowChanges }, { event.packageName?.toString() },
         { AccessibilityRuntime.currentToken() },
-        { current, observation -> binding.matches(event.windowId, readOwnedIds(), current, state.generation, observation) },
+        { current, observation -> binding.matches(event.windowId, readOwnedIds(observation), current, state.generation, observation) },
         { service.packageName }, diagnostic,
         // Runs only after a first rejected decision. Never mutates binding/unhealthy or retains event/token.
         { classifyWindow(event) })
@@ -175,32 +172,17 @@ private class OwnedOverlayTracker(private val service: AccessibilityService,
         { it.id }, { it.type }, { it.root }, { it.windowId }, { it.packageName?.toString() },
         { it.recycle() }, { it.recycle() })
     @Suppress("DEPRECATION")
-    private fun readOwnedIds(): Set<Int>? {
-        if (unhealthy) return null
-        val roots = mutableListOf<AccessibilityNodeInfo>()
-        val windows = mutableListOf<AccessibilityWindowInfo>()
-        return try {
-            CollectionResourceSafety.run(body = {
-                windows += service.windows
-                if (windows.isEmpty() || windows.size > 32) return@run null
-                val found = mutableSetOf<Int>()
-                for (window in windows) {
-                    if (window.type != AccessibilityWindowInfo.TYPE_ACCESSIBILITY_OVERLAY ||
-                        window.displayId != Display.DEFAULT_DISPLAY) continue
-                    val root = window.root ?: continue
-                    if (roots.none { it === root }) roots += root
-                    if (root.packageName?.toString() != service.packageName || root.windowId != window.id) continue
-                    if (window.title?.toString() == service.getString(R.string.ui_choice_pane_title)) found += window.id
-                }
-                found
-            }, cleanup = {
-                val batch = CollectionReleaseBatch()
-                roots.forEach { root -> batch.attempt { root.recycle() } }
-                val seen = java.util.IdentityHashMap<AccessibilityWindowInfo, Boolean>()
-                windows.forEach { window -> if (seen.put(window, true) == null) batch.attempt { window.recycle() } }
-                batch.finish()
-            }, cleanupFailure = { unhealthy = true; null })
-        } catch (_: Exception) { unhealthy = true; null }
-        finally { roots.clear(); windows.clear() }
+    private fun readOwnedIds(observation: OverlayEventDiagnostic? = null): Set<Int>? {
+        if (unhealthy) {
+            observation?.ownedQueryUncertain(OverlayOwnedWindowDetail.UNCERTAIN)
+            return null
+        }
+        return readOwnedOverlayIds(
+            { service.windows },
+            { it.type == AccessibilityWindowInfo.TYPE_ACCESSIBILITY_OVERLAY && it.displayId == Display.DEFAULT_DISPLAY },
+            { it.root },
+            { root, window -> root.packageName?.toString() == service.packageName && root.windowId == window.id },
+            { it.title?.toString() == service.getString(R.string.ui_choice_pane_title) },
+            { it.id }, { it.recycle() }, { it.recycle() }, { unhealthy = true }, observation)
     }
 }

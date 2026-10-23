@@ -19,7 +19,7 @@ class OverlayEventDiagnosticTest {
         var classification = OverlayEventWindowClass.UNKNOWN
         var classificationFailure: Exception? = null
         val calls = mutableListOf<String>()
-        val diagnostic = OverlayEventDiagnostic { event, reason, detail, windowClass -> rows += event to reason; details += detail; classes += windowClass }
+        val diagnostic = OverlayEventDiagnostic { event, reason, detail, windowClass, _, _ -> rows += event to reason; details += detail; classes += windowClass }
         val binding = OwnedOverlayBinding()
         var state = OverlayWindowState(OverlayWindowStatus.SHOWING, 1L)
         var type = AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED
@@ -181,14 +181,14 @@ class OverlayEventDiagnosticTest {
     }
     @Test fun failedDiagnosticSinkCannotChangeDecisionOrTriggerRetries() {
         var writes = 0
-        val diagnostic = OverlayEventDiagnostic { _, _, _, _ -> writes++; throw IllegalStateException("SYNTHETIC_SECRET") }
+        val diagnostic = OverlayEventDiagnostic { _, _, _, _, _, _ -> writes++; throw IllegalStateException("SYNTHETIC_SECRET") }
         diagnostic.arm()
         val d = Driver(); d.pkg = null
         repeat(3) { assertFalse(d.read(diagnostic)) }
         assertEquals(1, writes)
     }
     @Test fun sinkCancellationDoesNotCancelWorkOrCreateAFalseAcceptedDecision() {
-        val diagnostic = OverlayEventDiagnostic { _, _, _, _ -> throw CancellationException("SYNTHETIC_SECRET") }
+        val diagnostic = OverlayEventDiagnostic { _, _, _, _, _, _ -> throw CancellationException("SYNTHETIC_SECRET") }
         diagnostic.arm()
         val d = Driver(); d.pkg = null
         assertFalse(d.read(diagnostic))
@@ -210,7 +210,7 @@ class OverlayEventDiagnosticTest {
     }
     @Test fun opaqueBindingRefusalDoesNotInventAReason() {
         val rows = mutableListOf<OverlayEventRejection>()
-        val diagnostic = OverlayEventDiagnostic { _, reason, detail, _ ->
+        val diagnostic = OverlayEventDiagnostic { _, reason, detail, _, _, _ ->
             rows += reason; assertEquals(OverlayBindingDetail.UNKNOWN, detail)
         }; diagnostic.arm()
         val state = OverlayWindowState(OverlayWindowStatus.SHOWING, 1L)
@@ -311,7 +311,7 @@ class OverlayEventDiagnosticTest {
     }
     @Test fun v5UnspecifiedBindingFailureRemainsUnknown() {
         val details = mutableListOf<OverlayBindingDetail>()
-        val diagnostic = OverlayEventDiagnostic { _, reason, detail, _ ->
+        val diagnostic = OverlayEventDiagnostic { _, reason, detail, _, _, _ ->
             assertEquals(OverlayEventRejection.BINDING_MISMATCH, reason); details += detail
         }; diagnostic.arm()
         assertFalse(inspectOwnedOverlayEvent(OverlayWindowState(OverlayWindowStatus.SHOWING, 1),
@@ -380,7 +380,7 @@ class OverlayEventDiagnosticTest {
     }
     @Test fun reentrantClassificationCannotOverwriteTheFirstEventCodesOrReadAnotherWindow() {
         val rows = mutableListOf<List<Enum<*>>>()
-        val diagnostic = OverlayEventDiagnostic { event, reason, detail, windowClass ->
+        val diagnostic = OverlayEventDiagnostic { event, reason, detail, windowClass, _, _ ->
             rows += listOf(event, reason, detail, windowClass)
         }
         diagnostic.arm(); diagnostic.begin(OverlayEventCategory.WINDOW_STATE_CHANGED)
