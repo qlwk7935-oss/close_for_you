@@ -1,5 +1,6 @@
 package kr.closeforyou.accessibility.integration
 
+import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityWindowInfo
 import kr.closeforyou.accessibility.CollectionReleaseBatch
 import kr.closeforyou.accessibility.CollectionResourceSafety
@@ -19,6 +20,79 @@ internal enum class OverlayBindingDetail {
     BOUND_WINDOW_NOT_LIVE, NEW_EVENT_WINDOW_MISMATCH, UNKNOWN,
 }
 internal enum class OverlayEventWindowClass { TARGET_APP, SYSTEM, INPUT_METHOD, OTHER_APP, NOT_IN_LIST, UNKNOWN }
+internal enum class OverlayWindowChangeKind { LAYER_ONLY, BOUNDS_INCLUDED, ADDED_ONLY, MIXED, UNKNOWN }
+/** QUERY_FAILED includes read/release exceptions. UNCERTAIN covers an empty/oversized list or
+ * previously unhealthy reader. New-window counts refer only to validated candidates minus before;
+ * NO_NEW_WINDOW is not proof that no native C window exists. UNKNOWN means no applicable detail.
+ */
+internal enum class OverlayOwnedWindowDetail { QUERY_FAILED, NO_NEW_WINDOW, MULTIPLE_NEW_WINDOWS, UNCERTAIN, UNKNOWN }
+
+/** Fixed codes only. UNKNOWN also covers zero, future bits and other single change types.
+ * BOUNDS_INCLUDED says nothing about safety, including when REMOVED is also present.
+ */
+internal fun overlayWindowChangeKind(mask: Int): OverlayWindowChangeKind {
+    val known = AccessibilityEvent.WINDOWS_CHANGE_ADDED or AccessibilityEvent.WINDOWS_CHANGE_REMOVED or
+        AccessibilityEvent.WINDOWS_CHANGE_TITLE or AccessibilityEvent.WINDOWS_CHANGE_BOUNDS or
+        AccessibilityEvent.WINDOWS_CHANGE_LAYER or AccessibilityEvent.WINDOWS_CHANGE_ACTIVE or
+        AccessibilityEvent.WINDOWS_CHANGE_FOCUSED or AccessibilityEvent.WINDOWS_CHANGE_ACCESSIBILITY_FOCUSED or
+        AccessibilityEvent.WINDOWS_CHANGE_PARENT or AccessibilityEvent.WINDOWS_CHANGE_CHILDREN or
+        AccessibilityEvent.WINDOWS_CHANGE_PIP
+    return when {
+        mask == 0 || mask and known.inv() != 0 -> OverlayWindowChangeKind.UNKNOWN
+        mask and AccessibilityEvent.WINDOWS_CHANGE_BOUNDS != 0 -> OverlayWindowChangeKind.BOUNDS_INCLUDED
+        mask == AccessibilityEvent.WINDOWS_CHANGE_LAYER -> OverlayWindowChangeKind.LAYER_ONLY
+        mask == AccessibilityEvent.WINDOWS_CHANGE_ADDED -> OverlayWindowChangeKind.ADDED_ONLY
+        mask and (mask - 1) != 0 -> OverlayWindowChangeKind.MIXED
+        else -> OverlayWindowChangeKind.UNKNOWN
+    }
+}
+
+/** The V5 owned-window read/release order, with synchronous generic handles for JVM fault tests.
+ * The result still belongs only to the original binding policy. Diagnostic detail adds no reads.
+ */
+internal fun <W : Any, N : Any> readOwnedOverlayIds(
+    readWindows: () -> List<W>,
+    isOverlayOnDefaultDisplay: (W) -> Boolean,
+    readRoot: (W) -> N?,
+    isOwnedRoot: (N, W) -> Boolean,
+    hasOwnedTitle: (W) -> Boolean,
+    windowId: (W) -> Int,
+    releaseRoot: (N) -> Unit,
+    releaseWindow: (W) -> Unit,
+    onUnhealthy: () -> Unit,
+    diagnostic: OverlayEventDiagnostic?,
+): Set<Int>? {
+    val roots = mutableListOf<N>()
+    val windows = mutableListOf<W>()
+    return try {
+        CollectionResourceSafety.run(body = {
+            windows += readWindows()
+            if (windows.isEmpty() || windows.size > 32) {
+                diagnostic?.ownedQueryUncertain(OverlayOwnedWindowDetail.UNCERTAIN)
+                return@run null
+            }
+            val found = mutableSetOf<Int>()
+            for (window in windows) {
+                if (!isOverlayOnDefaultDisplay(window)) continue
+                val root = readRoot(window) ?: continue
+                if (roots.none { it === root }) roots += root
+                if (!isOwnedRoot(root, window)) continue
+                if (hasOwnedTitle(window)) found += windowId(window)
+            }
+            found
+        }, cleanup = {
+            val batch = CollectionReleaseBatch()
+            roots.forEach { root -> batch.attempt { releaseRoot(root) } }
+            val seen = java.util.IdentityHashMap<W, Boolean>()
+            windows.forEach { window -> if (seen.put(window, true) == null) batch.attempt { releaseWindow(window) } }
+            batch.finish()
+        }, cleanupFailure = {
+            onUnhealthy(); diagnostic?.ownedQueryUncertain(OverlayOwnedWindowDetail.QUERY_FAILED); null
+        })
+    } catch (_: Exception) {
+        onUnhealthy(); diagnostic?.ownedQueryUncertain(OverlayOwnedWindowDetail.QUERY_FAILED); null
+    } finally { roots.clear(); windows.clear() }
+}
 
 /** Synchronous, diagnostic-only lease. Only the result enum leaves this call; no text/title reads.
  * A different window of the target package is UNKNOWN, never TARGET_APP or OTHER_APP.
@@ -82,7 +156,8 @@ internal fun <W : Any, N : Any> classifyOverlayEventWindow(
  * No IDs, tokens, windows, text, clock, exceptions, collection or policy authority are retained.
  */
 internal class OverlayEventDiagnostic(
-    private val write: (OverlayEventCategory, OverlayEventRejection, OverlayBindingDetail, OverlayEventWindowClass) -> Unit,
+    private val write: (OverlayEventCategory, OverlayEventRejection, OverlayBindingDetail, OverlayEventWindowClass,
+        OverlayWindowChangeKind, OverlayOwnedWindowDetail) -> Unit,
 ) {
     private var armed = false
     private var reported = false
@@ -90,15 +165,26 @@ internal class OverlayEventDiagnostic(
     private var reason = OverlayEventRejection.UNKNOWN
     private var bindingFailure = OverlayBindingRejection.NONE
     private var bindingDetail = OverlayBindingDetail.UNKNOWN
+    private var windowChangeKind = OverlayWindowChangeKind.UNKNOWN
+    private var ownedWindowDetail = OverlayOwnedWindowDetail.UNKNOWN
 
     fun arm() { armed = true; reported = false }
     fun disarm() { armed = false }
     fun begin(event: OverlayEventCategory) {
         category = event; reason = OverlayEventRejection.UNKNOWN; bindingFailure = OverlayBindingRejection.NONE
         bindingDetail = OverlayBindingDetail.UNKNOWN
+        windowChangeKind = OverlayWindowChangeKind.UNKNOWN; ownedWindowDetail = OverlayOwnedWindowDetail.UNKNOWN
+    }
+    fun windowChangesObserved(mask: Int) { windowChangeKind = overlayWindowChangeKind(mask) }
+    fun ownedQueryUncertain(value: OverlayOwnedWindowDetail) { ownedWindowDetail = value }
+    fun ownedWindowUnconfirmed(value: OverlayOwnedWindowDetail) {
+        bindingRejected(OverlayBindingRejection.OWNED_WINDOW_UNCONFIRMED)
+        ownedWindowDetail = value
     }
     fun bindingRejected(value: OverlayBindingRejection, detail: OverlayBindingDetail = OverlayBindingDetail.UNKNOWN) {
         bindingFailure = value; bindingDetail = detail
+        if (value == OverlayBindingRejection.OWNED_WINDOW_UNCONFIRMED && ownedWindowDetail == OverlayOwnedWindowDetail.UNKNOWN)
+            ownedWindowDetail = OverlayOwnedWindowDetail.UNCERTAIN
     }
     fun rejected(value: OverlayEventRejection) { reason = value }
     fun bindingRefused(currentAvailable: Boolean) {
@@ -120,8 +206,11 @@ internal class OverlayEventDiagnostic(
         val event = category
         val rejection = reason
         val detail = if (rejection == OverlayEventRejection.BINDING_MISMATCH) bindingDetail else OverlayBindingDetail.UNKNOWN
+        val change = if (event == OverlayEventCategory.WINDOWS_CHANGED) windowChangeKind else OverlayWindowChangeKind.UNKNOWN
+        val ownedDetail = if (rejection == OverlayEventRejection.OWNED_WINDOW_UNCONFIRMED)
+            ownedWindowDetail else OverlayOwnedWindowDetail.UNKNOWN
         val classified = try { windowClass() } catch (_: Exception) { OverlayEventWindowClass.UNKNOWN }
-        diagnosticWrite { write(event, rejection, detail, classified) }
+        diagnosticWrite { write(event, rejection, detail, classified, change, ownedDetail) }
     }
     override fun toString() = "OverlayEventDiagnostic(redacted)"
 }

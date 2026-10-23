@@ -63,7 +63,8 @@ internal inline fun inspectOwnedOverlayEvent(
         OverlayEventCategory.WINDOWS_CHANGED -> {
             val harmless = AccessibilityEvent.WINDOWS_CHANGE_ADDED or AccessibilityEvent.WINDOWS_CHANGE_BOUNDS or
                 AccessibilityEvent.WINDOWS_CHANGE_LAYER or AccessibilityEvent.WINDOWS_CHANGE_TITLE
-            if (windowChanges() != 0 && windowChanges() and harmless.inv() == 0)
+            if (windowChanges().also { diagnostic?.windowChangesObserved(it) } != 0 &&
+                windowChanges().also { diagnostic?.windowChangesObserved(it) } and harmless.inv() == 0)
                 OverlayEventKind.OWN_WINDOW_LAYOUT else OverlayEventKind.UNKNOWN
         }
         OverlayEventCategory.OTHER -> OverlayEventKind.INTERACTION
@@ -123,8 +124,10 @@ internal class OwnedOverlayBinding {
                 OverlayBindingDetail.BOUND_WINDOW_NOT_LIVE)
             return matches
         }
-        val created = liveOwned.filter { it !in previous }.singleOrNull() ?: run {
-            diagnostic?.bindingRejected(OverlayBindingRejection.OWNED_WINDOW_UNCONFIRMED)
+        val createdWindows = liveOwned.filter { it !in previous }
+        val created = createdWindows.singleOrNull() ?: run {
+            diagnostic?.ownedWindowUnconfirmed(if (createdWindows.isEmpty()) OverlayOwnedWindowDetail.NO_NEW_WINDOW
+                else OverlayOwnedWindowDetail.MULTIPLE_NEW_WINDOWS)
             return false
         }
         if (eventWindow != created) {
