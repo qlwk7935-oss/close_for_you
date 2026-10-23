@@ -18,6 +18,25 @@ import org.junit.Test
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class CaptureOcrPipelineTest {
+    @Test fun cleanupStartingDuringOcrDiscardsLateResultAndReleasesFrameBeforeAnyPublication() = runTest {
+        val barrier = kr.closeforyou.accessibility.integration.OverlayCleanupBarrier()
+        val permit = barrier.awaitObservationPermit()
+        val completion = CompletableDeferred<List<OcrLine>>()
+        val shots = Shots()
+        val work = async {
+            CaptureOcrPipeline(shots, OcrPort { completion.await() }, { true }, {
+                // Same additional protection check used by A's checkEvidence boundary.
+                if (!barrier.permits(permit)) throw kotlinx.coroutines.CancellationException("CLEANUP_CHANGED")
+                null
+            }).analyze(imagePopup())
+        }
+        runCurrent(); assertEquals(1, shots.calls)
+        barrier.retiring(20, 1, 10)
+        completion.complete(listOf(OcrLine("SYNTHETIC_NOTICE", box)))
+        work.join()
+        assertTrue(work.isCancelled); assertTrue(shots.frame!!.closed)
+        assertFalse(barrier.permits(permit))
+    }
     private val box = ScreenBounds(100, 500, 900, 560)
     private fun blockLine(diagnostic: EvidenceBlockDiagnostic, outcome: EvidenceOutcome): String? {
         if (outcome is EvidenceOutcome.Blocked) diagnostic.blocked(outcome.reason, outcome.issue)

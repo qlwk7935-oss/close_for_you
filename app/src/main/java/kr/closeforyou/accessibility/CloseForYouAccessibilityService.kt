@@ -5,6 +5,7 @@ import android.accessibilityservice.AccessibilityServiceInfo
 import android.content.Intent
 import android.content.res.Configuration
 import android.os.Looper
+import android.os.Handler
 import android.os.Process
 import android.os.SystemClock
 import android.view.accessibility.AccessibilityEvent
@@ -39,6 +40,15 @@ class CloseForYouAccessibilityService : AccessibilityService() {
     private var connected = false
     private var inputMethodPackages: Set<String> = emptySet()
     private val preferences by lazy { CorePreferences.get(this) }
+    private val presentationHandler = Handler(Looper.getMainLooper())
+    private val presentationGate = kr.closeforyou.accessibility.integration.ChoicePresentationGate(
+        SystemClock::uptimeMillis, ::isCurrent,
+        { choiceIntegration?.permitsObservation(it) == true },
+        { kr.closeforyou.accessibility.integration.awaitChoicePresentationTurn(
+            { presentationHandler.post(it) }, { presentationHandler.removeCallbacks(it) }) },
+        { snapshot, check -> verifyScreen(snapshot, checkActive = check) == null },
+        { token -> if (isCurrent(token)) invalidate(clearBaseline = false, cause = ChoiceInvalidationCause.EVENT) },
+    )
 
     override fun onCreate() {
         super.onCreate()
@@ -63,6 +73,7 @@ class CloseForYouAccessibilityService : AccessibilityService() {
     }
 
     private fun initializeConnectedService() {
+        presentationGate.clear()
         ruleCleanup.close()
         choiceIntegration?.close(ChoiceInvalidationCause.SERVICE)
         choiceIntegration = null
@@ -82,9 +93,9 @@ class CloseForYouAccessibilityService : AccessibilityService() {
         AccessibilityRuntime.attachCaptureCapability(screenshots)
         pipeline = CaptureOcrPipeline(screenshots, KoreanMlKitOcr(), ::isCurrent, { verifyScreen(it) })
         AccessibilityRuntime.connect(::isPolicyCurrent)
-        choiceIntegration = kr.closeforyou.accessibility.integration.ServiceChoiceIntegration.create(this, serviceScope) {
-            touching || !connected
-        }
+        choiceIntegration = kr.closeforyou.accessibility.integration.ServiceChoiceIntegration.create(this, serviceScope,
+            userInteracting = { touching || !connected }, requestObservation = ::observeAfterCleanup,
+            verifyPresentation = presentationGate::awaitReady)
         choiceIntegration?.start()
         invalidate(clearBaseline = true, cause = ChoiceInvalidationCause.SERVICE)
         val application = applicationContext
@@ -107,6 +118,19 @@ class CloseForYouAccessibilityService : AccessibilityService() {
             return
         }
         if (event.eventType !in OBSERVED_EVENTS) return
+        val integration = choiceIntegration
+        val receipt = integration?.observeCleanupEvent(event)
+        var processed = false
+        try {
+            handleObservedEvent(event)
+            processed = true
+        } finally {
+            if (processed) integration?.cleanupEventProcessed(receipt)
+            else integration?.cleanupEventFailed()
+        }
+    }
+
+    private fun handleObservedEvent(event: AccessibilityEvent) {
         // A-owned new-window binding + live ownership, never an app-wide package exclusion.
         if (choiceIntegration?.shouldIgnore(event) == true) return
         // Copy only primitive enums/IDs, never keep the event or request event.source.
@@ -152,6 +176,20 @@ class CloseForYouAccessibilityService : AccessibilityService() {
             else PopupTrigger.WINDOW_CHANGED
         // All Android objects have been released before this delayed job can run.
         val eventWindowId = event.windowId
+        scheduleCapture(epoch, trigger, eventWindowId)
+    }
+
+    /** No Candidate is replayed. The original removal may have had our package and been excluded
+     * from detection, so explicitly arrange a fresh F0 observation after confirmed cleanup. */
+    private fun observeAfterCleanup() {
+        if (!connected || touching) return
+        val settings = preferences.currentSettings()
+        if (!settings.consentGranted || settings.paused) return
+        pendingCapture?.cancel()
+        scheduleCapture(freshness.version, PopupTrigger.WINDOW_CHANGED, -1)
+    }
+
+    private fun scheduleCapture(epoch: Long, trigger: PopupTrigger, eventWindowId: Int) {
         val captureDiagnostic = EvidenceBlockLog.beginWork(ServiceWorkKind.CAPTURE)
         pendingCapture = serviceScope.launchDiagnosed(captureDiagnostic) {
             captureDiagnostic?.at(ServiceWorkStage.DEBOUNCE)
@@ -162,20 +200,21 @@ class CloseForYouAccessibilityService : AccessibilityService() {
                 captureDiagnostic?.outcome(ServiceWorkEnd.INTEGRATION_UNAVAILABLE)
                 return@launchDiagnosed
             }
-            integration.awaitSubscription()
+            val cleanupPermit = integration.awaitObservationPermit()
             if (!freshness.isCurrent(epoch) || touching) {
                 captureDiagnostic?.outcome(ServiceWorkEnd.CAPTURE_STALE)
                 return@launchDiagnosed
             }
             val owner = currentCoroutineContext()[Job] ?: throw CancellationException("NO_COLLECTION_OWNER")
-            capture(epoch, trigger, eventWindowId, captureDiagnostic) {
-                freshness.checkActive(epoch, owner) { connected && !touching }
+            capture(epoch, trigger, eventWindowId, captureDiagnostic, integration, cleanupPermit) {
+                freshness.checkActive(epoch, owner) { connected && !touching && integration.permitsObservation(cleanupPermit) }
             }
         }
     }
 
     private fun capture(epoch: Long, trigger: PopupTrigger, eventWindowId: Int,
-        diagnostic: ServiceWorkDiagnostic?, checkActive: () -> Unit) {
+        diagnostic: ServiceWorkDiagnostic?, integration: kr.closeforyou.accessibility.integration.ServiceChoiceIntegration,
+        cleanupPermit: Any, checkActive: () -> Unit) {
         val trace = CaptureDiagnostics.trace(eventWindowId, epoch)
         val observation = DetectionObservationHook.beginAttempt()
         diagnostic?.at(ServiceWorkStage.CAPTURE)
@@ -215,6 +254,7 @@ class CloseForYouAccessibilityService : AccessibilityService() {
                 evidenceJob = serviceScope.launchDiagnosed(evidenceDiagnostic) {
                     evidenceDiagnostic?.at(ServiceWorkStage.BEGIN)
                     val owner = currentCoroutineContext()[Job] ?: throw CancellationException("NO_EVIDENCE_OWNER")
+                    freshness.checkActive(epoch, owner) { integration.permitsObservation(cleanupPermit) && connected && !touching }
                     val operation = AccessibilityRuntime.begin(result.snapshot, owner)
                     if (operation == null) {
                         evidenceDiagnostic?.outcome(ServiceWorkEnd.BEGIN_REJECTED)
@@ -222,9 +262,10 @@ class CloseForYouAccessibilityService : AccessibilityService() {
                     }
                     val blockDiagnostic = evidenceDiagnostic?.block
                     var published = false
+                    var presentationTicket: kr.closeforyou.accessibility.integration.ChoicePresentationGate.Ticket? = null
                     try {
                         val checkEvidence = {
-                            freshness.checkActive(epoch, owner) { isCurrent(result.snapshot.token) }
+                            freshness.checkActive(epoch, owner) { isCurrent(result.snapshot.token) && integration.permitsObservation(cleanupPermit) }
                         }
                         evidenceDiagnostic?.at(ServiceWorkStage.PIPELINE)
                         when (val evidence = pipeline.analyze(result.snapshot, trace, detectionFrame = result.frame,
@@ -237,6 +278,7 @@ class CloseForYouAccessibilityService : AccessibilityService() {
                                     trace.evidence(evidence.issue)
                                     checkEvidence()
                                     evidenceDiagnostic?.at(ServiceWorkStage.PUBLISH)
+                                    presentationTicket = presentationGate.prepare(evidence.snapshot, cleanupPermit)
                                     published = AccessibilityRuntime.publish(operation, evidence.snapshot,
                                         PopupDetection(result.snapshot.token, signals.toPersistentSet(), requiresUserReview = true),
                                         evidence.analysis, evidence.issue)
@@ -270,6 +312,7 @@ class CloseForYouAccessibilityService : AccessibilityService() {
                         }
                     } finally {
                         diagnosedCleanup(evidenceDiagnostic) {
+                            if (!published || !isActive) presentationTicket?.let(presentationGate::abandon)
                             if (!published || !isActive) AccessibilityRuntime.abandon(operation, epoch)
                         }
                     }
@@ -317,6 +360,7 @@ class CloseForYouAccessibilityService : AccessibilityService() {
     }
 
     private fun invalidate(clearBaseline: Boolean, cause: ChoiceInvalidationCause = ChoiceInvalidationCause.UNKNOWN): Long {
+        presentationGate.clear()
         pendingCapture?.cancel()
         pendingCapture = null
         evidenceJob?.cancel()

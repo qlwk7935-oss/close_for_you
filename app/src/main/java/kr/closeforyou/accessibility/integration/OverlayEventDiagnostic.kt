@@ -77,7 +77,11 @@ internal fun <W : Any, N : Any> readOwnedOverlayIds(
                 val root = readRoot(window) ?: continue
                 if (roots.none { it === root }) roots += root
                 if (!isOwnedRoot(root, window)) continue
-                if (hasOwnedTitle(window)) found += windowId(window)
+                if (hasOwnedTitle(window)) {
+                    val id = windowId(window)
+                    val duplicate = !found.add(id)
+                    diagnostic?.ownedIdObserved(id, duplicate)
+                }
             }
             found
         }, cleanup = {
@@ -153,11 +157,13 @@ internal fun <W : Any, N : Any> classifyOverlayEventWindow(
 }
 
 /** Debug observation only: at most one rejected event per actual successful presentation.
- * No IDs, tokens, windows, text, clock, exceptions, collection or policy authority are retained.
+ * Per-event fields retain only enums. The separate optional origin observer owns bounded Debug
+ * identity history; no event, token, Android handle, text, exception or policy authority is retained.
  */
 internal class OverlayEventDiagnostic(
+    private val origin: OverlayEventOriginDiagnostic? = null,
     private val write: (OverlayEventCategory, OverlayEventRejection, OverlayBindingDetail, OverlayEventWindowClass,
-        OverlayWindowChangeKind, OverlayOwnedWindowDetail) -> Unit,
+        OverlayWindowChangeKind, OverlayOwnedWindowDetail, OverlayEventIdRelation, OverlayEventTimeRelation) -> Unit,
 ) {
     private var armed = false
     private var reported = false
@@ -167,6 +173,7 @@ internal class OverlayEventDiagnostic(
     private var bindingDetail = OverlayBindingDetail.UNKNOWN
     private var windowChangeKind = OverlayWindowChangeKind.UNKNOWN
     private var ownedWindowDetail = OverlayOwnedWindowDetail.UNKNOWN
+    private var idRelation = OverlayEventIdRelation.UNKNOWN
 
     fun arm() { armed = true; reported = false }
     fun disarm() { armed = false }
@@ -174,9 +181,21 @@ internal class OverlayEventDiagnostic(
         category = event; reason = OverlayEventRejection.UNKNOWN; bindingFailure = OverlayBindingRejection.NONE
         bindingDetail = OverlayBindingDetail.UNKNOWN
         windowChangeKind = OverlayWindowChangeKind.UNKNOWN; ownedWindowDetail = OverlayOwnedWindowDetail.UNKNOWN
+        idRelation = OverlayEventIdRelation.UNKNOWN
     }
+    fun decisionContext(eventWindow: Int, targetWindow: Int?, generation: Long) {
+        idRelation = origin?.relation(eventWindow, targetWindow, generation) ?: OverlayEventIdRelation.UNKNOWN
+    }
+    fun boundConfirmed(window: Int, generation: Long, targetWindow: Int?) {
+        origin?.bound(window, generation)
+        idRelation = origin?.relation(window, targetWindow, generation) ?: OverlayEventIdRelation.UNKNOWN
+    }
+    fun ownedIdObserved(window: Int, duplicate: Boolean) { origin?.ownedId(window, duplicate) }
     fun windowChangesObserved(mask: Int) { windowChangeKind = overlayWindowChangeKind(mask) }
-    fun ownedQueryUncertain(value: OverlayOwnedWindowDetail) { ownedWindowDetail = value }
+    fun ownedQueryUncertain(value: OverlayOwnedWindowDetail) {
+        ownedWindowDetail = value
+        if (value == OverlayOwnedWindowDetail.QUERY_FAILED) origin?.uncertain()
+    }
     fun ownedWindowUnconfirmed(value: OverlayOwnedWindowDetail) {
         bindingRejected(OverlayBindingRejection.OWNED_WINDOW_UNCONFIRMED)
         ownedWindowDetail = value
@@ -199,7 +218,8 @@ internal class OverlayEventDiagnostic(
         if (bindingFailure == OverlayBindingRejection.TOKEN_MISMATCH && currentAvailable)
             bindingDetail = OverlayBindingDetail.NONNULL_TOKEN_MISMATCH
     }
-    fun completed(ignored: Boolean, windowClass: () -> OverlayEventWindowClass = { OverlayEventWindowClass.UNKNOWN }) {
+    fun completed(ignored: Boolean, eventTime: () -> Long? = { null },
+        windowClass: () -> OverlayEventWindowClass = { OverlayEventWindowClass.UNKNOWN }) {
         if (!armed || reported || ignored) return
         reported = true // A failed sink is never retried on later events.
         // Freeze fixed codes before framework reads can reenter event inspection.
@@ -209,8 +229,18 @@ internal class OverlayEventDiagnostic(
         val change = if (event == OverlayEventCategory.WINDOWS_CHANGED) windowChangeKind else OverlayWindowChangeKind.UNKNOWN
         val ownedDetail = if (rejection == OverlayEventRejection.OWNED_WINDOW_UNCONFIRMED)
             ownedWindowDetail else OverlayOwnedWindowDetail.UNKNOWN
+        val relation = idRelation
+        val time = try { origin?.timeRelation(eventTime()) ?: OverlayEventTimeRelation.UNKNOWN }
+            catch (_: Exception) { OverlayEventTimeRelation.UNKNOWN }
         val classified = try { windowClass() } catch (_: Exception) { OverlayEventWindowClass.UNKNOWN }
-        diagnosticWrite { write(event, rejection, detail, classified, change, ownedDetail) }
+        // A predecessor reported live again after ACK is reuse/identity uncertainty, not proof of
+        // a late event. Reuse the existing diagnostic query; never query or suppress an event here.
+        val conservativeRelation = if (relation == OverlayEventIdRelation.PREVIOUS_C_ACKED_ID_MATCH) when (classified) {
+            OverlayEventWindowClass.NOT_IN_LIST -> relation
+            OverlayEventWindowClass.UNKNOWN -> OverlayEventIdRelation.UNKNOWN
+            else -> OverlayEventIdRelation.AMBIGUOUS_OR_REUSED
+        } else relation
+        diagnosticWrite { write(event, rejection, detail, classified, change, ownedDetail, conservativeRelation, time) }
     }
     override fun toString() = "OverlayEventDiagnostic(redacted)"
 }

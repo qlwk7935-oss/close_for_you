@@ -45,6 +45,7 @@ internal inline fun inspectOwnedOverlayEvent(
     ownPackageName: () -> String,
     diagnostic: OverlayEventDiagnostic?,
     crossinline rejectedWindowClass: () -> OverlayEventWindowClass = { OverlayEventWindowClass.UNKNOWN },
+    crossinline rejectedEventTime: () -> Long? = { null },
 ): Boolean {
     if (!OwnedOverlayEventPolicy.mayTrack(state)) return false
     val category = when (eventType()) {
@@ -72,7 +73,7 @@ internal inline fun inspectOwnedOverlayEvent(
     if (kind == OverlayEventKind.INTERACTION || kind == OverlayEventKind.UNKNOWN) {
         diagnostic?.rejected(if (kind == OverlayEventKind.UNKNOWN) OverlayEventRejection.MASK_UNSUPPORTED
             else OverlayEventRejection.OWNERSHIP_NOT_CHECKED)
-        diagnostic?.completed(false) { rejectedWindowClass() }
+        diagnostic?.completed(false, { rejectedEventTime() }) { rejectedWindowClass() }
         return false
     }
     val pkg = packageName()
@@ -80,7 +81,7 @@ internal inline fun inspectOwnedOverlayEvent(
     val owns = liveBinding(current, diagnostic)
     val ignored = OwnedOverlayEventPolicy.mayIgnore(kind, owns, owns,
         pkg == ownPackageName(), pkg == null, current != null, diagnostic)
-    diagnostic?.completed(ignored) { rejectedWindowClass() }
+    diagnostic?.completed(ignored, { rejectedEventTime() }) { rejectedWindowClass() }
     return ignored
 }
 
@@ -98,6 +99,7 @@ internal class OwnedOverlayBinding {
     }
     fun matches(eventWindow: Int, liveOwned: Set<Int>?, current: SnapshotToken?, currentGeneration: Long,
         diagnostic: OverlayEventDiagnostic? = null): Boolean {
+        diagnostic?.decisionContext(eventWindow, current?.windowId, currentGeneration)
         val previous = before ?: run {
             diagnostic?.bindingRejected(OverlayBindingRejection.BEFORE_SET_UNAVAILABLE)
             return false
@@ -135,8 +137,10 @@ internal class OwnedOverlayBinding {
                 OverlayBindingDetail.NEW_EVENT_WINDOW_MISMATCH); return false
         }
         bound = created
+        diagnostic?.boundConfirmed(created, currentGeneration, current?.windowId)
         return true
     }
     fun clear() { before = null; token = null; bound = null; generation = 0L }
+    fun boundWindowFor(currentGeneration: Long): Int? = if (generation == currentGeneration && generation > 0) bound else null
     override fun toString() = "OwnedOverlayBinding(redacted)"
 }

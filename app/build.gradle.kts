@@ -1,8 +1,24 @@
+import java.security.MessageDigest
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.compose")
     id("com.google.devtools.ksp")
+}
+
+// Debug artifact identity includes the actual working-tree bytes (including untracked A code).
+// No Git command, path, local setting or user data is embedded. Configuration cache is not enabled.
+val issue29SourceHash = MessageDigest.getInstance("SHA-256").let { digest ->
+    val sources = fileTree("src/main") { include("**/*.kt", "**/*.xml") }.files +
+        fileTree("src/debug") { include("**/*.kt", "**/*.xml") }.files +
+        listOf(file("build.gradle.kts"), rootProject.file("build.gradle.kts"), rootProject.file("settings.gradle.kts"),
+            rootProject.file("gradle/libs.versions.toml"), rootProject.file("gradle/wrapper/gradle-wrapper.properties"))
+    sources.filter { it.isFile }.sortedBy { it.relativeTo(rootProject.projectDir).invariantSeparatorsPath }.forEach {
+        digest.update(it.relativeTo(rootProject.projectDir).invariantSeparatorsPath.toByteArray(Charsets.UTF_8))
+        digest.update(0.toByte()); digest.update(it.readBytes()); digest.update(0.toByte())
+    }
+    digest.digest().joinToString("") { "%02x".format(it.toInt() and 0xff) }
 }
 
 android {
@@ -19,6 +35,9 @@ android {
     }
 
     buildTypes {
+        debug {
+            buildConfigField("String", "ISSUE29_SOURCE_SHA256", "\"$issue29SourceHash\"")
+        }
         release {
             isMinifyEnabled = false
         }
@@ -34,6 +53,7 @@ android {
     sourceSets.getByName("debug").java.srcDir("../synthetic-test-support/src/main/java")
 
     buildFeatures {
+        buildConfig = true
         compose = true
     }
 }

@@ -2,6 +2,8 @@ package kr.closeforyou.ui.voice.integration
 
 import kotlin.coroutines.resume
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
@@ -99,6 +101,8 @@ class PopupChoiceFlow(
     private val rememberStore: RememberedPopupStore = RememberedPopupStore.NONE,
     /** C's per-app auto close setting (default off); decides the sentence after remembering. */
     private val autoCloseEnabledForApp: (packageName: String) -> Boolean = { false },
+    /** A's cancellable cleanup boundary. False discards this prompt without reporting a show failure. */
+    private val awaitPresentationReady: suspend (SnapshotToken) -> Boolean = { true },
 ) {
     suspend fun run() {
         source.events.collectLatest { event ->
@@ -141,6 +145,7 @@ class PopupChoiceFlow(
                     say(token, AnnouncementKind.ACTION_RESULT, R.string.ui_prompt_window_stuck)
                     null
                 }
+                is Answer.Obsolete -> null
             }
             if (source.currentToken() != token) return
         }
@@ -239,6 +244,7 @@ class PopupChoiceFlow(
 
         /** The person chose but the window could not be closed; the choice was dropped. */
         data object Lost : Answer
+        data object Obsolete : Answer
     }
 
     /** The prompt currently on screen, its generation, and who receives its next tap (null while busy). */
@@ -251,20 +257,27 @@ class PopupChoiceFlow(
      * until one tap. Taps that arrive while nobody waits are dropped. Cancelling this coroutine
      * leaves closing the prompt to [run]'s finally block.
      */
-    private suspend fun awaitAnswer(prompt: ChoicePrompt): Answer = suspendCancellableCoroutine { cont ->
-        pending = { answer ->
-            pending = null
-            if (cont.isActive) cont.resume(answer)
-        }
-        cont.invokeOnCancellation { pending = null }
+    private suspend fun awaitAnswer(prompt: ChoicePrompt): Answer {
         if (shown !== prompt || !presenter.isShowing) {
-            shown = prompt
-            shownGeneration = OverlayWindowKeeper.NO_GENERATION
-            if (presenter.present(prompt, ::deliver) == PromptShowResult.SHOWN) {
-                shownGeneration = presenter.windowState.generation
-            } else {
-                shown = null
-                pending?.invoke(Answer.NotShown)
+            if (!awaitPresentationReady(prompt.token)) return Answer.Obsolete
+            currentCoroutineContext().ensureActive()
+            if (source.currentToken() != prompt.token) return Answer.Obsolete
+        }
+        return suspendCancellableCoroutine { cont ->
+            pending = { answer ->
+                pending = null
+                if (cont.isActive) cont.resume(answer)
+            }
+            cont.invokeOnCancellation { pending = null }
+            if (shown !== prompt || !presenter.isShowing) {
+                shown = prompt
+                shownGeneration = OverlayWindowKeeper.NO_GENERATION
+                if (presenter.present(prompt, ::deliver) == PromptShowResult.SHOWN) {
+                    shownGeneration = presenter.windowState.generation
+                } else {
+                    shown = null
+                    pending?.invoke(Answer.NotShown)
+                }
             }
         }
     }

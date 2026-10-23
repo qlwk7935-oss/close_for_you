@@ -20,7 +20,7 @@ class OwnedOverlayWindowReadTest {
         val releasedRoots = mutableListOf<Node>()
         val releasedWindows = mutableListOf<Window>()
         val details = mutableListOf<OverlayOwnedWindowDetail>()
-        val diagnostic = OverlayEventDiagnostic { _, _, _, _, _, detail -> details += detail }
+        val diagnostic = OverlayEventDiagnostic { _, _, _, _, _, detail, _, _ -> details += detail }
         init { diagnostic.arm(); diagnostic.begin(OverlayEventCategory.WINDOWS_CHANGED) }
         private fun at(step: String) {
             calls += step

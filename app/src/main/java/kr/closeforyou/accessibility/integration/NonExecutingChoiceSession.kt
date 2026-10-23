@@ -185,6 +185,7 @@ internal class NonExecutingChoiceSession(
     private val resources: ChoiceResources,
     private val presentationHealth: ChoicePresentationHealth = ChoicePresentationHealth(),
     private val diagnostic: ChoiceFlowDiagnostic? = null,
+    private val awaitPresentationReady: suspend (SnapshotToken) -> Boolean = { true },
 ) {
     private var accepted: SnapshotToken? = null
     private var lastDelivered: SnapshotToken? = null
@@ -256,7 +257,8 @@ internal class NonExecutingChoiceSession(
                     override suspend fun handle(choice: UserChoice, analysis: PopupAnalysis, origin: ChoiceOrigin) =
                         reviewChoice(choice, analysis) // C metadata is not a proof of user authorization.
                 }, text, contentText, moveToButtonEnabled = false, rememberChoicesEnabled = false,
-                rememberStore = RememberedPopupStore.NONE, autoCloseEnabledForApp = { false }).run()
+                rememberStore = RememberedPopupStore.NONE, autoCloseEnabledForApp = { false },
+                awaitPresentationReady = awaitPresentationReady).run()
         } catch (cancelled: CancellationException) {
             diagnostic?.record(ChoiceFlowPoint.SESSION_CANCELLED)
             throw cancelled

@@ -22,7 +22,7 @@ class OverlayEventCauseTest {
         var classifierFailure: Exception? = null
         var classifierCalls = 0
         var current = token
-        val diagnostic = OverlayEventDiagnostic { event, reason, detail, window, change, owned ->
+        val diagnostic = OverlayEventDiagnostic { event, reason, detail, window, change, owned, _, _ ->
             rows += listOf(event, reason, detail, window, change, owned)
         }
         init { binding.expect(emptySet(), token, 1); diagnostic.arm() }
@@ -142,7 +142,7 @@ class OverlayEventCauseTest {
     }
     @Test fun reentrantReadCannotReplaceFrozenMaskOrOwnedDetail() {
         val rows = mutableListOf<List<Enum<*>>>()
-        val diagnostic = OverlayEventDiagnostic { event, reason, detail, window, change, owned ->
+        val diagnostic = OverlayEventDiagnostic { event, reason, detail, window, change, owned, _, _ ->
             rows += listOf(event, reason, detail, window, change, owned)
         }
         diagnostic.arm(); diagnostic.begin(OverlayEventCategory.WINDOWS_CHANGED)
