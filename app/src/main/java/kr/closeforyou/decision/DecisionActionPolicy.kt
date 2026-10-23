@@ -143,12 +143,12 @@ class DecisionActionPolicy : ActionPolicy {
      * trusted on its own: the label must itself say that role, so `CLOSE` + "닫기 전 저장", a bare
      * "X", or a grade D/K/P/O label is refused whoever built the candidate.
      */
-    private fun isVerifiedTarget(candidate: CloseCandidate): Boolean {
-        val label = candidate.label?.takeIf { it.isNotBlank() } ?: return false
-        val treeEvidence = candidate.evidence == EvidenceLevel.E1_DISMISS ||
-            candidate.evidence == EvidenceLevel.E2_LABELED_NODE
-        return treeEvidence &&
-            (candidate.role == ButtonRole.CLOSE || candidate.role == ButtonRole.SKIP) &&
-            DecisionKeywords.buttonRoleOf(label) == candidate.role
-    }
+    private fun isVerifiedTarget(candidate: CloseCandidate): Boolean = candidate.isVerifiedTarget()
+}
+
+/** See [DecisionActionPolicy.isVerifiedTarget]; shared with [DecisionAutoClose]. */
+internal fun CloseCandidate.isVerifiedTarget(): Boolean {
+    val label = label?.takeIf { it.isNotBlank() } ?: return false
+    val treeEvidence = evidence == EvidenceLevel.E1_DISMISS || evidence == EvidenceLevel.E2_LABELED_NODE
+    return treeEvidence && (role == ButtonRole.CLOSE || role == ButtonRole.SKIP) && DecisionKeywords.buttonRoleOf(label) == role
 }
