@@ -15,7 +15,7 @@ import kr.closeforyou.ui.voice.PressFailure
 import kr.closeforyou.ui.voice.PressResultSpeech
 
 /** Hedged summary: a display classification can be wrong, so the sentence never asserts it. */
-enum class PromptSummary { LIKELY_AD, LIKELY_VIDEO_AD, LIKELY_NOTICE, NEEDS_REVIEW, UNKNOWN }
+enum class PromptSummary { LIKELY_AD, LIKELY_VIDEO_AD, LIKELY_NOTICE, LIKELY_COUPON, NEEDS_REVIEW, UNKNOWN }
 
 /**
  * MOVE_TO_BUTTON appears only while [MoveToButtonFeature.enabled]; it never presses anything.
@@ -229,13 +229,12 @@ object ChoicePromptPlanner {
         buttonLabel = candidate.label?.trim(),
     )
 
-    private fun summaryOf(classification: PopupClassification) = when (classification) {
+    internal fun summaryOf(classification: PopupClassification) = when (classification) {
         PopupClassification.ADVERTISEMENT -> PromptSummary.LIKELY_AD
         PopupClassification.NOTICE -> PromptSummary.LIKELY_NOTICE
         PopupClassification.USER_DECISION -> PromptSummary.NEEDS_REVIEW
         PopupClassification.UNKNOWN -> PromptSummary.UNKNOWN
-        // Contract v2 added COUPON; kept with ads until C adds its own coupon summary (B contract PR, C to confirm).
-        PopupClassification.COUPON -> PromptSummary.LIKELY_AD
+        PopupClassification.COUPON -> PromptSummary.LIKELY_COUPON
     }
 }
 

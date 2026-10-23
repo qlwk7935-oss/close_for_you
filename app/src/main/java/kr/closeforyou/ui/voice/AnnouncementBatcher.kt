@@ -12,8 +12,25 @@ import kr.closeforyou.core.model.ChoiceKind
 /** What the person is told about one handled popup. Carries no screen text. */
 enum class HandledOutcome { CLOSED, SKIPPED, NOT_CONFIRMED }
 
-data class BatchSummary(val closed: Int, val skipped: Int, val notConfirmed: Int) {
+/** Contract v2: what kind of popup an automatic close closed ("광고 2개, 쿠폰 1개를 닫았어요"). */
+enum class ClosedKind { AD, COUPON, NOTICE, OTHER }
+
+/**
+ * [closedKinds] counts only closes added with a kind (automatic closes A confirmed closed).
+ * [onlyTitle] is the popup title when exactly one popup was closed and its title was known:
+ * screen text, kept in memory for the window only, never logged.
+ */
+data class BatchSummary(
+    val closed: Int,
+    val skipped: Int,
+    val notConfirmed: Int,
+    val closedKinds: Map<ClosedKind, Int> = emptyMap(),
+    val onlyTitle: String? = null,
+) {
     val total: Int get() = closed + skipped + notConfirmed
+
+    override fun toString(): String =
+        "BatchSummary(closed=$closed, skipped=$skipped, notConfirmed=$notConfirmed, kinds=$closedKinds, redacted)"
 }
 
 /**
@@ -31,11 +48,18 @@ class AnnouncementBatcher(
     }
 
     private val counts = IntArray(HandledOutcome.entries.size)
+    private val kindCounts = IntArray(ClosedKind.entries.size)
+    private var firstTitle: String? = null
     private var pending: Job? = null
 
+    /** [kind] and [title] are used only for [HandledOutcome.CLOSED]. */
     @Synchronized
-    fun add(outcome: HandledOutcome) {
+    fun add(outcome: HandledOutcome, kind: ClosedKind? = null, title: String? = null) {
         counts[outcome.ordinal]++
+        if (outcome == HandledOutcome.CLOSED) {
+            if (kind != null) kindCounts[kind.ordinal]++
+            if (counts[outcome.ordinal] == 1) firstTitle = title
+        }
         if (pending == null) {
             pending = scope.launch {
                 delay(windowMillis)
@@ -49,18 +73,27 @@ class AnnouncementBatcher(
     fun cancel() {
         pending?.cancel()
         pending = null
+        clearCounts()
+    }
+
+    private fun clearCounts() {
         counts.fill(0)
+        kindCounts.fill(0)
+        firstTitle = null
     }
 
     @Synchronized
     private fun take(): BatchSummary? {
         pending = null
+        val closed = counts[HandledOutcome.CLOSED.ordinal]
         val summary = BatchSummary(
-            closed = counts[HandledOutcome.CLOSED.ordinal],
+            closed = closed,
             skipped = counts[HandledOutcome.SKIPPED.ordinal],
             notConfirmed = counts[HandledOutcome.NOT_CONFIRMED.ordinal],
+            closedKinds = ClosedKind.entries.filter { kindCounts[it.ordinal] > 0 }.associateWith { kindCounts[it.ordinal] },
+            onlyTitle = firstTitle.takeIf { closed == 1 },
         )
-        counts.fill(0)
+        clearCounts()
         return summary.takeIf { it.total > 0 }
     }
 
@@ -84,15 +117,17 @@ class AnnouncementBatcher(
 /**
  * Builds the spoken sentence; [text] resolves a string resource with one count argument.
  * [detailed] (안내 길이 "자세히") adds the total only when two or more kinds are mixed — a count C
- * actually has, nothing inferred.
+ * actually has, nothing inferred. [closedLine] replaces the "팝업 N개를 닫았어요" part (contract v2,
+ * `AutoDecisionSpeech.batchSentence` says the kinds instead).
  */
 object BatchSentence {
     fun build(
         summary: BatchSummary,
         detailed: Boolean = false,
+        closedLine: String? = null,
         text: (resId: Int, count: Int) -> String,
     ): String = buildList {
-        if (summary.closed > 0) add(text(R.string.ui_announce_batch_closed, summary.closed))
+        if (summary.closed > 0) add(closedLine ?: text(R.string.ui_announce_batch_closed, summary.closed))
         if (summary.skipped > 0) add(text(R.string.ui_announce_batch_skipped, summary.skipped))
         if (summary.notConfirmed > 0) {
             add(text(R.string.ui_announce_batch_not_confirmed, summary.notConfirmed))

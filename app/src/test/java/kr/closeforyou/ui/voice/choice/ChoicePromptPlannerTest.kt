@@ -155,6 +155,9 @@ class ChoicePromptPlannerTest {
         val analysis = MockPopupFixtures.notice().analysis
         assertEquals(PromptSummary.LIKELY_NOTICE, ChoicePromptPlanner.plan(analysis, PopupClassification.NOTICE).summary)
         assertEquals(PromptSummary.UNKNOWN, ChoicePromptPlanner.plan(analysis, PopupClassification.UNKNOWN).summary)
+        // Contract v2: COUPON has its own hedged summary ("쿠폰으로 보이는 팝업이에요."), not the ad one.
+        assertEquals(PromptSummary.LIKELY_COUPON, ChoicePromptPlanner.plan(analysis, PopupClassification.COUPON).summary)
+        assertEquals(kr.closeforyou.R.string.ui_choice_summary_coupon, PromptSummary.LIKELY_COUPON.textRes())
     }
 
     @Test fun everyFixtureAlwaysOffersReadAndKeepAndRedactsText() {
