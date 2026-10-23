@@ -78,6 +78,8 @@ import kr.closeforyou.ui.voice.BatchSentence
 import kr.closeforyou.ui.voice.BatchSummary
 import kr.closeforyou.ui.voice.PressResultSpeech
 import kr.closeforyou.ui.voice.TtsPopupAnnouncer
+import kr.closeforyou.ui.voice.settings.UiVoiceOnboardingScreen
+import kr.closeforyou.ui.voice.settings.UiVoicePreferences
 import kr.closeforyou.ui.voice.settings.UiVoiceSettingsRoute
 import kr.closeforyou.ui.voice.overlay.PromptAnnouncementListener
 import kr.closeforyou.ui.voice.overlay.PromptSpeech
@@ -91,12 +93,18 @@ class ChoicePreviewActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val openSettings = intent?.getBooleanExtra(EXTRA_OPEN_SETTINGS, false) == true
-        setContent { UiVoiceTheme { ChoicePreviewScreen(openSettings) } }
+        val openOnboarding = intent?.getBooleanExtra(EXTRA_OPEN_ONBOARDING, false) == true
+        setContent { UiVoiceTheme { ChoicePreviewScreen(openSettings, openOnboarding) } }
         if (savedInstanceState == null) scheduleOverlayFromIntent(intent)
     }
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
+        // singleTop: the screen may already be in front, so open the first-run page here too.
+        if (intent.getBooleanExtra(EXTRA_OPEN_ONBOARDING, false)) {
+            intent.removeExtra(EXTRA_OPEN_ONBOARDING)
+            setContent { UiVoiceTheme { ChoicePreviewScreen(openSettings = false, openOnboarding = true) } }
+        }
         scheduleOverlayFromIntent(intent)
     }
 
@@ -106,22 +114,56 @@ class ChoicePreviewActivity : ComponentActivity() {
      * singleTop (debug manifest) delivers the extra even when this screen is already in front, and a
      * freshly started process waits briefly for the test service to connect.
      * Optional `--el ui_debug_tts_delay_ms <ms>` changes when our own TTS speaks (default 700).
+     * Optional `--ez ui_debug_c29_diag true` logs window facts for that show under C29Diag (issue #29).
+     * `--el ui_debug_c29_watch_ms <ms>` (no scenario) only watches events for that long (issue #29).
      */
     private fun scheduleOverlayFromIntent(intent: Intent?) {
+        // `--ez ui_debug_c34_dump true` (alone): logs the shown prompt's node tree under C34Nodes.
+        if (intent?.getBooleanExtra(EXTRA_C34_DUMP, false) == true) {
+            intent.removeExtra(EXTRA_C34_DUMP)
+            if (!ChoiceOverlayTestService.dumpOwnNodes()) {
+                Toast.makeText(this, R.string.ui_debug_overlay_service_off, Toast.LENGTH_LONG).show()
+            }
+            return
+        }
+        // `--el ui_debug_c34_focus_ms <ms>` (alone): logs TalkBack focus moves under C34Nodes for that long.
+        val focusMillis = intent?.getLongExtra(EXTRA_C34_FOCUS_MS, -1L)?.takeIf { it in 1..MAX_C29_WATCH_MILLIS * 3 }
+        intent?.removeExtra(EXTRA_C34_FOCUS_MS)
+        if (focusMillis != null) {
+            if (!ChoiceOverlayTestService.watchFocus(focusMillis)) {
+                Toast.makeText(this, R.string.ui_debug_overlay_service_off, Toast.LENGTH_LONG).show()
+            }
+            return
+        }
+        val watchMillis = intent?.getLongExtra(EXTRA_C29_WATCH_MS, -1L)?.takeIf { it in 1..MAX_C29_WATCH_MILLIS }
+        intent?.removeExtra(EXTRA_C29_WATCH_MS)
+        if (watchMillis != null) {
+            lifecycleScope.launch {
+                val connected = withTimeoutOrNull(SERVICE_WAIT_MILLIS) {
+                    ChoiceOverlayTestService.connected.first { it }
+                } == true
+                if (!connected || !ChoiceOverlayTestService.watchEvents(watchMillis)) {
+                    Toast.makeText(this@ChoicePreviewActivity, R.string.ui_debug_overlay_service_off, Toast.LENGTH_LONG).show()
+                }
+            }
+            return
+        }
         val index = intent?.getIntExtra(EXTRA_OVERLAY_SCENARIO, -1) ?: -1
         val fixture = scenarios.getOrNull(index)?.fixture ?: return
         val ttsDelay = intent?.getLongExtra(EXTRA_TTS_DELAY_MS, -1L)?.takeIf { it in 0..MAX_TTS_DELAY_MILLIS }
             ?: PromptAnnouncementListener.DEFAULT_TTS_DELAY_MILLIS
+        val diagnose = intent?.getBooleanExtra(EXTRA_C29_DIAG, false) == true
         // Consume the extras so a configuration change does not show the prompt again.
         intent?.removeExtra(EXTRA_OVERLAY_SCENARIO)
         intent?.removeExtra(EXTRA_TTS_DELAY_MS)
+        intent?.removeExtra(EXTRA_C29_DIAG)
         val prompt = ChoicePromptPlanner.plan(fixture.analysis, fixture.expectedDisplayClassification)
         val content = PromptSpeech.content(this, fixture.analysis)
         lifecycleScope.launch {
             val connected = withTimeoutOrNull(SERVICE_WAIT_MILLIS) {
                 ChoiceOverlayTestService.connected.first { it }
             } == true
-            if (!connected || !ChoiceOverlayTestService.scheduleShow(prompt, content, OVERLAY_DELAY_MILLIS, ttsDelay)) {
+            if (!connected || !ChoiceOverlayTestService.scheduleShow(prompt, content, OVERLAY_DELAY_MILLIS, ttsDelay, diagnose)) {
                 Toast.makeText(this@ChoicePreviewActivity, R.string.ui_debug_overlay_service_off, Toast.LENGTH_LONG).show()
             }
         }
@@ -132,8 +174,15 @@ class ChoicePreviewActivity : ComponentActivity() {
         const val SERVICE_WAIT_MILLIS = 3_000L
         const val EXTRA_TTS_DELAY_MS = "ui_debug_tts_delay_ms"
         const val MAX_TTS_DELAY_MILLIS = 10_000L
+        const val EXTRA_C29_DIAG = "ui_debug_c29_diag"
+        const val EXTRA_C29_WATCH_MS = "ui_debug_c29_watch_ms"
+        const val MAX_C29_WATCH_MILLIS = 60_000L
+        const val EXTRA_C34_DUMP = "ui_debug_c34_dump"
+        const val EXTRA_C34_FOCUS_MS = "ui_debug_c34_focus_ms"
         /** adb: `--ez ui_debug_open_settings true` opens the settings page directly. */
         const val EXTRA_OPEN_SETTINGS = "ui_debug_open_settings"
+        /** adb: `--ez ui_debug_open_onboarding true` opens the first-run setup directly. */
+        const val EXTRA_OPEN_ONBOARDING = "ui_debug_open_onboarding"
     }
 }
 
@@ -164,8 +213,13 @@ private fun closeAndSkipFixture(): MockPopupFixture {
 private const val SKIP_LABEL = "건너뛰기"
 
 @Composable
-private fun ChoicePreviewScreen(openSettings: Boolean) {
+private fun ChoicePreviewScreen(openSettings: Boolean, openOnboarding: Boolean) {
     var showSettings by rememberSaveable { mutableStateOf(openSettings) }
+    var showOnboarding by rememberSaveable { mutableStateOf(openOnboarding) }
+    if (showOnboarding) {
+        OnboardingPage(onBack = { showOnboarding = false })
+        return
+    }
     if (showSettings) {
         SettingsPage(onBack = { showSettings = false })
         return
@@ -198,6 +252,10 @@ private fun ChoicePreviewScreen(openSettings: Boolean) {
                 onClick = { showSettings = true },
                 modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
             ) { Text(stringResource(R.string.ui_debug_open_settings)) }
+            OutlinedButton(
+                onClick = { showOnboarding = true },
+                modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
+            ) { Text(stringResource(R.string.ui_debug_open_onboarding)) }
             SectionTitle(R.string.ui_debug_section_scenario)
             Column(Modifier.selectableGroup()) {
                 scenarios.forEach { scenario ->
@@ -397,6 +455,27 @@ private fun SettingsPage(onBack: () -> Unit) {
             ) { Text(stringResource(R.string.ui_debug_back_to_preview)) }
             UiVoiceSettingsRoute(DebugRules.repository)
         }
+    }
+}
+
+/**
+ * First-run setup, shown even when it was already finished. [시작하기] saves the preset and the
+ * "done" flag in C's real preferences (this build's MainActivity has no gate yet), then comes back.
+ */
+@Composable
+private fun OnboardingPage(onBack: () -> Unit) {
+    BackHandler(onBack = onBack)
+    val context = LocalContext.current
+    val preferences = remember { UiVoicePreferences.get(context) }
+    Scaffold { innerPadding ->
+        UiVoiceOnboardingScreen(
+            initialPreset = preferences.current().handlingPreset,
+            onStart = { preset ->
+                preferences.completeOnboarding(preset)
+                onBack()
+            },
+            modifier = Modifier.padding(innerPadding),
+        )
     }
 }
 

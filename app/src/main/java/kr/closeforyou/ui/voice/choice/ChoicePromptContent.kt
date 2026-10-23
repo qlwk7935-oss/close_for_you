@@ -59,7 +59,10 @@ fun ChoicePromptContent(
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             Text(text = stringResource(prompt.summary.textRes()), style = MaterialTheme.typography.titleMedium)
-            if (prompt.cannotPressForUser) {
+            val countdown = prompt.countdownSeconds
+            if (countdown != null) {
+                Text(text = stringResource(R.string.ui_choice_video_ad_wait, countdown))
+            } else if (prompt.cannotPressForUser) {
                 Text(text = stringResource(R.string.ui_choice_cannot_press))
             }
             prompt.pressFailure?.let { failure ->
@@ -113,6 +116,8 @@ private fun PromptControls(
             }
         }
     }
+    // Status line and hint exist only while they have words: an empty Text would still be a node
+    // TalkBack can land on. The Row above has no semantics, so it is not a node either (LG check 10/23).
     controls.messageRes?.let {
         Text(
             text = stringResource(it),
@@ -126,6 +131,7 @@ private fun PromptControls(
 
 internal fun PromptSummary.textRes(): Int = when (this) {
     PromptSummary.LIKELY_AD -> R.string.ui_choice_summary_ad
+    PromptSummary.LIKELY_VIDEO_AD -> R.string.ui_choice_summary_video_ad
     PromptSummary.LIKELY_NOTICE -> R.string.ui_choice_summary_notice
     PromptSummary.NEEDS_REVIEW -> R.string.ui_choice_summary_review
     PromptSummary.UNKNOWN -> R.string.ui_choice_summary_unknown

@@ -3,6 +3,7 @@ package kr.closeforyou.ui.voice.choice
 import java.io.File
 import javax.xml.parsers.DocumentBuilderFactory
 import kr.closeforyou.R
+import kr.closeforyou.core.model.LabelRejectReason
 import kr.closeforyou.core.model.SafetyReason
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -28,25 +29,26 @@ class CannotPressReasonTest {
         return requireNotNull(strings[name]) { "missing string $name" }
     }
 
-    private val allLabelSentences get() = UiLabelRejectReason.entries.map { text(CannotPressReasonSpeech.labelRes(it)) }
+    private val allLabelSentences get() = LabelRejectReason.entries.map { text(CannotPressReasonSpeech.labelRes(it)) }
 
-    @Test fun mirrorMatchesContractDraftV3() {
+    /** A new contract reason must get its own C sentence (the `when` in labelRes also stops the build). */
+    @Test fun contractStillHasTheEightReasonsCMaps() {
         assertEquals(
             listOf("NO_LABEL", "SYMBOL_ONLY", "DECISION_WORD", "CONDITIONAL_WORD", "NAVIGATION_WORD",
                 "AMBIGUOUS_WORD", "NOT_IN_LIST", "LABEL_CONFLICT"),
-            UiLabelRejectReason.entries.map { it.name },
+            LabelRejectReason.entries.map { it.name },
         )
     }
 
     @Test fun everyLabelReasonHasItsOwnNonEmptySentence() {
-        val ids = UiLabelRejectReason.entries.map(CannotPressReasonSpeech::labelRes)
+        val ids = LabelRejectReason.entries.map(CannotPressReasonSpeech::labelRes)
         assertEquals(8, ids.toSet().size)
         allLabelSentences.forEach { assertTrue(it.isNotBlank()) }
     }
 
     @Test fun decisionSentencesDoNotAssertPayment() {
         val decision = listOf(
-            text(CannotPressReasonSpeech.labelRes(UiLabelRejectReason.DECISION_WORD)),
+            text(CannotPressReasonSpeech.labelRes(LabelRejectReason.DECISION_WORD)),
             text(CannotPressReasonSpeech.policyRes(SafetyReason.IMPORTANT_DECISION)),
         )
         val asserted = listOf("결제", "구매", "구독", "동의", "삭제", "권한", "로그인")
@@ -69,13 +71,13 @@ class CannotPressReasonTest {
     @Test fun reasonSentencesAreNotExecutionResultSentences() {
         val results = setOf(R.string.ui_result_not_pressed, R.string.ui_result_screen_changed,
             R.string.ui_result_press_failed, R.string.ui_result_not_confirmed)
-        UiLabelRejectReason.entries.forEach { assertFalse(CannotPressReasonSpeech.labelRes(it) in results) }
+        LabelRejectReason.entries.forEach { assertFalse(CannotPressReasonSpeech.labelRes(it) in results) }
     }
 
     @Test fun policyReasonComesBeforeLabelReason() {
         val explanation = CannotPressReasonSpeech.explain(
             setOf(SafetyReason.FIRST_SEEN, SafetyReason.IMPORTANT_DECISION),
-            listOf(UiLabelRejectReason.SYMBOL_ONLY),
+            listOf(LabelRejectReason.SYMBOL_ONLY),
             enabled = true,
         )
         assertEquals(CannotPressExplanation.Policy(SafetyReason.IMPORTANT_DECISION), explanation)
@@ -84,22 +86,22 @@ class CannotPressReasonTest {
     @Test fun nonRefusalPolicyReasonFallsThroughToLabel() {
         val explanation = CannotPressReasonSpeech.explain(
             setOf(SafetyReason.FIRST_SEEN, SafetyReason.EXPLICIT_PERMISSION_REQUIRED),
-            listOf(UiLabelRejectReason.NO_LABEL, UiLabelRejectReason.DECISION_WORD),
+            listOf(LabelRejectReason.NO_LABEL, LabelRejectReason.DECISION_WORD),
             enabled = true,
         )
-        assertEquals(CannotPressExplanation.Label(UiLabelRejectReason.DECISION_WORD), explanation)
+        assertEquals(CannotPressExplanation.Label(LabelRejectReason.DECISION_WORD), explanation)
     }
 
     @Test fun nothingToExplainOrFeatureOffKeepsGenericSentence() {
         assertNull(CannotPressReasonSpeech.explain(emptySet(), emptyList(), enabled = true))
         assertNull(
-            CannotPressReasonSpeech.explain(setOf(SafetyReason.IMPORTANT_DECISION), listOf(UiLabelRejectReason.NO_LABEL)),
+            CannotPressReasonSpeech.explain(setOf(SafetyReason.IMPORTANT_DECISION), listOf(LabelRejectReason.NO_LABEL)),
         )
         assertFalse(CannotPressReasonFeature.enabled)
     }
 
     @Test fun explanationToStringCarriesOnlyCodes() {
-        val label = CannotPressExplanation.Label(UiLabelRejectReason.NOT_IN_LIST)
+        val label = CannotPressExplanation.Label(LabelRejectReason.NOT_IN_LIST)
         assertEquals("Label(reason=NOT_IN_LIST)", label.toString())
     }
 }

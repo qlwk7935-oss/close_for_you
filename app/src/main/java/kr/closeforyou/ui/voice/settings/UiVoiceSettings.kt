@@ -13,6 +13,8 @@ enum class AnnouncementDetail { SHORT, DETAILED }
 /**
  * C settings. Auto close is per app and off by default: an app listed here only lets B consider
  * repeating an exact remembered choice (F12). First-seen popups are always asked (AGENTS.md 6-2).
+ * [handlingPreset] is separate: the person's preference per popup kind, for B to read later
+ * (docs/c-notes/preset-contract-proposal.md). The two are never mixed.
  */
 data class UiVoiceSettings(
     val autoClosePackages: Set<String> = emptySet(),
@@ -20,6 +22,9 @@ data class UiVoiceSettings(
     val promptAnnounceMode: PromptAnnounceMode = PromptAnnounceMode.PANE_TITLE_AND_TTS,
     /** F13 [말하기] on the prompt (default on). Off hides it; listening still needs a press. */
     val voiceCommandsEnabled: Boolean = true,
+    val handlingPreset: HandlingPreset = HandlingPreset.DEFAULT,
+    /** First-run setup finished ([시작하기] pressed). Until then [UiVoiceOnboardingGate] shows it. */
+    val onboardingDone: Boolean = false,
 ) {
     fun withAutoClose(packageName: String, enabled: Boolean) = copy(
         autoClosePackages = if (enabled) autoClosePackages + packageName else autoClosePackages - packageName,
@@ -33,11 +38,13 @@ data class UiVoiceSettings(
 /** Application singleton over C's own SharedPreferences file (no DataStore, no new library). */
 class UiVoicePreferences private constructor(context: Context) {
     private val preferences = context.applicationContext.getSharedPreferences(FILE, Context.MODE_PRIVATE)
-    private val mutableState = MutableStateFlow(read())
+    private val mutableState = MutableStateFlow(readFrom(preferences))
     val state: StateFlow<UiVoiceSettings> = mutableState.asStateFlow()
 
     // SharedPreferences holds listeners weakly, so keep a strong reference.
-    private val listener = SharedPreferences.OnSharedPreferenceChangeListener { _, _ -> mutableState.value = read() }
+    private val listener = SharedPreferences.OnSharedPreferenceChangeListener { _, _ ->
+        mutableState.value = readFrom(preferences)
+    }
 
     init {
         preferences.registerOnSharedPreferenceChangeListener(listener)
@@ -53,24 +60,16 @@ class UiVoicePreferences private constructor(context: Context) {
 
     fun setVoiceCommandsEnabled(enabled: Boolean) = write(current().copy(voiceCommandsEnabled = enabled))
 
+    fun setHandlingPreset(preset: HandlingPreset) = write(current().copy(handlingPreset = preset))
+
+    /** [시작하기] on the first-run screen: saves the chosen preset and does not show the screen again. */
+    fun completeOnboarding(preset: HandlingPreset) =
+        write(current().copy(handlingPreset = preset, onboardingDone = true))
+
     private fun write(settings: UiVoiceSettings) {
-        preferences.edit {
-            putStringSet(KEY_AUTO_CLOSE, settings.autoClosePackages)
-            putString(KEY_DETAIL, settings.detail.name)
-            putString(KEY_PROMPT_MODE, settings.promptAnnounceMode.name)
-            putBoolean(KEY_VOICE_COMMANDS, settings.voiceCommandsEnabled)
-        }
+        preferences.edit { writeTo(this, settings) }
         mutableState.value = settings
     }
-
-    private fun read() = UiVoiceSettings(
-        autoClosePackages = preferences.getStringSet(KEY_AUTO_CLOSE, emptySet()).orEmpty().toSet(),
-        detail = enumOrDefault(preferences.getString(KEY_DETAIL, null), AnnouncementDetail.SHORT),
-        promptAnnounceMode = enumOrDefault(
-            preferences.getString(KEY_PROMPT_MODE, null), PromptAnnounceMode.PANE_TITLE_AND_TTS,
-        ),
-        voiceCommandsEnabled = preferences.getBoolean(KEY_VOICE_COMMANDS, true),
-    )
 
     companion object {
         private const val FILE = "ui_voice_settings"
@@ -78,11 +77,33 @@ class UiVoicePreferences private constructor(context: Context) {
         private const val KEY_DETAIL = "announcement_detail"
         private const val KEY_PROMPT_MODE = "prompt_announce_mode"
         private const val KEY_VOICE_COMMANDS = "voice_commands_enabled"
+        private const val KEY_PRESET = "handling_preset_v1"
+        private const val KEY_ONBOARDING_DONE = "onboarding_done_v1"
         @Volatile private var instance: UiVoicePreferences? = null
 
         fun get(context: Context): UiVoicePreferences = instance ?: synchronized(this) {
             instance ?: UiVoicePreferences(context).also { instance = it }
         }
+
+        internal fun writeTo(editor: SharedPreferences.Editor, settings: UiVoiceSettings) {
+            editor.putStringSet(KEY_AUTO_CLOSE, settings.autoClosePackages)
+            editor.putString(KEY_DETAIL, settings.detail.name)
+            editor.putString(KEY_PROMPT_MODE, settings.promptAnnounceMode.name)
+            editor.putBoolean(KEY_VOICE_COMMANDS, settings.voiceCommandsEnabled)
+            editor.putString(KEY_PRESET, settings.handlingPreset.name)
+            editor.putBoolean(KEY_ONBOARDING_DONE, settings.onboardingDone)
+        }
+
+        internal fun readFrom(preferences: SharedPreferences) = UiVoiceSettings(
+            autoClosePackages = preferences.getStringSet(KEY_AUTO_CLOSE, emptySet()).orEmpty().toSet(),
+            detail = enumOrDefault(preferences.getString(KEY_DETAIL, null), AnnouncementDetail.SHORT),
+            promptAnnounceMode = enumOrDefault(
+                preferences.getString(KEY_PROMPT_MODE, null), PromptAnnounceMode.PANE_TITLE_AND_TTS,
+            ),
+            voiceCommandsEnabled = preferences.getBoolean(KEY_VOICE_COMMANDS, true),
+            handlingPreset = enumOrDefault(preferences.getString(KEY_PRESET, null), HandlingPreset.DEFAULT),
+            onboardingDone = preferences.getBoolean(KEY_ONBOARDING_DONE, false),
+        )
 
         /** Unknown or missing stored values fall back to the safe default. */
         internal inline fun <reified T : Enum<T>> enumOrDefault(stored: String?, default: T): T =

@@ -22,7 +22,6 @@ import kr.closeforyou.core.model.SnapshotToken
 import kr.closeforyou.core.model.UserChoice
 import kr.closeforyou.ui.voice.AnnouncementBatcher
 import kr.closeforyou.ui.voice.PressResultSpeech
-import kr.closeforyou.ui.voice.choice.AGateLabelPolicy
 import kr.closeforyou.ui.voice.choice.ChoicePrompt
 import kr.closeforyou.ui.voice.choice.ChoicePromptPlanner
 import kr.closeforyou.ui.voice.choice.MoveToButtonFeature
@@ -31,6 +30,9 @@ import kr.closeforyou.ui.voice.choice.PressableLabelPolicy
 import kr.closeforyou.ui.voice.choice.PromptOptionKind
 import kr.closeforyou.ui.voice.choice.RememberChoiceFeature
 import kr.closeforyou.ui.voice.choice.RememberChoiceSpeech
+import kr.closeforyou.ui.voice.choice.SharedLabelPolicy
+import kr.closeforyou.ui.voice.choice.VideoAdAnnouncementFeature
+import kr.closeforyou.ui.voice.choice.VideoAdInfo
 import kr.closeforyou.ui.voice.overlay.ChoiceOrigin
 import kr.closeforyou.ui.voice.overlay.ChoicePromptPresenter
 import kr.closeforyou.ui.voice.overlay.OverlayWindowKeeper
@@ -93,12 +95,18 @@ class PopupChoiceFlow(
     private val text: UiText,
     private val contentText: (PopupAnalysis) -> String,
     private val onMoveToButton: (MoveToButtonRequest) -> Unit = {},
-    private val labelPolicy: PressableLabelPolicy = AGateLabelPolicy,
+    private val labelPolicy: PressableLabelPolicy = SharedLabelPolicy,
     private val moveToButtonEnabled: Boolean = MoveToButtonFeature.enabled,
     private val rememberChoicesEnabled: Boolean = RememberChoiceFeature.enabled,
     private val rememberStore: RememberedPopupStore = RememberedPopupStore.NONE,
     /** C's per-app auto close setting (default off); decides the sentence after remembering. */
     private val autoCloseEnabledForApp: (packageName: String) -> Boolean = { false },
+    /**
+     * B's F5 facts for this analysis, from A's assembly:
+     * `{ VideoAdInfo.from(DecisionVideoAd.inspect(it)) }`. Wording only (see [ChoicePromptPlanner.plan]).
+     */
+    private val videoAdOf: (PopupAnalysis) -> VideoAdInfo? = { null },
+    private val videoAdEnabled: Boolean = VideoAdAnnouncementFeature.enabled,
 ) {
     suspend fun run() {
         source.events.collectLatest { event ->
@@ -123,8 +131,10 @@ class PopupChoiceFlow(
         val analysis = evidence.copy(classification = classification)
         if (source.currentToken() != token) return
 
-        var prompt: ChoicePrompt? =
-            ChoicePromptPlanner.plan(analysis, classification, labelPolicy, moveToButtonEnabled, rememberChoicesEnabled)
+        val videoAd = if (videoAdEnabled) videoAdOf(analysis) else null
+        var prompt: ChoicePrompt? = ChoicePromptPlanner.plan(
+            analysis, classification, labelPolicy, moveToButtonEnabled, rememberChoicesEnabled, videoAd, videoAdEnabled,
+        )
         while (prompt != null) {
             prompt = when (val answer = awaitAnswer(prompt)) {
                 is Answer.Move -> {

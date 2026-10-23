@@ -29,7 +29,7 @@
 
     <!-- 다른 앱 위 오버레이 시험 (C 시험용 접근성 서비스) -->
     <string name="ui_debug_overlay_service_label">닫아줄게 C 선택 창 시험</string>
-    <string name="ui_debug_overlay_service_description">개발용입니다. 가짜 팝업으로 \'닫을까요?\' 선택 창을 다른 앱 위에 띄워 봅니다. 화면 내용은 읽지 않고, 아무것도 대신 누르지 않습니다.</string>
+    <string name="ui_debug_overlay_service_description">개발용입니다. 가짜 팝업으로 \'닫을까요?\' 선택 창을 다른 앱 위에 띄워 봅니다. 평소에는 화면 내용을 읽지 않고, 아무것도 대신 누르지 않습니다. 개발자 진단 때만 창 종류와 임시 순번을 기록합니다(글자와 창 번호 원값은 기록하지 않음).</string>
     <string name="ui_debug_section_overlay">다른 앱 위에 띄우기</string>
     <string name="ui_debug_overlay_schedule">5초 뒤 다른 앱 위에 띄우기</string>
     <string name="ui_debug_overlay_service_on">시험 서비스: 켜짐. 버튼을 누르고 5초 안에 다른 앱으로 가세요.</string>
@@ -39,6 +39,7 @@
     <string name="ui_debug_overlay_result">다른 앱 위 선택 창 결과: %1$s</string>
     <string name="ui_debug_open_settings">설정 화면 보기 (가짜 기억 목록)</string>
     <string name="ui_debug_back_to_preview">미리보기로 돌아가기</string>
+    <string name="ui_debug_open_onboarding">첫 실행 설정 화면 보기</string>
 
     <!-- 음성 명령 시험 (말하기 버튼을 누를 때만, 기기 안 인식) -->
     <string name="ui_debug_section_voice">음성 명령 시험</string>

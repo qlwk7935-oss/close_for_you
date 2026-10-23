@@ -190,6 +190,33 @@ class PromptControlsControllerTest {
         assertFalse(controller.state.value.speechButtons)
     }
 
+    /**
+     * LG velvet (no on-device recognizer): [말하기] hidden, [다시 듣기]·[그만 말하기] shown. The status line
+     * and hint are drawn only when their res is set, so here they must stay empty: no text-less
+     * TalkBack stop (LG TalkBack check 2026-10-23).
+     */
+    @Test fun withoutSpeakButtonRepeatAndStopLeaveNoStatusLine() = runTest {
+        val h = Harness(this, speak = SpeakButtonState.TURNED_OFF, prompt = prompt)
+        val start = h.controller.state.value
+        assertFalse(start.speakVisible)
+        assertTrue(start.speechButtons)
+        assertNull(start.messageRes)
+        assertNull(start.hintRes)
+        h.controller.onRepeat()
+        runCurrent()
+        h.controller.onStopSpeaking()
+        h.controller.onSpeak() // hidden button: ignored
+        assertNull(h.controller.state.value.messageRes)
+        assertNull(h.controller.state.value.hintRes)
+        assertEquals(0, h.input.starts)
+    }
+
+    @Test fun hintLineOnlyWhenPermissionIsNeeded() {
+        assertNull(PromptControlsState(speakButton = SpeakButtonState.SHOWN).hintRes)
+        assertNull(PromptControlsState(speakButton = SpeakButtonState.TURNED_OFF).hintRes)
+        assertEquals(R.string.ui_voice_permission_hint, PromptControlsState(speakButton = SpeakButtonState.PERMISSION_NEEDED).hintRes)
+    }
+
     private fun Harness.firstAnnouncement(scope: TestScope) = PromptAnnouncementListener(
         announcer, scope.backgroundScope, { PromptAnnounceMode.PANE_TITLE_AND_TTS }, 700L,
         { kr.closeforyou.ui.voice.settings.AnnouncementDetail.SHORT }, { _, _ -> "" },

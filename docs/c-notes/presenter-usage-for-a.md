@@ -74,6 +74,25 @@ class CloseForYouAccessibilityService : AccessibilityService() {
 | 고른 뒤 창을 못 닫음 | 선택을 버림(`Lost`). B/A 안 부름. "선택 창을 닫지 못해서 실행하지 않았어요" |
 | 탭·음성 출처 | `ChoiceHandler.handle(choice, analysis, origin)` 3인자 메서드를 override 하면 받음(기본은 무시) |
 
+### 영상 광고 안내 (F5, 기능 꺼짐 — 10/23 추가)
+B의 `DecisionVideoAd.inspect(analysis)`(B #20) 결과를 C가 받는 통로. **core 계약은 바꾸지 않는다.** A 조립이 함수 하나만 넘기면 된다.
+
+```kotlin
+val flow = PopupChoiceFlow(
+    // ... 위와 같음 ...
+    videoAdOf = { analysis -> VideoAdInfo.from(DecisionVideoAd.inspect(analysis)) },   // B 결과 → C 입력
+    // videoAdEnabled 기본값 = VideoAdAnnouncementFeature.enabled (false). 팀 결정 전까지 켜지 않음
+)
+// 직접 띄우는 방법(2장)이라면:
+val prompt = ChoicePromptPlanner.plan(analysis, classification, videoAd = VideoAdInfo.from(DecisionVideoAd.inspect(analysis)))
+```
+
+- `analysis.videoSurfaceObserved`는 A가 채운다. 이것이 false면 B가 영상 광고로 보지 않으므로 `VideoAdInfo.from`이 null → 기존 문장 그대로.
+- 켜면(B가 영상 광고로 보고 분류가 `ADVERTISEMENT`일 때만): 요약 "영상 광고로 보이는 팝업이에요." / B가 화면에서 읽은 카운트다운이 있고 지금 누를 건너뛰기 버튼이 없으면 "N초 뒤에 넘길 수 있다고 나와요. 지금은 대신 누를 버튼이 없어요."(이때 "대신 닫을 수 없어요" 대신 나옴).
+- **누르기 버튼은 플래그와 무관하게 똑같다**: 기존 규칙(B 역할 = 라벨 역할 `SKIP`, E1/E2, 중요 결정 아님)으로만 ['…' 버튼 눌러 주기]. 카운트다운 숫자는 B 값 그대로(C가 세거나 추측하지 않음), 값이 서로 다르면 B가 null → 숫자 안 말함.
+- **카운트다운이 끝나도 C는 기다렸다가 누르지 않는다.** 화면이 바뀌어 건너뛰기 버튼이 생기면 A의 새 팝업 이벤트 → 새 선택 창에서 사람이 고른다.
+- 중요 결정(`USER_DECISION`)이면 영상 문장도 누르기도 없음. `VideoAdInfo`·`VideoAdNotice`에는 화면 글자가 없다.
+
 ## 2. 직접 띄우는 방법 — `ChoicePromptPresenter`
 
 ```kotlin
@@ -103,18 +122,25 @@ overlay.dismiss()
 
 ## 4. 설정 화면 — 기억 목록 (F12 연결)
 
-C 설정 화면은 같은 `app` 모듈이라 D의 `RuleStorage`를 바로 넘길 수 있다. 기본값은 바꾸지 않았다(지금은 debug 미리보기만 메모리 Mock 사용). 실제 연결은 A의 F12 연결 PR에서 아래처럼 넘긴다.
+C 설정 화면은 같은 `app` 모듈이라 D의 `RuleStorage`를 바로 쓸 수 있다. D #15(Room)·#25(`cleanUp`)가 main에 있으므로 C가 묶음 하나로 만들어 두었다(`settings/RoomBackedRuleSettings.kt`). A는 `MainActivity`에 한 줄만 붙이면 된다.
 
 ```kotlin
+// MainActivity.setContent { ... } 안
+RoomBackedUiVoiceSettingsRoute()
+
+// 같은 뜻을 풀어 쓰면
 val context = LocalContext.current
-UiVoiceSettingsRoute(
-    repository = remember { RuleStorage.repository(context) },          // 서비스와 같은 DB
-    deleteAll = { RuleStorage.eraseAll(context.applicationContext) },  // 규칙 + 지문 키 폐기
-)
+val storage = remember { RoomBackedRuleSettings.create(context) }
+UiVoiceSettingsRoute(storage)
+// = repository     = RuleStorage.repository(context)    서비스와 같은 DB
+//   deleteAll      = { RuleStorage.eraseAll(context) }   규칙 + 지문 키 폐기
+//   onOpenCleanUp  = { RuleStorage.cleanUp(context) }    열 때 1번, 만료·손상 행 정리
 ```
 
-- `deleteAll`을 넘기지 않으면 `repository.deleteAll()`만 부른다(지문 키는 남음). Room 연결 때는 꼭 `eraseAll`을 넘긴다.
-- [전체 삭제]는 **목록이 비어 있어도 항상 보인다**(D가 못 읽은 행도 지울 수 있게, 10/22 동준 부탁). 누르면 확인 창 뒤 넘긴 함수를 1번만 부른다(진행 중 두 번 눌러도 무시).
-- `onOpenCleanUp: suspend () -> Unit`(기본: 아무것도 안 함) — 설정 화면을 열 때 1번(화면 회전 때는 다시 안 함). **D #25 `RuleStorage.cleanUp(context)`가 main에 들어오면** `onOpenCleanUp = { RuleStorage.cleanUp(context.applicationContext) }`로 연결한다. 실패해도 화면은 그대로이고 다음에 열 때 다시 한다. 실패하면 "기억을 지우지 못했어요"를 보이고 다시 누를 수 있다.
+- debug 미리보기(`ChoicePreviewActivity`)는 그대로 메모리 Mock(`DebugRules.repository`)과 가짜 규칙을 쓴다. 가짜 규칙은 실제 DB에 들어가지 않는다.
+- `eraseAll`·`cleanUp`은 `Dispatchers.IO`에서 돈다(Keystore 키 폐기가 Room 호출이 아니어서).
+- `deleteAll`을 넘기지 않는 옛 방식(`UiVoiceSettingsRoute(repository)`)은 `repository.deleteAll()`만 부른다(지문 키는 남음). Room 연결 때는 위 묶음을 쓴다.
+- `cleanUp`이 실패해도 화면은 그대로 열리고, 로그는 남기지 않으며(원문 없음), 다음에 열 때 다시 한다. `cleanUp` 결과(지운 개수)는 C가 쓰지 않는다.
+- [전체 삭제]는 **목록이 비어 있어도 항상 보인다**(D가 못 읽은 행도 지울 수 있게, 10/22 동준 부탁). 누르면 확인 창 뒤 넘긴 함수를 1번만 부른다(진행 중 두 번 눌러도 무시). 실패하면 "기억을 지우지 못했어요"를 보이고 다시 누를 수 있다.
 - 목록 상태는 `RuleStatusPolicy.statusOf(rule, now)`: 해제됨(`enabled=false`) → 꺼짐·실패(`failureCount>0`) → 꺼짐(만료일 없음·다른 스키마·저장 시각보다 이전) → 만료됨(`now ≥ expiresAt`) → 켜짐. D의 `RuleValidity.isUsable`과 같은 경계다. 만료·실패 규칙도 [해제]·[전체 삭제] 대상.
 - 시각은 `clock: Clock`(기본 `Clock.systemDefaultZone()`)으로 주입하고 화면에 돌아올 때 다시 읽는다. 날짜는 기기 로케일("11월 13일까지").
