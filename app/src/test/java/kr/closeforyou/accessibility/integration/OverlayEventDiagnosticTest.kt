@@ -14,8 +14,12 @@ class OverlayEventDiagnosticTest {
         val token = MockPopupFixtures.notice().snapshot.token
         val rows = mutableListOf<Pair<OverlayEventCategory, OverlayEventRejection>>()
         val details = mutableListOf<OverlayBindingDetail>()
+        val classes = mutableListOf<OverlayEventWindowClass>()
+        var classificationReads = 0
+        var classification = OverlayEventWindowClass.UNKNOWN
+        var classificationFailure: Exception? = null
         val calls = mutableListOf<String>()
-        val diagnostic = OverlayEventDiagnostic { event, reason, detail -> rows += event to reason; details += detail }
+        val diagnostic = OverlayEventDiagnostic { event, reason, detail, windowClass -> rows += event to reason; details += detail; classes += windowClass }
         val binding = OwnedOverlayBinding()
         var state = OverlayWindowState(OverlayWindowStatus.SHOWING, 1L)
         var type = AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED
@@ -38,6 +42,7 @@ class OverlayEventDiagnosticTest {
                 binding.matches(readWindow(), readLive(), value, state.generation, trace)
             },
             { calls += "OWN_PACKAGE"; "SYNTHETIC_HOST" }, observation,
+            { classificationReads++; classificationFailure?.let { throw it }; classification },
         )
         private fun readWindow(): Int { calls += "WINDOW"; return window }
         private fun readLive(): Set<Int>? { calls += "LIVE"; liveFailure?.let { throw it }; return live }
@@ -176,14 +181,14 @@ class OverlayEventDiagnosticTest {
     }
     @Test fun failedDiagnosticSinkCannotChangeDecisionOrTriggerRetries() {
         var writes = 0
-        val diagnostic = OverlayEventDiagnostic { _, _, _ -> writes++; throw IllegalStateException("SYNTHETIC_SECRET") }
+        val diagnostic = OverlayEventDiagnostic { _, _, _, _ -> writes++; throw IllegalStateException("SYNTHETIC_SECRET") }
         diagnostic.arm()
         val d = Driver(); d.pkg = null
         repeat(3) { assertFalse(d.read(diagnostic)) }
         assertEquals(1, writes)
     }
     @Test fun sinkCancellationDoesNotCancelWorkOrCreateAFalseAcceptedDecision() {
-        val diagnostic = OverlayEventDiagnostic { _, _, _ -> throw CancellationException("SYNTHETIC_SECRET") }
+        val diagnostic = OverlayEventDiagnostic { _, _, _, _ -> throw CancellationException("SYNTHETIC_SECRET") }
         diagnostic.arm()
         val d = Driver(); d.pkg = null
         assertFalse(d.read(diagnostic))
@@ -205,7 +210,7 @@ class OverlayEventDiagnosticTest {
     }
     @Test fun opaqueBindingRefusalDoesNotInventAReason() {
         val rows = mutableListOf<OverlayEventRejection>()
-        val diagnostic = OverlayEventDiagnostic { _, reason, detail ->
+        val diagnostic = OverlayEventDiagnostic { _, reason, detail, _ ->
             rows += reason; assertEquals(OverlayBindingDetail.UNKNOWN, detail)
         }; diagnostic.arm()
         val state = OverlayWindowState(OverlayWindowStatus.SHOWING, 1L)
@@ -306,7 +311,7 @@ class OverlayEventDiagnosticTest {
     }
     @Test fun v5UnspecifiedBindingFailureRemainsUnknown() {
         val details = mutableListOf<OverlayBindingDetail>()
-        val diagnostic = OverlayEventDiagnostic { _, reason, detail ->
+        val diagnostic = OverlayEventDiagnostic { _, reason, detail, _ ->
             assertEquals(OverlayEventRejection.BINDING_MISMATCH, reason); details += detail
         }; diagnostic.arm()
         assertFalse(inspectOwnedOverlayEvent(OverlayWindowState(OverlayWindowStatus.SHOWING, 1),
@@ -315,5 +320,80 @@ class OverlayEventDiagnosticTest {
             { _, observation -> observation?.bindingRejected(OverlayBindingRejection.BINDING_MISMATCH); false },
             { "SYNTHETIC_HOST" }, diagnostic))
         assertEquals(listOf(OverlayBindingDetail.UNKNOWN), details)
+    }
+    @Test fun windowClassificationRunsOnlyForTheFirstRejectedEventPerPresentation() {
+        val d = Driver()
+        assertTrue(d.read()); assertEquals(0, d.classificationReads)
+        d.pkg = null; d.classification = OverlayEventWindowClass.SYSTEM
+        repeat(3) { assertFalse(d.read()) }
+        assertEquals(1, d.classificationReads)
+        assertEquals(listOf(OverlayEventWindowClass.SYSTEM), d.classes)
+        d.diagnostic.disarm(); assertFalse(d.read()); assertEquals(1, d.classificationReads)
+        d.diagnostic.arm(); d.classification = OverlayEventWindowClass.TARGET_APP
+        assertFalse(d.read()); assertEquals(2, d.classificationReads)
+        assertEquals(OverlayEventWindowClass.TARGET_APP, d.classes.last())
+    }
+    @Test fun windowClassificationAlsoRunsAfterEarlyMaskAndInteractionRejections() {
+        for (type in listOf(AccessibilityEvent.TYPE_WINDOWS_CHANGED, AccessibilityEvent.TYPE_VIEW_SCROLLED)) {
+            val d = Driver(); d.type = type; d.changes = 0
+            d.classification = OverlayEventWindowClass.NOT_IN_LIST
+            assertFalse(d.read()); assertEquals(1, d.classificationReads)
+            assertEquals(listOf(OverlayEventWindowClass.NOT_IN_LIST), d.classes)
+            assertFalse(d.calls.contains("CURRENT")); assertFalse(d.calls.contains("LIVE"))
+        }
+    }
+    @Test fun everyWindowClassAndDiagnosticFailureKeepsDebugAndReleaseDecisionsAndPolicyReadsIdentical() {
+        val configurations: List<(Driver) -> Unit> = listOf(
+            {}, { it.window = 9 }, { it.pkg = null }, { it.live = null }, { it.current = null },
+            { it.state = it.state.copy(generation = 2) },
+            { it.type = AccessibilityEvent.TYPE_WINDOWS_CHANGED; it.changes = 0 },
+            { it.type = AccessibilityEvent.TYPE_VIEW_SCROLLED },
+            { it.diagnostic.disarm() },
+            { it.state = it.state.copy(status = OverlayWindowStatus.HIDDEN) },
+            { it.state = it.state.copy(status = OverlayWindowStatus.REMOVE_FAILED) },
+        )
+        for (classification in OverlayEventWindowClass.entries) for (failure in listOf(null,
+            IllegalStateException("SYNTHETIC_SECRET"), CancellationException("SYNTHETIC_SECRET"))) {
+            for (configure in configurations) {
+                val debug = Driver(); val release = Driver(); configure(debug); configure(release)
+                debug.classification = classification; debug.classificationFailure = failure
+                repeat(3) {
+                    assertEquals(debug.read(), release.read(null))
+                    // Includes original binding reads; diagnostic reads are counted separately.
+                    assertEquals(debug.calls, release.calls)
+                }
+                assertEquals(0, release.classificationReads)
+                assertTrue(debug.classificationReads <= 1)
+                if (debug.rows.isNotEmpty()) assertEquals(
+                    if (failure == null) classification else OverlayEventWindowClass.UNKNOWN, debug.classes.single())
+            }
+        }
+    }
+    @Test fun classificationFailureStillWritesTheOriginalReasonAndDetailOnlyOnce() {
+        val d = Driver(); assertTrue(d.read()); d.window = 9
+        d.classificationFailure = CancellationException("SYNTHETIC_SECRET")
+        repeat(3) { assertFalse(d.read()) }
+        d.detail(OverlayBindingDetail.BOUND_EVENT_WINDOW_MISMATCH)
+        assertEquals(listOf(OverlayEventWindowClass.UNKNOWN), d.classes)
+        assertEquals(1, d.classificationReads)
+        d.window = 2; assertTrue(d.read()) // No diagnostic failure quarantine in the real binding.
+    }
+    @Test fun reentrantClassificationCannotOverwriteTheFirstEventCodesOrReadAnotherWindow() {
+        val rows = mutableListOf<List<Enum<*>>>()
+        val diagnostic = OverlayEventDiagnostic { event, reason, detail, windowClass ->
+            rows += listOf(event, reason, detail, windowClass)
+        }
+        diagnostic.arm(); diagnostic.begin(OverlayEventCategory.WINDOW_STATE_CHANGED)
+        diagnostic.bindingRejected(OverlayBindingRejection.BINDING_MISMATCH,
+            OverlayBindingDetail.BOUND_EVENT_WINDOW_MISMATCH)
+        diagnostic.bindingRefused(true)
+        diagnostic.completed(false) {
+            diagnostic.begin(OverlayEventCategory.WINDOWS_CHANGED)
+            diagnostic.rejected(OverlayEventRejection.MASK_UNSUPPORTED)
+            diagnostic.completed(false) { error("UNEXPECTED_SECOND_CLASSIFICATION") }
+            OverlayEventWindowClass.SYSTEM
+        }
+        assertEquals(listOf(listOf(OverlayEventCategory.WINDOW_STATE_CHANGED, OverlayEventRejection.BINDING_MISMATCH,
+            OverlayBindingDetail.BOUND_EVENT_WINDOW_MISMATCH, OverlayEventWindowClass.SYSTEM)), rows)
     }
 }
