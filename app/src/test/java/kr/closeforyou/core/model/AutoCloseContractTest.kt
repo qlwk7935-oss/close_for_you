@@ -64,6 +64,28 @@ class AutoCloseContractTest {
         }
     }
 
+    @Test fun decisionsAndScamsAreOnlyExplainedAndWaitingSaysWhy() {
+        // #38 review (C) ①: a decision or scam-like popup always ends in DENY, whoever builds it.
+        for (reason in ActionDecision.DENY_ONLY_REASONS) {
+            assertEquals(NextStep.DENY, ActionDecision(token, ActionAuthorization.DENY, persistentSetOf(reason)).next)
+            for (next in NextStep.entries - NextStep.DENY - NextStep.EXECUTE) {
+                assertThrows("$reason $next", IllegalArgumentException::class.java) {
+                    ActionDecision(token, ActionAuthorization.DENY, persistentSetOf(reason), next = next)
+                }
+            }
+            assertThrows(reason.name, IllegalArgumentException::class.java) {
+                ActionDecision(token, ActionAuthorization.NEEDS_CONFIRMATION, persistentSetOf(reason))
+            }
+        }
+        // ②: WAIT always carries what it waits for.
+        assertThrows(IllegalArgumentException::class.java) {
+            ActionDecision(token, ActionAuthorization.NEEDS_CONFIRMATION, persistentSetOf(SafetyReason.FIRST_SEEN), next = NextStep.WAIT)
+        }
+        for (reason in ActionDecision.WAIT_REASONS) {
+            assertEquals(NextStep.WAIT, ActionDecision(token, ActionAuthorization.DENY, persistentSetOf(reason), next = NextStep.WAIT).next)
+        }
+    }
+
     @Test fun aClickOutcomeExistsOnlyAfterAnAttemptedPress() {
         assertEquals(ClickOutcome.CLOSED_CONFIRMED,
             ActionResult(token, ActionStatus.MECHANICAL_SUCCESS, null, attempted = true, outcome = ClickOutcome.CLOSED_CONFIRMED).outcome)

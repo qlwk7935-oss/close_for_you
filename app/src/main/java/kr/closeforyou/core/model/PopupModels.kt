@@ -184,7 +184,11 @@ enum class SafetyReason {
     NOT_AUTO_ELIGIBLE,
     /** Too many automatic closes in this app in a short time. */
     AUTO_LIMIT_REACHED,
-    /** An earlier press in this app left the app ([ClickOutcome.LEFT_APP]): automation stops there. */
+    /**
+     * An earlier press in this app left the app ([ClickOutcome.LEFT_APP]): automatic closing stops for
+     * that app until the accessibility service session ends (B keeps it in memory only). Asking the
+     * person still works.
+     */
     LEFT_APP_BEFORE,
     /** Closed automatically once already; repeating needs the person's F12 permission. */
     REPEAT_NOT_ALLOWED,
@@ -239,6 +243,17 @@ data class ActionDecision(
         require((next == NextStep.EXECUTE) == (authorization == ActionAuthorization.ALLOW_ONCE))
         // "No option to press" cannot sit on a decision that still offers one.
         require(next != NextStep.DENY || authorization == ActionAuthorization.DENY)
+        // An important decision or a scam-like popup is only ever explained (#38 review, C).
+        require(reasons.none { it in DENY_ONLY_REASONS } || next == NextStep.DENY)
+        // Waiting always says what it waits for, so C can say it once and stay quiet (#38 review, C).
+        require(next != NextStep.WAIT || reasons.any { it in WAIT_REASONS })
+    }
+
+    companion object {
+        val DENY_ONLY_REASONS: Set<SafetyReason> = setOf(SafetyReason.IMPORTANT_DECISION, SafetyReason.SUSPICIOUS_CONTENT)
+        val WAIT_REASONS: Set<SafetyReason> = setOf(
+            SafetyReason.WAITING_FOR_TARGET, SafetyReason.AWAITING_RESULT, SafetyReason.USER_INTERACTION, SafetyReason.STALE_SCREEN,
+        )
     }
 }
 
@@ -265,7 +280,10 @@ data class ActionResult(
     val reason: SafetyReason?,
     val attempted: Boolean = false,
     val semanticSafetyConfirmedByUser: Boolean = false,
-    /** Contract v2. Observed only after an attempted press; null when A did not observe. */
+    /**
+     * Contract v2. Observed only after an attempted press, whoever asked for it (the person, an F12
+     * rule or a preset); null when A did not observe. C says "닫았어요" only on CLOSED_CONFIRMED.
+     */
     val outcome: ClickOutcome? = null,
 ) {
     init { require(outcome == null || attempted) }
