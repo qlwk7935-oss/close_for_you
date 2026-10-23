@@ -270,3 +270,63 @@ Debug/Release·AndroidTest APK 빌드 및 앱 Debug/Release·호스트 Debug Lin
 서비스/런타임/세션·수집기·Manifest·gradle.properties는 그대로다. Android 실제 getter/recycle·
 창 표시·이벤트 발생원·P01은 이 검증으로 입증하지 않는다. 커밋·푸시·PR 변경은 하지 않는다.
 JVM 합성 회귀는 Android Binder·실제 P01 차단 원인·Logcat 실측을 대신하지 않는다.
+
+## V5 — 기존 V4 한 줄의 BINDING_DETAIL 확장
+
+기존 태그·접두사·VERSION=V4·EVENT·REASON을 유지하고 `BINDING_DETAIL` 필드만 덧붙인다.
+V5는 이 필드의 추가를 뜻하며 별도 로그나 재발행을 만들지 않는다. 실제 Android 결과가 아닌 형식 예시:
+
+```text
+A_OVERLAY_EVENT;VERSION=V4;EVENT=WINDOW_STATE_CHANGED;REASON=BINDING_MISMATCH;BINDING_DETAIL=BOUND_EVENT_WINDOW_MISMATCH
+```
+
+| BINDING_DETAIL | 확인한 기존 비교 분기 |
+| --- | --- |
+| CONTROL_STATE_MISMATCH | 저장 세대가 유효하지 않거나 현재 세대와 다르거나 저장 토큰이 없음. 복합 조건의 어느 항목인지는 추정하지 않음 |
+| NONNULL_TOKEN_MISMATCH | 저장 토큰과 current 토큰이 다르고 기존 current 값은 null이 아님. 토큰의 어느 필드가 다른지는 출력하지 않음 |
+| BOUND_EVENT_WINDOW_MISMATCH | 이미 결합한 창과 이벤트 창이 다름. 이 분기에서는 기존처럼 live 집합 membership을 검사하지 않음 |
+| BOUND_WINDOW_NOT_LIVE | 이벤트 창은 기존 결합 창과 같지만 그 창이 live 집합에 없음 |
+| NEW_EVENT_WINDOW_MISMATCH | 최초 결합에서 고유한 새 소유 창은 있으나 이벤트 창이 그 창과 다름 |
+| UNKNOWN | 분기 근거가 없거나 REASON이 BINDING_MISMATCH가 아님. current가 null인 TOKEN_MISMATCH는 REASON=CURRENT_UNAVAILABLE, BINDING_DETAIL=UNKNOWN으로 보고 |
+
+위 값은 기존 matches()/bindingRefused()가 확인한 비교만 사용한다. 기존 known 창 비교의
+`eventWindow == known && known in liveOwned` 단락 평가를 같은 순서의 두 반환 분기로 표현해,
+창 비교 불일치 때 membership을 새로 읽거나 추가 비교하지 않는다. getter·수집·OCR·시계·
+서비스/provider IPC·재시도는 추가하지 않는다. 판단·무효화·dismiss·취소·한 줄 제한은 그대로다.
+진단은 고정 enum 하나만 더 보유하며 원시 창 ID·토큰·패키지·화면 원문·예외는 받거나 출력하지 않는다.
+Release의 포트는 기존 null/no-op이며 V2/V3 로그는 변경하지 않는다.
+
+### V5에서 판정할 수 없는 것과 종료 기준
+
+창 비교 불일치에는 대상 앱·다른 창·불명확한 이벤트 창이 모두 포함될 수 있어 실제 C 발생원으로
+확정할 수 없다. BOUND_WINDOW_NOT_LIVE도 실제 창 소멸과 root/title의 일시 미확인을 구분하지
+않는다. NONNULL_TOKEN_MISMATCH는 실제 화면 변화의 원인이나 새 토큰의 생성 경위를 인증하지
+않는다. C 픽셀 표시·제거 완료·이벤트와 서비스 수집의 원자성도 입증하지 않는다.
+
+이 단계의 완료 기준은 실제 거부 분기를 분리하고, 같은 공유 JVM 경계에서 기존 거부·조회 순서와
+한 줄 제한이 유지되는지 검증하는 것이다. 특정 분기가 확인되면 추가 필드를 늘리지 않고 아래처럼
+처리한다. 이것을 P01 표시 문제 해결이나 실제 C 이벤트 증명으로 승격하지 않는다.
+
+- 창 ID 비교 불일치: 현재 C 창 이벤트로 인정할 근거가 부족하므로 기존 거부 유지. 발생원 미확정을
+  기록하고 이벤트 무시 범위를 넓히지 않는다.
+- CONTROL_STATE/NONNULL_TOKEN 불일치: 기존 A 수명·토큰 회귀와 정적 호출 순서로 확인 가능한
+  결함만 수정 대상으로 삼는다. 결함이 입증되지 않으면 차단 상태로 남기고 진단 확장은 중단한다.
+- BOUND_WINDOW_NOT_LIVE: 현 관측에서 소유권을 입증하지 못한 것으로 종료한다. 실제 창 식별의
+  보장이 필요하다면 C 창 수명·식별 계약 검토 과제로 남기며 A가 임의로 소유권을 허용하지 않는다.
+- UNKNOWN 또는 다른 V4 거부 사유: 원인을 추정하지 않고 확인된 범위와 한계를 기록한다.
+  BINDING_MISMATCH가 아닌 행의 UNKNOWN detail은 정상이다. 추가 Android 재실행이나 진단
+  증설을 자동으로 요구하지 않는다.
+
+이번 작업은 로컬 구현·검증만 하며 Android/P01 실행·커밋·푸시·병합은 하지 않는다.
+
+### V5 로컬 검증 (2026-10-23)
+
+신규7개 추가 및 기존4개 detail 검증 보강. 같은 inspectOwnedOverlayEvent()/matches() 경계에서
+5개 상세 분기·UNKNOWN, null current의 기존 사유 보존, membership의 0/1회 단락 평가,
+조회 순서·횟수, null 포트 동등성, 첫 보고 유지·다음 표시 초기화와 기존 취소/예외 회귀를 확인했다.
+대상 JVM98개, 전체 JVM1,613개(앱1,152·호스트443·합성 팝업 앱18), 실패·오류·skip0.
+JDK17/offline Debug/Release·AndroidTest APK 빌드 및 앱 Debug/Release·호스트 Debug Lint 통과(이슈0).
+합성 팝업 앱 Lint는 기존 TypographyFractions/SetTextI18n 경고2건, 오류0이다.
+패키징·DEX 격리·공백 검사와 Debug의 BINDING_DETAIL 필드 존재·Release 부재를 확인했다.
+Release 포트의 null/no-op bytecode와 Android 조회/수집/서비스·런타임·dismiss 경계가 변경되지
+않았음도 확인했다. 실제 Android/P01·픽셀 표시·이벤트 발생원 검증 결과는 아니다.

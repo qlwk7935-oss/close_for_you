@@ -13,8 +13,9 @@ class OverlayEventDiagnosticTest {
     private class Driver {
         val token = MockPopupFixtures.notice().snapshot.token
         val rows = mutableListOf<Pair<OverlayEventCategory, OverlayEventRejection>>()
+        val details = mutableListOf<OverlayBindingDetail>()
         val calls = mutableListOf<String>()
-        val diagnostic = OverlayEventDiagnostic { event, reason -> rows += event to reason }
+        val diagnostic = OverlayEventDiagnostic { event, reason, detail -> rows += event to reason; details += detail }
         val binding = OwnedOverlayBinding()
         var state = OverlayWindowState(OverlayWindowStatus.SHOWING, 1L)
         var type = AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED
@@ -41,6 +42,9 @@ class OverlayEventDiagnosticTest {
         private fun readWindow(): Int { calls += "WINDOW"; return window }
         private fun readLive(): Set<Int>? { calls += "LIVE"; liveFailure?.let { throw it }; return live }
         fun reason(expected: OverlayEventRejection) { assertEquals(expected, rows.single().second) }
+        fun detail(expected: OverlayBindingDetail) {
+            reason(OverlayEventRejection.BINDING_MISMATCH); assertEquals(expected, details.single())
+        }
     }
 
     @Test fun contentUsesTheOriginalGetterOrderAndAcceptedEventsProduceNoLog() {
@@ -117,10 +121,12 @@ class OverlayEventDiagnosticTest {
     @Test fun anotherTokenIsBindingMismatchAndDoesNotPretendToBeTtl() {
         val d = Driver(); d.current = d.token.copy(screenVersion = d.token.screenVersion + 1)
         assertFalse(d.read()); d.reason(OverlayEventRejection.BINDING_MISMATCH)
+        d.detail(OverlayBindingDetail.NONNULL_TOKEN_MISMATCH)
     }
     @Test fun anotherGenerationIsBindingMismatch() {
         val d = Driver(); d.state = d.state.copy(generation = 2)
         assertFalse(d.read()); d.reason(OverlayEventRejection.BINDING_MISMATCH)
+        d.detail(OverlayBindingDetail.CONTROL_STATE_MISMATCH)
     }
     @Test fun unavailableEmptyAmbiguousOrExcessiveLiveSetIsNotConfirmed() {
         for (live in listOf(null, emptySet(), setOf(2, 3), (1..33).toSet())) {
@@ -131,10 +137,12 @@ class OverlayEventDiagnosticTest {
     @Test fun eventWindowDifferentFromTheOnlyNewOwnedWindowIsBindingMismatch() {
         val d = Driver(); d.window = 9
         assertFalse(d.read()); d.reason(OverlayEventRejection.BINDING_MISMATCH)
+        d.detail(OverlayBindingDetail.NEW_EVENT_WINDOW_MISMATCH)
     }
     @Test fun aKnownWindowThatDisappearedRemainsRejected() {
         val d = Driver(); assertTrue(d.read()); d.live = emptySet()
         assertFalse(d.read()); d.reason(OverlayEventRejection.BINDING_MISMATCH)
+        d.detail(OverlayBindingDetail.BOUND_WINDOW_NOT_LIVE)
     }
     @Test fun missingPackageExceptionRemainsLimitedToOwnedWindowLayout() {
         val d = Driver(); d.type = AccessibilityEvent.TYPE_WINDOWS_CHANGED; d.pkg = null
@@ -168,14 +176,14 @@ class OverlayEventDiagnosticTest {
     }
     @Test fun failedDiagnosticSinkCannotChangeDecisionOrTriggerRetries() {
         var writes = 0
-        val diagnostic = OverlayEventDiagnostic { _, _ -> writes++; throw IllegalStateException("SYNTHETIC_SECRET") }
+        val diagnostic = OverlayEventDiagnostic { _, _, _ -> writes++; throw IllegalStateException("SYNTHETIC_SECRET") }
         diagnostic.arm()
         val d = Driver(); d.pkg = null
         repeat(3) { assertFalse(d.read(diagnostic)) }
         assertEquals(1, writes)
     }
     @Test fun sinkCancellationDoesNotCancelWorkOrCreateAFalseAcceptedDecision() {
-        val diagnostic = OverlayEventDiagnostic { _, _ -> throw CancellationException("SYNTHETIC_SECRET") }
+        val diagnostic = OverlayEventDiagnostic { _, _, _ -> throw CancellationException("SYNTHETIC_SECRET") }
         diagnostic.arm()
         val d = Driver(); d.pkg = null
         assertFalse(d.read(diagnostic))
@@ -197,7 +205,9 @@ class OverlayEventDiagnosticTest {
     }
     @Test fun opaqueBindingRefusalDoesNotInventAReason() {
         val rows = mutableListOf<OverlayEventRejection>()
-        val diagnostic = OverlayEventDiagnostic { _, reason -> rows += reason }; diagnostic.arm()
+        val diagnostic = OverlayEventDiagnostic { _, reason, detail ->
+            rows += reason; assertEquals(OverlayBindingDetail.UNKNOWN, detail)
+        }; diagnostic.arm()
         val state = OverlayWindowState(OverlayWindowStatus.SHOWING, 1L)
         assertFalse(inspectOwnedOverlayEvent(state, { AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED },
             { error("UNEXPECTED_CHANGES_READ") }, { "SYNTHETIC_HOST" }, { null }, { _, _ -> false },
@@ -224,5 +234,86 @@ class OverlayEventDiagnosticTest {
     }
     @Test fun toStringDoesNotExposeEventOrPayloadOrSink() {
         assertEquals("OverlayEventDiagnostic(redacted)", Driver().diagnostic.toString())
+    }
+    @Test fun v5BoundEventWindowMismatchDoesNotReadMembershipOrRebind() {
+        val d = Driver(); assertTrue(d.read()); d.calls.clear()
+        var membershipReads = 0; var iterations = 0
+        d.live = object : AbstractSet<Int>() {
+            override val size = 1
+            override fun iterator(): Iterator<Int> { iterations++; return setOf(2).iterator() }
+            override fun contains(element: Int): Boolean { membershipReads++; return element == 2 }
+        }
+        d.window = 9
+        assertFalse(d.read()); d.detail(OverlayBindingDetail.BOUND_EVENT_WINDOW_MISMATCH)
+        assertEquals(0, membershipReads); assertEquals(0, iterations)
+        assertEquals(listOf("TYPE", "PACKAGE", "CURRENT", "WINDOW", "LIVE", "OWN_PACKAGE"), d.calls)
+        d.window = 2; assertTrue(d.read()); assertEquals(1, membershipReads)
+        assertEquals(1, d.rows.size)
+    }
+    @Test fun v5BoundWindowNotLiveReadsMembershipExactlyOnce() {
+        val d = Driver(); assertTrue(d.read()); d.calls.clear()
+        var membershipReads = 0
+        d.live = object : AbstractSet<Int>() {
+            override val size = 1
+            override fun iterator(): Iterator<Int> = error("UNEXPECTED_ITERATION")
+            override fun contains(element: Int): Boolean { membershipReads++; return false }
+        }
+        assertFalse(d.read()); d.detail(OverlayBindingDetail.BOUND_WINDOW_NOT_LIVE)
+        assertEquals(1, membershipReads)
+        assertEquals(listOf("TYPE", "PACKAGE", "CURRENT", "WINDOW", "LIVE", "OWN_PACKAGE"), d.calls)
+    }
+    @Test fun v5ControlStateFailurePrecedesMissingCurrent() {
+        val d = Driver(); d.state = d.state.copy(generation = 2); d.current = null
+        assertFalse(d.read()); d.detail(OverlayBindingDetail.CONTROL_STATE_MISMATCH)
+    }
+    @Test fun v5NonBindingReasonsAlwaysHaveUnknownDetail() {
+        val cases: List<(Driver) -> Unit> = listOf(
+            { it.binding.clear() }, { it.live = null }, { it.pkg = null }, { it.current = null },
+            { it.type = AccessibilityEvent.TYPE_WINDOWS_CHANGED; it.changes = 0 },
+            { it.type = AccessibilityEvent.TYPE_VIEW_SCROLLED },
+        )
+        for (configure in cases) {
+            val d = Driver(); configure(d); assertFalse(d.read())
+            assertNotEquals(OverlayEventRejection.BINDING_MISMATCH, d.rows.single().second)
+            assertEquals(OverlayBindingDetail.UNKNOWN, d.details.single())
+        }
+    }
+    @Test fun v5FirstDetailIsNotOverwrittenAndAnotherPresentationCannotInheritIt() {
+        val d = Driver(); d.state = d.state.copy(generation = 2)
+        assertFalse(d.read()); d.detail(OverlayBindingDetail.CONTROL_STATE_MISMATCH)
+        d.state = d.state.copy(generation = 1); d.current = d.token.copy(screenVersion = d.token.screenVersion + 1)
+        assertFalse(d.read()); d.detail(OverlayBindingDetail.CONTROL_STATE_MISMATCH)
+        d.diagnostic.disarm(); d.diagnostic.arm()
+        assertFalse(d.read()); assertEquals(2, d.rows.size)
+        assertEquals(OverlayBindingDetail.NONNULL_TOKEN_MISMATCH, d.details.last())
+        d.diagnostic.disarm(); d.diagnostic.arm(); d.current = null
+        assertFalse(d.read()); assertEquals(OverlayEventRejection.CURRENT_UNAVAILABLE, d.rows.last().second)
+        assertEquals(OverlayBindingDetail.UNKNOWN, d.details.last())
+    }
+    @Test fun v5DebugAndNullPortKeepIdenticalReadsAndDecisionsForEveryDetail() {
+        val cases: List<(Driver) -> Unit> = listOf(
+            { it.state = it.state.copy(generation = 2) },
+            { it.current = it.token.copy(screenVersion = it.token.screenVersion + 1) },
+            { assertTrue(it.read(null)); it.window = 9 },
+            { assertTrue(it.read(null)); it.live = emptySet() },
+            { it.window = 9 },
+        )
+        for (configure in cases) {
+            val a = Driver(); val b = Driver(); configure(a); configure(b); a.calls.clear(); b.calls.clear()
+            assertFalse(a.read()); assertFalse(b.read(null)); assertEquals(a.calls, b.calls)
+            assertNotEquals(OverlayBindingDetail.UNKNOWN, a.details.single())
+        }
+    }
+    @Test fun v5UnspecifiedBindingFailureRemainsUnknown() {
+        val details = mutableListOf<OverlayBindingDetail>()
+        val diagnostic = OverlayEventDiagnostic { _, reason, detail ->
+            assertEquals(OverlayEventRejection.BINDING_MISMATCH, reason); details += detail
+        }; diagnostic.arm()
+        assertFalse(inspectOwnedOverlayEvent(OverlayWindowState(OverlayWindowStatus.SHOWING, 1),
+            { AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED }, { error("UNEXPECTED_CHANGES_READ") },
+            { "SYNTHETIC_HOST" }, { null },
+            { _, observation -> observation?.bindingRejected(OverlayBindingRejection.BINDING_MISMATCH); false },
+            { "SYNTHETIC_HOST" }, diagnostic))
+        assertEquals(listOf(OverlayBindingDetail.UNKNOWN), details)
     }
 }

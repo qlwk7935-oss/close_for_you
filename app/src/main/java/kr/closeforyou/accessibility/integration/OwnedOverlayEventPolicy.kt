@@ -101,7 +101,8 @@ internal class OwnedOverlayBinding {
             return false
         }
         if (generation <= 0L || generation != currentGeneration || token == null) {
-            diagnostic?.bindingRejected(OverlayBindingRejection.BINDING_MISMATCH); return false
+            diagnostic?.bindingRejected(OverlayBindingRejection.BINDING_MISMATCH,
+                OverlayBindingDetail.CONTROL_STATE_MISMATCH); return false
         }
         if (token != current) {
             diagnostic?.bindingRejected(OverlayBindingRejection.TOKEN_MISMATCH); return false
@@ -111,8 +112,14 @@ internal class OwnedOverlayBinding {
         }
         val known = bound
         if (known != null) {
-            val matches = eventWindow == known && known in liveOwned
-            if (!matches) diagnostic?.bindingRejected(OverlayBindingRejection.BINDING_MISMATCH)
+            if (eventWindow != known) {
+                diagnostic?.bindingRejected(OverlayBindingRejection.BINDING_MISMATCH,
+                    OverlayBindingDetail.BOUND_EVENT_WINDOW_MISMATCH)
+                return false
+            }
+            val matches = known in liveOwned
+            if (!matches) diagnostic?.bindingRejected(OverlayBindingRejection.BINDING_MISMATCH,
+                OverlayBindingDetail.BOUND_WINDOW_NOT_LIVE)
             return matches
         }
         val created = liveOwned.filter { it !in previous }.singleOrNull() ?: run {
@@ -120,7 +127,8 @@ internal class OwnedOverlayBinding {
             return false
         }
         if (eventWindow != created) {
-            diagnostic?.bindingRejected(OverlayBindingRejection.BINDING_MISMATCH); return false
+            diagnostic?.bindingRejected(OverlayBindingRejection.BINDING_MISMATCH,
+                OverlayBindingDetail.NEW_EVENT_WINDOW_MISMATCH); return false
         }
         bound = created
         return true
