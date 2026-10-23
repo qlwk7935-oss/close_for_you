@@ -140,6 +140,7 @@ fun UiVoiceSettingsRoute(
         microphoneState = microphoneState,
         microphoneDenied = microphoneDenied,
         onVoiceCommandsChange = preferences::setVoiceCommandsEnabled,
+        onPresetChange = preferences::setHandlingPreset,
         onAllowMicrophone = { permissionLauncher.launch(Manifest.permission.RECORD_AUDIO) },
         onRevoke = { id -> scope.launch { actions.revoke(id) } },
         onDeleteAll = {
@@ -175,6 +176,8 @@ fun UiVoiceSettingsScreen(
     microphoneDenied: Boolean = false,
     onVoiceCommandsChange: (Boolean) -> Unit = {},
     onAllowMicrophone: () -> Unit = {},
+    /** "팝업 처리 방식" (per popup kind). Separate from the per-app F12 switches below. */
+    onPresetChange: (HandlingPreset) -> Unit = {},
     /** Decides expired / on; the Route passes its clock. */
     nowEpochMillis: Long = System.currentTimeMillis(),
     zone: ZoneId = ZoneId.systemDefault(),
@@ -189,6 +192,11 @@ fun UiVoiceSettingsScreen(
     ) {
         Heading(R.string.ui_settings_title, MaterialTheme.typography.titleLarge)
 
+        Heading(R.string.ui_preset_section)
+        Text(stringResource(R.string.ui_preset_section_help))
+        HandlingPresetGroup(selected = settings.handlingPreset, onSelect = onPresetChange)
+
+        HorizontalDivider()
         Heading(R.string.ui_settings_section_status)
         Text(
             stringResource(

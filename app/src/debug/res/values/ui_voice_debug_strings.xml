@@ -39,6 +39,7 @@
     <string name="ui_debug_overlay_result">다른 앱 위 선택 창 결과: %1$s</string>
     <string name="ui_debug_open_settings">설정 화면 보기 (가짜 기억 목록)</string>
     <string name="ui_debug_back_to_preview">미리보기로 돌아가기</string>
+    <string name="ui_debug_open_onboarding">첫 실행 설정 화면 보기</string>
 
     <!-- 음성 명령 시험 (말하기 버튼을 누를 때만, 기기 안 인식) -->
     <string name="ui_debug_section_voice">음성 명령 시험</string>

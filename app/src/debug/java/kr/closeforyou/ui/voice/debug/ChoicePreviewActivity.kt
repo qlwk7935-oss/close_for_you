@@ -78,6 +78,8 @@ import kr.closeforyou.ui.voice.BatchSentence
 import kr.closeforyou.ui.voice.BatchSummary
 import kr.closeforyou.ui.voice.PressResultSpeech
 import kr.closeforyou.ui.voice.TtsPopupAnnouncer
+import kr.closeforyou.ui.voice.settings.UiVoiceOnboardingScreen
+import kr.closeforyou.ui.voice.settings.UiVoicePreferences
 import kr.closeforyou.ui.voice.settings.UiVoiceSettingsRoute
 import kr.closeforyou.ui.voice.overlay.PromptAnnouncementListener
 import kr.closeforyou.ui.voice.overlay.PromptSpeech
@@ -91,12 +93,18 @@ class ChoicePreviewActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val openSettings = intent?.getBooleanExtra(EXTRA_OPEN_SETTINGS, false) == true
-        setContent { UiVoiceTheme { ChoicePreviewScreen(openSettings) } }
+        val openOnboarding = intent?.getBooleanExtra(EXTRA_OPEN_ONBOARDING, false) == true
+        setContent { UiVoiceTheme { ChoicePreviewScreen(openSettings, openOnboarding) } }
         if (savedInstanceState == null) scheduleOverlayFromIntent(intent)
     }
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
+        // singleTop: the screen may already be in front, so open the first-run page here too.
+        if (intent.getBooleanExtra(EXTRA_OPEN_ONBOARDING, false)) {
+            intent.removeExtra(EXTRA_OPEN_ONBOARDING)
+            setContent { UiVoiceTheme { ChoicePreviewScreen(openSettings = false, openOnboarding = true) } }
+        }
         scheduleOverlayFromIntent(intent)
     }
 
@@ -173,6 +181,8 @@ class ChoicePreviewActivity : ComponentActivity() {
         const val EXTRA_C34_FOCUS_MS = "ui_debug_c34_focus_ms"
         /** adb: `--ez ui_debug_open_settings true` opens the settings page directly. */
         const val EXTRA_OPEN_SETTINGS = "ui_debug_open_settings"
+        /** adb: `--ez ui_debug_open_onboarding true` opens the first-run setup directly. */
+        const val EXTRA_OPEN_ONBOARDING = "ui_debug_open_onboarding"
     }
 }
 
@@ -203,8 +213,13 @@ private fun closeAndSkipFixture(): MockPopupFixture {
 private const val SKIP_LABEL = "건너뛰기"
 
 @Composable
-private fun ChoicePreviewScreen(openSettings: Boolean) {
+private fun ChoicePreviewScreen(openSettings: Boolean, openOnboarding: Boolean) {
     var showSettings by rememberSaveable { mutableStateOf(openSettings) }
+    var showOnboarding by rememberSaveable { mutableStateOf(openOnboarding) }
+    if (showOnboarding) {
+        OnboardingPage(onBack = { showOnboarding = false })
+        return
+    }
     if (showSettings) {
         SettingsPage(onBack = { showSettings = false })
         return
@@ -237,6 +252,10 @@ private fun ChoicePreviewScreen(openSettings: Boolean) {
                 onClick = { showSettings = true },
                 modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
             ) { Text(stringResource(R.string.ui_debug_open_settings)) }
+            OutlinedButton(
+                onClick = { showOnboarding = true },
+                modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
+            ) { Text(stringResource(R.string.ui_debug_open_onboarding)) }
             SectionTitle(R.string.ui_debug_section_scenario)
             Column(Modifier.selectableGroup()) {
                 scenarios.forEach { scenario ->
@@ -436,6 +455,27 @@ private fun SettingsPage(onBack: () -> Unit) {
             ) { Text(stringResource(R.string.ui_debug_back_to_preview)) }
             UiVoiceSettingsRoute(DebugRules.repository)
         }
+    }
+}
+
+/**
+ * First-run setup, shown even when it was already finished. [시작하기] saves the preset and the
+ * "done" flag in C's real preferences (this build's MainActivity has no gate yet), then comes back.
+ */
+@Composable
+private fun OnboardingPage(onBack: () -> Unit) {
+    BackHandler(onBack = onBack)
+    val context = LocalContext.current
+    val preferences = remember { UiVoicePreferences.get(context) }
+    Scaffold { innerPadding ->
+        UiVoiceOnboardingScreen(
+            initialPreset = preferences.current().handlingPreset,
+            onStart = { preset ->
+                preferences.completeOnboarding(preset)
+                onBack()
+            },
+            modifier = Modifier.padding(innerPadding),
+        )
     }
 }
 
