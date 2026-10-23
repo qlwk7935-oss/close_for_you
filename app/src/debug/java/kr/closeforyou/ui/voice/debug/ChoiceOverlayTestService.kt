@@ -47,6 +47,7 @@ class ChoiceOverlayTestService : AccessibilityService() {
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         if (diagnose && event != null) diagnostics.onEvent(event)
+        if (event != null) OverlayNodeDump.onEvent(this, event)
     }
 
     override fun onInterrupt() = Unit
@@ -54,6 +55,7 @@ class ChoiceOverlayTestService : AccessibilityService() {
     override fun onDestroy() {
         handler.removeCallbacksAndMessages(null)
         if (diagnose) diagnostics.disarm()
+        OverlayNodeDump.stopWatch(this)
         overlay?.dismiss()
         overlay = null
         announcer?.close()
@@ -121,6 +123,20 @@ class ChoiceOverlayTestService : AccessibilityService() {
         fun watchEvents(millis: Long): Boolean {
             val service = current?.get() ?: return false
             service.watchEvents(millis)
+            return true
+        }
+
+        /** Logs C's own prompt node tree under C34Nodes (flags and lengths only). False when the service is off. */
+        fun dumpOwnNodes(): Boolean {
+            val service = current?.get() ?: return false
+            OverlayNodeDump.dump(service)
+            return true
+        }
+
+        /** Logs accessibility-focus events (TalkBack swipes) for [millis] under C34Nodes. */
+        fun watchFocus(millis: Long): Boolean {
+            val service = current?.get() ?: return false
+            OverlayNodeDump.watchFocus(service, millis)
             return true
         }
 

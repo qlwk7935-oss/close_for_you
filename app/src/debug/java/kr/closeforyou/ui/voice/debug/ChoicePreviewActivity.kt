@@ -110,6 +110,23 @@ class ChoicePreviewActivity : ComponentActivity() {
      * `--el ui_debug_c29_watch_ms <ms>` (no scenario) only watches events for that long (issue #29).
      */
     private fun scheduleOverlayFromIntent(intent: Intent?) {
+        // `--ez ui_debug_c34_dump true` (alone): logs the shown prompt's node tree under C34Nodes.
+        if (intent?.getBooleanExtra(EXTRA_C34_DUMP, false) == true) {
+            intent.removeExtra(EXTRA_C34_DUMP)
+            if (!ChoiceOverlayTestService.dumpOwnNodes()) {
+                Toast.makeText(this, R.string.ui_debug_overlay_service_off, Toast.LENGTH_LONG).show()
+            }
+            return
+        }
+        // `--el ui_debug_c34_focus_ms <ms>` (alone): logs TalkBack focus moves under C34Nodes for that long.
+        val focusMillis = intent?.getLongExtra(EXTRA_C34_FOCUS_MS, -1L)?.takeIf { it in 1..MAX_C29_WATCH_MILLIS * 3 }
+        intent?.removeExtra(EXTRA_C34_FOCUS_MS)
+        if (focusMillis != null) {
+            if (!ChoiceOverlayTestService.watchFocus(focusMillis)) {
+                Toast.makeText(this, R.string.ui_debug_overlay_service_off, Toast.LENGTH_LONG).show()
+            }
+            return
+        }
         val watchMillis = intent?.getLongExtra(EXTRA_C29_WATCH_MS, -1L)?.takeIf { it in 1..MAX_C29_WATCH_MILLIS }
         intent?.removeExtra(EXTRA_C29_WATCH_MS)
         if (watchMillis != null) {
@@ -152,6 +169,8 @@ class ChoicePreviewActivity : ComponentActivity() {
         const val EXTRA_C29_DIAG = "ui_debug_c29_diag"
         const val EXTRA_C29_WATCH_MS = "ui_debug_c29_watch_ms"
         const val MAX_C29_WATCH_MILLIS = 60_000L
+        const val EXTRA_C34_DUMP = "ui_debug_c34_dump"
+        const val EXTRA_C34_FOCUS_MS = "ui_debug_c34_focus_ms"
         /** adb: `--ez ui_debug_open_settings true` opens the settings page directly. */
         const val EXTRA_OPEN_SETTINGS = "ui_debug_open_settings"
     }
