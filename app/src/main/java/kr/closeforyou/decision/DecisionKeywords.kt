@@ -47,19 +47,30 @@ internal object DecisionKeywords {
     fun isUserDecision(text: String): Boolean =
         userDecisionKo.any { it in text } || userDecisionEn.containsMatchIn(text)
 
-    // R1 (OVERWARNING_STUDY.md): a benefit condition such as "가입하면 포인트", "결제 시 5% 할인".
-    private val benefitCondition = Regex("""하면|하고|\S+\s*시\s|할 때|\band get\b|\bwhen you\b|\bif you\b""", RegexOption.IGNORE_CASE)
+    // R1 (OVERWARNING_STUDY.md), narrowed after A's review of #30. Only purchase and membership words
+    // count, and only as the condition itself: "가입하면", "결제 시", "구매하면", "sign up and get".
+    // Consent, permission, personal data, deletion, cancellation and transfers never do.
+    private val conditionedDecision = Regex(
+        """(결제|구매|구독|가입|로그인)\s?(하면|하시면|하고|할 때|하실 때|시(?=[\s,.!]|$))""" +
+            """|\b(sign up|subscribe|buy|purchase|pay|log in|sign in)\b(\s+now)?\s+(and|to)\s+get\b""" +
+            """|\b(when|if)\s+you\s+(sign up|subscribe|buy|purchase|pay|log in|sign in)\b""",
+        RegexOption.IGNORE_CASE,
+    )
     private val benefitWord = Regex("""할인|쿠폰|포인트|혜택|이벤트|특가|무료|증정|적립|배송|\boff\b|\bfree\b|\bbonus\b|\bcoupon\b""", RegexOption.IGNORE_CASE)
     // A question or A's fixed summary ("결제 선택 필요") is always a decision, never a mention.
     private val asksForDecision = Regex("""\?|하시겠|할까요|시겠어요|필요""")
 
     /**
-     * A sentence that only mentions a decision word as the condition of a benefit: it has a
-     * condition and a benefit word, asks nothing, and is longer than a button name (10 chars).
+     * True only when every decision word in [text] sits inside a purchase or membership condition
+     * of a benefit ("가입하면 포인트를 드립니다"). Any other decision word in the same text, such as
+     * "개인정보 제공에 동의하세요" or "지금 결제하세요", keeps it a decision, as do questions, A's fixed
+     * summaries and texts no longer than a button name (10 chars).
      */
-    fun isBenefitMention(text: String): Boolean =
-        text.length > 10 && benefitCondition.containsMatchIn(text) && benefitWord.containsMatchIn(text) &&
-            !asksForDecision.containsMatchIn(text)
+    fun isBenefitMention(text: String): Boolean {
+        if (text.length <= 10 || !benefitWord.containsMatchIn(text) || asksForDecision.containsMatchIn(text)) return false
+        val rest = conditionedDecision.replace(text, " ")
+        return rest != text && !isUserDecision(rest)
+    }
 
     fun isDecisionButtonLabel(label: String): Boolean =
         isUserDecision(label) || decisionButtonOnlyKo.any { it in label } ||

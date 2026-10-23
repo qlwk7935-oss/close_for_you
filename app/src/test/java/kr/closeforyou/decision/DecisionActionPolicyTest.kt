@@ -69,6 +69,11 @@ class DecisionActionPolicyTest {
             withTexts("결제 선택 필요"),                                         // A's fixed summary
             withTexts("광고", "결제 시 할인", "닫기"),                            // a short text: may be a button
             withTexts("광고 · 가상 상품 구매 안내", "닫기"),                       // a decision word with no benefit condition
+            // Review on #30 (A): a real request in the same text as a benefit condition.
+            withTexts("광고", "가입하면 포인트를 드립니다. 개인정보 제공에 동의하세요", "닫기"),
+            withTexts("광고", "결제하면 추가 할인, 지금 결제하세요", "닫기"),
+            withTexts("광고", "동의하면 쿠폰 지급", "닫기"),                       // consent never counts as a condition
+            withTexts("광고", "Sign up now and get 10% off. Please agree to the terms", "닫기"),
         )) {
             val decision = decide(blocked, choice = choose(blocked, confirmed = true))
             assertEquals(blocked.texts.joinToString("|") { it.text }, DENY, decision.authorization)

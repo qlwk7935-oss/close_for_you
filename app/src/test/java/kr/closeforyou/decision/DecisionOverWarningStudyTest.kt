@@ -146,7 +146,8 @@ class DecisionOverWarningStudyTest {
     }
 
     @Test fun productionNowMatchesCandidateR1OnEverySample() {
-        // R1 went into hasUserDecisionSignal (2026-10-22): the classifier must agree with the study's rule.
+        // R1 went into hasUserDecisionSignal (2026-10-22), later narrowed after A's #30 review (only
+        // purchase/membership words, only as the condition itself). On this set both agree sample by sample.
         for (sample in samples) assertEquals(sample.id, candidateR1(sample.texts), current(sample.texts))
     }
 

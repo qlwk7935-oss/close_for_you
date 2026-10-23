@@ -89,6 +89,29 @@ class DecisionPopupClassifierTest {
         assertEquals(PopupClassification.UNKNOWN, classifier.classify(analysis()))
     }
 
+    /** Review on #30 (A): a real request beside a benefit condition must stay a decision. */
+    @Test fun benefitConditionNextToARealRequestStaysADecision() = runBlocking {
+        val tree = TextSource.ACCESSIBILITY_TREE
+        for (text in listOf(
+            "가입하면 포인트를 드립니다. 개인정보 제공에 동의하세요",   // A's counterexample: two sentences
+            "가입하면 포인트를 드리니 지금 동의하세요",               // one sentence
+            "결제하면 추가 할인, 지금 결제하세요",                    // the same word as a direct request
+            "구독하면 첫 달 무료. 구독하세요",
+            "동의하면 쿠폰 지급",                                     // consent is never a benefit condition
+            "개인정보 제공 시 1,000포인트 적립",
+            "권한을 허용하면 할인 쿠폰 증정",
+            "Sign up now and get 10% off. Please agree to the terms",
+            "If you subscribe you get a free month and we delete your old plan",
+            "가입하면 포인트 지급, 결제 정보 등록 필요",                // a request word
+        )) {
+            assertEquals(text, PopupClassification.USER_DECISION, classify("광고" to tree, text to tree))
+        }
+        // The narrowed R1 still lets a pure benefit condition through.
+        for (text in listOf("가입하면 포인트를 드립니다. 시험용 광고입니다.", "앱 첫 결제 시 30% 할인 쿠폰", "회원가입하고 웰컴 혜택 받으세요")) {
+            assertEquals(text, PopupClassification.ADVERTISEMENT, classify("광고" to tree, text to tree))
+        }
+    }
+
     private suspend fun classify(vararg texts: Pair<String, TextSource>) = classifier.classify(analysis(*texts))
 
     private fun analysis(vararg texts: Pair<String, TextSource>) = PopupAnalysis(
