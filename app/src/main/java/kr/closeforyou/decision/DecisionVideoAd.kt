@@ -69,8 +69,9 @@ object DecisionVideoAd {
 
     private val CLASSIFIER = DecisionPopupClassifier()
     private const val MAX_SECONDS = 300
-    private val SKIP_CONTEXT = Regex("""건너\s*뛰|건너\s*뛸|스킵|\bskip""")
+    // ASCII boundaries instead of `\b`, which differs next to Hangul on Android (see DecisionKeywords).
+    private val SKIP_CONTEXT = Regex("""건너\s*뛰|건너\s*뛸|스킵|(?<![a-z0-9])skip""")
     private val KOREAN_AFTER =Regex("""(?<!\d)(\d{1,3})\s*초\s*(?:후|뒤)""")
     private val KOREAN_UNTIL = Regex("""까지\s*(\d{1,3})\s*초""")
-    private val ENGLISH_SKIP_IN = Regex("""\bin\s+(\d{1,3})\s*(?:s|sec|secs|second|seconds)?\b""")
+    private val ENGLISH_SKIP_IN = Regex("""(?<![a-z0-9])in\s+(\d{1,3})\s*(?:s|sec|secs|second|seconds)?(?![a-z0-9])""")
 }
