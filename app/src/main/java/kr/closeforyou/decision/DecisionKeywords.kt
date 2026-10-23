@@ -1,5 +1,6 @@
 package kr.closeforyou.decision
 
+import kr.closeforyou.core.model.ButtonLabelRules
 import kr.closeforyou.core.model.ButtonRole
 
 /**
@@ -80,26 +81,11 @@ internal object DecisionKeywords {
         isDecisionButtonLabel(label) || riskyButtonKo.any { it in label } || riskyButtonEn.containsMatchIn(label)
 
     /**
-     * CLOSE or SKIP only when the whole label says so, so "오늘 하루 닫기" (grade K) or "닫기 전 저장"
-     * are neither. Shared by the candidate finder and the policy's recheck of a supplied role.
+     * CLOSE or SKIP only when the whole label says so, by the team's shared label contract, so
+     * "오늘 하루 닫기" (grade K), "닫기 전 저장" or a bare "X" are neither. Used by the policy's
+     * recheck of a supplied role; the finder judges whole nodes with [ButtonLabelRules.judgeNode].
      */
-    fun buttonRoleOf(label: String): ButtonRole? {
-        if (isRiskyButtonLabel(label)) return null
-        val normalized = label.lowercase().filterNot { it.isWhitespace() || it in "[]()<>·." }
-        return when (normalized) {
-            in closeLabels -> ButtonRole.CLOSE
-            in skipLabels -> ButtonRole.SKIP
-            else -> null
-        }
-    }
-
-    // A bare "X"/"×" is not a close label: A's gate keeps refusing it until the button's meaning and
-    // popup membership can be proven (agreed after PR #11), so B must not offer it as pressable.
-    private val closeLabels = setOf(
-        "닫기", "닫음", "창닫기", "팝업닫기", "광고닫기", "공지닫기", "안내닫기", "닫기버튼",
-        "close", "closead", "closepopup", "closedialog", "closebutton", "dismiss",
-    )
-    private val skipLabels = setOf("건너뛰기", "광고건너뛰기", "건너뛰기버튼", "스킵", "광고스킵", "skip", "skipad", "skipads", "skipbutton")
+    fun buttonRoleOf(label: String): ButtonRole? = ButtonLabelRules.roleOf(label)
 
     fun isAdvertisement(text: String): Boolean =
         advertisementKo.any { it in text } ||

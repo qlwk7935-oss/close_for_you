@@ -35,13 +35,20 @@ class DecisionCloseCandidateFinderTest {
     }
 
     @Test fun closeAndSkipLabelsMatchAsWholeLabels() {
-        for (label in listOf("닫기", "광고 닫기", "[닫기]", "닫기 버튼", "Close", "close ad")) {
-            assertEquals(label, ButtonRole.CLOSE, find(node("0", text = label)).single().role)
+        // Shared label contract v1: NFKC, case and whitespace are normalized; the label itself is kept.
+        for (label in listOf("닫기", "광고 닫기", "닫기 버튼", "Close", "close ad", "창  닫기", "ＣＬＯＳＥ")) {
+            val candidate = find(node("0", text = label)).single()
+            assertEquals(label, ButtonRole.CLOSE, candidate.role)
+            assertEquals(label, candidate.label)
         }
         for (label in listOf("건너뛰기", "광고 건너뛰기", "스킵", "Skip", "Skip Ad")) {
             assertEquals(label, ButtonRole.SKIP, find(node("0", text = label)).single().role)
         }
         assertEquals(ButtonRole.CLOSE, find(node("0", description = "닫기")).single().role)
+        // Held by the team (contract v1): punctuation is not stripped and joined or B-only forms are out.
+        for (label in listOf("[닫기]", "닫기.", "창닫기", "광고건너뛰기", "닫음", "close popup", "skip ads", "닫​기")) {
+            assertTrue(label, find(node("0", text = label)).isEmpty())
+        }
     }
 
     @Test fun lookalikeButtonsAreNotCandidates() {
