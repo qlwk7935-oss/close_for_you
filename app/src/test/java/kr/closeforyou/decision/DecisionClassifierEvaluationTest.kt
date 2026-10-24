@@ -71,7 +71,7 @@ class DecisionClassifierEvaluationTest {
         appendLine("CLASSIFIER_EVAL rows=truth cols=predicted " + classes.joinToString(" "))
         for (truth in classes) appendLine("CLASSIFIER_EVAL ${truth.name} " + classes.joinToString(" ") { matrix.getValue(truth).getValue(it).toString() })
         appendLine("CLASSIFIER_EVAL correct=${results.count { it.first.truth == legacy(it.second) }} total=${results.size}")
-        for ((sample, predicted) in results) if (sample.truth != predicted) {
+        for ((sample, predicted) in results) if (sample.truth != legacy(predicted)) {
             appendLine("CLASSIFIER_EVAL miss ${sample.id} truth=${sample.truth} predicted=$predicted source=${sample.source}")
         }
     }
