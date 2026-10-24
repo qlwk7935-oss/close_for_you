@@ -209,8 +209,9 @@ object ChoicePromptPlanner {
         PopupClassification.NOTICE -> PromptSummary.LIKELY_NOTICE
         PopupClassification.USER_DECISION -> PromptSummary.NEEDS_REVIEW
         PopupClassification.UNKNOWN -> PromptSummary.UNKNOWN
-        // Contract v2 added COUPON; kept with ads until C adds its own coupon summary (B contract PR, C to confirm).
-        PopupClassification.COUPON -> PromptSummary.LIKELY_AD
+        // Contract v2 added COUPON. Neutral "팝업이 떴어요." until C adds its own coupon summary: a coupon is
+        // not described as an ad (#38 review).
+        PopupClassification.COUPON -> PromptSummary.UNKNOWN
     }
 }
 

@@ -98,12 +98,12 @@ class AutoCloseContractTest {
 
     @Test fun eligibilityNeedsEveryCheckThisTokenAndFiveSeconds() {
         val all = EligibilityCheck.entries.toSet()
-        val full = AutoEligibility(token, kotlinx.collections.immutable.persistentSetOf(*all.toTypedArray()), issuedAtUptimeMillis = 1_000)
+        val full = AutoEligibility(token, kotlinx.collections.immutable.persistentSetOf(*all.toTypedArray()), capturedAtUptimeMillis = 1_000)
         assertTrue(full.complete)
         assertTrue(full.validFor(token, 1_000))
         assertTrue(full.validFor(token, 5_999))
-        assertFalse("expired at 5 s, like A's evidence", full.validFor(token, 6_000))
-        assertFalse("not before it was issued", full.validFor(token, 999))
+        assertFalse("expired 5 s after capture, like A's evidence", full.validFor(token, 6_000))
+        assertFalse("not before the screen was captured", full.validFor(token, 999))
         assertFalse("another screen", full.validFor(token.copy(screenVersion = token.screenVersion + 1), 1_000))
         for (missing in all) {
             val partial = full.copy(checks = kotlinx.collections.immutable.persistentSetOf(*(all - missing).toTypedArray()))
@@ -111,6 +111,18 @@ class AutoCloseContractTest {
             assertFalse(missing.name, partial.validFor(token, 1_000))
         }
         assertEquals(5_000L, AutoEligibility.TTL_MILLIS)
+    }
+
+    @Test fun lateIssuedEvidenceNeverOutlivesTheCapture() {
+        // #38 review (A): evidence issued 4 s after the screen was captured is still bound to the
+        // capture, so it lasts 1 s more, never 5 s more. A copies PopupSnapshot.capturedAtUptimeMillis.
+        val snapshot = MockPopupFixtures.notice().snapshot.copy(capturedAtUptimeMillis = 10_000)
+        val issuedAt = 14_000L
+        val late = AutoEligibility(snapshot.token, persistentSetOf(*EligibilityCheck.entries.toTypedArray()), snapshot.capturedAtUptimeMillis)
+        assertTrue(late.validFor(snapshot.token, issuedAt))
+        assertTrue(late.validFor(snapshot.token, 14_999))
+        assertFalse("A's own 5 s from capture are over", late.validFor(snapshot.token, 15_000))
+        assertFalse(late.validFor(snapshot.token, issuedAt + AutoEligibility.TTL_MILLIS - 1))
     }
 
     @Test fun newTypesCarryNoScreenData() {
