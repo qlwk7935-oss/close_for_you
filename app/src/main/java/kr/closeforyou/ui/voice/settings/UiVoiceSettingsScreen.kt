@@ -107,6 +107,10 @@ fun UiVoiceSettingsRoute(
             // Tidying only: the list still shows what D has, and the next open tries again.
         }
     }
+    // "도와줄 앱" saved before A's consent is added once consent is there (also on opening).
+    PendingHelpAppsEffect()
+    val helpOutcome by HelpAppsSync.lastOutcome.collectAsState()
+    var editingHelpApps by rememberSaveable { mutableStateOf(false) }
     var now by remember { mutableLongStateOf(clock.millis()) }
     val labelSource = remember { PackageManagerAppLabelSource(context.packageManager) }
     val packages = coreSettings.allowedPackages + rules.map { it.key.packageName }
@@ -125,6 +129,11 @@ fun UiVoiceSettingsRoute(
         microphoneState = micState()
         now = clock.millis()
         onPauseOrDispose {}
+    }
+
+    if (editingHelpApps) {
+        HelpAppsEditScreen(onClose = { editingHelpApps = false }, modifier = modifier)
+        return
     }
 
     UiVoiceSettingsScreen(
@@ -151,6 +160,8 @@ fun UiVoiceSettingsRoute(
         nowEpochMillis = now,
         zone = clock.zone,
         deleteAllFailed = deleteFailed,
+        helpOutcome = helpOutcome,
+        onChangeHelpApps = { editingHelpApps = true },
     )
 }
 
@@ -182,6 +193,10 @@ fun UiVoiceSettingsScreen(
     nowEpochMillis: Long = System.currentTimeMillis(),
     zone: ZoneId = ZoneId.systemDefault(),
     deleteAllFailed: Boolean = false,
+    /** Counts of the last "도와줄 앱" save or retry (in memory only). */
+    helpOutcome: HelpAppsOutcome? = null,
+    /** Opens [HelpAppsEditScreen]; null hides the "도와줄 앱" block. */
+    onChangeHelpApps: (() -> Unit)? = null,
 ) {
     var confirmDeleteAll by rememberSaveable { mutableStateOf(false) }
     Column(
@@ -195,6 +210,18 @@ fun UiVoiceSettingsScreen(
         Heading(R.string.ui_preset_section)
         Text(stringResource(R.string.ui_preset_section_help))
         HandlingPresetGroup(selected = settings.handlingPreset, onSelect = onPresetChange)
+
+        if (onChangeHelpApps != null) {
+            HorizontalDivider()
+            Heading(R.string.ui_help_apps_section)
+            HelpAppsStatus(
+                mode = settings.helpAppsMode,
+                allowedCount = coreAllowedPackages.size,
+                pendingCount = (settings.pendingHelpPackages - coreAllowedPackages).size,
+                outcome = helpOutcome,
+                onChange = onChangeHelpApps,
+            )
+        }
 
         HorizontalDivider()
         Heading(R.string.ui_settings_section_status)

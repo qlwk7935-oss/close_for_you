@@ -51,6 +51,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import kotlinx.collections.immutable.persistentListOf
 import kr.closeforyou.R
+import kr.closeforyou.app.CorePreferences
 import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
@@ -81,6 +82,9 @@ import kr.closeforyou.ui.voice.TtsPopupAnnouncer
 import kr.closeforyou.ui.voice.settings.UiVoiceOnboardingScreen
 import kr.closeforyou.ui.voice.settings.UiVoicePreferences
 import kr.closeforyou.ui.voice.settings.UiVoiceSettingsRoute
+import kr.closeforyou.ui.voice.settings.CoreAllowedApps
+import kr.closeforyou.ui.voice.settings.HelpAppsEditScreen
+import kr.closeforyou.ui.voice.settings.HelpAppsSync
 import kr.closeforyou.ui.voice.overlay.PromptAnnouncementListener
 import kr.closeforyou.ui.voice.overlay.PromptSpeech
 
@@ -94,7 +98,8 @@ class ChoicePreviewActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         val openSettings = intent?.getBooleanExtra(EXTRA_OPEN_SETTINGS, false) == true
         val openOnboarding = intent?.getBooleanExtra(EXTRA_OPEN_ONBOARDING, false) == true
-        setContent { UiVoiceTheme { ChoicePreviewScreen(openSettings, openOnboarding) } }
+        val openAppPicker = intent?.getBooleanExtra(EXTRA_OPEN_APP_PICKER, false) == true
+        setContent { UiVoiceTheme { ChoicePreviewScreen(openSettings, openOnboarding, openAppPicker) } }
         if (savedInstanceState == null) scheduleOverlayFromIntent(intent)
     }
 
@@ -104,6 +109,9 @@ class ChoicePreviewActivity : ComponentActivity() {
         if (intent.getBooleanExtra(EXTRA_OPEN_ONBOARDING, false)) {
             intent.removeExtra(EXTRA_OPEN_ONBOARDING)
             setContent { UiVoiceTheme { ChoicePreviewScreen(openSettings = false, openOnboarding = true) } }
+        } else if (intent.getBooleanExtra(EXTRA_OPEN_APP_PICKER, false)) {
+            intent.removeExtra(EXTRA_OPEN_APP_PICKER)
+            setContent { UiVoiceTheme { ChoicePreviewScreen(openSettings = false, openOnboarding = false, openAppPicker = true) } }
         }
         scheduleOverlayFromIntent(intent)
     }
@@ -183,6 +191,8 @@ class ChoicePreviewActivity : ComponentActivity() {
         const val EXTRA_OPEN_SETTINGS = "ui_debug_open_settings"
         /** adb: `--ez ui_debug_open_onboarding true` opens the first-run setup directly. */
         const val EXTRA_OPEN_ONBOARDING = "ui_debug_open_onboarding"
+        /** adb: `--ez ui_debug_open_app_picker true` opens "도와줄 앱" (settings' editor) directly. */
+        const val EXTRA_OPEN_APP_PICKER = "ui_debug_open_app_picker"
     }
 }
 
@@ -213,9 +223,17 @@ private fun closeAndSkipFixture(): MockPopupFixture {
 private const val SKIP_LABEL = "건너뛰기"
 
 @Composable
-private fun ChoicePreviewScreen(openSettings: Boolean, openOnboarding: Boolean) {
+private fun ChoicePreviewScreen(openSettings: Boolean, openOnboarding: Boolean, openAppPicker: Boolean = false) {
     var showSettings by rememberSaveable { mutableStateOf(openSettings) }
     var showOnboarding by rememberSaveable { mutableStateOf(openOnboarding) }
+    var showAppPicker by rememberSaveable { mutableStateOf(openAppPicker) }
+    if (showAppPicker) {
+        // Real A preferences: [저장] calls CorePreferences.addAllowedPackage like the settings screen.
+        Scaffold { innerPadding ->
+            HelpAppsEditScreen(onClose = { showAppPicker = false }, modifier = Modifier.padding(innerPadding))
+        }
+        return
+    }
     if (showOnboarding) {
         OnboardingPage(onBack = { showOnboarding = false })
         return
@@ -256,6 +274,10 @@ private fun ChoicePreviewScreen(openSettings: Boolean, openOnboarding: Boolean) 
                 onClick = { showOnboarding = true },
                 modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
             ) { Text(stringResource(R.string.ui_debug_open_onboarding)) }
+            OutlinedButton(
+                onClick = { showAppPicker = true },
+                modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
+            ) { Text(stringResource(R.string.ui_debug_open_app_picker)) }
             SectionTitle(R.string.ui_debug_section_scenario)
             Column(Modifier.selectableGroup()) {
                 scenarios.forEach { scenario ->
@@ -461,19 +483,23 @@ private fun SettingsPage(onBack: () -> Unit) {
 /**
  * First-run setup, shown even when it was already finished. [시작하기] saves the preset and the
  * "done" flag in C's real preferences (this build's MainActivity has no gate yet), then comes back.
+ * "도와줄 앱" is saved through A's real CorePreferences (pending until A's collection consent).
  */
 @Composable
 private fun OnboardingPage(onBack: () -> Unit) {
     BackHandler(onBack = onBack)
     val context = LocalContext.current
     val preferences = remember { UiVoicePreferences.get(context) }
+    val core = remember { CorePreferences.get(context) }
     Scaffold { innerPadding ->
         UiVoiceOnboardingScreen(
             initialPreset = preferences.current().handlingPreset,
-            onStart = { preset ->
+            onStart = { preset, helpApps ->
+                helpApps?.let { HelpAppsSync.save(it.draft, it.catalog, preferences, CoreAllowedApps(core)) }
                 preferences.completeOnboarding(preset)
                 onBack()
             },
+            consentGranted = core.currentSettings().consentGranted,
             modifier = Modifier.padding(innerPadding),
         )
     }
