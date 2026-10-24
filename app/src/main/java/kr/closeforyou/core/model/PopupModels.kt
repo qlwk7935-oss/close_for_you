@@ -121,7 +121,12 @@ enum class EligibilityCheck {
     POPUP_SCOPE_CONFIRMED,
     /** The popup's tree was read completely (not truncated, not partial). */
     TREE_COMPLETE,
-    /** Decision text was judged within the popup, never dropped from it (decision summary scope). */
+    /**
+     * Decision text within the popup was all kept and judged (#38 review): A's collection and decision
+     * summary covered the whole popup scope and dropped nothing from it, AND B checked every popup
+     * text for decision wording (B keeps every warning when it narrows texts to the popup). A sets
+     * this only once both halves are agreed and connected; until then it stays unset.
+     */
     DECISION_TEXT_SCOPED,
     /** Every close candidate lies inside the popup's own nodes. */
     TARGETS_IN_POPUP,
@@ -131,18 +136,23 @@ enum class EligibilityCheck {
  * Contract v2, from A: the evidence that makes this analysis eligible for an automatic close. It is
  * not an authorization and does not override [AnalysisLimit.INCOMPLETE_EVIDENCE] for anything
  * else. Absent (the default) means no automatic close at all, as today. Valid only for [token] and
- * for [TTL_MILLIS] after [issuedAtUptimeMillis], the same 5 s as A's evidence.
+ * for [TTL_MILLIS] after [capturedAtUptimeMillis].
+ *
+ * The 5 s run from when the screen was captured, never from when this evidence was issued (#38
+ * review): A copies the [PopupSnapshot.capturedAtUptimeMillis] of the screen it checked, so evidence
+ * issued late cannot outlive A's own evidence TTL.
  */
 data class AutoEligibility(
     val token: SnapshotToken,
     val checks: ImmutableSet<EligibilityCheck>,
-    val issuedAtUptimeMillis: Long,
+    /** The capture time of the screen this evidence is about ([PopupSnapshot.capturedAtUptimeMillis]). */
+    val capturedAtUptimeMillis: Long,
 ) {
     val complete: Boolean get() = checks.containsAll(EligibilityCheck.entries)
 
     fun validFor(analysisToken: SnapshotToken, nowUptimeMillis: Long): Boolean =
-        complete && token == analysisToken && nowUptimeMillis >= issuedAtUptimeMillis &&
-            nowUptimeMillis - issuedAtUptimeMillis < TTL_MILLIS
+        complete && token == analysisToken && nowUptimeMillis >= capturedAtUptimeMillis &&
+            nowUptimeMillis - capturedAtUptimeMillis < TTL_MILLIS
 
     override fun toString(): String = "AutoEligibility(checks=$checks, redacted)"
 
@@ -159,7 +169,7 @@ data class PopupAnalysis(
     val limitations: ImmutableSet<AnalysisLimit> = persistentSetOf(),
     /** F5: video evidence alone must not imply an advertisement. F6 is excluded. */
     val videoSurfaceObserved: Boolean = false,
-    /** Contract v2: set by A only when every [EligibilityCheck] holds; null keeps automation off. */
+    /** Contract v2: set by A only when every [EligibilityCheck] holds; null (also when unsure) keeps automation off. */
     val autoEligibility: AutoEligibility? = null,
 ) {
     override fun toString(): String = "PopupAnalysis(classification=$classification, redacted)"
