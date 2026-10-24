@@ -191,6 +191,13 @@
     <string name="ui_help_apps_search">앱 이름 검색</string>
     <string name="ui_help_apps_search_results">앱 %1$d개를 찾았어요.</string>
     <string name="ui_help_apps_search_none">찾는 앱이 없어요.</string>
+    <!-- [말로 찾기]: 누를 때만 한 번 듣고(기기 안 인식만), 들은 말을 검색어로 넣는다. 못 쓰면 버튼 대신 아래 한 줄. -->
+    <string name="ui_help_apps_voice_search">말로 찾기</string>
+    <string name="ui_help_apps_voice_search_keyboard">키보드의 음성 입력 버튼으로도 찾을 수 있어요.</string>
+    <!-- 듣기가 끝난 뒤 안내(liveRegion). 마이크가 켜진 동안 읽힐 수 있으므로 명령어를 넣지 않는다. 들은 말은 되풀이하지 않는다. -->
+    <string name="ui_voice_search_not_understood">알아듣지 못했어요. 다시 말하거나 글자로 찾아 주세요.</string>
+    <string name="ui_voice_search_silent">아무 말도 듣지 못했어요. 다시 누르거나 글자로 찾아 주세요.</string>
+    <string name="ui_voice_search_unavailable">지금은 말로 찾을 수 없어요. 글자로 찾아 주세요.</string>
     <string name="ui_help_apps_recommended">추천: 광고 팝업이 많은 앱</string>
     <string name="ui_help_apps_all_list">모든 앱 (가나다순)</string>
     <string name="ui_help_apps_save">저장</string>

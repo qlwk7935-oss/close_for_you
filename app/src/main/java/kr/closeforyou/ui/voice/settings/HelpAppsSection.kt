@@ -1,6 +1,9 @@
 package kr.closeforyou.ui.voice.settings
 
+import android.Manifest
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -53,10 +56,16 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.unit.dp
 import androidx.core.graphics.drawable.toBitmap
+import androidx.lifecycle.compose.LifecycleResumeEffect
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kr.closeforyou.R
 import kr.closeforyou.app.CorePreferences
+import kr.closeforyou.ui.voice.command.AndroidMicrophoneAccess
+import kr.closeforyou.ui.voice.command.OnDeviceDictation
+import kr.closeforyou.ui.voice.command.SpeakButtonPolicy
+import kr.closeforyou.ui.voice.command.SpeakButtonState
+import kr.closeforyou.ui.voice.command.VoiceButtonFeature
 
 /** Which page of "도와줄 앱" is shown. The lists replace the whole screen. */
 enum class HelpAppsPage {
@@ -273,6 +282,24 @@ private fun AppPickList(
 ) {
     var query by rememberSaveable { mutableStateOf("") }
     val results = remember(apps, query) { HelpAppsCatalog.search(apps, query) }
+    // [말로 찾기]: same rules as the prompt's [말하기]; the microphone is asked only here in the Activity.
+    val context = LocalContext.current
+    val preferences = remember { UiVoicePreferences.get(context) }
+    val microphone = remember { AndroidMicrophoneAccess(context) }
+    fun buttonState() =
+        SpeakButtonPolicy.state(VoiceButtonFeature.enabled, preferences.current().voiceCommandsEnabled, microphone)
+    val voiceSearch = remember { VoiceSearchController(OnDeviceDictation(context), buttonState()) { query = it } }
+    val voice by voiceSearch.state.collectAsState()
+    var microphoneDenied by rememberSaveable { mutableStateOf(false) }
+    val permissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        microphoneDenied = !granted
+        voiceSearch.updateButton(buttonState())
+    }
+    // Back from system settings: re-check. Leaving the screen or the app: stop listening.
+    LifecycleResumeEffect(voiceSearch) {
+        voiceSearch.updateButton(buttonState())
+        onPauseOrDispose { voiceSearch.stop() }
+    }
     val shownRecommended = if (query.isNotBlank()) emptyList() else recommended
     val recommendedPackages = shownRecommended.mapTo(HashSet()) { it.packageName }
     val rest = results.filter { it.packageName !in recommendedPackages }
@@ -294,13 +321,20 @@ private fun AppPickList(
                 Button(onClick = onDone, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) {
                     Text(stringResource(R.string.ui_help_apps_done))
                 }
-                OutlinedTextField(
-                    value = query,
-                    onValueChange = { query = it },
-                    label = { Text(stringResource(R.string.ui_help_apps_search)) },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth(),
-                )
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    OutlinedTextField(
+                        value = query,
+                        onValueChange = { query = it },
+                        label = { Text(stringResource(R.string.ui_help_apps_search)) },
+                        singleLine = true,
+                        modifier = Modifier.weight(1f),
+                    )
+                    if (voice.buttonVisible) VoiceSearchButton(voice.listening, voiceSearch::onPress)
+                }
+                VoiceSearchLines(voice, microphoneDenied) { permissionLauncher.launch(Manifest.permission.RECORD_AUDIO) }
                 if (query.isNotBlank()) {
                     // Polite: TalkBack reads the count once it settles, focus stays in the field.
                     Text(
@@ -326,6 +360,40 @@ private fun GroupHeading(textRes: Int) {
         HorizontalDivider()
         Spacer(Modifier.size(8.dp))
         Text(stringResource(textRes), style = MaterialTheme.typography.titleMedium, modifier = Modifier.semantics { heading() })
+    }
+}
+
+/** "말로 찾기, 버튼"; while listening "듣기 멈추기, 듣는 중, 버튼" (a second press cancels). */
+@Composable
+private fun VoiceSearchButton(listening: Boolean, onPress: () -> Unit) {
+    val listeningState = stringResource(R.string.ui_voice_listening_state)
+    OutlinedButton(
+        onClick = onPress,
+        modifier = Modifier
+            .heightIn(min = 56.dp)
+            .semantics { if (listening) stateDescription = listeningState },
+    ) {
+        Text(stringResource(if (listening) R.string.ui_voice_stop_listening else R.string.ui_help_apps_voice_search))
+    }
+}
+
+/** Without the button: one keyboard hint (and [마이크 허용] when only the permission is missing). Then the status line. */
+@Composable
+private fun VoiceSearchLines(voice: VoiceSearchState, microphoneDenied: Boolean, onAllowMicrophone: () -> Unit) {
+    if (!voice.buttonVisible) {
+        Text(stringResource(R.string.ui_help_apps_voice_search_keyboard), style = MaterialTheme.typography.bodySmall)
+        if (voice.button == SpeakButtonState.PERMISSION_NEEDED) {
+            if (microphoneDenied) Text(stringResource(R.string.ui_settings_mic_denied), style = MaterialTheme.typography.bodySmall)
+            OutlinedButton(
+                onClick = onAllowMicrophone,
+                modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
+            ) { Text(stringResource(R.string.ui_settings_mic_allow)) }
+        }
+    }
+    val message = voice.messageRes
+    if (message != null) {
+        // Polite and only when it changes: "듣고 있어요." is read once, focus stays where it is.
+        Text(stringResource(message), modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite })
     }
 }
 
