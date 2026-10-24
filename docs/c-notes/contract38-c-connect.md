@@ -1,6 +1,6 @@
 # C 연결: 공용 계약 v2(#38) — 쿠폰·프리셋 동의 범위·자동 처리 결과 안내
 
-- 브랜치: `c/contract38-connect` = #38(`917800b`) 위에 `origin/feature/ui-voice`(`ce864c2`)를 merge(충돌 없음) + C 커밋 1개
+- 브랜치: `c/contract38-connect` = #38(`917800b`, 이후 `e35417f`까지 merge) 위에 `origin/feature/ui-voice`(`ce864c2`)를 merge(충돌 없음) + C 커밋 1개
 - 상태: **Mock 기준, 실제 연동 미검증.** 실기기·TalkBack 확인 안 함. A·B·D·`core/**`는 고치지 않음(#38 내용 그대로)
 
 ## 1. 바뀐 것 (C 파일만)
@@ -53,10 +53,10 @@
 
 - [ ] A: 자동 처리 결과(`ActionDecision` + `ActionResult.outcome`)를 C에 실어 줄 경로 (위 2-1)
 - [ ] 팝업 **제목** 전달 여부: 계약에 제목이 없다. `PopupAnalysis.texts`에서 C가 첫 줄을 고르면 추측이 된다. A/B가 "제목으로 볼 글자"를 정해 줄지(예: `PopupAnalysis.title: String?`, 없으면 null) 합의 필요. 그 전에는 `title = null` → "광고를 닫았어요."
-- [ ] `LEFT_APP` 뒤 "이 앱에서는 당분간 자동으로 처리하지 않을게요"는 B의 `LEFT_APP_BEFORE`가 실제로 그 앱을 멈춰야 참이다. 멈추는 기간("당분간")을 B와 맞출 것
+- [x] `LEFT_APP_BEFORE` 범위: 그 앱, 접근성 서비스가 끝날 때까지(B 메모리, #38 `e35417f`). "당분간"과 맞음. 묻기는 계속됨
 - [ ] WAIT가 끝내 닫기 버튼 없이 끝났을 때(광고가 안 끝남) B가 ASK로 넘어오는지 — 그때는 기존 선택 창
 - [ ] `ui_onboarding_intro`("광고는 자동으로 닫아요")는 `live = false`인 지금은 앞서 말하는 문장이다. `ui_preset_not_live` 줄이 같이 보이긴 하지만, live 전까지 첫 문장을 다듬을지 팀 확인
 - [ ] `WaitSaidOnce` 키 후보: `SnapshotToken.popupInstanceId`가 같은 팝업의 다음 스냅샷에서도 같은지 A 확인
-- [ ] A가 사용자가 직접 고른 누르기에도 `ActionResult.outcome`을 채우면, `AnnouncementBatcher.outcomeOf`도 `CLOSED_CONFIRMED`일 때만 CLOSED로(C 후속, 지금은 outcome이 늘 null이라 동작 같음)
-- [ ] B: `SUSPICIOUS_CONTENT`면 `next == DENY`를 계약으로 강제할지 (C는 이미 EXECUTE가 아니면 경고만)
+- [ ] `ActionResult.outcome`은 누가 요청했든(사람·F12·프리셋) 채운다고 계약에 적힘(#38 `e35417f`). → `AnnouncementBatcher.outcomeOf`도 `CLOSED_CONFIRMED`일 때만 CLOSED로 바꿀 것(C 후속, 지금은 A가 outcome을 안 채워 동작 같음)
+- [x] 계약이 강제함(#38 `e35417f`): `IMPORTANT_DECISION`·`SUSPICIOUS_CONTENT`면 DENY만, WAIT면 `WAIT_REASONS` 중 하나 필수. C 시험 `contractAllowsOnlyDenyForSuspiciousOrDecision`·`contractRequiresAReasonForWait`
 - [ ] 새 문장 TalkBack 실기기 확인(LG 벨벳) — 미검증

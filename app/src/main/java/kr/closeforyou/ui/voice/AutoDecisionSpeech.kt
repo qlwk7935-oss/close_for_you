@@ -60,7 +60,8 @@ fun interface UiFormat {
  * - "닫았어요" only for [ClickOutcome.CLOSED_CONFIRMED]. A delivered click alone is "확인하지 못했어요".
  * - WAIT is said once per popup ([waitAlreadySaid], see [WaitSaidOnce]), and only for
  *   [SafetyReason.WAITING_FOR_TARGET]; waiting for A's result or for the person is silent.
- * - SUSPICIOUS_CONTENT always wins before a press: a warning with nothing to press.
+ * - SUSPICIOUS_CONTENT: a warning with nothing to press. The contract already allows it only with
+ *   DENY (#38 review); the check here stays as a second guard.
  */
 object AutoDecisionSpeech {
     /** How much of a popup title is said ("'제목' 광고를 닫았어요"). */

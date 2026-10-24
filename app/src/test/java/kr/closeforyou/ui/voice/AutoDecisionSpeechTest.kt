@@ -22,6 +22,7 @@ import kr.closeforyou.ui.voice.command.KoreanVoiceCommandMatcher
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -169,7 +170,7 @@ class AutoDecisionSpeechTest {
     }
 
     @Test fun waitingForResultOrThePersonIsSilent() {
-        listOf(SafetyReason.AWAITING_RESULT, SafetyReason.USER_INTERACTION).forEach {
+        listOf(SafetyReason.AWAITING_RESULT, SafetyReason.USER_INTERACTION, SafetyReason.STALE_SCREEN).forEach {
             assertEquals(it.name, AutoSpeech.Quiet, AutoDecisionSpeech.speechFor(decision(NextStep.WAIT, it), ad))
         }
     }
@@ -214,12 +215,32 @@ class AutoDecisionSpeechTest {
         val speech = AutoDecisionSpeech.speechFor(deny, PopupClassification.UNKNOWN)
         assertTrue("no prompt, so no press or move option", speech is AutoSpeech.Say)
         assertEquals("사기일 수 있는 팝업이에요. 아무것도 누르지 마세요.", say(speech))
-        // Even if B asked or announced, a suspicious popup never gets the prompt with press buttons.
-        listOf(NextStep.ASK, NextStep.ANNOUNCE, NextStep.WAIT).forEach {
-            assertEquals(it.name, speech, AutoDecisionSpeech.speechFor(decision(it, SafetyReason.SUSPICIOUS_CONTENT), ad))
-        }
         val text = say(speech)
         listOf("눌러 주기", "이동", "닫을게요").forEach { assertFalse(it, text.contains(it)) }
+    }
+
+    /**
+     * #38 review: the contract refuses a suspicious or important-decision popup with any step but
+     * DENY, so C never gets one that would open the prompt with press buttons.
+     */
+    @Test fun contractAllowsOnlyDenyForSuspiciousOrDecision() {
+        listOf(SafetyReason.SUSPICIOUS_CONTENT, SafetyReason.IMPORTANT_DECISION).forEach { reason ->
+            NextStep.entries.filter { it != NextStep.DENY }.forEach { next ->
+                assertThrows("$reason/$next", IllegalArgumentException::class.java) {
+                    decision(next, reason, SafetyReason.WAITING_FOR_TARGET)
+                }
+            }
+        }
+    }
+
+    /** #38 review: a WAIT always carries what it waits for; C stays quiet for all but WAITING_FOR_TARGET. */
+    @Test fun contractRequiresAReasonForWait() {
+        assertThrows(IllegalArgumentException::class.java) { decision(NextStep.WAIT) }
+        assertThrows(IllegalArgumentException::class.java) { decision(NextStep.WAIT, SafetyReason.FIRST_SEEN) }
+        ActionDecision.WAIT_REASONS.forEach { reason ->
+            val speech = AutoDecisionSpeech.speechFor(decision(NextStep.WAIT, reason), ad)
+            assertEquals(reason.name, reason == SafetyReason.WAITING_FOR_TARGET, speech is AutoSpeech.Say)
+        }
     }
 
     @Test fun denyDecisionKeepsTheExistingSentence() {
