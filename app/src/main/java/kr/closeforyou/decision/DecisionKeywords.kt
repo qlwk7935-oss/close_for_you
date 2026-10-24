@@ -128,7 +128,7 @@ internal object DecisionKeywords {
     private fun spaced(text: String): List<String> = listOf(text, fold(text)).distinct()
 
     /** English words between ASCII boundaries, the same on the JDK and Android. */
-    private fun en(words: String) = Regex("(?<![a-z0-9])(?:$words)(?![a-z0-9])", RegexOption.IGNORE_CASE)
+    private fun en(words: String) = Regex("$EN_START(?:$words)$EN_END", RegexOption.IGNORE_CASE)
 
     // Today's English decision words (userDecisionEn) with ASCII boundaries, plus switching things on.
     private val decisionEn = en(
@@ -151,7 +151,7 @@ internal object DecisionKeywords {
             "apply now|install now|start (your )?(free )?trial|free trial|continue to|join now|enroll",
     )
     // Money taken later without asking again.
-    private val recurringCharge = Regex("자동\\s?(갱신|연장|결제|이체)|정기\\s?(결제|구독)|(?<![a-z])auto[- ]?renew", RegexOption.IGNORE_CASE)
+    private val recurringCharge = Regex("자동\\s?(갱신|연장|결제|이체)|정기\\s?(결제|구독)|${EN_START}auto[- ]?renew", RegexOption.IGNORE_CASE)
     // A polite question asking the person to act or accept ("주문하시겠어요?", "보러 가실래요?"). A bare
     // "?" is not one: "아직도 정가로 사세요?" or "오늘 뭐 먹지?" are only ad copy.
     private val askToAct = Regex("하시겠|겠습니까|시겠어요|시겠나요|할까요|드릴까요|실래요")

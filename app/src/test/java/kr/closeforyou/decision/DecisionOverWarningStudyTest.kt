@@ -126,7 +126,7 @@ class DecisionOverWarningStudyTest {
         for (s in samples) {
             val c = classify(s.texts)
             if (s.truth.matches(c)) correct++ else wrong += "${s.id}→$c"
-            if (s.truth == Truth.DECISION && (c == PopupClassification.ADVERTISEMENT || c == PopupClassification.NOTICE)) dangerous++
+            if (s.truth == Truth.DECISION && (c == PopupClassification.ADVERTISEMENT || c == PopupClassification.NOTICE || c == PopupClassification.COUPON)) dangerous++
             if (s.truth != Truth.DECISION && c == PopupClassification.USER_DECISION) over++
         }
         return Score(correct, dangerous, over, wrong)

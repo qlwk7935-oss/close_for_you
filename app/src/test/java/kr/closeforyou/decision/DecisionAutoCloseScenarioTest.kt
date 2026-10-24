@@ -22,7 +22,9 @@ import javax.xml.parsers.DocumentBuilderFactory
  *
  * Assumed because a dump does not carry them: A's signal (Dialog window → NEW_WINDOW, activity- or
  * web-drawn → SAME_WINDOW_OVERLAY, page change → FULL_SCREEN_TRANSITION), CLICK from `clickable`,
- * editable = EditText, no OCR (A's capture is not simulated), and no other window of the app.
+ * editable = EditText, no OCR (A's capture is not simulated), no other window of the app, and that A
+ * issues a complete AutoEligibility (contract v2) for every screen it lets through, so these rows show
+ * B's own conditions.
  */
 class DecisionAutoCloseScenarioTest {
     /** D's answer key (ScenarioCatalog; web rows follow c-test-checklist 2-5). Targets are view ids, or "label:" for web buttons. */
@@ -83,7 +85,8 @@ class DecisionAutoCloseScenarioTest {
         val withCandidates = analysis.copy(closeCandidates = DecisionCloseCandidateFinder().find(snapshot, detection))
         val scoped = withCandidates.copy(texts = DecisionPopupScope.texts(snapshot, detection, analysis.texts).toPersistentList())
         val outcomes = presets.map { (name, preset) ->
-            val verdict = DecisionAutoClose().evaluate(snapshot, detection, withCandidates, DecisionContext(token, null, null, false, true), preset)
+            val eligible = withCandidates.copy(autoEligibility = AutoEligibility(token, persistentSetOf(*EligibilityCheck.entries.toTypedArray()), 0))
+            val verdict = DecisionAutoClose(nowMillis = { 0 }).evaluate(snapshot, detection, eligible, DecisionContext(token, null, null, false, true), preset)
             val pressed = verdict.candidateId?.let { id -> targetName(nodes.single { "node:${it.node.path}" == id }.node) }
             assertSafe(screen, name, pressed)
             "$name " + (pressed ?: verdict.blocks.joinToString("+"))

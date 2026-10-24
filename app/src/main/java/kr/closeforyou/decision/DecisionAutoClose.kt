@@ -5,6 +5,7 @@ import kr.closeforyou.core.model.ActionResult
 import kr.closeforyou.core.model.ActionStatus
 import kr.closeforyou.core.model.AnalysisLimit
 import kr.closeforyou.core.model.ButtonRole
+import kr.closeforyou.core.model.ClickOutcome
 import kr.closeforyou.core.model.PopupAnalysis
 import kr.closeforyou.core.model.PopupClassification
 import kr.closeforyou.core.model.PopupDetection
@@ -54,6 +55,8 @@ internal enum class AutoCloseBlock {
     CLOSED_BEFORE,
     /** The analysis is mock data (AnalysisLimit.MOCK_ONLY). */
     MOCK_DATA,
+    /** A gave no complete, current AutoEligibility for this screen (contract v2). */
+    NOT_AUTO_ELIGIBLE,
 }
 
 /** Exactly one of an approved [candidateId] and a non-empty [blocks] (AUTO_CLOSE.md 4절). */
@@ -74,6 +77,10 @@ internal data class AutoCloseVerdict(val kind: DecisionKind, val candidateId: St
  * cautious side.
  */
 internal class DecisionAutoClose(
+    /**
+     * Must be the clock A stamps AutoEligibility with (SystemClock.uptimeMillis): the wiring passes
+     * it. The default is the JVM monotonic clock, for tests (same base as uptime on Android: device check pending).
+     */
     private val nowMillis: () -> Long = { System.nanoTime() / 1_000_000 },
     private val maxPerApp: Int = 3,
     private val windowMillis: Long = 60_000,
@@ -129,6 +136,9 @@ internal class DecisionAutoClose(
         if (!context.announcementAvailable) blocks += AutoCloseBlock.FEEDBACK_UNAVAILABLE
         // Mock data never moves a real screen.
         if (AnalysisLimit.MOCK_ONLY in analysis.limitations) blocks += AutoCloseBlock.MOCK_DATA
+        // A's evidence that this exact screen is eligible: every check, this token, within 5 s.
+        val now = nowMillis()
+        if (analysis.autoEligibility?.validFor(analysis.token, now) != true) blocks += AutoCloseBlock.NOT_AUTO_ELIGIBLE
 
         // 3. Exactly one button to press. Only for a kind this preset closes, so that "waiting for a
         // close button" can never stand in for asking about a decision or an unknown popup.
@@ -138,7 +148,6 @@ internal class DecisionAutoClose(
         // 4. This session's history for this popup and app.
         val key = key(analysis.token)
         val app = analysis.token.packageName
-        val now = nowMillis()
         pending[key]?.let { sentAt -> if (now - sentAt >= resultTimeoutMillis) { pending.remove(key); remember(failed, key) } }
         if (app in pausedApps) blocks += AutoCloseBlock.APP_PAUSED
         if (key in failed) blocks += AutoCloseBlock.FAILED_BEFORE
@@ -158,31 +167,34 @@ internal class DecisionAutoClose(
     }
 
     /**
-     * A's result for an approved popup. No press (not executed, blocked, stale) frees the popup for
-     * a later screen; a failed or unknown press, or [leftApp] (the press opened another app or page,
-     * a fake close), stops it for this session, and [leftApp] stops the whole app.
+     * A's result for any press, read from its observed [ActionResult.outcome] (contract v2):
+     * - LEFT_APP (a fake close): that popup and the whole app stop for this session, even when the
+     *   result comes after the timeout or the press was the person's own choice.
+     * - For a popup B approved: no press (not executed, blocked, stale) frees it for a later screen;
+     *   CLOSED_CONFIRMED marks it closed once (asked if it shows again: repeating is the person's F12
+     *   choice); STILL_PRESENT, UNKNOWN or no observation after a press is a failure, never retried.
+     *   A delivered click (MECHANICAL_SUCCESS) alone is not a closed popup.
      */
     @Synchronized
-    fun onResult(result: ActionResult, leftApp: Boolean = false) {
+    fun onResult(result: ActionResult) {
         val key = key(result.token)
-        // A press that left the app stops the app even if its result came after the timeout.
-        if (leftApp) {
+        if (result.outcome == ClickOutcome.LEFT_APP) {
             remember(pausedApps, result.token.packageName)
             remember(failed, key)
         }
         if (pending.remove(key) == null) return
         val pressed = result.attempted || result.status == ActionStatus.MECHANICAL_SUCCESS ||
             result.status == ActionStatus.ATTEMPT_FAILED || result.status == ActionStatus.OUTCOME_UNKNOWN
-        // Only presses count toward the per-app limit (A's gate does not press at all today).
-        if (!pressed && !leftApp) {
+        if (!pressed) {
+            // Only presses count toward the per-app limit (A's gate does not press at all today).
             approvedAt[result.token.packageName]?.let { list -> list.lastOrNull { it.first == key }?.let(list::remove) }
+            return
         }
-        if (leftApp) return
-        if (pressed && result.status != ActionStatus.MECHANICAL_SUCCESS) remember(failed, key)
-        // A delivered click does not prove the popup closed, and a dead "닫기" changes nothing on
-        // screen. So one automatic close per popup per session: if it shows again, ask. Repeating
-        // is the person's own F12 choice ([앞으로 항상 닫기]).
-        else if (result.status == ActionStatus.MECHANICAL_SUCCESS) remember(closed, key)
+        when (result.outcome) {
+            ClickOutcome.CLOSED_CONFIRMED -> remember(closed, key)
+            ClickOutcome.LEFT_APP -> Unit // already stopped above
+            ClickOutcome.STILL_PRESENT, ClickOutcome.UNKNOWN, null -> remember(failed, key)
+        }
     }
 
     private fun target(analysis: PopupAnalysis, kind: DecisionKind, blocks: MutableSet<AutoCloseBlock>): String? {

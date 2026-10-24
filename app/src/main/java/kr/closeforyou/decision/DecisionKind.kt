@@ -6,8 +6,8 @@ import kr.closeforyou.core.model.TextSource
 import kotlinx.collections.immutable.toPersistentList
 
 /**
- * B: the six kinds the auto-close presets need (AUTO_CLOSE.md 3절). COUPON and SUSPICIOUS are not
- * in the shared [PopupClassification] yet, so [toDisplay] maps them until the contract PR adds them.
+ * B: the six kinds the auto-close presets need (AUTO_CLOSE.md 3절). Contract v2 has COUPON; a
+ * scam-like popup is shown as UNKNOWN and the policy adds SafetyReason.SUSPICIOUS_CONTENT.
  * A kind is never an authorization; [DecisionAutoClose] decides separately.
  */
 internal enum class DecisionKind {
@@ -21,7 +21,8 @@ internal enum class DecisionKind {
 
     fun toDisplay(): PopupClassification = when (this) {
         USER_DECISION -> PopupClassification.USER_DECISION
-        COUPON, ADVERTISEMENT -> PopupClassification.ADVERTISEMENT
+        COUPON -> PopupClassification.COUPON
+        ADVERTISEMENT -> PopupClassification.ADVERTISEMENT
         NOTICE -> PopupClassification.NOTICE
         SUSPICIOUS, UNKNOWN -> PopupClassification.UNKNOWN
     }

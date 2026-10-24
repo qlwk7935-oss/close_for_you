@@ -1,13 +1,16 @@
 # B 자동 닫기 승인 조건 · 쿠폰 분류 (설계 + 시제품 검증)
 
-작성: B 준영 · 2026-10-23 · 브랜치 `feature/decision-auto-close` (로컬, 커밋·push 안 함)
-배정: 우진 "B는 자동 닫기 승인 조건과 쿠폰 분류" · 근거: 재호 AGENTS 6장 개정 초안 + 우진 추가 조건
+작성: B 준영 · 2026-10-23 설계, 2026-10-24 B 정책 연결 · 브랜치 `feature/decision-auto-close-policy` (#38 위, 로컬)
+배정: 우진 "B는 자동 닫기 승인 조건과 쿠폰 분류" · 근거: 재호 AGENTS 6장 개정 초안 + 우진 추가 조건 + 계약 v2(#38)
 
-> **상태: 팀 합의 전 시제품.**
-> - 공용 계약(`core/model`, `core/contract`)은 바꾸지 않았다. 새 종류(COUPON 등)는 B 내부에만 있다.
-> - 기존 B 동작(분류기·정책·배선)은 그대로이고, 새 코드는 아직 어디서도 호출되지 않는다.
+> **상태: B 정책 연결 (#37·#38 병합 대기).**
+> - 계약 v2(#38) 위에서 B가 연결됐다.
+>   - 분류기는 여섯 종류로 판정하고 COUPON을 낸다.
+>   - 배선은 같은 창 팝업 글자를 팝업 범위로 좁힌다.
+>   - 정책은 프리셋 경로, `next`·`source`, A 적격 근거, 클릭 후 결과를 쓴다.
+> - 그래도 **A가 `AutoEligibility`를 채우고 C가 `autoCloseKinds`를 넘기기 전까지는 자동 닫기가 일어나지 않는다.**
+>   A의 F9가 켜지기 전까지는 실제로 눌리는 것도 없다.
 > - 검증은 JVM 시험, **API 37 에뮬레이터** 덤프와 계측 시험, 독립 리뷰 2회까지다. 실기기·TalkBack은 0회다.
-> - A의 F9가 켜지기 전까지는 실제로 눌리는 것이 없다.
 
 ## 1. 한 문장 규칙
 
@@ -94,14 +97,28 @@
 
 그래서 X, 라벨 없음, E3·E4, "오늘 하루 닫기", "닫기 전 저장", "확인", "자세히 보기"는 절대 대상이 되지 않는다.
 
-**결과 처리** (`onResult`, A가 호출)
+**결과 처리** (`DecisionActionPolicy.onActionResult` → `onResult`, A가 모든 결과를 넘김. 계약 v2 `ClickOutcome` 기준)
 
 | A 결과 | B가 하는 일 |
 |---|---|
 | 누르지 않음 (NOT_EXECUTED·BLOCKED·STALE, attempted=false) | 기록을 풀어 준다. 횟수 제한에도 세지 않는다 |
-| 성공 (MECHANICAL_SUCCESS) | 그 팝업은 세션 동안 "이미 닫음"(16). 클릭이 전달됐다고 실제로 닫혔다는 보장은 없어서, 죽은 "닫기"를 반복해서 누르지 않게 한다 |
-| 실패·결과 불명·attempted=true인 STALE·30초 무응답 | 그 팝업은 세션 끝까지 자동 금지 |
-| 누른 뒤 다른 앱·페이지로 감 (`leftApp`) | 그 팝업과 그 앱 전체를 세션 동안 자동 금지. 결과가 늦게 와도 적용한다 |
+| `CLOSED_CONFIRMED` | 그 팝업은 세션 동안 "이미 닫음"(16). 다시 뜨면 묻는다. 반복은 F12에서 사용자가 허락했을 때만 |
+| `STILL_PRESENT`·`UNKNOWN`·관측 없음, 실패·attempted=true인 STALE·30초 무응답 | 그 팝업은 세션 끝까지 자동 금지. `MECHANICAL_SUCCESS`만으로는 닫힘으로 보지 않는다 |
+| `LEFT_APP` (가짜 닫기) | 그 팝업과 그 앱 전체를 세션 동안 자동 금지. 결과가 늦게 와도, 사용자가 직접 고른 누르기여도 적용한다 |
+
+**A 적격 근거:** `PopupAnalysis.autoEligibility`에 다섯 검사가 다 있고, 같은 토큰이고, 발급 후 5초 안이어야 한다. 아니면 `NOT_AUTO_ELIGIBLE`로 묻는다.
+
+**정책 출력** (`DecisionActionPolicy`, 계약 v2)
+
+| 상황 | authorization | next | source |
+|---|---|---|---|
+| 프리셋 조건 전부 통과 | ALLOW_ONCE | EXECUTE | PRESET |
+| 결정·사기 의심 | DENY | DENY | (누가 요청했든) |
+| 닫기 버튼 대기, 결과 대기, 사용자 조작 중, 화면 바뀜 | 그대로 | WAIT | PRESET 등 |
+| 프리셋이 안내만 하는 종류, 트리 근거 부족, 공지인데 버튼 없음 | 그대로 | ANNOUNCE | PRESET |
+| 그 밖 (버튼 여러 개, 전에 실패, 이미 닫음, 1분 3회, 앱 이탈, 적격 근거 없음) | 그대로 | ASK | PRESET |
+| 프리셋 없음 (기본) | 지금과 같음 | ASK (결정이면 DENY) | 없음 |
+| 사용자 선택 / 기억 규칙 | 지금과 같음 | 위와 같은 규칙 | USER_CHOICE / REMEMBERED_RULE |
 
 - 기록은 메모리에만 있고 화면 글자는 담지 않는다. 키는 패키지 + A 구조 지문이다.
 - 배치가 같은 팝업끼리는 기록을 같이 쓴다. 한쪽이 실패하면 다른 쪽도 막히는데, 조심스러운 쪽이다.
@@ -162,22 +179,59 @@ held-out에서 틀린 7개는 **모두 조심하는 쪽**이다.
 
 ## 7. 팀에 필요한 결정 · 계약 변경
 
-| # | 내용 | 누구 |
+1~5번은 계약 v2(#38)로 정리됐다. 우진·재호 합의, 10/23~24.
+
+| # | 내용 | 상태 |
 |---|---|---|
-| 1 | `PopupClassification`에 `COUPON` 추가. SUSPICIOUS는 UNKNOWN + 경고 사유로 둘지, enum으로 둘지 | A·B (C 안내 문구, D 정답지) |
-| 2 | `DecisionContext`에 프리셋 결과(`autoCloseKinds`, 기본 빈 집합) | A·B·C |
-| 3 | 자동 판단 결과를 C·A에 넘길 통로: `ActionDecision` 근거(사용자/기억/프리셋) + 막힌 이유(대기·묻기·안내 구분) | A·B·C |
-| 4 | A 관문 결과에 "누른 뒤 앱 밖으로 나감" 여부 (`leftApp`) | A |
-| 5 | `INCOMPLETE_EVIDENCE`: 지금은 모든 분석에 붙는다. 프리셋 경로는 4절 조건으로 대신해도 되는지 (기억 규칙 경로는 지금 이 표시로 막힘 → 둘을 맞춰야 함) | 팀 |
+| 1 | `COUPON` 추가, 사기 의심은 `SUSPICIOUS_CONTENT` 사유 | #38 |
+| 2 | `DecisionContext.autoCloseKinds` (기본 빈 집합) | #38 |
+| 3 | `ActionDecision.source`·`next` (EXECUTE/WAIT/ANNOUNCE/ASK/DENY) | #38 |
+| 4 | `ActionResult.outcome` (`CLOSED_CONFIRMED`/`LEFT_APP`/`STILL_PRESENT`/`UNKNOWN`) | #38 |
+| 5 | A `AutoEligibility` (5개 검사, 5초). `INCOMPLETE_EVIDENCE`를 무시하지 않음 | #38 |
 | 6 | A 차단 범위: "이름", "회원", "고객", "카드"가 화면 어디든 있으면 통째로 차단 → 웹·쇼핑 앱 상당수가 대상 밖. 팝업 창만 볼지 | A |
 | 7 | A 결정 요약: 페이지 링크의 "결제" 하나로 웹 팝업 전체가 결정이 됨. 요약을 팝업 범위로 한정할지 (5절 범위 함수 재사용 가능) | A·B |
 | 8 | 라벨 없는 X(E3) 첫 자동: B는 반대. P04와 P06은 누르기 전에 구분할 수 없다 → 처음은 묻기 → 효과 확인 → 기억 규칙으로 두 번째부터 자동 | 팀 |
 | 9 | 공지의 "확인" 버튼: 라벨 계약상 닫기가 아니라서 공지 자동 닫기는 대부분 안내만 된다. B는 계약 확장에 반대(P08 "결제 확인") | 팀 |
-| 10 | 기존 B 분류기의 영어 결정어 `\b`: Android(ICU)에서는 "sign up하기"처럼 한글이 바로 붙으면 안 잡힘. 자동 닫기 쪽은 고쳤고, 기존 분류기는 별도 PR로 고칠 것 | B |
+| 10 | 기존 B 분류기의 영어 결정어 `\b`: Android(ICU)에서는 "sign up하기"처럼 한글이 바로 붙으면 안 잡힘 | **PR #37로 수정** (우진 승인) |
+| 11 | 반복 닫기: 세션 1회가 기본. 반복은 F12에서 사용자가 반복을 허락한 경우만 (우진) | 별도 계약 |
+| 12 | SDK 닫기 버튼: 먼저 실제 접근성 라벨을 조사하고, 검증된 라벨은 라벨 계약에 추가 (E3 첫 자동은 보류) | D 시험 앱 → B 분석 |
+| 13 | 공지 "확인": 자동 닫기와 분리한 사용자 선택 경로. A·B·C 별도 계약 | 별도 계약 |
 
-## 8. 남은 일
+## 8. 제안: B 처리 결과를 C로 넘기는 경로 · 팝업 제목 (다음 계약)
 
-- 계약 PR(7절 1~3)이 합의되면 B 정책·배선에 연결한다. 입구 함수는 C 흐름 앞에 둔다.
+재호 지적: 프리셋이나 기억으로 B가 바로 처리한 결과를 C가 받을 경로가 계약에 없다.
+
+**① 처리 보고** (A가 C에 보냄. 새 포트)
+
+    data class HandlingReport(
+        val token: SnapshotToken,
+        val classification: PopupClassification,
+        val decision: ActionDecision,     // source, next, reasons
+        val result: ActionResult?,        // EXECUTE였을 때만, outcome 포함
+        val title: String?,               // ② (선택)
+    ) // toString은 가림, 저장·로그 금지
+
+- A의 조립 코드가 `decide → (EXECUTE면) execute → policy.onActionResult` 다음에 C에 넘긴다.
+- C는 `next`와 `outcome`으로 안내 문장을 고른다. 이미 순수 함수로 준비돼 있다.
+  - "닫았어요"는 `CLOSED_CONFIRMED`일 때만
+  - WAIT은 한 번만
+  - DENY+사기는 경고
+- ASK면 지금 선택 창 흐름을 그대로 쓴다.
+
+**② 팝업 제목** (`PopupAnalysis.title: String? = null`, B 배선이 채움)
+
+- 규칙: 팝업 범위 안의 트리 글자 중 **첫 번째로, 닫기 후보의 라벨도 결정·사기 문구도 아닌 것**. 없으면 null.
+- 자르기는 C가 한다. 화면 글자라서 말로만 쓰고 로그·저장은 하지 않는다.
+- B가 정하는 이유: 범위 판정과 같은 기준이라 뒤 페이지 글자가 제목으로 읽히지 않는다.
+
+**③ 묶음 안내** ("광고 2개, 쿠폰 1개를 닫았어요"): C가 2초 동안 `HandlingReport`를 모아서 한다.
+
+## 9. 남은 일
+
+- #37·#38 병합 뒤 이 브랜치를 main에 맞춰 PR로 올린다.
+- 8절(처리 보고·제목) 계약을 A·C와 정한다.
+- A: `AutoEligibility`·`outcome` 채우기. 정책은 `DecisionActionPolicy { SystemClock.uptimeMillis() }`로 만든다.
+  JVM 기본 시계와 같은 기준인지는 실기기 확인 필요.
 - D 정답지에 COUPON 열과 프리셋별 기대값을 추가한다.
 - 실제 앱 문구로 쿠폰·광고 단어를 다듬는다. 다듬은 뒤에는 새 held-out 세트로 다시 측정한다.
 - 실기기 TalkBack 확인(LG/S26).

@@ -64,7 +64,11 @@ class DecisionKindEvaluationTest {
         assertEquals(RECORDED_ERRORS, wrong)
     }
 
-    /** Today's display classes are kept, except where the new kinds are deliberately more careful or more complete. */
+    /**
+     * The display classifier is the six kinds now (contract v2). Against the classifier before that
+     * (main b8f7264) four of the 82 moved, all from UNKNOWN to their right class: ad-05 ("할인 이벤트"),
+     * no-18 ("종료되었습니다"), no-23 ("maintenance"), de-22 (an install question); none toward closing.
+     */
     @Test fun displayMappingAgainstTodaysClassifierOn82Samples() = runBlocking {
         val classifier = DecisionPopupClassifier()
         val changed = DecisionClassifierEvaluationSet.samples.mapNotNull { sample ->
@@ -73,7 +77,7 @@ class DecisionKindEvaluationTest {
             val kind = DecisionKinds.of(a)
             if (kind.toDisplay() == today) null else "${sample.id}:${sample.truth}:$today->$kind"
         }
-        assertEquals(RECORDED_82_CHANGES, changed)
+        assertEquals(emptyList<String>(), changed)
         // Never less careful than today: nothing today calls a decision becomes closable.
         for (sample in DecisionClassifierEvaluationSet.samples) {
             val a = analysis(if (sample.text.isEmpty()) emptyList() else listOf(sample.text to sample.source))
@@ -106,13 +110,6 @@ class DecisionKindEvaluationTest {
             "cp-08:COUPON->UNKNOWN", // "5천 포인트" with no giving verb
             "ad-19:ADVERTISEMENT->UNKNOWN", // install banner without an ad word
             "no-05:NOTICE->UNKNOWN", "no-07:NOTICE->UNKNOWN", "no-09:NOTICE->UNKNOWN", // no notice word
-        )
-        // Today's UNKNOWN becomes a known kind; nothing moves toward closing a decision.
-        val RECORDED_82_CHANGES = listOf(
-            "ad-05:ADVERTISEMENT:UNKNOWN->ADVERTISEMENT", // "할인 이벤트"
-            "no-18:NOTICE:UNKNOWN->NOTICE", // "종료되었습니다"
-            "no-23:NOTICE:UNKNOWN->NOTICE", // "maintenance"
-            "de-22:USER_DECISION:UNKNOWN->USER_DECISION", // "설치하시겠습니까?": a question
         )
         const val RECORDED_STUDY =
             "{AD={USER_DECISION=2, ADVERTISEMENT=6, COUPON=4}, NOTICE={USER_DECISION=5}, DECISION={USER_DECISION=18}}"

@@ -8,6 +8,7 @@ import kr.closeforyou.core.model.PopupDetection
 import kr.closeforyou.core.model.PopupSnapshot
 import kr.closeforyou.core.model.SnapshotToken
 import kotlinx.collections.immutable.persistentListOf
+import kotlinx.collections.immutable.toPersistentList
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.onEach
 import java.util.concurrent.atomic.AtomicReference
@@ -21,7 +22,9 @@ import java.util.concurrent.atomic.AtomicReference
  * (signals only, never the snapshot). The extractor attaches candidates only when the snapshot is
  * A's current screen and the snapshot, its analysis and that detection all have the same token.
  * Anything else, including a screen that changed, expired or was blocked meanwhile, yields an
- * analysis with no candidates, so a button from one screen is never offered for another.
+ * analysis with no candidates, so a button from one screen is never offered for another. For a
+ * same-window popup the texts are narrowed to the popup's own plus any warning from the page
+ * ([DecisionPopupScope]), so what C reads and what B classifies is the popup.
  *
  * A's events are a shared flow and may have several collectors. An event older than what is
  * already remembered (a smaller screen version) never replaces it, so a slow collector cannot bring
@@ -48,8 +51,13 @@ class DecisionCandidateWiring(
             val detection = memory.get().detection?.takeIf {
                 it.token == snapshot.token && analysis.token == snapshot.token && base.currentToken() == snapshot.token
             }
-            val candidates = if (detection != null) finder.find(snapshot, detection) else persistentListOf()
-            return analysis.copy(closeCandidates = candidates)
+            if (detection == null) return analysis.copy(closeCandidates = persistentListOf())
+            // Same popup boundary for texts as for candidates (AUTO_CLOSE.md 5절): page text behind a
+            // same-window popup no longer decides its kind, and warnings from the page are kept.
+            return analysis.copy(
+                texts = DecisionPopupScope.texts(snapshot, detection, analysis.texts).toPersistentList(),
+                closeCandidates = finder.find(snapshot, detection),
+            )
         }
     }
 

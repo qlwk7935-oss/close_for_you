@@ -35,8 +35,12 @@ class DecisionAutoCloseTest {
     private fun ctx(a: PopupAnalysis, interacting: Boolean = false, announce: Boolean = true, choice: UserChoice? = null) =
         DecisionContext(a.token, choice, null, interacting, announce)
 
+    /** A's eligibility evidence for this screen, issued now (contract v2): every check. */
+    private fun eligible(a: PopupAnalysis) =
+        a.copy(autoEligibility = AutoEligibility(a.token, kotlinx.collections.immutable.persistentSetOf(*EligibilityCheck.entries.toTypedArray()), now))
+
     private fun decide(a: PopupAnalysis, preset: Set<DecisionKind> = DecisionAutoClose.PRESET_ALL, context: DecisionContext = ctx(a)) =
-        auto.evaluateScoped(a, context, preset)
+        auto.evaluateScoped(eligible(a), context, preset)
 
     private val ad = { popup(tree("광고", "신상 운동화", "자세히 보기", "닫기"), close) }
     private val coupon = { popup(tree("쿠폰이 도착했어요", "닫기"), close, token = token("coupon")) }
@@ -53,11 +57,11 @@ class DecisionAutoCloseTest {
         )
         for (preset in presets) {
             val fresh = DecisionAutoClose(nowMillis = { now })
-            val got = listOf(ad(), coupon(), notice()).map { fresh.evaluateScoped(it, ctx(it), preset) }
+            val got = listOf(ad(), coupon(), notice()).map { fresh.evaluateScoped(eligible(it), ctx(it), preset) }
             assertEquals(preset.toString(), expected.getValue(preset), got.map { it.approved })
             got.filterNot { it.approved }.forEach { assertEquals(setOf(AutoCloseBlock.KIND_NOT_IN_PRESET), it.blocks) }
         }
-        val ok = DecisionAutoClose().evaluateScoped(ad(), ctx(ad()), DecisionAutoClose.PRESET_ADS_ONLY)
+        val ok = DecisionAutoClose(nowMillis = { now }).evaluateScoped(eligible(ad()), ctx(ad()), DecisionAutoClose.PRESET_ADS_ONLY)
         assertEquals("node:close", ok.candidateId)
         assertEquals(DecisionKind.ADVERTISEMENT, ok.kind)
     }
@@ -171,7 +175,8 @@ class DecisionAutoCloseTest {
 
     // ---- 4. session history ----
 
-    private fun result(a: PopupAnalysis, status: ActionStatus, attempted: Boolean) = ActionResult(a.token, status, null, attempted)
+    private fun result(a: PopupAnalysis, status: ActionStatus, attempted: Boolean, outcome: ClickOutcome? = null) =
+        ActionResult(a.token, status, null, attempted, outcome = outcome)
 
     @Test fun onePopupIsSentOnceUntilItsResultComesBack() {
         val a = ad()
@@ -184,7 +189,7 @@ class DecisionAutoCloseTest {
             auto.onResult(result(a, status, attempted = false))
             assertTrue(status.name, decide(a).approved)
         }
-        auto.onResult(result(a, ActionStatus.MECHANICAL_SUCCESS, attempted = true))
+        auto.onResult(result(a, ActionStatus.MECHANICAL_SUCCESS, attempted = true, outcome = ClickOutcome.CLOSED_CONFIRMED))
         now += 600_000
         // Closed once: if the same popup shows again this session, it is asked about, however late.
         assertEquals(setOf(AutoCloseBlock.CLOSED_BEFORE), decide(a).blocks)
@@ -207,7 +212,7 @@ class DecisionAutoCloseTest {
     @Test fun aPressThatLeftTheAppStopsThatAppOnly() {
         val a = ad()
         assertTrue(decide(a).approved)
-        auto.onResult(result(a, ActionStatus.MECHANICAL_SUCCESS, attempted = true), leftApp = true)
+        auto.onResult(result(a, ActionStatus.MECHANICAL_SUCCESS, attempted = true, outcome = ClickOutcome.LEFT_APP))
         assertTrue(AutoCloseBlock.APP_PAUSED in decide(coupon()).blocks)
         assertTrue(AutoCloseBlock.FAILED_BEFORE in decide(a).blocks)
         val elsewhere = popup(tree("광고", "닫기"), close, token = token("x", app = "other.app"))
@@ -224,7 +229,7 @@ class DecisionAutoCloseTest {
         assertTrue(decide(b).approved)
         now += 30_000
         assertEquals(setOf(AutoCloseBlock.FAILED_BEFORE), decide(b).blocks) // timed out
-        auto.onResult(result(b, ActionStatus.MECHANICAL_SUCCESS, attempted = true), leftApp = true)
+        auto.onResult(result(b, ActionStatus.MECHANICAL_SUCCESS, attempted = true, outcome = ClickOutcome.LEFT_APP))
         assertTrue(AutoCloseBlock.APP_PAUSED in decide(coupon()).blocks)
     }
 
@@ -311,7 +316,7 @@ class DecisionAutoCloseTest {
         val a = ad()
         repeat(5) { i ->
             val screen = a.copy(token = a.token.copy(screenVersion = i.toLong()))
-            val v = auto.evaluateScoped(screen, ctx(screen), DecisionAutoClose.PRESET_ALL)
+            val v = auto.evaluateScoped(eligible(screen), ctx(screen), DecisionAutoClose.PRESET_ALL)
             assertEquals("evaluation $i", i == 0, v.approved)
             if (v.approved) auto.onResult(result(screen, ActionStatus.MECHANICAL_SUCCESS, attempted = true))
             now += 12_000
@@ -373,7 +378,7 @@ class DecisionAutoCloseTest {
             PopupTrigger.CONTENT_CHANGED, SnapshotCompleteness.COMPLETE)
         val detection = PopupDetection(t, kotlinx.collections.immutable.persistentSetOf(PopupSignal.SAME_WINDOW_OVERLAY))
         val texts = nodes.mapNotNull { n -> n.text?.let { ExtractedText(it, n.bounds, TextSource.ACCESSIBILITY_TREE, null) } }
-        val v = auto.evaluate(snapshot, detection, PopupAnalysis(t, texts = texts.toPersistentList()), DecisionContext(t, null, null, false, true),
+        val v = auto.evaluate(snapshot, detection, eligible(PopupAnalysis(t, texts = texts.toPersistentList())), DecisionContext(t, null, null, false, true),
             DecisionAutoClose.PRESET_ADS_AND_COUPONS)
         assertEquals(DecisionKind.COUPON, v.kind)
     }
@@ -411,10 +416,42 @@ class DecisionAutoCloseTest {
         val analysis = PopupAnalysis(t, texts = texts.toPersistentList(), closeCandidates = DecisionCloseCandidateFinder().find(snapshot, detection))
         // Unscoped, the page's "쿠폰" would make this notice a coupon that preset ② closes.
         assertEquals(DecisionKind.COUPON, DecisionKinds.of(analysis))
-        val v = auto.evaluate(snapshot, detection, analysis, ctx(analysis), DecisionAutoClose.PRESET_ADS_AND_COUPONS)
+        val v = auto.evaluate(snapshot, detection, eligible(analysis), ctx(analysis), DecisionAutoClose.PRESET_ADS_AND_COUPONS)
         assertEquals(DecisionKind.NOTICE, v.kind)
         assertEquals(setOf(AutoCloseBlock.KIND_NOT_IN_PRESET), v.blocks)
         val other = auto.evaluate(snapshot.copy(token = token("other")), detection, analysis, ctx(analysis), DecisionAutoClose.PRESET_ALL)
         assertEquals(setOf(AutoCloseBlock.STALE_SCREEN), other.blocks)
+    }
+    // ---- Contract v2: A's eligibility evidence and the observed click outcome ----
+
+    @Test fun noCompleteCurrentEligibilityNoAutomaticClose() {
+        val a = ad()
+        val all = EligibilityCheck.entries.toSet()
+        fun with(e: AutoEligibility?) = auto.evaluateScoped(a.copy(autoEligibility = e), ctx(a), DecisionAutoClose.PRESET_ALL).blocks
+        assertEquals(setOf(AutoCloseBlock.NOT_AUTO_ELIGIBLE), with(null))
+        for (missing in all) {
+            val partial = AutoEligibility(a.token, kotlinx.collections.immutable.persistentSetOf(*(all - missing).toTypedArray()), now)
+            assertEquals(missing.name, setOf(AutoCloseBlock.NOT_AUTO_ELIGIBLE), with(partial))
+        }
+        val full = kotlinx.collections.immutable.persistentSetOf(*all.toTypedArray())
+        assertEquals("issued 5 s ago", setOf(AutoCloseBlock.NOT_AUTO_ELIGIBLE), with(AutoEligibility(a.token, full, now - 5_000)))
+        assertEquals("another screen", setOf(AutoCloseBlock.NOT_AUTO_ELIGIBLE), with(AutoEligibility(token("other"), full, now)))
+        assertTrue(auto.evaluateScoped(a.copy(autoEligibility = AutoEligibility(a.token, full, now - 4_999)), ctx(a), DecisionAutoClose.PRESET_ALL).approved)
+    }
+
+    @Test fun onlyAConfirmedCloseCountsAsClosed() {
+        val cases = mapOf<ClickOutcome?, AutoCloseBlock>(
+            ClickOutcome.CLOSED_CONFIRMED to AutoCloseBlock.CLOSED_BEFORE,
+            ClickOutcome.STILL_PRESENT to AutoCloseBlock.FAILED_BEFORE,
+            ClickOutcome.UNKNOWN to AutoCloseBlock.FAILED_BEFORE,
+            // A delivered click without an observation is not a closed popup (contract v2).
+            null to AutoCloseBlock.FAILED_BEFORE,
+        )
+        for ((i, entry) in cases.entries.withIndex()) {
+            val a = popup(tree("광고", "닫기"), close, token = token("o$i", app = "app$i"))
+            assertTrue(decide(a).approved)
+            auto.onResult(result(a, ActionStatus.MECHANICAL_SUCCESS, attempted = true, outcome = entry.key))
+            assertEquals(entry.key.toString(), setOf(entry.value), decide(a).blocks)
+        }
     }
 }

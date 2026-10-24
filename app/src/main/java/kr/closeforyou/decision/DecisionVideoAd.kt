@@ -43,7 +43,8 @@ object DecisionVideoAd {
         val reading = if (seconds.size == 1) countdowns.first() else null
         return VideoAdReport(
             videoObserved = analysis.videoSurfaceObserved,
-            advertisementEvidence = CLASSIFIER.displayClassification(analysis) == PopupClassification.ADVERTISEMENT,
+            // A coupon shown in a video ad is still promotion (contract v2 COUPON).
+            advertisementEvidence = CLASSIFIER.displayClassification(analysis).let { it == PopupClassification.ADVERTISEMENT || it == PopupClassification.COUPON },
             countdownSeconds = reading?.first,
             countdownSource = reading?.let { r -> countdowns.filter { it.first == r.first }.minOf { it.second } },
             skipCandidateIds = analysis.closeCandidates.filter(::isSkipButton).map { it.id },
