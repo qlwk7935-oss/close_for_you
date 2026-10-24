@@ -158,7 +158,7 @@
 
     <!-- 첫 실행 설정 (C). -->
     <string name="ui_onboarding_title">닫아줄게 처음 설정</string>
-    <string name="ui_onboarding_intro">다른 앱에 뜨는 팝업을 대신 처리해 드려요. 광고는 자동으로 닫아요. 공지와 쿠폰은 고른 방식대로 알려 주거나 닫아요.</string>
+    <string name="ui_onboarding_intro">다른 앱에 뜨는 팝업을 대신 처리해 드려요. 광고·공지·쿠폰을 닫을지 알려 줄지 여기서 고른 범위에서만, 안전 확인을 통과한 팝업만 닫아요.</string>
     <string name="ui_onboarding_later">고른 방식은 나중에 안내·음성 설정에서 바꿀 수 있어요.</string>
     <string name="ui_onboarding_start">시작하기</string>
 
@@ -187,4 +187,65 @@
     <string name="ui_auto_wait_other">%1$s 바로 닫을 수 없어서 잠시 기다릴게요.</string>
     <!-- DENY + SUSPICIOUS_CONTENT: 누르기·이동 선택지를 주지 않는다. -->
     <string name="ui_auto_suspicious">사기일 수 있는 팝업이에요. 아무것도 누르지 마세요.</string>
+
+    <string name="ui_onboarding_step_preset">2단계 중 1단계: 팝업 처리 방식</string>
+    <string name="ui_onboarding_step_help_apps">2단계 중 2단계: 도와줄 앱</string>
+    <string name="ui_onboarding_next">다음</string>
+    <string name="ui_onboarding_back">이전 단계</string>
+    <string name="ui_onboarding_skip">건너뛰기</string>
+    <string name="ui_onboarding_skip_help">건너뛰면 아직 아무 앱도 돕지 않아요. 나중에 안내·음성 설정의 \'도와줄 앱\'에서 고를 수 있어요.</string>
+    <string name="ui_onboarding_help_apps_consent">고른 앱은 다음 화면에서 화면 정보 수집에 동의하면 적용돼요.</string>
+
+    <!-- 도와줄 앱 (첫 실행 2단계 + 설정). 앱 이름·패키지 이름은 로그에 남기지 않는다. -->
+    <string name="ui_help_apps_section">도와줄 앱</string>
+    <string name="ui_help_apps_intro">닫아줄게가 팝업을 살펴볼 앱을 정해요.</string>
+    <string name="ui_help_apps_all">모든 앱에서 돕기 (추천)</string>
+    <string name="ui_help_apps_all_help">설치된 앱 전체를 도와요. 직접 더 뺄 수도 있어요.</string>
+    <string name="ui_help_apps_chosen">직접 고르기</string>
+    <string name="ui_help_apps_chosen_help">도와줄 앱을 하나씩 골라요.</string>
+    <string name="ui_help_apps_loading">앱 목록을 불러오는 중이에요.</string>
+    <string name="ui_help_apps_list_failed">앱 목록을 불러오지 못했어요. 지금은 도와줄 앱을 넣을 수 없어요. 나중에 설정에서 다시 해 보세요.</string>
+    <string name="ui_help_apps_all_summary">앱 %1$d개를 도와요. 은행·결제 앱처럼 보이는 앱 %2$d개는 항상 빼요.</string>
+    <string name="ui_help_apps_show_excluded">항상 빼는 앱 보기</string>
+    <string name="ui_help_apps_new_apps">새로 설치한 앱은 저절로 들어가지 않아요. 설정의 \'도와줄 앱\'에서 다시 저장하면 들어가요.</string>
+    <string name="ui_help_apps_pick">앱 고르기</string>
+    <string name="ui_help_apps_chosen_count">앱 %1$d개를 골랐어요.</string>
+    <string name="ui_help_apps_chosen_none">아직 고른 앱이 없어요.</string>
+    <string name="ui_help_apps_pick_title">도와줄 앱 고르기</string>
+    <string name="ui_help_apps_excluded_title">항상 빼는 앱</string>
+    <string name="ui_help_apps_excluded_help">은행·증권·결제·카드·비밀번호 관리 앱처럼 보여서 어느 방식이든 항상 빼요. 여기서는 보기만 할 수 있어요.</string>
+    <string name="ui_help_apps_excluded_count">항상 빼는 앱은 %1$d개예요.</string>
+    <string name="ui_help_apps_done">완료</string>
+    <string name="ui_help_apps_search">앱 이름 검색</string>
+    <string name="ui_help_apps_search_results">앱 %1$d개를 찾았어요.</string>
+    <string name="ui_help_apps_search_none">찾는 앱이 없어요.</string>
+    <!-- [말로 찾기]: 누를 때만 한 번 듣고(기기 안 인식만), 들은 말을 검색어로 넣는다. 못 쓰면 버튼 대신 아래 한 줄. -->
+    <string name="ui_help_apps_voice_search">말로 찾기</string>
+    <string name="ui_help_apps_voice_search_keyboard">키보드의 음성 입력 버튼으로도 찾을 수 있어요.</string>
+    <!-- 듣기가 끝난 뒤 안내(liveRegion). 마이크가 켜진 동안 읽힐 수 있으므로 명령어를 넣지 않는다. 들은 말은 되풀이하지 않는다. -->
+    <string name="ui_voice_search_not_understood">알아듣지 못했어요. 다시 말하거나 글자로 찾아 주세요.</string>
+    <string name="ui_voice_search_silent">아무 말도 듣지 못했어요. 다시 누르거나 글자로 찾아 주세요.</string>
+    <string name="ui_voice_search_unavailable">지금은 말로 찾을 수 없어요. 글자로 찾아 주세요.</string>
+    <string name="ui_help_apps_recommended">추천: 광고 팝업이 많은 앱</string>
+    <string name="ui_help_apps_all_list">모든 앱 (가나다순)</string>
+    <string name="ui_help_apps_save">저장</string>
+    <string name="ui_help_apps_cancel">취소</string>
+    <string name="ui_help_apps_change">도와줄 앱 바꾸기</string>
+    <string name="ui_help_apps_status_count">지금 앱 %1$d개를 돕고 있어요.</string>
+    <string name="ui_help_apps_status_none">아직 돕는 앱이 없어요. 아래 버튼으로 골라 주세요.</string>
+    <string name="ui_help_apps_status_mode_all">방식: 모든 앱에서 돕기</string>
+    <string name="ui_help_apps_status_mode_chosen">방식: 직접 고르기</string>
+    <string name="ui_help_apps_status_pending">화면 정보 수집에 동의하면 앱 %1$d개를 더 도와요.</string>
+    <string name="ui_help_apps_result_added">앱 %1$d개를 도와줄 앱에 넣었어요.</string>
+    <string name="ui_help_apps_result_failed">앱 %1$d개는 넣지 못했어요.</string>
+    <string name="ui_help_apps_result_removed">앱 %1$d개를 뺐어요.</string>
+    <string name="ui_help_apps_result_waiting">화면 정보 수집에 동의하면 앱 %1$d개를 넣어요.</string>
+    <string name="ui_help_apps_result_nothing">바뀐 앱이 없어요.</string>
+    <string name="ui_help_apps_scope">닫아줄게는 접근성 정보로 고른 앱의 팝업을 살펴봐요. 은행·증권·결제·비밀번호 관리 앱과 보호된 화면은 [모든 앱]을 골라도 항상 빼고, 원하면 더 뺄 수 있어요. 화면 내용은 휴대폰 밖으로 나가지 않아요.</string>
+    <string name="ui_help_apps_separate">도와줄 앱을 골라도 화면 사진(스크린샷)·글자 읽기(OCR)와 자동 닫기는 따로 정해요.</string>
+    <string name="ui_help_apps_exclude_more">더 뺄 앱 고르기</string>
+    <string name="ui_help_apps_exclude_more_title">더 뺄 앱 고르기</string>
+    <string name="ui_help_apps_exclude_more_help">체크를 끈 앱은 돕지 않아요.</string>
+    <string name="ui_help_apps_user_excluded">직접 뺀 앱은 %1$d개예요.</string>
+    <string name="ui_help_apps_choose_first">모든 앱에서 돕기나 직접 고르기 중 하나를 고르면 누를 수 있어요.</string>
 </resources>

@@ -1,6 +1,7 @@
 package kr.closeforyou.ui.voice.debug
 
 import android.accessibilityservice.AccessibilityService
+import android.content.Intent
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
@@ -19,6 +20,7 @@ import kr.closeforyou.ui.voice.TtsPopupAnnouncer
 import kr.closeforyou.ui.voice.choice.ChoicePrompt
 import kr.closeforyou.ui.voice.overlay.AccessibilityChoiceOverlay
 import kr.closeforyou.ui.voice.overlay.OverlayWindowState
+import kr.closeforyou.ui.voice.overlay.PromptShowResult
 import kr.closeforyou.ui.voice.overlay.PromptAnnouncementListener
 import kr.closeforyou.ui.voice.overlay.PromptControlsSupport
 import kr.closeforyou.ui.voice.settings.UiVoicePreferences
@@ -29,7 +31,9 @@ import java.lang.ref.WeakReference
  * It performs no actions and never invalidates its prompt. The produced UserChoice is only shown
  * on the preview screen. Normally it gets only our own announcement events and ignores them; the
  * issue #29 diagnosis ([C29OverlayDiagnostics], adb extra only) reads window ids, types and layers (logged as run-local numbers)
- * for one show and logs numbers only.
+ * for one show and logs numbers only. The C34 focus watch ([OverlayNodeDump]) is read-only unless its
+ * adb extra asks to move focus. Both debug tools are stopped, with their service info restored and every
+ * pending callback cancelled, on interrupt, unbind and destroy; only one of them changes the service info at a time.
  */
 class ChoiceOverlayTestService : AccessibilityService() {
     private val handler = Handler(Looper.getMainLooper())
@@ -39,7 +43,13 @@ class ChoiceOverlayTestService : AccessibilityService() {
     private val diagnostics = C29OverlayDiagnostics(this, handler) { overlay?.windowState ?: OverlayWindowState.HIDDEN }
     private var diagnose = false
 
+    /** This connection's number; [OverlayNodeDump.NO_SESSION] when not connected. */
+    private var session = OverlayNodeDump.NO_SESSION
+    private val nodeDump = OverlayNodeDump(this, { session }, { overlay?.windowState ?: OverlayWindowState.HIDDEN })
+
     override fun onServiceConnected() {
+        lastSession += 1
+        session = lastSession
         announcer = TtsPopupAnnouncer.create(this)
         current = WeakReference(this)
         mutableConnected.value = true
@@ -47,15 +57,25 @@ class ChoiceOverlayTestService : AccessibilityService() {
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         if (diagnose && event != null) diagnostics.onEvent(event)
-        if (event != null) OverlayNodeDump.onEvent(this, event)
+        if (event != null) nodeDump.onEvent(event)
     }
 
-    override fun onInterrupt() = Unit
+    override fun onInterrupt() {
+        stopDebugTools(OverlayNodeDump.StopReason.INTERRUPT)
+    }
+
+    override fun onUnbind(intent: Intent?): Boolean {
+        stopDebugTools(OverlayNodeDump.StopReason.UNBIND)
+        session = OverlayNodeDump.NO_SESSION
+        if (current?.get() === this) current = null
+        mutableConnected.value = false
+        return super.onUnbind(intent)
+    }
 
     override fun onDestroy() {
         handler.removeCallbacksAndMessages(null)
-        if (diagnose) diagnostics.disarm()
-        OverlayNodeDump.stopWatch(this)
+        stopDebugTools(OverlayNodeDump.StopReason.DESTROY)
+        session = OverlayNodeDump.NO_SESSION
         overlay?.dismiss()
         overlay = null
         announcer?.close()
@@ -66,13 +86,24 @@ class ChoiceOverlayTestService : AccessibilityService() {
         super.onDestroy()
     }
 
+    /** Debug watches end; the service info they changed is restored. */
+    private fun stopDebugTools(reason: OverlayNodeDump.StopReason) {
+        diagnostics.disarm()
+        diagnose = false
+        nodeDump.stopWatch(reason)
+    }
+
     private fun showLater(prompt: ChoicePrompt, content: String, delayMillis: Long, ttsDelayMillis: Long, diagnose: Boolean) {
         handler.removeCallbacksAndMessages(null)
-        if (this.diagnose) diagnostics.disarm()
+        diagnostics.disarm()
         this.diagnose = diagnose
-        if (diagnose) diagnostics.arm()
+        if (diagnose) {
+            nodeDump.stopWatch(OverlayNodeDump.StopReason.OTHER_DIAGNOSIS)
+            diagnostics.arm()
+        }
         handler.postDelayed({
             val tts = announcer ?: return@postDelayed
+            nodeDump.onPromptGone()
             overlay?.dismiss()
             // A new overlay per show so each test can use its own announcement delay.
             val next = AccessibilityChoiceOverlay(
@@ -89,15 +120,18 @@ class ChoiceOverlayTestService : AccessibilityService() {
             overlay = next
             val startedAt = SystemClock.uptimeMillis()
             val result = next.show(prompt) { choice ->
+                nodeDump.onPromptGone()
                 mutableLastChoice.value = choice
                 if (choice.kind == ChoiceKind.READ_CONTENT) readContent(choice, content)
             }
             if (diagnose) diagnostics.onShown(startedAt, result.ordinal)
+            if (result == PromptShowResult.SHOWN) nodeDump.onPromptShown()
         }, delayMillis)
     }
 
     private fun watchEvents(millis: Long) {
-        if (diagnose) diagnostics.disarm()
+        diagnostics.disarm()
+        nodeDump.stopWatch(OverlayNodeDump.StopReason.OTHER_DIAGNOSIS)
         diagnose = true
         diagnostics.watch(millis)
     }
@@ -108,7 +142,14 @@ class ChoiceOverlayTestService : AccessibilityService() {
         scope.launch { tts.announce(AnnouncementRequest(choice.token, AnnouncementKind.CONTENT, content)) }
     }
 
+    private fun watchFocus(millis: Long, moveFocus: Boolean) {
+        diagnostics.disarm()
+        diagnose = false
+        nodeDump.watchFocus(millis, moveFocus)
+    }
+
     companion object {
+        private var lastSession = OverlayNodeDump.NO_SESSION
         private var current: WeakReference<ChoiceOverlayTestService>? = null
         private val mutableConnected = MutableStateFlow(false)
         private val mutableLastChoice = MutableStateFlow<UserChoice?>(null)
@@ -129,14 +170,18 @@ class ChoiceOverlayTestService : AccessibilityService() {
         /** Logs C's own prompt node tree under C34Nodes (flags and lengths only). False when the service is off. */
         fun dumpOwnNodes(): Boolean {
             val service = current?.get() ?: return false
-            OverlayNodeDump.dump(service)
+            service.nodeDump.dump()
             return true
         }
 
-        /** Logs accessibility-focus events (TalkBack swipes) for [millis] under C34Nodes. */
-        fun watchFocus(millis: Long): Boolean {
+        /**
+         * Logs accessibility-focus events (TalkBack swipes) for [millis] under C34Nodes, and C's nodes 4 s after
+         * each prompt shown meanwhile. Read-only unless [moveFocus] (explicit adb extra): then also puts TalkBack's
+         * focus on C's first node once per shown prompt, if the same window is still up. Main thread only.
+         */
+        fun watchFocus(millis: Long, moveFocus: Boolean = false): Boolean {
             val service = current?.get() ?: return false
-            OverlayNodeDump.watchFocus(service, millis)
+            service.watchFocus(millis, moveFocus)
             return true
         }
 

@@ -5,6 +5,14 @@
         android:protectionLevel="signature" />
     <!-- C(ui/voice) debug only: push-to-talk voice command test on the preview screen (on-device recognizer). -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <!-- C(ui/voice) "도와줄 앱": launcher apps only (Android 11+ package visibility). Not QUERY_ALL_PACKAGES.
+         Debug only until A adds the same <queries> to the main manifest (docs/c-notes/app-picker.md). -->
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.LAUNCHER" />
+        </intent>
+    </queries>
     <application>
         <!-- Only debug builds. No image/text IPC, no service activation or arbitrary app selection. -->
         <provider

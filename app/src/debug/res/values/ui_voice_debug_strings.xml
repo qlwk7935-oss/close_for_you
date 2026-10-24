@@ -40,6 +40,7 @@
     <string name="ui_debug_open_settings">설정 화면 보기 (가짜 기억 목록)</string>
     <string name="ui_debug_back_to_preview">미리보기로 돌아가기</string>
     <string name="ui_debug_open_onboarding">첫 실행 설정 화면 보기</string>
+    <string name="ui_debug_open_app_picker">도와줄 앱 고르기 보기 (실제 A 허용 목록에 저장)</string>
 
     <!-- 음성 명령 시험 (말하기 버튼을 누를 때만, 기기 안 인식) -->
     <string name="ui_debug_section_voice">음성 명령 시험</string>

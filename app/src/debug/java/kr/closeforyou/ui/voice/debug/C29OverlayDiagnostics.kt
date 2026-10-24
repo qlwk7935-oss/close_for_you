@@ -30,7 +30,8 @@ import kr.closeforyou.ui.voice.overlay.WindowFacts
  * Numbers, enums and booleans only. Window ids are never printed: each run numbers the windows it sees
  * w1, w2, … in order of appearance (comparable within one run only). No node text, window title, package
  * name or content description is ever logged. Only turned on by adb extras in ChoicePreviewActivity; the
- * service info is restored after.
+ * service info is restored after. Its timed snapshots carry their own token and run number: a new run or
+ * [disarm] (also on interrupt/unbind/destroy) cancels them, so an old run never ends a newer one early.
  */
 internal class C29OverlayDiagnostics(
     private val service: AccessibilityService,
@@ -48,6 +49,7 @@ internal class C29OverlayDiagnostics(
     private lateinit var fresh: OwnOverlayWindowTracker
 
     private var original: AccessibilityServiceInfo? = null
+    private val timerToken = Any()
     private var run = 0
     private var startedAt = NOT_STARTED
     private var watching = false
@@ -81,11 +83,11 @@ internal class C29OverlayDiagnostics(
         aStyle.update(windows.map { it.facts }, overlayState())
         Log.i(TAG, "run=$run SHOW addMs=${SystemClock.uptimeMillis() - startedAt} result=$shownCode state=${stateText()} " +
             "aKnows=${bound(aStyle) != null} wins=${windowsText(windows)}")
-        handler.postDelayed({ snapshot("END") }, WATCH_MILLIS)
-        handler.postDelayed({
+        later(WATCH_MILLIS) { snapshot("END") }
+        later(STILL_MILLIS) {
             snapshot("STILL")
             disarm()
-        }, STILL_MILLIS)
+        }
     }
 
     /** Watch mode: arm now and log every event for [millis] without showing anything. */
@@ -95,10 +97,10 @@ internal class C29OverlayDiagnostics(
         watching = true
         watchMillis = millis
         Log.i(TAG, "run=$run WATCH ms=$millis wins=${windowsText(readWindows())}")
-        handler.postDelayed({
+        later(millis) {
             snapshot("WATCH_END")
             disarm()
-        }, millis)
+        }
     }
 
     fun onEvent(event: AccessibilityEvent) {
@@ -129,15 +131,25 @@ internal class C29OverlayDiagnostics(
         )
     }
 
+    /** Cancels this diagnosis's timers and restores the service info. Safe to call any number of times. */
     fun disarm() {
+        handler.removeCallbacksAndMessages(timerToken)
         startedAt = NOT_STARTED
         watching = false
         val info = original ?: return
+        original = null
         service.serviceInfo = copyOf(info)
         Log.i(TAG, "disarmed")
     }
 
+    /** Runs [block] after [delayMillis] only if no newer run started meanwhile. */
+    private fun later(delayMillis: Long, block: () -> Unit) {
+        val thisRun = run
+        handler.postAtTime({ if (run == thisRun && startedAt != NOT_STARTED) block() }, timerToken, SystemClock.uptimeMillis() + delayMillis)
+    }
+
     private fun newRun(at: Long) {
+        handler.removeCallbacksAndMessages(timerToken)
         run += 1
         startedAt = at
         ordinals.clear()

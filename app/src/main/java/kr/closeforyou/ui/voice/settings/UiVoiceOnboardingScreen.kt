@@ -1,5 +1,6 @@
 package kr.closeforyou.ui.voice.settings
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -10,6 +11,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -27,6 +29,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import kr.closeforyou.R
+import kr.closeforyou.app.CorePreferences
 import kr.closeforyou.ui.voice.UiVoiceTheme
 
 /** Which screen the app's first screen shows. Pure, so the gate is tested on the JVM. */
@@ -37,38 +40,68 @@ object OnboardingGatePolicy {
 /**
  * For A's first screen: the first-run setup until [시작하기] is pressed once, then [content].
  * e.g. `UiVoiceOnboardingGate { CoreSetupScreen(...) }`. Nothing is shown over another app.
+ * After setup, "도와줄 앱" saved before A's collection consent is applied as soon as it is given.
  */
 @Composable
 fun UiVoiceOnboardingGate(modifier: Modifier = Modifier, content: @Composable () -> Unit) {
     val context = LocalContext.current
     val preferences = remember { UiVoicePreferences.get(context) }
+    val core = remember { CorePreferences.get(context) }
     val settings by preferences.state.collectAsState()
     if (OnboardingGatePolicy.showOnboarding(settings)) {
         // Own Scaffold: theme background and system-bar insets (targetSdk 35 draws edge to edge).
         Scaffold(modifier) { insets ->
             UiVoiceOnboardingScreen(
                 initialPreset = settings.handlingPreset,
-                onStart = preferences::completeOnboarding,
+                onStart = { preset, helpApps ->
+                    helpApps?.let { HelpAppsSync.save(it.draft, it.catalog, preferences, CoreAllowedApps(core)) }
+                    preferences.completeOnboarding(preset)
+                },
+                consentGranted = core.currentSettings().consentGranted,
                 modifier = Modifier.padding(insets),
             )
         }
     } else {
+        PendingHelpAppsEffect()
         content()
     }
 }
 
+/** What the "도와줄 앱" step decided; null from [UiVoiceOnboardingScreen] means it was skipped. */
+data class OnboardingHelpApps(val draft: HelpAppsDraft, val catalog: AppCatalog)
+
+private enum class OnboardingStep { PRESET, HELP_APPS }
+
 /**
- * First-run setup: short explanation → the preset radio group → fixed lines → [시작하기].
- * The choice is saved only on [시작하기]; before that, rotation keeps it ([rememberSaveable]).
+ * First-run setup in two steps.
+ * 1. Short explanation → the preset radio group → fixed lines → [다음].
+ * 2. "도와줄 앱" ([HelpAppsEditor], no way pre-selected; [시작하기] waits for one) →
+ *    [시작하기] / [이전 단계] / [건너뛰기].
+ * Nothing is saved before [시작하기] or [건너뛰기]; rotation keeps the choices ([rememberSaveable]).
  * Reading order = layout order and focus is never moved, so TalkBack starts wherever it is.
  */
 @Composable
 fun UiVoiceOnboardingScreen(
     initialPreset: HandlingPreset,
-    onStart: (HandlingPreset) -> Unit,
+    onStart: (HandlingPreset, OnboardingHelpApps?) -> Unit,
     modifier: Modifier = Modifier,
+    /** A's collection consent; false adds a line that the apps apply after consent. */
+    consentGranted: Boolean = false,
+    /** Null = load the launcher apps; previews pass a fixed catalog. */
+    catalogOverride: AppCatalog? = null,
 ) {
     var chosen by rememberSaveable { mutableStateOf(initialPreset) }
+    var step by rememberSaveable { mutableStateOf(OnboardingStep.PRESET) }
+    if (step == OnboardingStep.HELP_APPS) {
+        HelpAppsStep(
+            consentGranted = consentGranted,
+            catalog = catalogOverride ?: rememberAppCatalog(),
+            onBack = { step = OnboardingStep.PRESET },
+            onStart = { helpApps -> onStart(chosen, helpApps) },
+            modifier = modifier,
+        )
+        return
+    }
     Column(
         modifier = modifier
             .verticalScroll(rememberScrollState())
@@ -82,6 +115,7 @@ fun UiVoiceOnboardingScreen(
         )
         Text(stringResource(R.string.ui_onboarding_intro))
         HorizontalDivider()
+        Text(stringResource(R.string.ui_onboarding_step_preset), style = MaterialTheme.typography.bodySmall)
         Text(
             stringResource(R.string.ui_preset_section),
             style = MaterialTheme.typography.titleMedium,
@@ -90,14 +124,58 @@ fun UiVoiceOnboardingScreen(
         HandlingPresetGroup(selected = chosen, onSelect = { chosen = it })
         Text(stringResource(R.string.ui_onboarding_later), style = MaterialTheme.typography.bodySmall)
         Button(
-            onClick = { onStart(chosen) },
+            onClick = { step = OnboardingStep.HELP_APPS },
             modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
-        ) { Text(stringResource(R.string.ui_onboarding_start)) }
+        ) { Text(stringResource(R.string.ui_onboarding_next)) }
     }
+}
+
+@Composable
+private fun HelpAppsStep(
+    consentGranted: Boolean,
+    catalog: AppCatalog?,
+    onBack: () -> Unit,
+    onStart: (OnboardingHelpApps?) -> Unit,
+    modifier: Modifier,
+) {
+    var draft by rememberSaveable(stateSaver = HelpAppsDraftSaver) { mutableStateOf(HelpAppsDraft()) }
+    var page by rememberSaveable { mutableStateOf(HelpAppsPage.MODE) }
+    if (page == HelpAppsPage.MODE) BackHandler(onBack = onBack)
+    HelpAppsEditor(
+        catalog = catalog,
+        draft = draft,
+        onDraftChange = { draft = it },
+        page = page,
+        onPageChange = { page = it },
+        modifier = modifier,
+        top = {
+            Text(stringResource(R.string.ui_onboarding_step_help_apps), style = MaterialTheme.typography.bodySmall)
+            Text(
+                stringResource(R.string.ui_help_apps_section),
+                style = MaterialTheme.typography.titleLarge,
+                modifier = Modifier.semantics { heading() },
+            )
+        },
+        bottom = {
+            if (!consentGranted) Text(stringResource(R.string.ui_onboarding_help_apps_consent))
+            HelpAppsSaveButton(
+                label = stringResource(R.string.ui_onboarding_start),
+                enabled = HelpAppsPlan.canSave(draft, catalog),
+                onClick = { onStart(catalog?.let { OnboardingHelpApps(draft, it) }) },
+            )
+            OutlinedButton(onClick = onBack, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) {
+                Text(stringResource(R.string.ui_onboarding_back))
+            }
+            OutlinedButton(onClick = { onStart(null) }, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) {
+                Text(stringResource(R.string.ui_onboarding_skip))
+            }
+            Text(stringResource(R.string.ui_onboarding_skip_help), style = MaterialTheme.typography.bodySmall)
+        },
+    )
 }
 
 @Preview(name = "첫 실행", showBackground = true, heightDp = 900)
 @Composable
 private fun OnboardingPreview() {
-    UiVoiceTheme { UiVoiceOnboardingScreen(initialPreset = HandlingPreset.DEFAULT, onStart = {}) }
+    UiVoiceTheme { UiVoiceOnboardingScreen(initialPreset = HandlingPreset.DEFAULT, onStart = { _, _ -> }) }
 }
