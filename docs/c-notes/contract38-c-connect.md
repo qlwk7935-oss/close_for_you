@@ -1,7 +1,33 @@
 # C 연결: 공용 계약 v2(#38) — 쿠폰·프리셋 동의 범위·자동 처리 결과 안내
 
 - 브랜치: `c/contract38-connect` = #38(`917800b`, 이후 `e35417f`까지 merge) 위에 `origin/feature/ui-voice`(`ce864c2`)를 merge(충돌 없음) + C 커밋 1개
+- 10/25 갱신: `origin/feature/ui-voice`(`5e50653`: 도와줄 앱·말로 찾기·debug 진단 수정)와 #38 최신(`bfbf6dc`: 적격 근거 5초를 수집 시각부터, COUPON 임시 문구 "팝업이 떴어요.")을 다시 merge
+  - 충돌 1: `res/values/ui_voice_strings.xml` 끝부분 — 양쪽 모두 새 문자열 추가(`ui_auto_*` / `ui_onboarding_step_*`·`ui_help_apps_*`·`ui_voice_search_*`) → 둘 다 유지
+  - 충돌 2: `ChoicePromptPlanner.summaryOf`의 COUPON 줄 — #38 임시 `COUPON -> PromptSummary.UNKNOWN` 대신 C 쿠폰 문장 `COUPON -> PromptSummary.LIKELY_COUPON`("쿠폰으로 보이는 팝업이에요.", `ui_choice_summary_coupon`) 유지
+  - 새로 들어온 도와줄 앱·말로 찾기 코드에는 `PopupClassification` 분기가 없다. `HandlingPreset`은 이미 COUPON 분기 있음(①②는 닫기, ③은 알려 주기, 결정·모름은 항상 묻기)
 - 상태: **Mock 기준, 실제 연동 미검증.** 실기기·TalkBack 확인 안 함. A·B·D·`core/**`는 고치지 않음(#38 내용 그대로)
+
+## 0. #38 병합 후 할 일 (사용자 재호)
+
+순서 (작업 트리 `D:\close_for_you`, 다른 세션이 쓰지 않을 때):
+
+1. `git fetch origin`
+2. `git switch feature/ui-voice` → `git pull` (원격과 같게)
+3. `git merge origin/main` — #38이 main에 들어와 `PopupClassification.COUPON`이 생긴다
+4. `git merge c/contract38-connect` — C 쿠폰 연결(요약 문장·프리셋·자동 안내)
+5. 빌드: `$env:JAVA_HOME="D:\Android\Android Studio\jbr"; $env:ANDROID_HOME="D:\Android\SDK"; .\gradlew.bat :app:assembleDebug :app:testDebugUnitTest :app:lintDebug`
+6. `git push` → PR #34가 자동으로 갱신된다. PR 설명에 "#38 COUPON 호환: C 쿠폰 문장·프리셋 COUPON 분기, Mock 기준"을 한 줄 더한다
+
+예상 충돌 지점:
+
+| 단계 | 파일 | 무엇 | 해결 |
+|---|---|---|---|
+| 3 | (보통 없음) | main의 #38은 C 파일 중 `ChoicePromptPlanner.kt` 한 줄만 바꾼다. 다만 3단계 직후 `HandlingPreset.preferenceFor`의 `when`에 COUPON이 없어 **컴파일이 깨진 상태**다. 4단계까지 이어서 하고 그 뒤에 빌드한다 | — |
+| 4 | `ui/voice/choice/ChoicePromptPlanner.kt` `summaryOf` | main: `COUPON -> PromptSummary.UNKNOWN`(임시) / C: `COUPON -> PromptSummary.LIKELY_COUPON` | **C 줄 유지**, 임시 주석 2줄 삭제 |
+| 4 | `core/**` (`PopupModels.kt`, `PopupContracts.kt`, `AutoCloseContractTest.kt`) | #38을 squash로 병합하면 커밋이 달라 같은 내용이 두 번 들어온다. 내용이 같으면 충돌 없음. #38이 `bfbf6dc` 뒤에 더 바뀌었으면 충돌 | **main 쪽으로**(`git checkout origin/main -- <파일>`). core는 C가 고치지 않는다 |
+| 4 | `res/values/ui_voice_strings.xml` | 그 사이 feature/ui-voice에 새 문자열이 더 붙었으면 끝부분 충돌 | 양쪽 다 유지 |
+| 빌드 | C 시험 | #38이 더 바뀌어 `AutoDecisionSpeechTest`·`HandlingPresetTest`가 실패하면 C 시험만 계약에 맞춘다 | — |
+
 
 ## 1. 바뀐 것 (C 파일만)
 
