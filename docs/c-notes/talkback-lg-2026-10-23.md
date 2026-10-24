@@ -41,6 +41,8 @@ adb -d shell am start -n kr.closeforyou/.ui.voice.debug.ChoicePreviewActivity --
 adb -d shell am start -n kr.closeforyou/.ui.voice.debug.ChoicePreviewActivity --ez ui_debug_c34_dump true   # 노드만 (미리보기 화면이 앞으로 옴)
 ```
 
+> 10/24 PR #34 리뷰 반영: `focus_ms`는 **기본 읽기 전용**(초점 이벤트·노드 기록만, 선택 창이 뜬 4초 뒤 노드 한 번). TalkBack 초점을 C 첫 노드로 옮기려면 `--ez ui_debug_c34_focus_move true`를 함께 줘야 하고, 그때도 같은 서비스 연결·같은 C 창 세대·창 안 노드가 그대로일 때만 옮긴다(이미 C 창 안에 초점이 있으면 안 옮김). 감시는 시간이 다 되면 이벤트가 없어도 끝나고, 새 요청·창 닫힘·interrupt/unbind/destroy 때 예약이 모두 취소되며 서비스 설정이 원래대로 돌아간다(`FocusWatchSchedule`, JVM 시험 9개). 실기기 재확인 미실시.
+
 ### 2-1. C 선택 창 안 (측정)
 
 | 노드 | 초점 가능 | 글자 | 판단 |

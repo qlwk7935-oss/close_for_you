@@ -134,11 +134,15 @@ class ChoicePreviewActivity : ComponentActivity() {
             }
             return
         }
-        // `--el ui_debug_c34_focus_ms <ms>` (alone): logs TalkBack focus moves under C34Nodes for that long.
+        // `--el ui_debug_c34_focus_ms <ms>` (alone): logs TalkBack focus moves under C34Nodes for that long, and
+        // C's nodes 4 s after each prompt shown meanwhile. Read-only: TalkBack's focus is not moved unless
+        // `--ez ui_debug_c34_focus_move true` is added too.
         val focusMillis = intent?.getLongExtra(EXTRA_C34_FOCUS_MS, -1L)?.takeIf { it in 1..MAX_C29_WATCH_MILLIS * 3 }
+        val moveFocus = intent?.getBooleanExtra(EXTRA_C34_FOCUS_MOVE, false) == true
         intent?.removeExtra(EXTRA_C34_FOCUS_MS)
+        intent?.removeExtra(EXTRA_C34_FOCUS_MOVE)
         if (focusMillis != null) {
-            if (!ChoiceOverlayTestService.watchFocus(focusMillis)) {
+            if (!ChoiceOverlayTestService.watchFocus(focusMillis, moveFocus)) {
                 Toast.makeText(this, R.string.ui_debug_overlay_service_off, Toast.LENGTH_LONG).show()
             }
             return
@@ -187,6 +191,7 @@ class ChoicePreviewActivity : ComponentActivity() {
         const val MAX_C29_WATCH_MILLIS = 60_000L
         const val EXTRA_C34_DUMP = "ui_debug_c34_dump"
         const val EXTRA_C34_FOCUS_MS = "ui_debug_c34_focus_ms"
+        const val EXTRA_C34_FOCUS_MOVE = "ui_debug_c34_focus_move"
         /** adb: `--ez ui_debug_open_settings true` opens the settings page directly. */
         const val EXTRA_OPEN_SETTINGS = "ui_debug_open_settings"
         /** adb: `--ez ui_debug_open_onboarding true` opens the first-run setup directly. */
