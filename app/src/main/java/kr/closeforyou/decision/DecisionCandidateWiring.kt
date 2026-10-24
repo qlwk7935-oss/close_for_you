@@ -51,12 +51,18 @@ class DecisionCandidateWiring(
             val detection = memory.get().detection?.takeIf {
                 it.token == snapshot.token && analysis.token == snapshot.token && base.currentToken() == snapshot.token
             }
-            if (detection == null) return analysis.copy(closeCandidates = persistentListOf())
+            // A's eligibility evidence counts only for this exact screen and its own capture time, so it
+            // can never outlive A's 5 s from capture (#38 review); anything else drops it.
+            val eligibility = analysis.autoEligibility?.takeIf {
+                detection != null && it.token == snapshot.token && it.capturedAtUptimeMillis == snapshot.capturedAtUptimeMillis
+            }
+            if (detection == null) return analysis.copy(closeCandidates = persistentListOf(), autoEligibility = null)
             // Same popup boundary for texts as for candidates (AUTO_CLOSE.md 5절): page text behind a
             // same-window popup no longer decides its kind, and warnings from the page are kept.
             return analysis.copy(
                 texts = DecisionPopupScope.texts(snapshot, detection, analysis.texts).toPersistentList(),
                 closeCandidates = finder.find(snapshot, detection),
+                autoEligibility = eligibility,
             )
         }
     }

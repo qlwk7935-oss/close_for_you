@@ -221,9 +221,35 @@ class DecisionCandidateWiringTest {
         // The page's "쿠폰 모음" is gone; its decision words stay as a warning (AUTO_CLOSE.md 5절).
         assertEquals(listOf("로그인하고 결제하기", "운영 시간 안내", "닫기"), analysis.texts.map { it.text })
         assertEquals(listOf("node:0/2/1"), analysis.closeCandidates.map { it.id })
+        // Without A's eligibility the analysis has none; B never invents it.
+        assertEquals(null, analysis.autoEligibility)
         // Without a matching detection nothing is narrowed (and no candidates are offered).
         val stranger = DecisionCandidateWiring(FakeSource(token), extractor).extractor.extract(snapshot)
         assertEquals(texts.map { it.text }, stranger.texts.map { it.text })
         assertTrue(stranger.closeCandidates.isEmpty())
+    }
+
+    @Test fun asEligibilityIsKeptOnlyForThisScreensOwnCaptureTime() = runBlocking {
+        val snapshot = notice.snapshot.copy(capturedAtUptimeMillis = 10_000)
+        val checks = persistentSetOf(*EligibilityCheck.entries.toTypedArray())
+        fun extractWith(e: AutoEligibility?): AutoEligibility? {
+            val extractor = object : EvidenceExtractor {
+                override suspend fun extract(snapshot: PopupSnapshot) = notice.analysis.copy(token = snapshot.token, autoEligibility = e)
+            }
+            val source = FakeSource(snapshot.token)
+            val wiring = DecisionCandidateWiring(source, extractor)
+            deliver(source, wiring, PopupEvent.Candidate(snapshot, PopupDetection(snapshot.token, persistentSetOf(PopupSignal.NEW_WINDOW))))
+            return runBlocking { wiring.extractor.extract(snapshot).autoEligibility }
+        }
+        val own = AutoEligibility(snapshot.token, checks, 10_000)
+        assertEquals(own, extractWith(own))
+        // Stamped later than the capture (issued late): dropped, so it cannot outlive A's 5 s (#38 review).
+        assertEquals(null, extractWith(own.copy(capturedAtUptimeMillis = 14_000)))
+        assertEquals(null, extractWith(own.copy(token = snapshot.token.copy(screenVersion = 99))))
+        // And never without a detection for this screen.
+        val noDetection = DecisionCandidateWiring(FakeSource(snapshot.token), object : EvidenceExtractor {
+            override suspend fun extract(snapshot: PopupSnapshot) = notice.analysis.copy(token = snapshot.token, autoEligibility = own)
+        }).extractor.extract(snapshot)
+        assertEquals(null, noDetection.autoEligibility)
     }
 }
