@@ -24,6 +24,7 @@ class HelpAppsTest {
         InstalledApp("com.x8bit.bitwarden", "Bitwarden"),
         InstalledApp("kr.example.secure", "내 비밀번호 보관함"),
         InstalledApp("kr.example.stocks", "주식 시세"),
+        InstalledApp("kr.example.delivery", "배달의민족"), // recommended by name, not by id
         InstalledApp(own, "닫아줄게"),
     )
     private val catalog = HelpAppsCatalog.build(apps, own)
@@ -68,9 +69,19 @@ class HelpAppsTest {
 
     @Test fun recommendedKeepsTheFixedOrderAndOnlyInstalledApps() {
         assertEquals(
-            listOf("com.google.android.youtube", "com.kakao.talk", "com.coupang.mobile", "com.kakao.page"),
+            listOf("com.google.android.youtube", "com.kakao.talk", "com.coupang.mobile", "kr.example.delivery", "com.kakao.page"),
             catalog.recommended.map { it.packageName },
         )
+    }
+
+    @Test fun uncertainIdsAreMatchedByNameNotById() {
+        assertFalse("com.sampleapp" in RecommendedApps.PACKAGES)
+        assertTrue("배달의민족" in RecommendedApps.NAMES)
+    }
+
+    @Test fun recommendedNeverShowsAnAlwaysExcludedApp() {
+        val withPayName = HelpAppsCatalog.build(listOf(InstalledApp("kr.example.x", "당근페이")), own)
+        assertTrue(withPayName.recommended.isEmpty())
     }
 
     @Test fun recommendedListHasNoPaymentLookingApp() =
@@ -86,11 +97,34 @@ class HelpAppsTest {
 
     // --- 저장할 목록 ---
 
-    @Test fun allModeTargetsHelpableAppsPlusAddedBack() {
-        val draft = HelpAppsDraft(mode = HelpAppsMode.ALL, addedBack = setOf("com.viva.republica.toss", "kr.unlisted"))
-        val target = HelpAppsPlan.target(draft, catalog)
-        assertEquals(catalog.helpable.map { it.packageName }.toSet() + "com.viva.republica.toss", target)
-        assertEquals(1, HelpAppsPlan.addedBackCount(draft, catalog))
+    @Test fun nothingIsChosenAtFirstSoNothingCanBeSaved() {
+        val draft = HelpAppsDraft()
+        assertEquals(null, draft.mode)
+        assertTrue(HelpAppsPlan.target(draft, catalog).isEmpty())
+        assertFalse(HelpAppsPlan.canSave(draft, catalog))
+        assertFalse(HelpAppsPlan.canSave(draft.copy(mode = HelpAppsMode.ALL), null))
+        assertTrue(HelpAppsPlan.canSave(draft.copy(mode = HelpAppsMode.ALL), catalog))
+        assertEquals(null, HelpAppsDraft.from(null, emptySet(), setOf("com.kakao.talk"), emptySet()).mode)
+    }
+
+    @Test fun allModeTargetsHelpableAppsMinusTheOnesTakenOut() {
+        val draft = HelpAppsDraft(mode = HelpAppsMode.ALL)
+            .toggleHelpedInAll("com.kakao.talk", helped = false)
+            .toggleHelpedInAll("com.coupang.mobile", helped = false)
+            .toggleHelpedInAll("com.coupang.mobile", helped = true)
+        assertEquals(catalog.helpablePackages - "com.kakao.talk", HelpAppsPlan.target(draft, catalog))
+        assertEquals(1, HelpAppsPlan.userExcludedCount(draft, catalog))
+    }
+
+    @Test fun alwaysExcludedAppsAreNeverHelpedWhicheverWay() {
+        val chosen = HelpAppsDraft(mode = HelpAppsMode.CHOSEN, chosen = setOf("com.viva.republica.toss", "com.kakao.talk"))
+        assertEquals(setOf("com.kakao.talk"), HelpAppsPlan.target(chosen, catalog))
+        assertTrue(HelpAppsPlan.target(HelpAppsDraft(HelpAppsMode.ALL), catalog).none { it in catalog.sensitive })
+    }
+
+    @Test fun savingRemovesAnAlreadyAllowedPaymentApp() {
+        val change = HelpAppsPlan.change(HelpAppsDraft(HelpAppsMode.ALL), catalog, setOf("com.viva.republica.toss"))
+        assertEquals(setOf("com.viva.republica.toss"), change.remove)
     }
 
     @Test fun chosenModeTargetsOnlyListedTickedApps() {
@@ -107,9 +141,10 @@ class HelpAppsTest {
     }
 
     @Test fun draftReopensWithWhatAIsAllowsAndWhatIsPending() {
-        val draft = HelpAppsDraft.from(HelpAppsMode.CHOSEN, allowed = setOf("com.kakao.talk"), pending = setOf("com.coupang.mobile"))
+        val draft = HelpAppsDraft.from(HelpAppsMode.CHOSEN, emptySet(), allowed = setOf("com.kakao.talk"), pending = setOf("com.coupang.mobile"))
         assertEquals(setOf("com.kakao.talk", "com.coupang.mobile"), HelpAppsPlan.target(draft, catalog))
-        assertEquals(HelpAppsMode.ALL, HelpAppsDraft.from(null, emptySet(), emptySet()).mode)
+        val all = HelpAppsDraft.from(HelpAppsMode.ALL, setOf("com.kakao.talk"), emptySet(), emptySet())
+        assertFalse("com.kakao.talk" in HelpAppsPlan.target(all, catalog))
     }
 
     // --- 동의 전 보류 → 동의 후 적용 ---
@@ -172,16 +207,32 @@ class HelpAppsTest {
         assertTrue(text("ui_help_apps_all_summary").contains("%1\$d") && text("ui_help_apps_all_summary").contains("%2\$d"))
     }
 
-    @Test fun paymentNoteSaysPaymentAndConsentAreAlwaysChecked() {
-        val line = text("ui_help_apps_payment_note")
-        assertTrue(line.contains("결제") && line.contains("동의") && line.contains("항상 직접 확인"))
+    /** A (10/24): what is analysed, what is always left out, nothing leaves the phone. */
+    @Test fun scopeLineExplainsBeforeTheChoice() {
+        val line = text("ui_help_apps_scope")
+        listOf("접근성", "은행", "결제", "비밀번호", "보호된 화면", "항상 빼", "더 뺄", "휴대폰 밖으로 나가지 않아요")
+            .forEach { assertTrue(it, line.contains(it)) }
+    }
+
+    @Test fun separateConsentLineNamesScreenshotOcrAndAutoClose() {
+        val line = text("ui_help_apps_separate")
+        assertTrue(line.contains("스크린샷") && line.contains("OCR") && line.contains("자동 닫기") && line.contains("따로"))
+    }
+
+    /** The first-run intro must not say ads are closed no matter what (auto close is off by default). */
+    @Test fun introDoesNotPromiseUnconditionalAutoClose() {
+        val line = text("ui_onboarding_intro")
+        assertFalse(line.contains("광고는 자동으로 닫아요"))
+        assertTrue(line.contains("고른 범위") && line.contains("안전 확인"))
     }
 
     @Test fun recommendedModeIsAllApps() = assertTrue(text("ui_help_apps_all").contains("추천"))
 
     @Test fun helpAppsModeIsSavedAndRestored() {
         val store = MapPreferencesForHelpApps()
-        val saved = UiVoiceSettings(helpAppsMode = HelpAppsMode.CHOSEN, pendingHelpPackages = setOf("com.kakao.talk"))
+        val saved = UiVoiceSettings(
+            helpAppsMode = HelpAppsMode.CHOSEN, pendingHelpPackages = setOf("com.kakao.talk"), helpAppsExcluded = setOf("kr.a"),
+        )
         store.edit().also { UiVoicePreferences.writeTo(it, saved) }.apply()
         assertEquals(saved, UiVoicePreferences.readFrom(store))
         assertEquals(null, UiVoicePreferences.readFrom(MapPreferencesForHelpApps()).helpAppsMode)

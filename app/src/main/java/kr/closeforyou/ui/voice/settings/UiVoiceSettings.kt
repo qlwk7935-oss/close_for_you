@@ -29,6 +29,8 @@ data class UiVoiceSettings(
     val helpAppsMode: HelpAppsMode? = null,
     /** Apps saved in "도와줄 앱" that A has not accepted yet (before collection consent). */
     val pendingHelpPackages: Set<String> = emptySet(),
+    /** Apps the person took out of "모든 앱" (A's planned exclusion list can take these over). */
+    val helpAppsExcluded: Set<String> = emptySet(),
 ) {
     fun withAutoClose(packageName: String, enabled: Boolean) = copy(
         autoClosePackages = if (enabled) autoClosePackages + packageName else autoClosePackages - packageName,
@@ -70,9 +72,9 @@ class UiVoicePreferences private constructor(context: Context) {
     fun completeOnboarding(preset: HandlingPreset) =
         write(current().copy(handlingPreset = preset, onboardingDone = true))
 
-    /** "도와줄 앱" saved: the way, and the additions still waiting for A's consent. */
-    fun setHelpApps(mode: HelpAppsMode, pending: Set<String>) =
-        write(current().copy(helpAppsMode = mode, pendingHelpPackages = pending))
+    /** "도와줄 앱" saved: the way, the person's exclusions, and the additions still waiting for A's consent. */
+    fun setHelpApps(mode: HelpAppsMode, excluded: Set<String>, pending: Set<String>) =
+        write(current().copy(helpAppsMode = mode, helpAppsExcluded = excluded, pendingHelpPackages = pending))
 
     fun setPendingHelpPackages(pending: Set<String>) = write(current().copy(pendingHelpPackages = pending))
 
@@ -91,6 +93,7 @@ class UiVoicePreferences private constructor(context: Context) {
         private const val KEY_ONBOARDING_DONE = "onboarding_done_v1"
         private const val KEY_HELP_APPS_MODE = "help_apps_mode_v1"
         private const val KEY_PENDING_HELP = "pending_help_packages_v1"
+        private const val KEY_HELP_EXCLUDED = "help_apps_excluded_v1"
         @Volatile private var instance: UiVoicePreferences? = null
 
         fun get(context: Context): UiVoicePreferences = instance ?: synchronized(this) {
@@ -106,6 +109,7 @@ class UiVoicePreferences private constructor(context: Context) {
             editor.putBoolean(KEY_ONBOARDING_DONE, settings.onboardingDone)
             editor.putString(KEY_HELP_APPS_MODE, settings.helpAppsMode?.name)
             editor.putStringSet(KEY_PENDING_HELP, settings.pendingHelpPackages)
+            editor.putStringSet(KEY_HELP_EXCLUDED, settings.helpAppsExcluded)
         }
 
         internal fun readFrom(preferences: SharedPreferences) = UiVoiceSettings(
@@ -119,6 +123,7 @@ class UiVoicePreferences private constructor(context: Context) {
             onboardingDone = preferences.getBoolean(KEY_ONBOARDING_DONE, false),
             helpAppsMode = HelpAppsMode.entries.firstOrNull { it.name == preferences.getString(KEY_HELP_APPS_MODE, null) },
             pendingHelpPackages = preferences.getStringSet(KEY_PENDING_HELP, emptySet()).orEmpty().toSet(),
+            helpAppsExcluded = preferences.getStringSet(KEY_HELP_EXCLUDED, emptySet()).orEmpty().toSet(),
         )
 
         /** Unknown or missing stored values fall back to the safe default. */

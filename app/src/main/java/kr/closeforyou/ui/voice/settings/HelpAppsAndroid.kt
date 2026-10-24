@@ -43,6 +43,21 @@ class CoreAllowedApps(private val core: CorePreferences) : AllowedAppsTarget {
 }
 
 /**
+ * Placeholder only (A's 10/24 plan): when A adds "분석 범위 모드 + 제외 목록" to `CorePreferences`,
+ * it is wired in this shape. [HelpAppsSync.save]'s [HelpAppsMode.ALL] path then calls
+ * `setAllApps(excluded)` once instead of `addAllowedPackage` per app, and A includes newly
+ * installed apps itself. excluded = [AppCatalog.sensitive] + [UiVoiceSettings.helpAppsExcluded].
+ * No implementation yet; nothing calls it.
+ */
+interface AnalysisScopeTarget {
+    val consentGranted: Boolean
+    /** Every app except [excluded]; false before consent. */
+    fun setAllApps(excluded: Set<String>): Boolean
+    /** Only [packages] (today's allowed list). */
+    fun setChosenApps(packages: Set<String>): Boolean
+}
+
+/**
  * Saves "도와줄 앱" and keeps the additions A could not take yet. [lastOutcome] holds only counts,
  * in memory, for the settings screen's result line.
  */
@@ -50,12 +65,15 @@ object HelpAppsSync {
     private val mutableOutcome = MutableStateFlow<HelpAppsOutcome?>(null)
     val lastOutcome: StateFlow<HelpAppsOutcome?> = mutableOutcome.asStateFlow()
 
+    /** [draft] must have a way chosen ([HelpAppsPlan.canSave]); otherwise nothing is changed. */
     fun save(draft: HelpAppsDraft, catalog: AppCatalog, preferences: UiVoicePreferences, target: AllowedAppsTarget): HelpAppsOutcome {
+        val mode = draft.mode ?: return HelpAppsOutcome()
+        // TODO(A 범위 API): mode == ALL → AnalysisScopeTarget.setAllApps(...) once A has it. Today: one add per app.
         val change = HelpAppsPlan.change(draft, catalog, target.allowed)
         // A new save replaces older pending additions, except those the new draft still wants.
         val stillWanted = preferences.current().pendingHelpPackages intersect HelpAppsPlan.target(draft, catalog)
         val result = HelpAppsApplier.apply(change.copy(add = change.add + stillWanted), target)
-        preferences.setHelpApps(draft.mode, result.stillPending)
+        preferences.setHelpApps(mode, draft.userExcluded intersect catalog.helpablePackages, result.stillPending)
         mutableOutcome.value = result.outcome
         return result.outcome
     }

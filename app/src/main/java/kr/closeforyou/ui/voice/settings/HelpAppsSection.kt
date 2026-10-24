@@ -50,6 +50,7 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.unit.dp
 import androidx.core.graphics.drawable.toBitmap
 import kotlinx.coroutines.Dispatchers
@@ -57,8 +58,16 @@ import kotlinx.coroutines.withContext
 import kr.closeforyou.R
 import kr.closeforyou.app.CorePreferences
 
-/** Which page of "도와줄 앱" is shown. The two lists replace the whole screen. */
-enum class HelpAppsPage { MODE, PICK, EXCLUDED }
+/** Which page of "도와줄 앱" is shown. The lists replace the whole screen. */
+enum class HelpAppsPage {
+    MODE,
+    /** [HelpAppsMode.CHOSEN]: tick the apps to help. */
+    PICK,
+    /** [HelpAppsMode.ALL]: untick apps to take them out. */
+    EXCLUDE_MORE,
+    /** The always-excluded apps, shown only (no checkboxes). */
+    ALWAYS_EXCLUDED,
+}
 
 /** Launcher apps, loaded once off the main thread. Null while loading. */
 @Composable
@@ -72,24 +81,25 @@ fun rememberAppCatalog(): AppCatalog? {
     return catalog
 }
 
-/** Survives rotation: the mode and the two ticked sets. */
+/** Survives rotation: the way (or none yet) and the two sets. */
 val HelpAppsDraftSaver: Saver<HelpAppsDraft, Any> = listSaver(
-    save = { listOf(it.mode.name, ArrayList(it.chosen), ArrayList(it.addedBack)) },
+    save = { listOf(it.mode?.name.orEmpty(), ArrayList(it.chosen), ArrayList(it.userExcluded)) },
     restore = {
         @Suppress("UNCHECKED_CAST")
         HelpAppsDraft(
-            mode = HelpAppsMode.valueOf(it[0] as String),
+            mode = HelpAppsMode.entries.firstOrNull { mode -> mode.name == it[0] },
             chosen = (it[1] as List<String>).toSet(),
-            addedBack = (it[2] as List<String>).toSet(),
+            userExcluded = (it[2] as List<String>).toSet(),
         )
     },
 )
 
 /**
  * "도와줄 앱" editor shared by the first-run step and settings. On [HelpAppsPage.MODE] it is one
- * scrolling column: [top], the two radio rows with their summary, then [bottom] (the caller's
- * buttons). The pick lists are [LazyColumn]s with the count and [완료] first, so TalkBack reaches
- * them without swiping through every app. Focus is never moved.
+ * scrolling column: [top], the scope explanation, the two radio rows (none selected until the
+ * person picks one), the summary, then [bottom] (the caller's buttons). The lists are
+ * [LazyColumn]s with the count and [완료] first, so TalkBack reaches them without swiping through
+ * every app. Focus is never moved.
  */
 @Composable
 fun HelpAppsEditor(
@@ -104,22 +114,42 @@ fun HelpAppsEditor(
 ) {
     if (page != HelpAppsPage.MODE && catalog != null) {
         BackHandler { onPageChange(HelpAppsPage.MODE) }
-        val excludedPage = page == HelpAppsPage.EXCLUDED
-        AppPickList(
-            catalog = catalog,
-            excludedOnly = excludedPage,
-            checked = if (excludedPage) draft.addedBack else draft.chosen,
-            onToggle = { pkg, on ->
-                onDraftChange(if (excludedPage) draft.toggleAddedBack(pkg, on) else draft.toggleChosen(pkg, on))
-            },
-            countLine = if (excludedPage) {
-                stringResource(R.string.ui_help_apps_excluded_count, HelpAppsPlan.addedBackCount(draft, catalog))
-            } else {
-                chosenCountLine(draft, catalog)
-            },
-            onDone = { onPageChange(HelpAppsPage.MODE) },
-            modifier = modifier,
-        )
+        val onDone = { onPageChange(HelpAppsPage.MODE) }
+        when (page) {
+            HelpAppsPage.PICK -> AppPickList(
+                title = stringResource(R.string.ui_help_apps_pick_title),
+                help = null,
+                apps = catalog.helpable,
+                recommended = catalog.recommended,
+                checked = { it in draft.chosen },
+                onToggle = { pkg, on -> onDraftChange(draft.toggleChosen(pkg, on)) },
+                countLine = chosenCountLine(draft, catalog),
+                onDone = onDone,
+                modifier = modifier,
+            )
+            HelpAppsPage.EXCLUDE_MORE -> AppPickList(
+                title = stringResource(R.string.ui_help_apps_exclude_more_title),
+                help = stringResource(R.string.ui_help_apps_exclude_more_help),
+                apps = catalog.helpable,
+                recommended = emptyList(),
+                checked = { it !in draft.userExcluded },
+                onToggle = { pkg, on -> onDraftChange(draft.toggleHelpedInAll(pkg, on)) },
+                countLine = allSummaryLine(draft, catalog),
+                onDone = onDone,
+                modifier = modifier,
+            )
+            else -> AppPickList(
+                title = stringResource(R.string.ui_help_apps_excluded_title),
+                help = stringResource(R.string.ui_help_apps_excluded_help),
+                apps = catalog.excluded,
+                recommended = emptyList(),
+                checked = null,
+                onToggle = { _, _ -> },
+                countLine = stringResource(R.string.ui_help_apps_excluded_count, catalog.excluded.size),
+                onDone = onDone,
+                modifier = modifier,
+            )
+        }
         return
     }
     Column(
@@ -132,7 +162,7 @@ fun HelpAppsEditor(
     }
 }
 
-/** The radio group, then one summary for the chosen way and its list button. */
+/** Scope first, then the radio group, then one summary for the chosen way and its list buttons. */
 @Composable
 private fun HelpAppsModeSection(
     catalog: AppCatalog?,
@@ -141,6 +171,8 @@ private fun HelpAppsModeSection(
     onPageChange: (HelpAppsPage) -> Unit,
 ) {
     Text(stringResource(R.string.ui_help_apps_intro))
+    Text(stringResource(R.string.ui_help_apps_scope))
+    Text(stringResource(R.string.ui_help_apps_separate), style = MaterialTheme.typography.bodySmall)
     Column(Modifier.selectableGroup()) {
         HelpAppsMode.entries.forEach { mode ->
             Row(
@@ -164,25 +196,55 @@ private fun HelpAppsModeSection(
         catalog == null -> Text(stringResource(R.string.ui_help_apps_loading))
         catalog.isEmpty() -> Text(stringResource(R.string.ui_help_apps_list_failed))
         draft.mode == HelpAppsMode.ALL -> {
-            Text(stringResource(R.string.ui_help_apps_all_summary, catalog.helpable.size, catalog.excluded.size))
-            val addedBack = HelpAppsPlan.addedBackCount(draft, catalog)
-            if (addedBack > 0) Text(stringResource(R.string.ui_help_apps_all_added_back, addedBack))
+            Text(allSummaryLine(draft, catalog))
+            OutlinedButton(
+                onClick = { onPageChange(HelpAppsPage.EXCLUDE_MORE) },
+                modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
+            ) { Text(stringResource(R.string.ui_help_apps_exclude_more)) }
             if (catalog.excluded.isNotEmpty()) {
                 OutlinedButton(
-                    onClick = { onPageChange(HelpAppsPage.EXCLUDED) },
+                    onClick = { onPageChange(HelpAppsPage.ALWAYS_EXCLUDED) },
                     modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
                 ) { Text(stringResource(R.string.ui_help_apps_show_excluded)) }
             }
             Text(stringResource(R.string.ui_help_apps_new_apps), style = MaterialTheme.typography.bodySmall)
         }
-        else -> {
+        draft.mode == HelpAppsMode.CHOSEN -> {
             Text(chosenCountLine(draft, catalog))
             OutlinedButton(
                 onClick = { onPageChange(HelpAppsPage.PICK) },
                 modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
             ) { Text(stringResource(R.string.ui_help_apps_pick)) }
         }
+        else -> Unit
     }
+}
+
+/**
+ * The caller's [시작하기]/[저장]: disabled until a way is chosen. While disabled, the reason is
+ * shown above it and also given as the button's state, so TalkBack reads the label, the reason,
+ * then "사용 중지됨".
+ */
+@Composable
+fun HelpAppsSaveButton(label: String, enabled: Boolean, onClick: () -> Unit) {
+    val reason = stringResource(R.string.ui_help_apps_choose_first)
+    if (!enabled) Text(reason)
+    Button(
+        onClick = onClick,
+        enabled = enabled,
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(min = 48.dp)
+            .semantics { if (!enabled) stateDescription = reason },
+    ) { Text(label) }
+}
+
+@Composable
+private fun allSummaryLine(draft: HelpAppsDraft, catalog: AppCatalog): String {
+    val helped = HelpAppsPlan.target(draft.copy(mode = HelpAppsMode.ALL), catalog).size
+    val summary = stringResource(R.string.ui_help_apps_all_summary, helped, catalog.excluded.size)
+    val mine = HelpAppsPlan.userExcludedCount(draft, catalog)
+    return if (mine == 0) summary else summary + " " + stringResource(R.string.ui_help_apps_user_excluded, mine)
 }
 
 @Composable
@@ -193,28 +255,30 @@ private fun chosenCountLine(draft: HelpAppsDraft, catalog: AppCatalog): String {
 }
 
 /**
- * Title, count, [완료], search, then the apps. Without a search: "추천" first (pick list only),
- * then every other app 가나다순. With a search: one flat list and a polite result count.
+ * Title, (help), count, [완료], search, then the apps. Without a search: [recommended] first, then
+ * every other app 가나다순. With a search: one flat list and a polite result count.
+ * [checked] null = shown only, no checkboxes.
  */
 @Composable
 private fun AppPickList(
-    catalog: AppCatalog,
-    excludedOnly: Boolean,
-    checked: Set<String>,
+    title: String,
+    help: String?,
+    apps: List<InstalledApp>,
+    recommended: List<InstalledApp>,
+    checked: ((String) -> Boolean)?,
     onToggle: (String, Boolean) -> Unit,
     countLine: String,
     onDone: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     var query by rememberSaveable { mutableStateOf("") }
-    val base = if (excludedOnly) catalog.excluded else catalog.all
-    val results = remember(base, query) { HelpAppsCatalog.search(base, query) }
-    val recommended = if (excludedOnly || query.isNotBlank()) emptyList() else catalog.recommended
-    val recommendedPackages = recommended.mapTo(HashSet()) { it.packageName }
+    val results = remember(apps, query) { HelpAppsCatalog.search(apps, query) }
+    val shownRecommended = if (query.isNotBlank()) emptyList() else recommended
+    val recommendedPackages = shownRecommended.mapTo(HashSet()) { it.packageName }
     val rest = results.filter { it.packageName !in recommendedPackages }
-    val row: LazyListScope.(List<InstalledApp>) -> Unit = { apps ->
-        items(apps, key = { it.packageName }) { app ->
-            AppCheckRow(app, app.packageName in checked, app.packageName in catalog.sensitive, onToggle)
+    val row: LazyListScope.(List<InstalledApp>) -> Unit = { list ->
+        items(list, key = { it.packageName }) { app ->
+            if (checked == null) AppInfoRow(app) else AppCheckRow(app, checked(app.packageName), onToggle)
         }
     }
     LazyColumn(
@@ -224,12 +288,8 @@ private fun AppPickList(
     ) {
         item {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text(
-                    stringResource(if (excludedOnly) R.string.ui_help_apps_excluded_title else R.string.ui_help_apps_pick_title),
-                    style = MaterialTheme.typography.titleLarge,
-                    modifier = Modifier.semantics { heading() },
-                )
-                if (excludedOnly) Text(stringResource(R.string.ui_help_apps_excluded_help))
+                Text(title, style = MaterialTheme.typography.titleLarge, modifier = Modifier.semantics { heading() })
+                if (help != null) Text(help)
                 Text(countLine)
                 Button(onClick = onDone, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) {
                     Text(stringResource(R.string.ui_help_apps_done))
@@ -251,9 +311,9 @@ private fun AppPickList(
                 }
             }
         }
-        if (recommended.isNotEmpty()) {
+        if (shownRecommended.isNotEmpty()) {
             item { GroupHeading(R.string.ui_help_apps_recommended) }
-            row(recommended)
+            row(shownRecommended)
             item { GroupHeading(R.string.ui_help_apps_all_list) }
         }
         row(rest)
@@ -269,34 +329,31 @@ private fun GroupHeading(textRes: Int) {
     }
 }
 
-/**
- * One TalkBack node: "유튜브, 체크 안 됨, 체크 상자" (payment-like apps add "결제 앱일 수 있어요").
- * Ticking such an app shows the payment note below as a polite live region, read once.
- */
+/** One TalkBack node: "유튜브, 체크 안 됨, 체크 상자". */
 @Composable
-private fun AppCheckRow(app: InstalledApp, checked: Boolean, sensitive: Boolean, onToggle: (String, Boolean) -> Unit) {
-    Column {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .heightIn(min = 56.dp)
-                .toggleable(value = checked, role = Role.Checkbox) { onToggle(app.packageName, it) },
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            AppIcon(app.packageName)
-            Column(Modifier.weight(1f).padding(horizontal = 12.dp, vertical = 4.dp)) {
-                Text(app.label)
-                if (sensitive) Text(stringResource(R.string.ui_help_apps_payment_hint), style = MaterialTheme.typography.bodySmall)
-            }
-            Checkbox(checked = checked, onCheckedChange = null)
-        }
-        if (checked && sensitive) {
-            Text(
-                stringResource(R.string.ui_help_apps_payment_note),
-                style = MaterialTheme.typography.bodySmall,
-                modifier = Modifier.padding(start = 52.dp, bottom = 4.dp).semantics { liveRegion = LiveRegionMode.Polite },
-            )
-        }
+private fun AppCheckRow(app: InstalledApp, checked: Boolean, onToggle: (String, Boolean) -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(min = 56.dp)
+            .toggleable(value = checked, role = Role.Checkbox) { onToggle(app.packageName, it) },
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        AppIcon(app.packageName)
+        Text(app.label, Modifier.weight(1f).padding(horizontal = 12.dp, vertical = 4.dp))
+        Checkbox(checked = checked, onCheckedChange = null)
+    }
+}
+
+/** Always-excluded app: name only, one node, nothing to press. */
+@Composable
+private fun AppInfoRow(app: InstalledApp) {
+    Row(
+        modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).semantics(mergeDescendants = true) {},
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        AppIcon(app.packageName)
+        Text(app.label, Modifier.padding(horizontal = 12.dp, vertical = 4.dp))
     }
 }
 
@@ -358,7 +415,10 @@ fun HelpAppsEditScreen(onClose: () -> Unit, modifier: Modifier = Modifier) {
     var draft by rememberSaveable(stateSaver = HelpAppsDraftSaver) {
         val settings = preferences.current()
         mutableStateOf(
-            HelpAppsDraft.from(settings.helpAppsMode, core.currentSettings().allowedPackages, settings.pendingHelpPackages),
+            HelpAppsDraft.from(
+                settings.helpAppsMode, settings.helpAppsExcluded,
+                core.currentSettings().allowedPackages, settings.pendingHelpPackages,
+            ),
         )
     }
     var page by rememberSaveable { mutableStateOf(HelpAppsPage.MODE) }
@@ -378,14 +438,14 @@ fun HelpAppsEditScreen(onClose: () -> Unit, modifier: Modifier = Modifier) {
             )
         },
         bottom = {
-            Button(
+            HelpAppsSaveButton(
+                label = stringResource(R.string.ui_help_apps_save),
+                enabled = HelpAppsPlan.canSave(draft, catalog),
                 onClick = {
                     if (catalog != null) HelpAppsSync.save(draft, catalog, preferences, CoreAllowedApps(core))
                     onClose()
                 },
-                enabled = catalog != null,
-                modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
-            ) { Text(stringResource(R.string.ui_help_apps_save)) }
+            )
             OutlinedButton(onClick = onClose, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) {
                 Text(stringResource(R.string.ui_help_apps_cancel))
             }

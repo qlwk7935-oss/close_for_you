@@ -75,7 +75,8 @@ private enum class OnboardingStep { PRESET, HELP_APPS }
 /**
  * First-run setup in two steps.
  * 1. Short explanation → the preset radio group → fixed lines → [다음].
- * 2. "도와줄 앱" ([HelpAppsEditor], 모든 앱 by default) → [시작하기] / [이전 단계] / [건너뛰기].
+ * 2. "도와줄 앱" ([HelpAppsEditor], no way pre-selected; [시작하기] waits for one) →
+ *    [시작하기] / [이전 단계] / [건너뛰기].
  * Nothing is saved before [시작하기] or [건너뛰기]; rotation keeps the choices ([rememberSaveable]).
  * Reading order = layout order and focus is never moved, so TalkBack starts wherever it is.
  */
@@ -157,11 +158,11 @@ private fun HelpAppsStep(
         },
         bottom = {
             if (!consentGranted) Text(stringResource(R.string.ui_onboarding_help_apps_consent))
-            Button(
+            HelpAppsSaveButton(
+                label = stringResource(R.string.ui_onboarding_start),
+                enabled = HelpAppsPlan.canSave(draft, catalog),
                 onClick = { onStart(catalog?.let { OnboardingHelpApps(draft, it) }) },
-                enabled = catalog != null,
-                modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
-            ) { Text(stringResource(R.string.ui_onboarding_start)) }
+            )
             OutlinedButton(onClick = onBack, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) {
                 Text(stringResource(R.string.ui_onboarding_back))
             }

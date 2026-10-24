@@ -10,7 +10,7 @@ import java.util.Locale
  * never logged (CLAUDE.local.md 3-3).
  */
 enum class HelpAppsMode {
-    /** Every launchable app except our own and [SensitiveAppRules] matches (unless added back). */
+    /** Every launchable app except our own, [SensitiveAppRules] matches and the person's exclusions. */
     ALL,
     /** Only the apps the person ticked. */
     CHOSEN,
@@ -26,7 +26,7 @@ fun interface InstalledAppSource {
 
 /**
  * Apps that look like banking, securities, payment, card, simple-pay or password-manager apps.
- * Excluded from [HelpAppsMode.ALL] by default; the person may add one back.
+ * Always left out, in both ways (A, 10/24: "[모든 앱]이어도 항상 뺀다"); the list is only shown.
  *
  * Android's `ApplicationInfo.category` has no finance or payment category (only game, audio,
  * video, image, social, news, maps, productivity, accessibility), so it cannot help here; the
@@ -65,7 +65,8 @@ object SensitiveAppRules {
 
 /**
  * Apps with many ad popups, shown first under "추천" when installed. Order = shown order.
- * Package names are the public store ids; the person should double-check the list (report).
+ * [PACKAGES] holds only ids we are sure of; apps whose id we are not sure of are matched by their
+ * visible name ([NAMES]) instead, so a wrong id never silently drops or adds an app.
  */
 object RecommendedApps {
     val PACKAGES: List<String> = listOf(
@@ -76,16 +77,12 @@ object RecommendedApps {
         "com.instagram.android", // 인스타그램
         "com.zhiliaoapp.musically", // 틱톡
         "com.ss.android.ugc.trill", // 틱톡 (다른 지역판)
-        "com.coupang.mobile.eats", // 쿠팡이츠
-        "com.sampleapp", // 배달의민족
-        "com.fineapp.yogiyo", // 요기요
-        "com.towneers.www", // 당근
-        "com.elevenst", // 11번가
-        "com.ebay.kr.gmarket", // G마켓
-        "com.alibaba.aliexpresshd", // 알리익스프레스
-        "com.einnovation.temu", // 테무
-        "com.nhn.android.webtoon", // 네이버 웹툰
-        "com.kakao.page", // 카카오페이지
+    )
+
+    /** Visible names (spaces and case ignored, part match). 확인 필요: device labels may differ. */
+    val NAMES: List<String> = listOf(
+        "쿠팡이츠", "배달의민족", "요기요", "당근", "11번가", "G마켓", "알리익스프레스", "AliExpress",
+        "테무", "Temu", "네이버웹툰", "카카오페이지",
     )
 }
 
@@ -93,14 +90,15 @@ object RecommendedApps {
 data class AppCatalog(
     /** Every launchable app, 가나다순. */
     val all: List<InstalledApp>,
-    /** Package names [SensitiveAppRules] excludes from [HelpAppsMode.ALL]. */
+    /** Package names [SensitiveAppRules] always leaves out, in both ways. */
     val sensitive: Set<String>,
-    /** Installed [RecommendedApps], in that list's order. */
+    /** Installed [RecommendedApps] that are not [sensitive], in that list's order. */
     val recommended: List<InstalledApp>,
 ) {
     val helpable: List<InstalledApp> get() = all.filter { it.packageName !in sensitive }
     val excluded: List<InstalledApp> get() = all.filter { it.packageName in sensitive }
     val packages: Set<String> get() = all.mapTo(LinkedHashSet()) { it.packageName }
+    val helpablePackages: Set<String> get() = helpable.mapTo(LinkedHashSet()) { it.packageName }
     fun isEmpty() = all.isEmpty()
 }
 
@@ -114,11 +112,14 @@ object HelpAppsCatalog {
             .distinctBy { it.packageName }
             .map { if (it.label.isBlank()) it.copy(label = it.packageName) else it.copy(label = it.label.trim()) }
             .sortedWith { a, b -> collator.compare(a.label, b.label).takeIf { it != 0 } ?: a.packageName.compareTo(b.packageName) }
+        val sensitive = all.filter(SensitiveAppRules::looksSensitive).mapTo(LinkedHashSet()) { it.packageName }
         val byPackage = all.associateBy { it.packageName }
+        val byId = RecommendedApps.PACKAGES.mapNotNull { byPackage[it] }
+        val byName = RecommendedApps.NAMES.flatMap { name -> all.filter { normalize(name) in normalize(it.label) } }
         return AppCatalog(
             all = all,
-            sensitive = all.filter(SensitiveAppRules::looksSensitive).mapTo(LinkedHashSet()) { it.packageName },
-            recommended = RecommendedApps.PACKAGES.mapNotNull { byPackage[it] },
+            sensitive = sensitive,
+            recommended = (byId + byName).distinctBy { it.packageName }.filter { it.packageName !in sensitive },
         )
     }
 
@@ -133,30 +134,30 @@ object HelpAppsCatalog {
 }
 
 /**
- * The picker's unsaved state. [chosen] is used in [HelpAppsMode.CHOSEN]; [addedBack] holds the
- * excluded apps the person added back in [HelpAppsMode.ALL].
+ * The picker's unsaved state. [mode] starts null: nothing is chosen for the person (A, 10/24 —
+ * analysing every app must never be on without the person picking it). [chosen] is used in
+ * [HelpAppsMode.CHOSEN]; [userExcluded] holds the apps the person took out of [HelpAppsMode.ALL].
  */
 data class HelpAppsDraft(
-    val mode: HelpAppsMode = HelpAppsMode.ALL,
+    val mode: HelpAppsMode? = null,
     val chosen: Set<String> = emptySet(),
-    val addedBack: Set<String> = emptySet(),
+    val userExcluded: Set<String> = emptySet(),
 ) {
     fun toggleChosen(packageName: String, on: Boolean) =
         copy(chosen = if (on) chosen + packageName else chosen - packageName)
 
-    fun toggleAddedBack(packageName: String, on: Boolean) =
-        copy(addedBack = if (on) addedBack + packageName else addedBack - packageName)
+    /** In [HelpAppsMode.ALL]: [helped] false takes the app out, true puts it back. */
+    fun toggleHelpedInAll(packageName: String, helped: Boolean) =
+        copy(userExcluded = if (helped) userExcluded - packageName else userExcluded + packageName)
 
     companion object {
         /**
-         * Opening the picker again shows what A already allows (plus what still waits for consent)
-         * as ticked. The first time ([savedMode] null) starts at [HelpAppsMode.ALL] (recommended).
+         * Opening the picker again: the saved way, the saved exclusions, and what A already allows
+         * (plus what still waits for consent) as ticked. Never saved before → no way chosen.
          * Unlisted packages may be in the sets; [HelpAppsPlan] only ever counts listed ones.
          */
-        fun from(savedMode: HelpAppsMode?, allowed: Set<String>, pending: Set<String>): HelpAppsDraft {
-            val on = allowed + pending
-            return HelpAppsDraft(mode = savedMode ?: HelpAppsMode.ALL, chosen = on, addedBack = on)
-        }
+        fun from(savedMode: HelpAppsMode?, savedExcluded: Set<String>, allowed: Set<String>, pending: Set<String>) =
+            HelpAppsDraft(mode = savedMode, chosen = allowed + pending, userExcluded = savedExcluded)
     }
 }
 
@@ -164,19 +165,27 @@ data class HelpAppsDraft(
 data class HelpAppsChange(val add: Set<String>, val remove: Set<String>)
 
 object HelpAppsPlan {
-    /** Apps that should be helped after saving [draft]. Only listed apps count. */
+    /**
+     * Apps that should be helped after saving [draft]. Only listed apps count, and
+     * [AppCatalog.sensitive] apps are never in it, whichever way. No way chosen → nothing.
+     */
     fun target(draft: HelpAppsDraft, catalog: AppCatalog): Set<String> = when (draft.mode) {
-        HelpAppsMode.ALL -> catalog.helpable.mapTo(LinkedHashSet()) { it.packageName } +
-            (draft.addedBack intersect catalog.sensitive)
-        HelpAppsMode.CHOSEN -> draft.chosen intersect catalog.packages
+        HelpAppsMode.ALL -> catalog.helpablePackages - draft.userExcluded
+        HelpAppsMode.CHOSEN -> draft.chosen intersect catalog.helpablePackages
+        null -> emptySet()
     }
 
-    /** Excluded apps added back in [HelpAppsMode.ALL] (for "뺀 앱 중 N개는 다시 넣었어요"). */
-    fun addedBackCount(draft: HelpAppsDraft, catalog: AppCatalog): Int = (draft.addedBack intersect catalog.sensitive).size
+    /** Apps the person took out of [HelpAppsMode.ALL] (for "직접 뺀 앱 N개"). */
+    fun userExcludedCount(draft: HelpAppsDraft, catalog: AppCatalog): Int =
+        (draft.userExcluded intersect catalog.helpablePackages).size
+
+    /** [저장]/[시작하기] only once a way is chosen. */
+    fun canSave(draft: HelpAppsDraft, catalog: AppCatalog?): Boolean = draft.mode != null && catalog != null
 
     /**
-     * Adds what is missing; removes only listed apps the person left unticked. Packages A allows
-     * that the picker does not list (typed in A's debug field, or hidden) are left alone.
+     * Adds what is missing; removes listed apps that are not in the target (unticked, taken out,
+     * or always-excluded). Packages A allows that the picker does not list (typed in A's debug
+     * field, or hidden) are left alone.
      */
     fun change(draft: HelpAppsDraft, catalog: AppCatalog, allowed: Set<String>): HelpAppsChange {
         val target = target(draft, catalog)
