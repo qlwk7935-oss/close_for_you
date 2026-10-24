@@ -20,9 +20,11 @@ import kr.closeforyou.ui.voice.TtsPopupAnnouncer
 import kr.closeforyou.ui.voice.choice.ChoicePrompt
 import kr.closeforyou.ui.voice.overlay.AccessibilityChoiceOverlay
 import kr.closeforyou.ui.voice.overlay.OverlayWindowState
+import kr.closeforyou.ui.voice.overlay.PromptAnswer
 import kr.closeforyou.ui.voice.overlay.PromptShowResult
 import kr.closeforyou.ui.voice.overlay.PromptAnnouncementListener
 import kr.closeforyou.ui.voice.overlay.PromptControlsSupport
+import kr.closeforyou.ui.voice.overlay.RevalidationCause
 import kr.closeforyou.ui.voice.settings.UiVoicePreferences
 import java.lang.ref.WeakReference
 
@@ -93,7 +95,14 @@ class ChoiceOverlayTestService : AccessibilityService() {
         nodeDump.stopWatch(reason)
     }
 
-    private fun showLater(prompt: ChoicePrompt, content: String, delayMillis: Long, ttsDelayMillis: Long, diagnose: Boolean) {
+    private fun showLater(
+        prompt: ChoicePrompt,
+        content: String,
+        delayMillis: Long,
+        ttsDelayMillis: Long,
+        diagnose: Boolean,
+        revalidateDemo: RevalidateDemo,
+    ) {
         handler.removeCallbacksAndMessages(null)
         diagnostics.disarm()
         this.diagnose = diagnose
@@ -116,17 +125,44 @@ class ChoiceOverlayTestService : AccessibilityService() {
                 ),
                 // Same [말하기]·[다시 듣기]·[그만 말하기] as the real prompt (synthetic fixtures only).
                 PromptControlsSupport.create(this, tts),
+                revalidatingEnabled = revalidateDemo != RevalidateDemo.OFF,
             )
             overlay = next
-            val startedAt = SystemClock.uptimeMillis()
-            val result = next.show(prompt) { choice ->
-                nodeDump.onPromptGone()
-                mutableLastChoice.value = choice
-                if (choice.kind == ChoiceKind.READ_CONTENT) readContent(choice, content)
+            val onAnswer: (PromptAnswer) -> Unit = { answer ->
+                if (answer is PromptAnswer.Picked) {
+                    nodeDump.onPromptGone()
+                    mutableLastChoice.value = answer.choice
+                    if (answer.choice.kind == ChoiceKind.READ_CONTENT) readContent(answer.choice, content)
+                }
             }
+            val startedAt = SystemClock.uptimeMillis()
+            val result = next.present(prompt, onAnswer)
             if (diagnose) diagnostics.onShown(startedAt, result.ordinal)
-            if (result == PromptShowResult.SHOWN) nodeDump.onPromptShown()
+            if (result == PromptShowResult.SHOWN) {
+                nodeDump.onPromptShown()
+                if (revalidateDemo != RevalidateDemo.OFF) demoRevalidation(next, prompt, onAnswer, revalidateDemo)
+            }
         }, delayMillis)
+    }
+
+    /**
+     * REVALIDATING demo (adb extra only): stands in for A's three signals with the same synthetic
+     * prompt. Each step runs only if this overlay is still the one shown; the handler is cleared on the
+     * next show and on destroy, and the overlay cancels its own timeout when it closes.
+     */
+    private fun demoRevalidation(
+        target: AccessibilityChoiceOverlay,
+        prompt: ChoicePrompt,
+        onAnswer: (PromptAnswer) -> Unit,
+        demo: RevalidateDemo,
+    ) {
+        handler.postDelayed({
+            if (overlay !== target) return@postDelayed
+            if (!target.beginRevalidation(RevalidationCause.OTHER) || demo != RevalidateDemo.CONFIRM) return@postDelayed
+            handler.postDelayed({
+                if (overlay === target) target.confirmSamePopup(prompt, onAnswer)
+            }, DEMO_CONFIRM_AFTER_MILLIS)
+        }, DEMO_BEGIN_AFTER_MILLIS)
     }
 
     private fun watchEvents(millis: Long) {
@@ -149,6 +185,8 @@ class ChoiceOverlayTestService : AccessibilityService() {
     }
 
     companion object {
+        private const val DEMO_BEGIN_AFTER_MILLIS = 3_000L
+        private const val DEMO_CONFIRM_AFTER_MILLIS = 2_000L
         private var lastSession = OverlayNodeDump.NO_SESSION
         private var current: WeakReference<ChoiceOverlayTestService>? = null
         private val mutableConnected = MutableStateFlow(false)
@@ -193,11 +231,16 @@ class ChoiceOverlayTestService : AccessibilityService() {
             ttsDelayMillis: Long = PromptAnnouncementListener.DEFAULT_TTS_DELAY_MILLIS,
             /** Issue #29 diagnosis for this show (adb extra only): logs window facts under C29Diag. */
             diagnose: Boolean = false,
+            /** REVALIDATING demo for this show (adb extra only). */
+            revalidateDemo: RevalidateDemo = RevalidateDemo.OFF,
         ): Boolean {
             val service = current?.get() ?: return false
             mutableLastChoice.value = null
-            service.showLater(prompt, content, delayMillis, ttsDelayMillis, diagnose)
+            service.showLater(prompt, content, delayMillis, ttsDelayMillis, diagnose, revalidateDemo)
             return true
         }
     }
 }
+
+/** Debug REVALIDATING demo: off, "다시 확인 중" then confirmed, or "다시 확인 중" until the timeout. */
+enum class RevalidateDemo { OFF, CONFIRM, TIMEOUT }

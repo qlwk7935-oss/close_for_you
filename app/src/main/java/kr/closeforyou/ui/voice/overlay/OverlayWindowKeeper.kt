@@ -9,6 +9,13 @@ enum class OverlayWindowStatus {
     SHOWING,
 
     /**
+     * A asked C to wait for a re-check ([RevalidatingFeature], off by default): the same window stays
+     * on screen with its content cleared and every button disabled. No answer is accepted. It ends
+     * as SHOWING (same popup: new prompt, new generation, same window) or HIDDEN (end, timeout, dismiss).
+     */
+    REVALIDATING,
+
+    /**
      * Removing the window failed: it may still be on screen, blanked and with every callback dead.
      * The next show/dismiss retries removal; until it succeeds no new prompt is shown.
      */
@@ -60,6 +67,22 @@ internal interface OverlayWindowOps<W : Any> {
 
     /** Ends the window's lifecycle (OverlayLifecycleOwner.destroy). */
     fun destroy(window: W)
+
+    /**
+     * Keeps the window added but clears its prompt, disables every button, stops listening and
+     * speech, and shows the one "다시 확인하고 있어요" line. Never moves TalkBack focus.
+     */
+    fun enterRevalidating(window: W)
+}
+
+/** Schedules the REVALIDATING timeout on the main thread; the returned function cancels it. */
+internal fun interface RevalidationTimer {
+    fun schedule(delayMillis: Long, action: () -> Unit): () -> Unit
+
+    companion object {
+        /** Never fires: for keepers that are never asked to revalidate (JVM fakes). */
+        val NEVER = RevalidationTimer { _, _ -> {} }
+    }
 }
 
 /**
@@ -74,22 +97,36 @@ internal interface OverlayWindowOps<W : Any> {
  *   show/dismiss, and no new prompt is shown while it stays.
  * - stop and destroy run exactly once per window, whether removal succeeds or not; a failed
  *   create/add/announce releases everything made so far (review #18-2).
+ * - REVALIDATING (issue #29, off by default): [beginRevalidation] takes a new generation at once, so
+ *   every tap, voice result and controller callback of the old prompt is dropped. The window is not
+ *   removed (its window id stays, so A sees fewer window events). [confirmRevalidation] puts a new
+ *   prompt in the same window under another new generation; [endRevalidation], the timeout,
+ *   [dismiss] and [show] close it like a showing window (REMOVE_FAILED rules unchanged).
  *
  * Main thread only.
  */
-internal class OverlayWindowKeeper<W : Any>(private val ops: OverlayWindowOps<W>) {
-    private class Entry<W>(val window: W, val generation: Long) {
+internal class OverlayWindowKeeper<W : Any>(
+    private val ops: OverlayWindowOps<W>,
+    private val timer: RevalidationTimer = RevalidationTimer.NEVER,
+    private val revalidationTimeoutMillis: Long = RevalidatingFeature.TIMEOUT_MILLIS,
+) {
+    private class Entry<W>(val window: W, var generation: Long) {
+        /** The generation the window was added with; unchanged by revalidation. */
+        val windowNumber = generation
         var stopped = false
         var destroyed = false
     }
 
     private var lastGeneration = NO_GENERATION
     private var showing: Entry<W>? = null
+    private var revalidating: Entry<W>? = null
     private var stuck: Entry<W>? = null
+    private var cancelTimeout: (() -> Unit)? = null
 
     val status: OverlayWindowStatus
         get() = when {
             showing != null -> OverlayWindowStatus.SHOWING
+            revalidating != null -> OverlayWindowStatus.REVALIDATING
             stuck != null -> OverlayWindowStatus.REMOVE_FAILED
             else -> OverlayWindowStatus.HIDDEN
         }
@@ -97,15 +134,20 @@ internal class OverlayWindowKeeper<W : Any>(private val ops: OverlayWindowOps<W>
     /** Generation whose callbacks are accepted, or [NO_GENERATION]. */
     val currentGeneration: Long get() = showing?.generation ?: NO_GENERATION
 
-    /** Generation of the window still on screen (showing or stuck), or [NO_GENERATION]. */
-    val windowGeneration: Long get() = (showing ?: stuck)?.generation ?: NO_GENERATION
+    private val onScreen: Entry<W>? get() = showing ?: revalidating ?: stuck
+
+    /** Generation of the window still on screen (showing, revalidating or stuck), or [NO_GENERATION]. */
+    val windowGeneration: Long get() = onScreen?.generation ?: NO_GENERATION
+
+    /** Which added window is on screen ([Entry.windowNumber]); the same through revalidation. */
+    val windowNumber: Long get() = onScreen?.windowNumber ?: NO_GENERATION
 
     fun isCurrent(generation: Long): Boolean =
         generation != NO_GENERATION && showing?.generation == generation
 
     /** Replaces the current window with one made by [create] for a new generation. */
     fun show(create: (generation: Long) -> W): PromptShowResult {
-        closeShowing()
+        closeOpen()
         if (!retryStuck()) return PromptShowResult.BLOCKED
         val generation = ++lastGeneration
         // create releases its own partial work when it throws (AccessibilityChoiceOverlay).
@@ -127,10 +169,68 @@ internal class OverlayWindowKeeper<W : Any>(private val ops: OverlayWindowOps<W>
         try {
             ops.announceShown(window)
         } catch (e: RuntimeException) {
-            closeShowing()
+            closeOpen()
             return PromptShowResult.FAILED
         }
         return PromptShowResult.SHOWN
+    }
+
+    /**
+     * SHOWING → REVALIDATING. The old generation stops being current *before* the window changes.
+     * True when the window is now (or already was) revalidating; false when nothing was showing,
+     * or clearing the window failed (it is then closed). A second call does not restart the timeout,
+     * so repeated invalidations cannot keep the window up. [onTimeout] runs once the timeout has
+     * closed the window, only for this revalidation.
+     */
+    fun beginRevalidation(onTimeout: () -> Unit = {}): Boolean {
+        if (revalidating != null) return true
+        val entry = showing ?: return false
+        showing = null
+        val generation = ++lastGeneration
+        entry.generation = generation
+        revalidating = entry
+        try {
+            ops.enterRevalidating(entry.window)
+        } catch (e: RuntimeException) {
+            closeOpen()
+            return false
+        }
+        cancelTimeout = timer.schedule(revalidationTimeoutMillis) {
+            // A late timer of an older revalidation must not touch this one (or its cancel handle).
+            if (revalidating?.generation != generation) return@schedule
+            cancelTimeout = null
+            closeOpen()
+            onTimeout()
+        }
+        return true
+    }
+
+    /**
+     * REVALIDATING → SHOWING: [refill] puts the new prompt into the same window under a new
+     * generation (no add, no remove). FAILED when not revalidating (the caller shows a new window
+     * instead) or when [refill] threw (the window is then closed).
+     */
+    fun confirmRevalidation(refill: (window: W, generation: Long) -> Unit): PromptShowResult {
+        val entry = revalidating ?: return PromptShowResult.FAILED
+        cancelRevalidationTimeout()
+        val generation = ++lastGeneration
+        try {
+            refill(entry.window, generation)
+        } catch (e: RuntimeException) {
+            closeOpen()
+            return PromptShowResult.FAILED
+        }
+        entry.generation = generation
+        revalidating = null
+        showing = entry
+        return PromptShowResult.SHOWN
+    }
+
+    /** REVALIDATING → HIDDEN (or REMOVE_FAILED). False when nothing was revalidating. */
+    fun endRevalidation(): Boolean {
+        if (revalidating == null) return false
+        closeOpen()
+        return true
     }
 
     /**
@@ -141,7 +241,7 @@ internal class OverlayWindowKeeper<W : Any>(private val ops: OverlayWindowOps<W>
     fun deliver(answer: PromptAnswer, closesWindow: Boolean, onAnswer: (PromptAnswer) -> Unit) {
         if (!isCurrent(answer.generation)) return
         if (closesWindow) {
-            closeShowing()
+            closeOpen()
             if (stuck != null) {
                 onAnswer(PromptAnswer.Lost(answer.generation))
                 return
@@ -150,14 +250,16 @@ internal class OverlayWindowKeeper<W : Any>(private val ops: OverlayWindowOps<W>
         onAnswer(answer)
     }
 
-    /** Closes the current window, or retries removing a stuck one. Safe to call any number of times. */
+    /** Closes the current or revalidating window, or retries removing a stuck one. Safe to call any number of times. */
     fun dismiss() {
-        if (showing != null) closeShowing() else retryStuck()
+        if (showing != null || revalidating != null) closeOpen() else retryStuck()
     }
 
-    private fun closeShowing() {
-        val entry = showing ?: return
+    private fun closeOpen() {
+        val entry = showing ?: revalidating ?: return
         showing = null // from here on nothing from this window reaches B or A
+        revalidating = null
+        cancelRevalidationTimeout()
         safely { ops.announceDismissed(entry.window) }
         stop(entry)
         finishRemoval(entry, remove(entry.window, immediate = false))
@@ -180,6 +282,12 @@ internal class OverlayWindowKeeper<W : Any>(private val ops: OverlayWindowOps<W>
         if (remove(entry.window, immediate = true) == RemoveOutcome.FAILED) return false
         stuck = null
         return true
+    }
+
+    private fun cancelRevalidationTimeout() {
+        val cancel = cancelTimeout ?: return
+        cancelTimeout = null
+        safely { cancel() }
     }
 
     private fun stop(entry: Entry<W>) {

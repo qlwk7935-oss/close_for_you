@@ -56,6 +56,14 @@
     <string name="ui_prompt_show_failed">팝업이 나타났지만 선택 창을 띄우지 못했어요. 팝업은 직접 확인해 주세요.</string>
     <!-- 선택했지만 선택 창이 닫히지 않아 그 선택을 실행하지 않음 -->
     <string name="ui_prompt_window_stuck">선택 창을 닫지 못해서 고른 것을 실행하지 않았어요. 팝업은 그대로 있어요.</string>
+    <!-- REVALIDATING (#29, 기능 플래그로 꺼 둠): A가 같은 팝업인지 다시 확인하는 동안. 창은 그대로, 버튼은 비활성. liveRegion으로 1번. 명령어 금지 -->
+    <string name="ui_revalidate_checking">다시 확인하고 있어요.</string>
+    <!-- 같은 팝업으로 확인됨: 같은 창에 새 내용. 처음처럼 길게 다시 읽지 않고 상태 줄(liveRegion)로 1번 -->
+    <string name="ui_revalidate_confirmed">다시 확인했어요.</string>
+    <!-- 다른 팝업·화면 바뀜으로 창을 닫음 (창이 없어져 자체 음성으로 1번) -->
+    <string name="ui_revalidate_closed_changed">팝업이 바뀌어서 선택 창을 닫았어요.</string>
+    <!-- 정해진 시간 안에 같은 팝업이 확인되지 않아 창을 닫음 -->
+    <string name="ui_revalidate_closed_timeout">다시 확인하지 못해서 선택 창을 닫았어요. 팝업은 직접 확인해 주세요.</string>
     <string name="ui_remember_auto_close_off">이 앱은 자동 닫기가 꺼져 있어서 다음에도 물어볼게요. 설정에서 켤 수 있어요.</string>
     <string name="ui_remember_auto_close_on">똑같은 팝업이 다시 뜨면 안전 확인을 한 뒤 닫아요. 설정에서 언제든 해제할 수 있어요.</string>
     <string name="ui_choice_read_content">내용 다시 읽기</string>

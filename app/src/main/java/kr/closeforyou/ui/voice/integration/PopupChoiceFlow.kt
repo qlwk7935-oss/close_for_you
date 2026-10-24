@@ -2,7 +2,9 @@ package kr.closeforyou.ui.voice.integration
 
 import kotlin.coroutines.resume
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import kr.closeforyou.R
@@ -36,8 +38,12 @@ import kr.closeforyou.ui.voice.choice.VideoAdInfo
 import kr.closeforyou.ui.voice.overlay.ChoiceOrigin
 import kr.closeforyou.ui.voice.overlay.ChoicePromptPresenter
 import kr.closeforyou.ui.voice.overlay.OverlayWindowKeeper
+import kr.closeforyou.ui.voice.overlay.OverlayWindowStatus
 import kr.closeforyou.ui.voice.overlay.PromptAnswer
 import kr.closeforyou.ui.voice.overlay.PromptShowResult
+import kr.closeforyou.ui.voice.overlay.RevalidatingFeature
+import kr.closeforyou.ui.voice.overlay.RevalidationCause
+import kr.closeforyou.ui.voice.overlay.RevalidationEnd
 
 /**
  * A (or B) hands C's choice to the safety path: B's ActionPolicy, then A's single action gate.
@@ -81,6 +87,14 @@ fun interface UiText {
  *   for a skip button, as B checks the role). The rule key is prepared by [rememberStore] before
  *   the press (team decision 10/21); only MECHANICAL_SUCCESS commits it, once; any other result
  *   drops it and is spoken like a one-time press. The handler is still called at most once per tap.
+ * - REVALIDATING ([revalidatingEnabled], off by default; off = everything above unchanged):
+ *   `Invalidated` puts the prompt on screen into "다시 확인 중" instead of closing it (signal 1).
+ *   The next `Candidate` for which A's [isSamePopup] says yes refills the same window (signal 2);
+ *   any other `Candidate` closes it with one sentence and shows its own prompt, `Blocked` closes it
+ *   silently (signal 3). Whether it is "the same popup" is A's rule only: C never guesses, and
+ *   until A provides [isSamePopup] every candidate counts as different. A can also call
+ *   [ChoicePromptPresenter.endRevalidation] directly; with no answer the window closes after
+ *   [kr.closeforyou.ui.voice.overlay.RevalidatingFeature.TIMEOUT_MILLIS].
  *
  * Call [run] from a main-thread coroutine owned by the service; cancel it when the service stops.
  */
@@ -107,22 +121,69 @@ class PopupChoiceFlow(
      */
     private val videoAdOf: (PopupAnalysis) -> VideoAdInfo? = { null },
     private val videoAdEnabled: Boolean = VideoAdAnnouncementFeature.enabled,
+    /** [RevalidatingFeature]; false keeps the old "invalidated → close" path exactly. */
+    private val revalidatingEnabled: Boolean = RevalidatingFeature.enabled,
+    /**
+     * A's signal 2, asked on the main thread only while C's window is REVALIDATING: true when A's
+     * new F0 check says [PopupEvent.Candidate] is the popup the prompt was asking about.
+     * [팀 확정 필요] No A signal exists yet, so the default says "different" for every candidate.
+     */
+    private val isSamePopup: (PopupEvent.Candidate) -> Boolean = { false },
 ) {
     suspend fun run() {
-        source.events.collectLatest { event ->
-            when (event) {
-                is PopupEvent.Candidate -> try {
-                    handleCandidate(event)
-                } finally {
-                    // Covers cancellation by a newer event as well as normal completion.
-                    closePrompt()
+        if (!revalidatingEnabled) {
+            source.events.collectLatest { event ->
+                when (event) {
+                    is PopupEvent.Candidate -> try {
+                        handleCandidate(event)
+                    } finally {
+                        // Covers cancellation by a newer event as well as normal completion.
+                        closePrompt()
+                    }
+                    is PopupEvent.Blocked, is PopupEvent.Invalidated -> closePrompt()
                 }
-                is PopupEvent.Blocked, is PopupEvent.Invalidated -> closePrompt()
             }
+            return
+        }
+        try {
+            source.events.collectLatest { event ->
+                when (event) {
+                    is PopupEvent.Candidate -> {
+                        val same = presenter.windowState.status == OverlayWindowStatus.REVALIDATING && isSamePopup(event)
+                        if (!same) closeOrEndRevalidation(RevalidationEnd.DIFFERENT_POPUP)
+                        try {
+                            handleCandidate(event, confirmSamePopup = same)
+                        } finally {
+                            // Cancelled by a newer event: that event decides what happens to the
+                            // window (an Invalidated one may keep it for the re-check). Finished: close.
+                            if (currentCoroutineContext().isActive) closePrompt() else forgetPrompt()
+                        }
+                    }
+                    is PopupEvent.Invalidated -> {
+                        forgetPrompt()
+                        announcer.stop()
+                        presenter.beginRevalidation(RevalidationCause.SCREEN_EVENT)
+                    }
+                    is PopupEvent.Blocked -> closePrompt()
+                }
+            }
+        } finally {
+            // The flow ends (service stops) while a window may be revalidating with no work running.
+            closePrompt()
         }
     }
 
-    private suspend fun handleCandidate(event: PopupEvent.Candidate) {
+    /** A new candidate that is not "the same popup": a revalidating window says why it closes. */
+    private fun closeOrEndRevalidation(end: RevalidationEnd) {
+        if (presenter.windowState.status == OverlayWindowStatus.REVALIDATING) {
+            forgetPrompt()
+            presenter.endRevalidation(end)
+        } else {
+            closePrompt()
+        }
+    }
+
+    private suspend fun handleCandidate(event: PopupEvent.Candidate, confirmSamePopup: Boolean = false) {
         val token = event.snapshot.token
         if (source.currentToken() != token) return
         val evidence = extractor.extract(event.snapshot)
@@ -135,8 +196,12 @@ class PopupChoiceFlow(
         var prompt: ChoicePrompt? = ChoicePromptPlanner.plan(
             analysis, classification, labelPolicy, moveToButtonEnabled, rememberChoicesEnabled, videoAd, videoAdEnabled,
         )
+        // Only the first prompt of a confirmed same popup goes into the revalidating window.
+        var refill = confirmSamePopup
         while (prompt != null) {
-            prompt = when (val answer = awaitAnswer(prompt)) {
+            val answer = awaitAnswer(prompt, refill)
+            refill = false
+            prompt = when (answer) {
                 is Answer.Move -> {
                     onMoveToButton(answer.request)
                     null
@@ -261,7 +326,7 @@ class PopupChoiceFlow(
      * until one tap. Taps that arrive while nobody waits are dropped. Cancelling this coroutine
      * leaves closing the prompt to [run]'s finally block.
      */
-    private suspend fun awaitAnswer(prompt: ChoicePrompt): Answer = suspendCancellableCoroutine { cont ->
+    private suspend fun awaitAnswer(prompt: ChoicePrompt, refill: Boolean = false): Answer = suspendCancellableCoroutine { cont ->
         pending = { answer ->
             pending = null
             if (cont.isActive) cont.resume(answer)
@@ -270,7 +335,9 @@ class PopupChoiceFlow(
         if (shown !== prompt || !presenter.isShowing) {
             shown = prompt
             shownGeneration = OverlayWindowKeeper.NO_GENERATION
-            if (presenter.present(prompt, ::deliver) == PromptShowResult.SHOWN) {
+            // confirmSamePopup falls back to a new window when the re-check already timed out.
+            val result = if (refill) presenter.confirmSamePopup(prompt, ::deliver) else presenter.present(prompt, ::deliver)
+            if (result == PromptShowResult.SHOWN) {
                 shownGeneration = presenter.windowState.generation
             } else {
                 shown = null
@@ -291,10 +358,15 @@ class PopupChoiceFlow(
     }
 
     private fun closePrompt() {
+        forgetPrompt()
+        presenter.dismiss()
+        announcer.stop()
+    }
+
+    /** Lets go of the prompt without touching the window: no answer of it reaches B/A any more. */
+    private fun forgetPrompt() {
         shown = null
         shownGeneration = OverlayWindowKeeper.NO_GENERATION
         pending = null
-        presenter.dismiss()
-        announcer.stop()
     }
 }

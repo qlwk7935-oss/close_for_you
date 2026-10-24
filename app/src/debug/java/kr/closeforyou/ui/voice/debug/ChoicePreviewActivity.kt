@@ -124,6 +124,9 @@ class ChoicePreviewActivity : ComponentActivity() {
      * Optional `--el ui_debug_tts_delay_ms <ms>` changes when our own TTS speaks (default 700).
      * Optional `--ez ui_debug_c29_diag true` logs window facts for that show under C29Diag (issue #29).
      * `--el ui_debug_c29_watch_ms <ms>` (no scenario) only watches events for that long (issue #29).
+     * Optional `--ez ui_debug_revalidate_demo true` (REVALIDATING, #29): 3 s after the prompt shows it
+     * starts "다시 확인 중", and 2 s later the same prompt is confirmed into the same window. Adding
+     * `--ez ui_debug_revalidate_timeout true` skips the confirmation, so the 3 s timeout closes it.
      */
     private fun scheduleOverlayFromIntent(intent: Intent?) {
         // `--ez ui_debug_c34_dump true` (alone): logs the shown prompt's node tree under C34Nodes.
@@ -165,6 +168,13 @@ class ChoicePreviewActivity : ComponentActivity() {
         val ttsDelay = intent?.getLongExtra(EXTRA_TTS_DELAY_MS, -1L)?.takeIf { it in 0..MAX_TTS_DELAY_MILLIS }
             ?: PromptAnnouncementListener.DEFAULT_TTS_DELAY_MILLIS
         val diagnose = intent?.getBooleanExtra(EXTRA_C29_DIAG, false) == true
+        val revalidateDemo = when {
+            intent?.getBooleanExtra(EXTRA_REVALIDATE_DEMO, false) != true -> RevalidateDemo.OFF
+            intent.getBooleanExtra(EXTRA_REVALIDATE_TIMEOUT, false) -> RevalidateDemo.TIMEOUT
+            else -> RevalidateDemo.CONFIRM
+        }
+        intent?.removeExtra(EXTRA_REVALIDATE_DEMO)
+        intent?.removeExtra(EXTRA_REVALIDATE_TIMEOUT)
         // Consume the extras so a configuration change does not show the prompt again.
         intent?.removeExtra(EXTRA_OVERLAY_SCENARIO)
         intent?.removeExtra(EXTRA_TTS_DELAY_MS)
@@ -175,7 +185,7 @@ class ChoicePreviewActivity : ComponentActivity() {
             val connected = withTimeoutOrNull(SERVICE_WAIT_MILLIS) {
                 ChoiceOverlayTestService.connected.first { it }
             } == true
-            if (!connected || !ChoiceOverlayTestService.scheduleShow(prompt, content, OVERLAY_DELAY_MILLIS, ttsDelay, diagnose)) {
+            if (!connected || !ChoiceOverlayTestService.scheduleShow(prompt, content, OVERLAY_DELAY_MILLIS, ttsDelay, diagnose, revalidateDemo)) {
                 Toast.makeText(this@ChoicePreviewActivity, R.string.ui_debug_overlay_service_off, Toast.LENGTH_LONG).show()
             }
         }
@@ -187,6 +197,8 @@ class ChoicePreviewActivity : ComponentActivity() {
         const val EXTRA_TTS_DELAY_MS = "ui_debug_tts_delay_ms"
         const val MAX_TTS_DELAY_MILLIS = 10_000L
         const val EXTRA_C29_DIAG = "ui_debug_c29_diag"
+        const val EXTRA_REVALIDATE_DEMO = "ui_debug_revalidate_demo"
+        const val EXTRA_REVALIDATE_TIMEOUT = "ui_debug_revalidate_timeout"
         const val EXTRA_C29_WATCH_MS = "ui_debug_c29_watch_ms"
         const val MAX_C29_WATCH_MILLIS = 60_000L
         const val EXTRA_C34_DUMP = "ui_debug_c34_dump"

@@ -26,8 +26,16 @@ sealed interface PromptAnswer {
     data class Lost(override val generation: Long) : PromptAnswer
 }
 
-/** Read-only view of C's window for A. [generation] is that of the window on screen (showing or stuck). */
-data class OverlayWindowState(val status: OverlayWindowStatus, val generation: Long) {
+/**
+ * Read-only view of C's window for A. [generation] is that of the prompt on screen (showing,
+ * revalidating or stuck). [windowNumber] names the added window itself: it equals the generation
+ * the window was added with and stays the same through REVALIDATING, when [generation] changes.
+ */
+data class OverlayWindowState(
+    val status: OverlayWindowStatus,
+    val generation: Long,
+    val windowNumber: Long = generation,
+) {
     companion object {
         val HIDDEN = OverlayWindowState(OverlayWindowStatus.HIDDEN, OverlayWindowKeeper.NO_GENERATION)
     }
@@ -76,6 +84,35 @@ interface ChoicePromptPresenter {
      * of times; after a failed removal each call retries it ([windowState]).
      */
     fun dismiss()
+
+    /**
+     * Signal 1 of 3 (REVALIDATING, [RevalidatingFeature], off by default): A invalidated the token
+     * but will re-check whether the popup is the same. C keeps the window, takes a new generation
+     * (every old tap and voice result is dropped), clears the prompt, disables the buttons, stops
+     * speech and listening, and shows "다시 확인하고 있어요" once (liveRegion). Focus is not moved.
+     * Returns true when the window is now revalidating. Feature off, or nothing showing: same as
+     * [dismiss] and false. Without a confirmation in [RevalidatingFeature.TIMEOUT_MILLIS] C closes it.
+     */
+    fun beginRevalidation(cause: RevalidationCause): Boolean {
+        dismiss()
+        return false
+    }
+
+    /**
+     * Signal 2 of 3: A's F0 re-check found the same popup ("same" is A's rule). [prompt], planned
+     * from the new analysis, goes into the same window under a new generation; only a short line
+     * is said, not the whole prompt again. Not revalidating any more (timed out, ended): same as
+     * [present], a new window.
+     */
+    fun confirmSamePopup(prompt: ChoicePrompt, onAnswer: (PromptAnswer) -> Unit): PromptShowResult =
+        present(prompt, onAnswer)
+
+    /**
+     * Signal 3 of 3: the re-check failed (different popup, screen changed, sensitive screen). The
+     * window closes and, except for [RevalidationEnd.BLOCKED], one short sentence says why.
+     * Not revalidating: same as [dismiss].
+     */
+    fun endRevalidation(end: RevalidationEnd) = dismiss()
 }
 
 /**
@@ -138,7 +175,10 @@ object ChoiceOverlayIdentity {
  * interactive windows (flagRetrieveInteractiveWindows). Device behaviour unverified.
  *
  * Conservative by design: no match, two look-alike windows, an unknown window id (-1), a hidden
- * prompt or a different generation all answer false, so the event is treated as not C's.
+ * prompt or a different added window all answer false, so the event is treated as not C's.
+ * It compares [OverlayWindowState.windowNumber], so the same window stays recognised while it is
+ * REVALIDATING and after a same-popup refill (it is the same added window); a new window needs
+ * [update] again.
  */
 class OwnOverlayWindowTracker(
     private val ownPackageName: String,
@@ -146,20 +186,20 @@ class OwnOverlayWindowTracker(
     private val ownWindowTitle: String,
 ) {
     private var windowId: Int? = null
-    private var generation = OverlayWindowKeeper.NO_GENERATION
+    private var windowNumber = OverlayWindowKeeper.NO_GENERATION
 
     fun update(windows: List<WindowFacts>, overlay: OverlayWindowState) {
         val match = windows.filter { ChoiceOverlayIdentity.isOwnOverlayWindow(it, ownPackageName, ownWindowTitle, overlay) }
             .singleOrNull()
         windowId = match?.id
-        generation = if (match != null) overlay.generation else OverlayWindowKeeper.NO_GENERATION
+        windowNumber = if (match != null) overlay.windowNumber else OverlayWindowKeeper.NO_GENERATION
     }
 
     fun isOwnOverlayWindowEvent(eventWindowId: Int, overlay: OverlayWindowState): Boolean {
         val id = windowId ?: return false
         return overlay.status != OverlayWindowStatus.HIDDEN &&
-            overlay.generation != OverlayWindowKeeper.NO_GENERATION &&
-            overlay.generation == generation &&
+            overlay.windowNumber != OverlayWindowKeeper.NO_GENERATION &&
+            overlay.windowNumber == windowNumber &&
             eventWindowId >= 0 &&
             eventWindowId == id
     }
