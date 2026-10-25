@@ -34,6 +34,7 @@ import android.widget.VideoView
 class PopupScenarioActivity : Activity() {
     private lateinit var scenarioId: String
     private var dialog: Dialog? = null
+    private var f9DeferredP01 = false
     private val handler = Handler(Looper.getMainLooper())
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -44,7 +45,14 @@ class PopupScenarioActivity : Activity() {
         setContentView(backgroundPage())
         if (savedInstanceState != null || scenario == null) return
         when (scenarioId) {
-            "P01" -> labeledAdDialog()
+            "P01" -> {
+                // Explicit F9 fixture only; default preserves the ordinary P01 scenario.
+                f9DeferredP01 = intent.getBooleanExtra("f9_defer_popup", false)
+                val delay = intent.getLongExtra("f9_popup_delay_ms", 0L).coerceIn(0L, 3_000L)
+                if (!f9DeferredP01) {
+                    if (delay == 0L) labeledAdDialog() else handler.postDelayed({ labeledAdDialog() }, delay)
+                }
+            }
             "P02" -> sameWindowOverlay()
             "P03" -> bottomBanner()
             "P04" -> unlabeledXDialog()
@@ -64,6 +72,16 @@ class PopupScenarioActivity : Activity() {
             "P18" -> timeSaleDialog()
             ScenarioCatalog.BUTTON_MOVED_NOTICE_ID -> textNotice(scenario.note, closeOnTop = true)
             else -> if (scenario.kind == PopupKind.NOTICE) textNotice(scenario.note)
+        }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        // Explicit synthetic setup handshake: the test read the base page before this request.
+        // SINGLE_TOP keeps the same page/window; the original intent retains f9_keep_popup.
+        if (scenarioId == "P01" && f9DeferredP01 && intent.getBooleanExtra("f9_show_deferred_popup", false)) {
+            f9DeferredP01 = false
+            labeledAdDialog()
         }
     }
 
@@ -165,7 +183,9 @@ class PopupScenarioActivity : Activity() {
             text(getString(R.string.ad_coupon_title), 20f),
             text(getString(R.string.ad_coupon_body)),
             button(R.id.btn_ad_open, getString(R.string.ad_open)) { openAdLanding() },
-            button(R.id.btn_close, getString(R.string.close)) { dismiss() },
+            button(R.id.btn_close, getString(R.string.close)) {
+                if (!intent.getBooleanExtra("f9_keep_popup", false)) dismiss()
+            },
         ))
     }
 
