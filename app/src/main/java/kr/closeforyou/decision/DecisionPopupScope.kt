@@ -1,6 +1,9 @@
 package kr.closeforyou.decision
 
+import kr.closeforyou.core.model.ButtonLabelRules
+import kr.closeforyou.core.model.CloseCandidate
 import kr.closeforyou.core.model.ExtractedText
+import kr.closeforyou.core.model.LabelRejectReason
 import kr.closeforyou.core.model.PopupDetection
 import kr.closeforyou.core.model.PopupSignal
 import kr.closeforyou.core.model.PopupSnapshot
@@ -32,6 +35,24 @@ internal object DecisionPopupScope {
                     text.bounds.right <= scope.bounds.right && text.bounds.bottom <= scope.bounds.bottom
             }
         }
+    }
+
+    /**
+     * The popup's title for C (contract v3 PopupAnalysis.title): the first of [popupTexts] (already
+     * scoped to the popup, in A's top-to-bottom order) that is accessibility-tree text and is not a
+     * button word (any label the shared contract does not call NOT_IN_LIST: 닫기, 확인, 자세히 보기…),
+     * not a close candidate's label, and carries no warning. Null when none qualifies: a title is
+     * only ever read aloud, so an unsure one is left out.
+     */
+    fun title(popupTexts: List<ExtractedText>, candidates: List<CloseCandidate>): String? {
+        val labels = candidates.mapNotNull { it.label?.let(ButtonLabelRules::normalize) }.toSet()
+        return popupTexts.asSequence()
+            .filter { it.source == TextSource.ACCESSIBILITY_TREE }
+            .map { it.text.trim() }
+            .firstOrNull { text ->
+                text.isNotEmpty() && ButtonLabelRules.normalize(text) !in labels &&
+                    ButtonLabelRules.judge(text).reason == LabelRejectReason.NOT_IN_LIST && !isWarning(text)
+            }
     }
 
     /**

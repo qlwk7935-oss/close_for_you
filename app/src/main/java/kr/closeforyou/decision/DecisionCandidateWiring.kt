@@ -56,13 +56,17 @@ class DecisionCandidateWiring(
             val eligibility = analysis.autoEligibility?.takeIf {
                 detection != null && it.token == snapshot.token && it.capturedAtUptimeMillis == snapshot.capturedAtUptimeMillis
             }
-            if (detection == null) return analysis.copy(closeCandidates = persistentListOf(), autoEligibility = null)
+            if (detection == null) return analysis.copy(closeCandidates = persistentListOf(), autoEligibility = null, title = null)
             // Same popup boundary for texts as for candidates (AUTO_CLOSE.md 5절): page text behind a
             // same-window popup no longer decides its kind, and warnings from the page are kept.
+            val texts = DecisionPopupScope.texts(snapshot, detection, analysis.texts)
+            val candidates = finder.find(snapshot, detection)
             return analysis.copy(
-                texts = DecisionPopupScope.texts(snapshot, detection, analysis.texts).toPersistentList(),
-                closeCandidates = finder.find(snapshot, detection),
+                texts = texts.toPersistentList(),
+                closeCandidates = candidates,
                 autoEligibility = eligibility,
+                // Contract v3: a title confirmed inside the popup, for C to say; spoken only, never logged.
+                title = DecisionPopupScope.title(texts, candidates),
             )
         }
     }

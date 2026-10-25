@@ -109,7 +109,7 @@ class DecisionActionPolicy internal constructor(private val autoClose: DecisionA
      * Every result A returns, whoever asked for the press: B's session record for automatic closing
      * (a press that left the app stops automation there; a preset close is done once per popup).
      */
-    fun onActionResult(result: ActionResult) = autoClose.onResult(result)
+    override fun onActionResult(result: ActionResult) = autoClose.onResult(result)
 
     private fun nextStep(authorization: ActionAuthorization, reasons: Set<SafetyReason>, announceOnly: Boolean): NextStep = when {
         authorization == ActionAuthorization.ALLOW_ONCE -> NextStep.EXECUTE

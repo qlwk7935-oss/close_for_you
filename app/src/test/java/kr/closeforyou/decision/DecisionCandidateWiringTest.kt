@@ -221,6 +221,8 @@ class DecisionCandidateWiringTest {
         // The page's "쿠폰 모음" is gone; its decision words stay as a warning (AUTO_CLOSE.md 5절).
         assertEquals(listOf("로그인하고 결제하기", "운영 시간 안내", "닫기"), analysis.texts.map { it.text })
         assertEquals(listOf("node:0/2/1"), analysis.closeCandidates.map { it.id })
+        // Contract v3: the popup's own title; the page's "쿠폰 모음" and the decision warning are not it.
+        assertEquals("운영 시간 안내", analysis.title)
         // Without A's eligibility the analysis has none; B never invents it.
         assertEquals(null, analysis.autoEligibility)
         // Without a matching detection nothing is narrowed (and no candidates are offered).

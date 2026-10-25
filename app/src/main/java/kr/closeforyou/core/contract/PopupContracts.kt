@@ -52,6 +52,13 @@ data class DecisionContext(
 
 interface ActionPolicy {
     suspend fun decide(analysis: PopupAnalysis, context: DecisionContext): ActionDecision
+
+    /**
+     * Contract v3: A passes every ActionResult it returns here, whoever asked for the press, so the
+     * policy can keep its session record (a preset close is done once; a press that left the app
+     * stops automation there). Does nothing by default.
+     */
+    fun onActionResult(result: ActionResult) {}
 }
 
 data class ActionRequest(val decision: ActionDecision, val candidate: CloseCandidate)
@@ -74,6 +81,15 @@ interface PopupAnnouncer {
     suspend fun announce(request: AnnouncementRequest): AnnouncementReceipt
     suspend fun repeatLast(): AnnouncementReceipt
     fun stop()
+}
+
+/**
+ * Contract v3, C: receives what happened to popups handled without asking (HandlingReport). C says
+ * "닫았어요" only for [HandlingReport.closedConfirmed], says a WAIT once, warns on a scam DENY, and may
+ * batch reports from about 2 s into one sentence. Never logs or stores a report or its title.
+ */
+interface PopupHandlingListener {
+    suspend fun onHandled(report: HandlingReport)
 }
 
 enum class VoiceCommand { CLOSE, SKIP, READ_CONTENT, KEEP_OPEN, GO_BACK, MOVE_TO_BUTTON, DESCRIBE_IMAGE }
