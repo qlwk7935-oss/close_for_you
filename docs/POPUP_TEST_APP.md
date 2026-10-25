@@ -98,12 +98,39 @@ adb logcat -s PopupTest
 | N05 | 보상 금액 추가 | 불가 |
 | N06 | 행동 요구(업데이트) 추가 | 불가 |
 | N07 | 본문 완전 변경 | 불가 |
+| N08 | 글자는 같고 **닫기 버튼 위치만** 위로 이동(C09) | 불가 |
+
+### 앱 업데이트·버튼 위치 변경 (C09, 10/25 추가)
+
+F12 기억은 앱 버전과 대상 버튼(라벨·위치 등)까지 묶어 지문을 만듭니다. 그래서 아래 두 경우 모두 **이전 기억으로 자동 처리하면 실패**이고, 처음 본 공지처럼 다시 선택 창이 떠야 합니다. 실측 결과는 아직 없습니다.
+
+**버튼 위치만 변경 (N08)**: N01과 글자가 같고 닫기 버튼만 제목 위로 옮긴 공지입니다.
+
+1. N01을 열고 C 선택 창에서 기억하기를 고릅니다(기억 저장이 연결된 빌드에서만 의미 있음).
+2. N02를 열어 기억이 맞는지 봅니다(맞아야 정상).
+3. N08을 엽니다. 기억이 맞으면 **실패**입니다.
+
+**앱 버전 변경**: 같은 화면을 재현 앱 버전만 올려 다시 엽니다.
+
+```bash
+./gradlew :popup-test-app:assembleDebug                            # versionCode 1
+adb install -r -t popup-test-app/build/outputs/apk/debug/popup-test-app-debug.apk
+# N01 열고 기억하기 → N02에서 기억이 맞는지 확인
+./gradlew :popup-test-app:assembleDebug -PpopupTestVersionCode=2   # versionCode 2
+adb install -r -t popup-test-app/build/outputs/apk/debug/popup-test-app-debug.apk
+adb shell dumpsys package kr.closeforyou.popuptest | grep versionCode   # 2인지 확인
+# N02를 다시 엶 → 기억이 맞으면 실패
+```
+
+- 버전 1의 옛 기억은 목록에 남아 있다가 만료(최대 30일) 뒤 정리됩니다. 지우지 않았다고 실패가 아닙니다.
+- `popupTestVersionCode`는 1 이상의 정수만 받습니다(아니면 빌드 실패). 끝나면 기본(1)으로 다시 설치해 둡니다.
+- 결과 CSV는 `scenario_id`를 N02로, `notes`에 `버전 2`를 적습니다.
 
 ## 한계·TODO
 
 - 아직 빌드·실기기·TalkBack에서 확인하지 않았습니다.
 - 실제 시스템 권한창, 보안 키패드(FLAG_SECURE), 캔버스 게임 화면은 아직 없습니다. 영상 광고(C07)는 P16 합성 화면뿐이며 실제 영상 플레이어(SurfaceView 등)는 아닙니다.
-- 앱 업데이트(버전 변경)·버튼 위치 변경 시나리오(C09)는 다음 단계에서 추가합니다.
+- C09는 버튼 위치(N08)와 버전 변경만 있습니다. 버튼 라벨만 바뀐 변형은 아직 없습니다.
 - 라벨 없는 닫기 버튼 **탐지**는 B 담당입니다. P04·P05는 B가 탐지를 만들 때 시험 데이터로 씁니다.
 - B는 같은 창 덮개(P02·P03)에서 뒤 화면 오클릭을 막으려고 Dialog 노드 안에서만 후보를 찾습니다(위협 모델 T4). 정답지는 그대로 두고 잘못 거부로 셉니다. 실제 앱의 덮개가 Dialog 노드를 갖는지는 실기기 체크리스트 P8에서 확인합니다.
 - 결과 기록 양식과 지표 집계는 [검증 지표 문서](QA_METRICS.md)를 따릅니다.

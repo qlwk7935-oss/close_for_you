@@ -105,6 +105,19 @@ class ScenarioCatalogTest {
         }
     }
 
+    /** C09 N08: 글자는 N01과 같아도 닫기 버튼 위치가 바뀌었으므로 N01 기억을 재사용하지 않는다. */
+    @Test
+    fun movedCloseButtonNoticeKeepsTextButMustNotReuseMemory() {
+        val original = ScenarioCatalog.find("N01")!!
+        val moved = ScenarioCatalog.find(ScenarioCatalog.BUTTON_MOVED_NOTICE_ID)!!
+        assertEquals(original.note, moved.note)
+        assertEquals(original.correctTargetId, moved.correctTargetId)
+        assertEquals(original.appAllowedTargetId, moved.appAllowedTargetId)
+        assertNull(moved.memoryReusableFrom)
+        assertTrue(moved.rememberable)
+        assertTrue("C09" in moved.experiments)
+    }
+
     /** P16·P18: 시간이 흐르며 글자가 바뀌는 화면은 지문이 매번 달라 기억 대상이 아니다. */
     @Test
     fun timeVaryingScreensAreNotRemembered() {

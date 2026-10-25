@@ -24,3 +24,4 @@ N04,공지 시간만 변경,NOTICE,USER_CHOICE,E2_LABELED_CLICK,btn_close,btn_cl
 N05,공지 금액 추가,NOTICE,USER_CHOICE,E2_LABELED_CLICK,btn_close,btn_close,,true,,C05;C09
 N06,공지 행동 요구 추가,NOTICE,USER_CHOICE,E2_LABELED_CLICK,btn_close,btn_close,,true,,C05;C09
 N07,공지 본문 완전 변경,NOTICE,USER_CHOICE,E2_LABELED_CLICK,btn_close,btn_close,,true,,C05;C09
+N08,공지 닫기 버튼 위치만 변경,NOTICE,USER_CHOICE,E2_LABELED_CLICK,btn_close,btn_close,,true,,C05;C09
