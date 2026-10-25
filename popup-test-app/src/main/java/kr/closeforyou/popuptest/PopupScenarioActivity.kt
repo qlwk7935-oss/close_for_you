@@ -68,6 +68,7 @@ class PopupScenarioActivity : Activity() {
             "P21" -> suspiciousDialog(R.string.prize_title, R.string.prize_body, R.id.btn_prize_claim, R.string.prize_claim)
             "P22" -> suspiciousDialog(R.string.infected_title, R.string.infected_body, R.id.btn_scan_now, R.string.scan_now)
             "P23" -> delayedCloseCoupon()
+            "P24" -> webViewModal("ad-risky-back")
             ScenarioCatalog.BUTTON_MOVED_NOTICE_ID -> textNotice(scenario.note, closeOnTop = true)
             else -> if (scenario.kind == PopupKind.NOTICE) textNotice(scenario.note)
         }
@@ -353,14 +354,15 @@ class PopupScenarioActivity : Activity() {
     }
 
     @SuppressLint("SetJavaScriptEnabled")
-    private fun webViewModal() {
+    /** [fragment]는 popup_test_page.html의 시나리오(#ad = P13, #ad-risky-back = P24). */
+    private fun webViewModal(fragment: String = "ad") {
         val web = WebView(this).apply {
             settings.javaScriptEnabled = true
             settings.allowFileAccess = false
             settings.allowContentAccess = false
         }
         setContentView(web)
-        web.loadUrl("file:///android_asset/popup_test_page.html#ad")
+        web.loadUrl("file:///android_asset/popup_test_page.html#$fragment")
     }
 
     private fun normalTransition() {
