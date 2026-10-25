@@ -4,7 +4,7 @@
 
 `PopupClassifier`와 `ActionPolicy`를 구현하고 `ActionExecutor` 인터페이스로 A에게 실행을 요청합니다. 표시 분류와 실행 허가를 분리하고 금지 조건을 먼저 적용합니다. B가 접근성 노드를 소유하거나 직접 클릭·제스처·뒤로 가기·포커스 변경을 실행하지 않습니다.
 
-> **상태 (2026-10-25, main `4241a94`):** 아래 부품은 모두 main에 있고 JVM 단위 시험, API 37 에뮬레이터 덤프·계측 시험을 통과했습니다. 하지만 **main의 실제 서비스는 아직 B를 부르지 않습니다.** A 서비스 이벤트를 B·C로 잇는 조립 코드는 A 브랜치(`transfer/…`, #29)에만 있고, 클릭 실행(F9 #42)도 병합 전입니다. 실기기 검증은 0건입니다.
+> **상태 (2026-10-25, main `e38aac5`):** 아래 부품은 모두 main에 있고 JVM 단위 시험, API 37 에뮬레이터 덤프·계측 시험을 통과했습니다. 하지만 **main의 실제 서비스는 아직 B를 부르지 않습니다.** A 서비스 이벤트를 B·C로 잇는 조립 코드는 A 브랜치(`transfer/…`, #29)에만 있고, 클릭 실행(F9 #42)도 병합 전입니다. 실기기 검증은 0건입니다.
 
 ## 구현
 
@@ -17,7 +17,7 @@
   - **기억 규칙(F12) 자동 반복:** 아직 꺼져 있어 항상 사용자 확인으로 갑니다. A가 모든 분석에 `INCOMPLETE_EVIDENCE`를 붙이고, 반복 허락 계약이 아직 없기 때문입니다.
   - **결과 받기:** `onActionResult`로 A의 모든 결과(누르지 않은 결과 포함)를 받아 세션 기록을 갱신합니다. 성공은 `attempted` + `MECHANICAL_SUCCESS` + `CLOSED_CONFIRMED`일 때만입니다(팀 기준 10/25).
 - **`DecisionCloseCandidateFinder` (F3, E1/E2만):** 라벨 전체가 공용 계약 `ButtonLabelRules`상 닫기/건너뛰기인 `DISMISS`·클릭 가능 노드만 후보로 냅니다. 새 창은 활성 창 전체, 같은 창 덮개는 Dialog 노드가 하나일 때 그 하위 노드만 봅니다. 전체 화면 전환과 `INSUFFICIENT_EVIDENCE` 감지는 후보를 만들지 않습니다. 단독 X/×, 라벨 없는 `DISMISS`, 아이콘(E3), 픽셀(E4)은 후보가 아닙니다.
-- **`DecisionPopupScope`:** 같은 창 덮개에서 팝업 밖 글자를 빼되 경고 신호는 절대 빼지 않습니다. 팝업 제목(`PopupAnalysis.title`)도 고르며, 이름+님·7자리 이상 숫자·이메일·웹 주소가 든 줄은 제목으로 쓰지 않습니다(#50). 첫 통합에서는 A가 제목을 넘기지 않습니다(팀 결정).
+- **`DecisionPopupScope`:** 같은 창 덮개에서 팝업 밖 글자를 빼되 경고 신호는 절대 빼지 않습니다. 팝업 제목(`PopupAnalysis.title`)도 고르며, 이름+님·7자리 이상 숫자·이메일·웹 주소가 든 줄은 제목으로 쓰지 않습니다(#50). 첫 통합에서는 A가 제목을 넘기지 않고(팀 결정), C도 제목 낭독이 기본 꺼짐입니다(#51).
 - **`DecisionCandidateWiring` / `DecisionChoiceHandler`:** A의 분석에 같은 화면의 후보·제목을 붙이고, 사람의 선택을 B 정책 → A 게이트 1회로 잇습니다. 조립 방법은 [연결 안내](INTEGRATION.md).
 - **`DecisionVideoAd` (F5):** 영상 표면과 광고 근거를 분리합니다. A가 `videoSurfaceObserved`를 아직 채우지 않아 실제 입력은 없습니다.
 - **`DecisionRulePressOutcome` (F12):** 기억 규칙으로 누른 결과가 실패이면 D의 `recordFailure`로 규칙을 끕니다(#48).

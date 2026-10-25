@@ -1,6 +1,6 @@
 # B 위협 모델 — 분류·안전 판단·닫기 후보
 
-작성: B 준영 · 2026-10-19 (PR #13 리뷰 반영 2026-10-20, 프리셋 자동 닫기 반영 2026-10-25) · 기준 코드: `main` `4241a94` (#37·#38·#44·#45·#46·#48·#50 포함)
+작성: B 준영 · 2026-10-19 (PR #13 리뷰 반영 2026-10-20, 프리셋 자동 닫기 반영 2026-10-25) · 기준 코드: `main` `e38aac5` (#37·#38·#44·#45·#46·#48·#50·C #51 포함)
 
 이 문서는 B(`decision` 패키지)가 막아야 하는 위협과, 각 위협을 **어떤 코드 규칙과 어떤 단위 시험으로 막는지**를 정리합니다. 근거는 [AGENTS.md](../../../../../../../AGENTS.md)의 필수 안전 규칙, 통합 설계 v5(`docs/통합설계.md`), 검증 실험 계획(`docs/검증 실험 계획.md`), 그리고 프리셋 자동 닫기 설계([AUTO_CLOSE.md](AUTO_CLOSE.md), 계약 v2 #38)입니다.
 
@@ -232,13 +232,13 @@
 - **근거:** 설계 F10, 검증 계획 B04, 팀 성공 기준(10/25)
 - **B 대응:** 결과를 안내할 수 없으면 승인하지 않습니다(`FEEDBACK_UNAVAILABLE`). 닫힘은 `attempted` + `MECHANICAL_SUCCESS` + `CLOSED_CONFIRMED`일 때만이고, 처리 보고(`HandlingReport.closedConfirmed`)도 같은 기준입니다. 정책은 `next`(WAIT·ANNOUNCE·ASK·DENY)로 C가 할 안내를 정해 줍니다.
 - **시험:** `staleScreenUserActionSilenceAndOtherPathsBlock`, `onlyAConfirmedCloseCountsAsClosed`, `DecisionActionPolicyPresetTest.eachOutcomeTellsCWhatToDo`, `HandlingReportContractTest`의 `onlyAConfirmedCloseCountsAsClosed`·`onlyAutomaticHandlingIsReported`
-- **상태: 줄임.** 실제 안내는 C, 처리 보고 전달은 A 조립 담당이고 아직 main에 연결되지 않았습니다.
+- **상태: 줄임.** 실제 안내는 C(`SpeechHandlingListener`, #51)가 main에 있지만, 처리 보고를 C에 넘기는 A 조립은 아직 main에 없습니다.
 
 ### T25. 팝업 제목으로 개인정보를 소리 내어 읽음
 
 - **예:** 팝업 첫 줄 "홍길동님, 쿠폰이 도착했어요", "010-1234-5678", "abc@example.com"
 - **근거:** AGENTS 6-8·6-9, 재호 #45 리뷰
-- **B 대응:** 제목은 팝업 범위 안 트리 글자 중 버튼 단어·후보 라벨·경고가 아닌 첫 줄이고, 이름+님·숫자 7개 이상·이메일·웹 주소가 든 줄은 건너뜁니다. 안전한 줄이 없으면 null입니다. 제목은 말로만 쓰고 로그·저장하지 않으며 `toString`은 가립니다. **첫 통합에서는 A가 제목을 넘기지 않습니다**(팀 결정).
+- **B 대응:** 제목은 팝업 범위 안 트리 글자 중 버튼 단어·후보 라벨·경고가 아닌 첫 줄이고, 이름+님·숫자 7개 이상·이메일·웹 주소가 든 줄은 건너뜁니다. 안전한 줄이 없으면 null입니다. 제목은 말로만 쓰고 로그·저장하지 않으며 `toString`은 가립니다. **첫 통합에서는 A가 제목을 넘기지 않고**(팀 결정), C도 제목 낭독이 기본 꺼짐입니다(`HandlingTitleSpeechFeature`, #51).
 - **시험:** `DecisionPopupScopeTest`의 `theTitleIsTheFirstSafePopupText`·`aLineThatMayHoldPersonalDataIsNeverTheTitle`, `HandlingReportContractTest.titleAndReportNeverShowScreenText`
 - **상태: 줄임.** "님" 없는 이름 한 줄("홍길동")은 구별할 수 없습니다. 대부분은 A의 F0가 화면을 먼저 차단합니다.
 
