@@ -106,4 +106,22 @@ class DecisionPopupScopeTest {
         val spaced = close.copy(label = "  닫기 ")
         assertEquals(null, DecisionPopupScope.title(t("닫기"), listOf(spaced)))
     }
+
+    @Test fun aLineThatMayHoldPersonalDataIsNeverTheTitle() {
+        fun t(vararg texts: String) = texts.mapIndexed { i, s ->
+            ExtractedText(s, ScreenBounds(100, 900 + i * 100, 900, 990 + i * 100), TextSource.ACCESSIBILITY_TREE, null)
+        }
+        // C review on #45: the first line may be the person's name or number. The next safe line is the title.
+        for (personal in listOf(
+            "홍길동님", "홍길동님, 쿠폰이 도착했어요", "김OO 고객님 전용", "홍길동 님", // a name with an honorific
+            "010-1234-5678", "1234 5678 90", "주문번호 1234567", "０１０１２３４５６７８", // 7+ digits, any width or separator
+            "abc@example.com", "www.example.com", "https://ex.kr/a", "example.co.kr", // e-mail and web addresses
+        )) {
+            assertEquals(personal, "쿠폰이 도착했어요", DecisionPopupScope.title(t(personal, "쿠폰이 도착했어요"), emptyList()))
+        }
+        // Ordinary numbers and dates in a title are fine.
+        for (ok in listOf("3,000원 쿠폰 도착", "10월 25일 점검 안내", "50% 할인", "1+1 특가")) {
+            assertEquals(ok, ok, DecisionPopupScope.title(t(ok), emptyList()))
+        }
+    }
 }
