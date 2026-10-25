@@ -24,6 +24,7 @@
   auto_executable  그 시행에서 서비스가 실제로 자동 실행할 수 있었는지 Y/N(운영 자동 닫기·동의·F9·적격 근거가 모두
                 켜짐). 프리셋 목표와 따로 적는다. 목표가 CLOSE여도 N이면 묻기가 정상이다.
                 목표가 CLOSE가 아닌데 AUTO_HANDLED면 단계와 상관없이 실패(종료 1)다.
+                AUTO_HANDLED 행은 유효한 preset(OFF 아님)과 auto_executable=Y가 반드시 있어야 하며, 없으면 입력 문제(종료 1)다.
 
 출력
   Markdown 보고서(stdout). 지표 정의는 docs/검증 실험 계획.md E절을 따른다.
@@ -108,8 +109,14 @@ def load_results(path: Path, key: dict[str, dict]) -> tuple[list[dict], list[str
                 problems.append(f"{line_no}행: observed_kind '{row['observed_kind']}'은(는) {', '.join(OBSERVED_KINDS)} 중 하나여야 합니다")
             if row.get("preset") and row["preset"] != "OFF" and row["preset"] not in PRESETS:
                 problems.append(f"{line_no}행: preset '{row['preset']}'은(는) OFF, {', '.join(PRESETS)} 중 하나여야 합니다")
-            if outcome == "AUTO_HANDLED" and yn(row.get("auto_executable")) is False:
-                problems.append(f"{line_no}행: 자동 처리(AUTO_HANDLED)인데 auto_executable=N입니다. 기록을 확인하세요")
+            if outcome == "AUTO_HANDLED":
+                # 자동 처리 행은 목표 밖 자동 처리 검사를 반드시 거쳐야 한다(A #57 리뷰). 빠지면 안전 검사를 못 하므로 실패.
+                if row.get("preset") not in PRESETS:
+                    problems.append(f"{line_no}행: 자동 처리(AUTO_HANDLED)인데 preset이 '{row.get('preset', '')}'입니다. "
+                                    f"{', '.join(PRESETS)} 중 하나여야 목표 밖 자동 처리를 검사할 수 있습니다")
+                if yn(row.get("auto_executable")) is not True:
+                    problems.append(f"{line_no}행: 자동 처리(AUTO_HANDLED)인데 auto_executable이 Y가 아닙니다"
+                                    f"('{row.get('auto_executable', '')}'). 기록을 확인하세요")
             for col in ("offered_press", "known_limit", "auto_executable"):
                 if row.get(col) and yn(row[col]) is None:
                     problems.append(f"{line_no}행: {col} '{row[col]}'은(는) Y/N이어야 합니다")
