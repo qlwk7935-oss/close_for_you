@@ -100,6 +100,11 @@ class AnswerKeyPipelineTest {
         "P22" -> listOf(res("infected_title"), res("infected_body"), res("scan_now"), res("close"))
         // 버튼이 생기기 전 화면.
         "P23" -> listOf(res("delayed_title"), res("delayed_body"))
+        "P24" -> listOf(
+            webText("시험 본문 화면(웹)"), webText("팝업을 닫은 뒤 이 첫 문단을 찾을 수 있어야 합니다. 이 페이지는 합성 시험용입니다."),
+            webText("결제 수단을 바꾸려면 약관에 동의해 주세요(시험용 뒤 페이지 문구)."),
+            webText(res("ad_coupon_title")), webText(res("ad_coupon_body")), webText(res("ad_open")), webText(res("close")),
+        )
         else -> listOf(res("notice_title"), catalogText(NOTICES[id] ?: error("시험 fixture 없음: $id")), res("close"))
     }
 
