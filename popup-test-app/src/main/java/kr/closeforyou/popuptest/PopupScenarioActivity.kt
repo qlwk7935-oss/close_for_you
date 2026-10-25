@@ -63,6 +63,11 @@ class PopupScenarioActivity : Activity() {
             "P16" -> videoAd()
             "P17" -> closeOrSkipDialog()
             "P18" -> timeSaleDialog()
+            "P19" -> leavesAppDialog()
+            "P20" -> adSeriesDialog(0)
+            "P21" -> suspiciousDialog(R.string.prize_title, R.string.prize_body, R.id.btn_prize_claim, R.string.prize_claim)
+            "P22" -> suspiciousDialog(R.string.infected_title, R.string.infected_body, R.id.btn_scan_now, R.string.scan_now)
+            "P23" -> delayedCloseCoupon()
             ScenarioCatalog.BUTTON_MOVED_NOTICE_ID -> textNotice(scenario.note, closeOnTop = true)
             else -> if (scenario.kind == PopupKind.NOTICE) textNotice(scenario.note)
         }
@@ -479,6 +484,63 @@ class PopupScenarioActivity : Activity() {
             }
         }
         tick.run()
+    }
+
+    /** S16: 라벨은 '닫기'지만 누르면 앱 밖(홈 화면)으로 나간다. 네트워크·다른 앱 화면 조작은 하지 않는다. */
+    private fun leavesAppDialog() {
+        showDialog(column(
+            text(getString(R.string.leave_title), 20f),
+            text(getString(R.string.leave_body)),
+            button(R.id.btn_fake_close, getString(R.string.close)) {
+                dismiss()
+                record("left_app")
+                startActivity(
+                    Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+                )
+            },
+        ))
+    }
+
+    private val adSeries = listOf(
+        R.string.ad_series_1_title to R.string.ad_series_1_body,
+        R.string.ad_series_2_title to R.string.ad_series_2_body,
+        R.string.ad_series_3_title to R.string.ad_series_3_body,
+        R.string.ad_series_4_title to R.string.ad_series_4_body,
+    )
+
+    /** S17: 광고를 '닫기'로 닫으면 1초 뒤 다른 광고가 나온다. 뒤로 가기로 닫으면 거기서 멈춘다. */
+    private fun adSeriesDialog(index: Int) {
+        val (title, body) = adSeries[index]
+        showDialog(column(
+            text(getString(title), 20f),
+            text(getString(body)),
+            button(R.id.btn_close, getString(R.string.close)) {
+                dismiss()
+                if (index + 1 < adSeries.size) handler.postDelayed({ adSeriesDialog(index + 1) }, 1_000)
+            },
+        ))
+    }
+
+    /** S18: 사기 의심 팝업. [actionId] 버튼은 광고 페이지를 연다(앱이 누르면 실패). */
+    private fun suspiciousDialog(titleRes: Int, bodyRes: Int, actionId: Int, actionLabelRes: Int) {
+        showDialog(column(
+            text(getString(titleRes), 20f),
+            text(getString(bodyRes)),
+            button(actionId, getString(actionLabelRes)) { openAdLanding() },
+            button(R.id.btn_close, getString(R.string.close)) { dismiss() },
+        ))
+    }
+
+    /** S20: 처음에는 누를 버튼이 없고 [ScenarioCatalog.DELAYED_CLOSE_SECONDS]초 뒤 '닫기'가 생긴다. */
+    private fun delayedCloseCoupon() {
+        val content = column(
+            text(getString(R.string.delayed_title), 20f),
+            text(getString(R.string.delayed_body)),
+        )
+        showDialog(content)
+        handler.postDelayed({
+            content.addView(button(R.id.btn_close, getString(R.string.close)) { dismiss() })
+        }, ScenarioCatalog.DELAYED_CLOSE_SECONDS * 1_000L)
     }
 
     private fun resultDialog(message: String) {
