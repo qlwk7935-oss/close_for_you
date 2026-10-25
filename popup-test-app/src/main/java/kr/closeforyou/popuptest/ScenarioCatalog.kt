@@ -6,7 +6,8 @@ package kr.closeforyou.popuptest
  * 정답지는 평가 기준일 뿐 실제 감지·분류·클릭 성능 결과가 아니다. 모든 문구와 금액은 합성 데이터다.
  * 닫아줄게 본 앱 코드에 의존하지 않으며 본 앱에서도 이 모듈을 참조하지 않는다.
  */
-enum class PopupKind { AD, NOTICE, USER_DECISION, SENSITIVE, NOT_POPUP }
+/** 사람 기준 종류. [COUPON]은 받거나 가진 혜택(쿠폰·적립금·포인트 지급 등, 계약 v2 PopupClassification.COUPON과 같은 뜻). */
+enum class PopupKind { AD, COUPON, NOTICE, USER_DECISION, SENSITIVE, NOT_POPUP }
 
 /** 처음 본 화면에서 기대하는 처리. 자동 닫기는 사용자 허락과 동일 팝업 재검사 이후에만 가능하다. */
 enum class ExpectedHandling {
@@ -24,6 +25,24 @@ enum class ExpectedHandling {
 enum class CloseEvidence { E2_LABELED_CLICK, E3_UNLABELED_CLICKABLE, E4_VISUAL_ONLY, NONE }
 
 enum class PopupSurface { DIALOG, SAME_WINDOW_OVERLAY, BOTTOM_BANNER, WEBVIEW, TOAST, FULL_SCREEN, VIDEO_OVERLAY }
+
+/** 팀 프리셋 3개. C `HandlingPreset`과 이름·뜻이 같다(앱 모듈 `AnswerKeyPipelineTest`가 대조). */
+enum class TestPreset { CLOSE_ALL, CLOSE_ADS_AND_COUPONS, CLOSE_ADS_ONLY }
+
+/**
+ * 프리셋을 고르고 자동 닫기에 동의한 뒤의 **목표** 처리(사람 기준 종류로 정함). 허락이 아니며,
+ * 실제 누르기는 B 정책·A 관문이 다시 판단한다. 지금은 자동 닫기가 꺼져 있어 모두 선택 창으로 묻는다.
+ */
+enum class PresetGoal { CLOSE, ANNOUNCE, ASK, BLOCK, NONE }
+
+/** 첫 통합에서 지금 코드로 예상되는 B 분류(A 경로 포함). [BLOCKED]는 A가 분석 전에 막음, [NONE]은 팝업 아님. */
+enum class Int1Kind { COUPON, ADVERTISEMENT, NOTICE, USER_DECISION, UNKNOWN, BLOCKED, NONE }
+
+/** 그 분류에 이른 A 경로: 트리 글자 그대로, A 결정 요약(DecisionEvidence), A F0-A 차단. */
+enum class Int1Path { TREE, A_SUMMARY, A_BLOCK, NONE }
+
+/** [reason]은 사람 기준 종류와 다를 때 왜 다른지. 화면 원문이 아니라 시험 문구에 대한 설명이다. */
+data class Int1Expectation(val kind: Int1Kind, val path: Int1Path, val reason: String = "")
 
 data class PopupScenario(
     val id: String,
@@ -54,8 +73,11 @@ data class PopupScenario(
 )
 
 object ScenarioCatalog {
-    /** 공지 변형(C05) 공통 문구. */
-    const val NOTICE_BASE = "서비스 점검 안내: 10월 25일 02:00~04:00 동안 결제 기능을 쓸 수 없습니다."
+    /**
+     * 공지 변형(C05) 공통 문구. '결제'를 넣으면 A가 결정 요약으로 바꿔 공지로 분류되지 않으므로 '주문'을 쓴다(10/25).
+     * 결제 문구 때문에 결정이 되는 한계는 P18이 맡는다.
+     */
+    const val NOTICE_BASE = "서비스 점검 안내: 10월 25일 02:00~04:00 동안 주문 기능을 쓸 수 없습니다."
 
     /** P16 영상 광고: 이 시간(초)이 지나야 [건너뛰기] 버튼이 생긴다. */
     const val VIDEO_SKIP_AFTER_SECONDS = 5
@@ -75,7 +97,7 @@ object ScenarioCatalog {
     val all: List<PopupScenario> = listOf(
         PopupScenario(
             id = "P01", title = "라벨 있는 광고 대화상자", surface = PopupSurface.DIALOG,
-            kind = PopupKind.AD, expected = ExpectedHandling.USER_CHOICE,
+            kind = PopupKind.COUPON, expected = ExpectedHandling.USER_CHOICE,
             closeEvidence = CloseEvidence.E2_LABELED_CLICK,
             correctTargetId = "btn_close", appAllowedTargetId = "btn_close", forbiddenTargetIds = setOf("btn_ad_open"),
             keyFacts = listOf("가을 할인 쿠폰 광고"), rememberable = true, memoryReusableFrom = null,
@@ -84,7 +106,7 @@ object ScenarioCatalog {
         ),
         PopupScenario(
             id = "P02", title = "같은 창 덮개 광고", surface = PopupSurface.SAME_WINDOW_OVERLAY,
-            kind = PopupKind.AD, expected = ExpectedHandling.USER_CHOICE,
+            kind = PopupKind.COUPON, expected = ExpectedHandling.USER_CHOICE,
             closeEvidence = CloseEvidence.E2_LABELED_CLICK,
             correctTargetId = "btn_close", appAllowedTargetId = "btn_close", forbiddenTargetIds = setOf("btn_ad_open"),
             keyFacts = listOf("신규 가입 이벤트 광고"), rememberable = true, memoryReusableFrom = null,
@@ -132,7 +154,7 @@ object ScenarioCatalog {
             kind = PopupKind.NOTICE, expected = ExpectedHandling.USER_CHOICE,
             closeEvidence = CloseEvidence.E2_LABELED_CLICK,
             correctTargetId = "btn_close", appAllowedTargetId = "btn_close", forbiddenTargetIds = emptySet(),
-            keyFacts = listOf("점검 10월 25일 02:00~04:00", "결제 기능 중단"), rememberable = true,
+            keyFacts = listOf("점검 10월 25일 02:00~04:00", "주문 기능 중단"), rememberable = true,
             memoryReusableFrom = null, experiments = setOf("B01", "C02"),
             note = "본문이 비트맵 안에만 있고 접근성 텍스트가 없음. OCR 필요.",
         ),
@@ -174,7 +196,7 @@ object ScenarioCatalog {
         ),
         PopupScenario(
             id = "P12", title = "연속 팝업(광고→공지→동의)", surface = PopupSurface.DIALOG,
-            kind = PopupKind.AD, expected = ExpectedHandling.USER_CHOICE,
+            kind = PopupKind.COUPON, expected = ExpectedHandling.USER_CHOICE,
             closeEvidence = CloseEvidence.E2_LABELED_CLICK,
             correctTargetId = "btn_close", appAllowedTargetId = "btn_close", forbiddenTargetIds = setOf("btn_allow"),
             keyFacts = listOf("세 번째 창은 동의 요청"), rememberable = false,
@@ -183,7 +205,7 @@ object ScenarioCatalog {
         ),
         PopupScenario(
             id = "P13", title = "WebView 모달 광고", surface = PopupSurface.WEBVIEW,
-            kind = PopupKind.AD, expected = ExpectedHandling.USER_CHOICE,
+            kind = PopupKind.COUPON, expected = ExpectedHandling.USER_CHOICE,
             closeEvidence = CloseEvidence.E2_LABELED_CLICK,
             correctTargetId = null, appAllowedTargetId = null, forbiddenTargetIds = emptySet(),
             keyFacts = listOf("웹 페이지 안의 쿠폰 광고"), rememberable = false,
@@ -250,25 +272,76 @@ object ScenarioCatalog {
 
     /** C05·C09: 같은 공지와 일부만 바뀐 공지. N02만 N01의 기억을 재사용할 수 있다. */
     private fun noticeVariants(): List<PopupScenario> = listOf(
-        notice("N01", "공지 원본", NOTICE_BASE, null, "10월 25일 02:00~04:00 결제 중단"),
-        notice("N02", "공지 동일 반복", NOTICE_BASE, "N01", "10월 25일 02:00~04:00 결제 중단"),
+        notice("N01", "공지 원본", NOTICE_BASE, null, "10월 25일 02:00~04:00 주문 중단"),
+        notice("N02", "공지 동일 반복", NOTICE_BASE, "N01", "10월 25일 02:00~04:00 주문 중단"),
         notice("N03", "공지 날짜만 변경",
-            "서비스 점검 안내: 10월 26일 02:00~04:00 동안 결제 기능을 쓸 수 없습니다.", null,
+            "서비스 점검 안내: 10월 26일 02:00~04:00 동안 주문 기능을 쓸 수 없습니다.", null,
             "날짜가 10월 26일로 바뀜"),
         notice("N04", "공지 시간만 변경",
-            "서비스 점검 안내: 10월 25일 03:00~06:00 동안 결제 기능을 쓸 수 없습니다.", null,
+            "서비스 점검 안내: 10월 25일 03:00~06:00 동안 주문 기능을 쓸 수 없습니다.", null,
             "시간이 03:00~06:00으로 바뀜"),
         notice("N05", "공지 금액 추가",
-            "서비스 점검 안내: 10월 25일 02:00~04:00 동안 결제 기능을 쓸 수 없습니다. 보상 3,000포인트 지급.",
+            "서비스 점검 안내: 10월 25일 02:00~04:00 동안 주문 기능을 쓸 수 없습니다. 보상 3,000포인트 지급.",
             null, "보상 금액 추가"),
         notice("N06", "공지 행동 요구 추가",
-            "서비스 점검 안내: 10월 25일 02:00~04:00 동안 결제 기능을 쓸 수 없습니다. 점검 전 앱을 업데이트하세요.",
+            "서비스 점검 안내: 10월 25일 02:00~04:00 동안 주문 기능을 쓸 수 없습니다. 점검 전 앱을 업데이트하세요.",
             null, "업데이트 요구 추가"),
         notice("N07", "공지 본문 완전 변경",
-            "개인정보 처리방침이 11월 1일부터 변경됩니다.", null, "다른 공지"),
+            "이용약관이 11월 1일부터 변경됩니다.", null, "다른 공지"),
         notice(BUTTON_MOVED_NOTICE_ID, "공지 닫기 버튼 위치만 변경", NOTICE_BASE, null,
             "글자는 원본과 같고 닫기 버튼만 위로 옮김"),
     )
+
+    /** 정답지의 건너뛰기 버튼 ID. */
+    const val SKIP_TARGET_ID = "btn_skip"
+
+    /** #46: 자동 건너뛰기는 F9 지원·실측 전까지 꺼져 있다. 켜면 P16 목표가 바뀐다. */
+    val autoSkipEnabled: Boolean = false
+
+    /**
+     * 프리셋별 목표(C `HandlingPreset`: ① 광고·쿠폰·공지 닫기, ② 광고·쿠폰 닫기, ③ 광고만 닫기).
+     * 닫기가 목표여도 앱 허용 버튼이 없거나 자동 건너뛰기가 꺼진 건너뛰기뿐이면 묻는다(ASK).
+     */
+    fun presetGoal(scenario: PopupScenario, preset: TestPreset): PresetGoal {
+        val preference = when (scenario.kind) {
+            PopupKind.USER_DECISION -> return PresetGoal.ASK
+            PopupKind.SENSITIVE -> return PresetGoal.BLOCK
+            PopupKind.NOT_POPUP -> return PresetGoal.NONE
+            PopupKind.AD -> PresetGoal.CLOSE
+            PopupKind.COUPON -> if (preset == TestPreset.CLOSE_ADS_ONLY) PresetGoal.ANNOUNCE else PresetGoal.CLOSE
+            PopupKind.NOTICE -> if (preset == TestPreset.CLOSE_ALL) PresetGoal.CLOSE else PresetGoal.ANNOUNCE
+        }
+        val target = scenario.appAllowedTargetId
+        val closable = target != null && (target != SKIP_TARGET_ID || autoSkipEnabled)
+        return if (preference == PresetGoal.CLOSE && !closable) PresetGoal.ASK else preference
+    }
+
+    /**
+     * 첫 통합(클릭 없음, A 결정 요약 영역 제한·A·B 영역 계약 7번 연결 전) 예상. 앱 모듈
+     * `AnswerKeyPipelineTest`가 지금 A·B 코드로 같은 값이 나오는지 CI에서 확인한다. 실기기 결과가 아니다.
+     */
+    val int1: Map<String, Int1Expectation> = mapOf(
+        "P01" to Int1Expectation(Int1Kind.COUPON, Int1Path.TREE),
+        "P02" to Int1Expectation(Int1Kind.USER_DECISION, Int1Path.TREE,
+            "제목 '신규 가입 이벤트'의 '가입'. 10자 이하라 B가 혜택 조건(R1)으로 보지 않음"),
+        "P03" to Int1Expectation(Int1Kind.UNKNOWN, Int1Path.TREE, "'설치하고 혜택 받기'에 B 광고·쿠폰 단어가 없음"),
+        "P04" to Int1Expectation(Int1Kind.ADVERTISEMENT, Int1Path.TREE),
+        "P05" to Int1Expectation(Int1Kind.UNKNOWN, Int1Path.TREE, "글자 노드 없음(그림만)"),
+        "P06" to Int1Expectation(Int1Kind.ADVERTISEMENT, Int1Path.TREE),
+        "P07" to Int1Expectation(Int1Kind.UNKNOWN, Int1Path.TREE, "본문이 그림에만 있음. OCR 미구현"),
+        "P08" to Int1Expectation(Int1Kind.USER_DECISION, Int1Path.A_SUMMARY),
+        "P09" to Int1Expectation(Int1Kind.USER_DECISION, Int1Path.A_SUMMARY),
+        "P10" to Int1Expectation(Int1Kind.USER_DECISION, Int1Path.A_SUMMARY),
+        "P11" to Int1Expectation(Int1Kind.BLOCKED, Int1Path.A_BLOCK),
+        "P12" to Int1Expectation(Int1Kind.COUPON, Int1Path.TREE),
+        "P13" to Int1Expectation(Int1Kind.COUPON, Int1Path.TREE),
+        "P14" to Int1Expectation(Int1Kind.NONE, Int1Path.NONE),
+        "P15" to Int1Expectation(Int1Kind.NONE, Int1Path.NONE),
+        "P16" to Int1Expectation(Int1Kind.ADVERTISEMENT, Int1Path.TREE),
+        "P17" to Int1Expectation(Int1Kind.ADVERTISEMENT, Int1Path.TREE),
+        "P18" to Int1Expectation(Int1Kind.USER_DECISION, Int1Path.A_SUMMARY,
+            "'5초 안에 결제하면'의 '결제' 때문에 A가 결정 요약으로 바꿈(영역 계약 7번 연결 전)"),
+    ) + noticeVariants().associate { it.id to Int1Expectation(Int1Kind.NOTICE, Int1Path.TREE) }
 
     fun find(id: String): PopupScenario? = all.firstOrNull { it.id == id }
 }

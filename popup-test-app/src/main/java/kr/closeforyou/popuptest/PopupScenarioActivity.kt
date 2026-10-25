@@ -40,7 +40,8 @@ class PopupScenarioActivity : Activity() {
         super.onCreate(savedInstanceState)
         scenarioId = intent.getStringExtra(EXTRA_SCENARIO) ?: "UNKNOWN"
         val scenario = ScenarioCatalog.find(scenarioId)
-        title = scenario?.let { "${it.id} ${it.title}" } ?: getString(R.string.unknown_scenario)
+        // 제목에는 ID만 둔다. 시나리오 이름("광고"·"공지"·"동의" 등)이 같은 창 글자로 잡혀 분류에 섞이지 않게(10/25).
+        title = scenario?.id ?: getString(R.string.unknown_scenario)
         setContentView(backgroundPage())
         if (savedInstanceState != null || scenario == null) return
         when (scenarioId) {

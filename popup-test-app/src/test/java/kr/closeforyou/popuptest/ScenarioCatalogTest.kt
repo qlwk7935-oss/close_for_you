@@ -85,7 +85,7 @@ class ScenarioCatalogTest {
 
     @Test
     fun firstSeenAdsAreUserChoiceNotAutomatic() {
-        all.filter { it.kind == PopupKind.AD || it.kind == PopupKind.NOTICE }.forEach {
+        all.filter { it.kind == PopupKind.AD || it.kind == PopupKind.COUPON || it.kind == PopupKind.NOTICE }.forEach {
             assertEquals(it.id, ExpectedHandling.USER_CHOICE, it.expected)
         }
     }
@@ -143,6 +143,43 @@ class ScenarioCatalogTest {
         assertEquals(PopupSurface.VIDEO_OVERLAY, s.surface)
         assertEquals("btn_skip", s.appAllowedTargetId)
         assertTrue("btn_ad_open" in s.forbiddenTargetIds)
+    }
+
+    /** 첫 통합 예상이 사람 기준 종류와 다른 시나리오는 이 목록에만 있고, 이유가 적혀 있어야 한다. */
+    @Test
+    fun int1GapsAreListedAndExplained() {
+        assertEquals(all.map { it.id }.toSet(), ScenarioCatalog.int1.keys)
+        val gaps = all.filter { ScenarioCatalog.int1.getValue(it.id).kind != humanInt1(it.kind) }.map { it.id }.toSet()
+        assertEquals(setOf("P02", "P03", "P05", "P07", "P18"), gaps)
+        gaps.forEach { assertTrue(it, ScenarioCatalog.int1.getValue(it).reason.isNotBlank()) }
+    }
+
+    private fun humanInt1(kind: PopupKind): Int1Kind = when (kind) {
+        PopupKind.AD -> Int1Kind.ADVERTISEMENT
+        PopupKind.COUPON -> Int1Kind.COUPON
+        PopupKind.NOTICE -> Int1Kind.NOTICE
+        PopupKind.USER_DECISION -> Int1Kind.USER_DECISION
+        PopupKind.SENSITIVE -> Int1Kind.BLOCKED
+        PopupKind.NOT_POPUP -> Int1Kind.NONE
+    }
+
+    @Test
+    fun presetGoalsFollowKindAndTarget() {
+        fun goals(id: String) = TestPreset.entries.map { ScenarioCatalog.presetGoal(ScenarioCatalog.find(id)!!, it) }
+        assertEquals(listOf(PresetGoal.CLOSE, PresetGoal.CLOSE, PresetGoal.ANNOUNCE), goals("P01")) // 쿠폰
+        assertEquals(listOf(PresetGoal.CLOSE, PresetGoal.CLOSE, PresetGoal.CLOSE), goals("P06")) // 광고
+        assertEquals(listOf(PresetGoal.CLOSE, PresetGoal.ANNOUNCE, PresetGoal.ANNOUNCE), goals("N01")) // 공지
+        assertEquals(List(3) { PresetGoal.ASK }, goals("P04")) // 앱 허용 버튼 없음
+        assertEquals(List(3) { PresetGoal.ASK }, goals("P16")) // 자동 건너뛰기 꺼짐(#46)
+        assertEquals(List(3) { PresetGoal.ASK }, goals("P08")) // 결정
+        assertEquals(List(3) { PresetGoal.BLOCK }, goals("P11")) // 민감
+        assertEquals(List(3) { PresetGoal.NONE }, goals("P14")) // 팝업 아님
+        assertEquals(listOf(PresetGoal.ASK, PresetGoal.ASK, PresetGoal.ANNOUNCE), goals("P13")) // 쿠폰, 앱 허용 버튼 미정
+    }
+
+    @Test
+    fun couponScenariosAreTheClaimableBenefits() {
+        assertEquals(setOf("P01", "P02", "P12", "P13"), all.filter { it.kind == PopupKind.COUPON }.map { it.id }.toSet())
     }
 
     @Test
