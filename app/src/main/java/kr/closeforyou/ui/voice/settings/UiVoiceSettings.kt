@@ -12,7 +12,8 @@ enum class AnnouncementDetail { SHORT, DETAILED }
 
 /**
  * C settings. Auto close is per app and off by default: an app listed here only lets B consider
- * repeating an exact remembered choice (F12). First-seen popups are always asked (AGENTS.md 6-2).
+ * repeating an exact remembered choice (F12). First-seen popups are closed without asking only under
+ * AGENTS.md 6-2 (preset + [autoCloseConsent] + B approval + A eligibility); otherwise they are asked.
  * [handlingPreset] is separate: the person's preference per popup kind, for B to read later
  * (docs/c-notes/preset-contract-proposal.md). The two are never mixed.
  * [autoCloseConsent] is a third, separate thing: the person's explicit "자동 닫기" switch (off by
