@@ -1,16 +1,17 @@
 # B 자동 닫기 승인 조건 · 쿠폰 분류 (설계 + 시제품 검증)
 
-작성: B 준영 · 2026-10-23 설계, 2026-10-24 B 정책 연결 · 브랜치 `feature/decision-auto-close-policy` (#38 위, 로컬)
+작성: B 준영 · 2026-10-23 설계, 2026-10-24 B 정책 연결, 2026-10-25 상태 갱신 · 기준 코드: `main` `e38aac5`
 배정: 우진 "B는 자동 닫기 승인 조건과 쿠폰 분류" · 근거: 재호 AGENTS 6장 개정 초안 + 우진 추가 조건 + 계약 v2(#38)
 
-> **상태: B 정책 연결 (#37·#38 병합 대기).**
-> - 계약 v2(#38) 위에서 B가 연결됐다.
->   - 분류기는 여섯 종류로 판정하고 COUPON을 낸다.
->   - 배선은 같은 창 팝업 글자를 팝업 범위로 좁힌다.
->   - 정책은 프리셋 경로, `next`·`source`, A 적격 근거, 클릭 후 결과를 쓴다.
-> - 그래도 **A가 `AutoEligibility`를 채우고 C가 `autoCloseKinds`를 넘기기 전까지는 자동 닫기가 일어나지 않는다.**
->   A의 F9가 켜지기 전까지는 실제로 눌리는 것도 없다.
-> - 검증은 JVM 시험, **API 37 에뮬레이터** 덤프와 계측 시험, 독립 리뷰 2회까지다. 실기기·TalkBack은 0회다.
+> **상태 (2026-10-25): B 쪽은 전부 main에 병합됐다.** 영어 경계 #37, 계약 v2 #38, 정책 연결 #44, 계약 v3(처리 보고·제목) #45, 자동 SKIP 꺼짐 #46, 기억 결과 #48, 제목 개인정보 제외 #50.
+> - 분류기는 여섯 종류로 판정하고 COUPON을 낸다. 배선은 같은 창 팝업 글자를 팝업 범위로 좁히고 제목을 고른다. 정책은 프리셋 경로, `next`·`source`, A 적격 근거, 클릭 후 결과를 쓴다.
+> - **그래도 지금 앱에서는 자동 닫기가 일어나지 않는다.** 아래가 모두 빠져 있다.
+>   - main의 실제 서비스가 B 정책을 아직 만들지 않는다(A 조립 코드는 `transfer/…` 브랜치, #29 진행 중).
+>   - A가 `AutoEligibility`를 채우지 않는다.
+>   - A F9(#42)는 Draft이고, F9와 B 정책을 잇는 `F9PolicyBridge` 어댑터가 없다(9절).
+>   - C의 운영 스위치 `PresetAutoCloseFeature.live`가 꺼져 있어 `autoCloseKinds`는 빈 집합이다.
+> - 검증은 JVM 시험, **API 37 에뮬레이터** 덤프와 계측 시험, 독립 리뷰 2회까지다. 실기기·TalkBack은 0회다. 계측 시험은 CI에서 컴파일만 하고 실행하지 않는다.
+> - 위협 정리는 [위협 모델](THREAT_MODEL.md) T17~T25, 연결 조건은 [연결 안내](INTEGRATION.md) 4절, 실기기 시나리오는 [체크리스트](REAL_DEVICE_CHECKLIST.md) S14~S20.
 
 ## 1. 한 문장 규칙
 
@@ -197,7 +198,7 @@ held-out에서 틀린 7개는 **모두 조심하는 쪽**이다.
 | 12 | SDK 닫기 버튼: 먼저 실제 접근성 라벨을 조사하고, 검증된 라벨은 라벨 계약에 추가 (E3 첫 자동은 보류) | D 시험 앱 → B 분석 |
 | 13 | 공지 "확인": 자동 닫기와 분리한 사용자 선택 경로. A·B·C 별도 계약 | 별도 계약 |
 
-## 8. 제안: B 처리 결과를 C로 넘기는 경로 · 팝업 제목 (다음 계약)
+## 8. B 처리 결과를 C로 넘기는 경로 · 팝업 제목 (계약 v3 #45로 반영, 제목 개인정보 제외 #50)
 
 재호 지적: 프리셋이나 기억으로 B가 바로 처리한 결과를 C가 받을 경로가 계약에 없다.
 
@@ -228,12 +229,29 @@ held-out에서 틀린 7개는 **모두 조심하는 쪽**이다.
 
 ## 9. 남은 일
 
-- #37·#38 병합 완료(10/25). 이 브랜치를 main에 맞춰 PR로 올린다. 다음은 처리 보고(8절) 계약 PR.
-- **A F9(#42) 연결 방법 (F9PolicyBridge):**
-  - `authorize`: B 배선 extractor로 받은 분석과 `DecisionContext(현재 토큰, null, null, 사용자 조작 중, 안내 가능, autoCloseKinds)`로 `decide`한다.
-    `next == EXECUTE && source == PRESET`일 때만 `F9Approval(decision, analysis.autoEligibility, CONTRACT_V2)`.
-  - `onActionResult`: **누르지 않고 막은 결과(NOT_EXECUTED·BLOCKED·STALE, attempted=false)도 넘긴다.** 안 넘기면 B는 30초 뒤 "결과 모름"으로 보고 그 팝업을 세션 내내 자동 금지한다.
-  - 정책은 `DecisionActionPolicy { SystemClock.uptimeMillis() }`로 만든다(A 적격 근거와 같은 시계).
-- D 정답지에 COUPON 열과 프리셋별 기대값을 추가한다.
-- 실제 앱 문구로 쿠폰·광고 단어를 다듬는다. 다듬은 뒤에는 새 held-out 세트로 다시 측정한다.
-- 실기기 TalkBack 확인(LG/S26).
+**끝난 것 (10/25):** 8절 처리 보고·제목은 계약 v3(#45)로 들어갔다. 제목에서 개인정보일 수 있는 줄은 뺀다(#50). 첫 통합에서는 A가 제목을 넘기지 않는다(팀 결정). 자동 SKIP은 기본 꺼짐이다(#46). 기억 규칙 실패 판정은 성공 3조건 기준이다(#48).
+
+**자동 닫기가 실제로 일어나려면** (위에서부터 순서대로, 담당)
+
+| # | 할 일 | 담당 | 지금 |
+|---|---|---|---|
+| 1 | 서비스 조립: A 이벤트 → B 배선 → C 흐름을 main에 연결 | A | `transfer/…` 브랜치에만 있음 (#29) |
+| 2 | `AutoEligibility` 5개 검사 채우기 (`DECISION_TEXT_SCOPED`는 A·B 절반씩 합의 뒤) | A | 미구현 |
+| 3 | F9 병합 | A | #42 Draft |
+| 4 | `F9PolicyBridge` 어댑터 (아래) | A (B 리뷰) | 없음. A가 연결 예정(우진 10/25 우선순위 2). 없으면 F9가 `POLICY_UNAVAILABLE`로 전부 막음 |
+| 5 | `autoCloseKinds` 전달 + 운영 스위치 | C (팀 결정) | `PresetAutoCloseFeature.live = false` |
+| 6 | 처리 보고 → C 안내 연결 | A → C | C 수신부 `SpeechHandlingListener`는 main(#51, 제목 낭독 기본 꺼짐). A 조립에서 넘기는 부분이 남음 |
+| 7 | AGENTS.md 6장 2번 개정 | 팀 | 옛 문구 그대로 |
+
+**F9PolicyBridge 어댑터 동작 (B 기준, 코드 예시는 [연결 안내](INTEGRATION.md) 4절)**
+- `authorize`: B 배선 extractor로 받은 분석과 `DecisionContext(현재 토큰, null, null, 사용자 조작 중, 안내 가능, autoCloseKinds)`로 `decide`한다.
+  `next == EXECUTE && source == PRESET`일 때만 `F9Approval(decision, analysis.autoEligibility, CONTRACT_V2)`.
+- `onActionResult`: **누르지 않고 막은 결과(NOT_EXECUTED·BLOCKED·STALE, attempted=false)도 넘긴다.** 안 넘기면 B는 30초 뒤 "결과 모름"으로 보고 그 팝업을 세션 내내 자동 금지한다.
+- 정책은 `DecisionActionPolicy { SystemClock.uptimeMillis() }`로 만든다(A 적격 근거와 같은 시계). 서비스 세션마다 하나만 만들고, 사용자 선택 경로(`DecisionChoiceHandler`)에도 같은 인스턴스를 넘긴다. 인자 없는 생성자는 시험용 JVM 시계다.
+
+**B 남은 일**
+- D 정답지에 COUPON 종류와 프리셋별 기대값을 추가한다(D와 협의). 지금은 P01 쿠폰이 광고로, A 결정 요약을 거치는 P18이 광고·사용자 선택으로 적혀 있다.
+- 실제 앱 문구로 쿠폰·광고·사기 단어를 다듬는다. 다듬은 뒤에는 새 held-out 세트로 다시 측정한다.
+- 계측 시험(`DecisionKindInstrumentedTest` 등)을 CI에서도 실행할지 A와 논의한다. 지금은 사전을 바꿀 때마다 에뮬레이터에서 직접 실행한다.
+- 기억 규칙 자동 반복(반복 허락, `INCOMPLETE_EVIDENCE` 처리)은 별도 계약이다(7절 11번).
+- 실기기 TalkBack 확인(LG/S26), 체크리스트 S14~S20.
