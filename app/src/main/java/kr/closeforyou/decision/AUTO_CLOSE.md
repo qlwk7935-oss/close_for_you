@@ -82,7 +82,7 @@
 | 8 | 결과를 안내할 수 있음 | `FEEDBACK_UNAVAILABLE` | 묻기 (조용히 닫지 않음) |
 | 9 | 모의 데이터가 아님 (`MOCK_ONLY`) | `MOCK_DATA` | — |
 | 10 | 검증된 E1/E2 CLOSE가 **정확히 1개** → 그 버튼. CLOSE+SKIP이 같이 있으면 CLOSE (P17) | `AMBIGUOUS_TARGET` (2개 이상) | 묻기 |
-| 11 | CLOSE가 없고 SKIP이 정확히 1개 → 광고일 때만, 카운트다운이 끝난 뒤 | `SKIP_NOT_READY` (광고 아님), 카운트다운 중이면 `WAITING_FOR_TARGET` | 묻기 / 대기 |
+| 11 | CLOSE가 없고 SKIP이 정확히 1개 → 광고일 때만, 카운트다운이 끝난 뒤. **자동 SKIP은 기본 꺼짐** (A F9가 CLOSE만 누름, 10/25). A가 SKIP을 지원하면 `DecisionActionPolicy(allowAutoSkip = true)`로 켬 | `SKIP_NOT_READY` (광고 아님 또는 자동 SKIP 꺼짐), 카운트다운 중이면 `WAITING_FOR_TARGET` | 묻기 / 대기 |
 | 12 | 버튼이 아직 없음 (지연 광고·쿠폰) | `WAITING_FOR_TARGET` | A가 새 화면마다 다시 관측하고 C는 묻지 않음. 30초 뒤 안내(재호안) |
 | 13 | 공지인데 닫기 버튼 없음 ("확인"뿐) | `NO_TARGET` | 안내만 |
 | 14 | 같은 팝업(앱 + A 구조 지문)이 결과를 기다리는 중이 아님. 30초 안에 결과가 안 오면 결과 불명으로 봄 | `AWAITING_RESULT` | 대기 |

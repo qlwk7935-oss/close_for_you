@@ -60,6 +60,22 @@ class DecisionActionPolicyPresetTest {
         assertEquals("the person may still choose it", "node:c", d.candidateId)
     }
 
+    @Test fun aSkipOnlyAdIsAskedUntilAPressesSkip() {
+        val skip = CloseCandidate("node:s", "s", null, "건너뛰기", bounds, EvidenceLevel.E2_LABELED_NODE, ButtonRole.SKIP)
+        val ad = popup("영상 광고", "건너뛰기", buttons = listOf(skip), token = token("skip"))
+        // Default (F9 is CLOSE-only): the person is asked and may choose the skip themselves.
+        decide(ad).let {
+            assertEquals(NextStep.ASK, it.next)
+            assertEquals(ActionAuthorization.NEEDS_CONFIRMATION, it.authorization)
+            assertEquals("node:s", it.candidateId)
+        }
+        // Once A's executor presses SKIP, A turns it on and the same ad is closed automatically.
+        val skipping = DecisionActionPolicy(allowAutoSkip = true) { now }
+        val d = runBlocking { skipping.decide(ad, DecisionContext(ad.token, null, null, false, true, adsOnly)) }
+        assertEquals(NextStep.EXECUTE, d.next)
+        assertEquals("node:s", d.candidateId)
+    }
+
     @Test fun eachOutcomeTellsCWhatToDo() {
         // A coupon under preset ③ is only told.
         decide(popup("쿠폰이 도착했어요", "닫기", token = token("c"))).let {
