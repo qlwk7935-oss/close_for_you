@@ -1,5 +1,6 @@
 package kr.closeforyou.decision
 
+import kr.closeforyou.core.model.ButtonLabelRules
 import kr.closeforyou.core.model.ButtonRole
 
 /**
@@ -7,6 +8,13 @@ import kr.closeforyou.core.model.ButtonRole
  * Korean terms use substring matching; English terms use word boundaries so "read" is not "ad".
  */
 internal object DecisionKeywords {
+    // English word boundaries in ASCII, not `\b`: next to Hangul, `\b` holds on the JDK but not on
+    // Android's ICU engine, so "sign up하기" or "AD광고" were missed on phones while JVM tests passed.
+    // `_` stays a word character as in `\b`, so identifiers such as "AD_banner" or "pay_day" still
+    // do not match (PR #37 review).
+    private const val EN_START = "(?<![a-z0-9_])"
+    private const val EN_END = "(?![a-z0-9_])"
+
     // Design 3-1 grade D, F7 decision signals (계정·개인정보) and A's fixed summaries
     // (e.g. "결제 선택 필요"). "설치" is grade P (navigation), so an install advertisement stays one.
     private val userDecisionKo = listOf(
@@ -14,13 +22,13 @@ internal object DecisionKeywords {
         "승인", "송금", "이체", "해지", "탈퇴",
     )
     private val userDecisionEn = Regex(
-        "\\b(pay|payment|purchase|buy|subscribe|subscription|consent|agree|accept|permission|allow|delete|login|log in|sign in|sign up|account|personal (information|data))\\b",
+        "$EN_START(pay|payment|purchase|buy|subscribe|subscription|consent|agree|accept|permission|allow|delete|login|log in|sign in|sign up|account|personal (information|data))$EN_END",
         RegexOption.IGNORE_CASE,
     )
 
     // Grade D on a button only: popup bodies such as "체험 상품 안내" are often advertisements.
     private val decisionButtonOnlyKo = listOf("체험")
-    private val decisionButtonOnlyEn = Regex("\\btrial\\b", RegexOption.IGNORE_CASE)
+    private val decisionButtonOnlyEn = Regex("${EN_START}trial$EN_END", RegexOption.IGNORE_CASE)
 
     // Design 3-1 grades K (취소·거절·나중에·오늘 하루 보지 않기·7일간 닫기), P (설치·자세히·받기·열기)
     // and O (확인·OK): a button labelled like this is not a close or skip target, whatever its role says.
@@ -30,14 +38,14 @@ internal object DecisionKeywords {
         "확인", "알겠",
     )
     private val riskyButtonEn = Regex(
-        "\\b(cancel|decline|later|install|open|more|get|download|ok|okay|confirm|continue|got it|today|don't show|do not show)\\b",
+        "$EN_START(cancel|decline|later|install|open|more|get|download|ok|okay|confirm|continue|got it|today|don't show|do not show)$EN_END",
         RegexOption.IGNORE_CASE,
     )
 
     private val advertisementKo = listOf("광고", "스폰서", "협찬", "프로모션", "특가", "쿠폰")
     // Upper-case only, so ordinary words containing "ad" are not advertisements.
-    private val advertisementUpperEn = Regex("\\bAD\\b")
-    private val advertisementEn = Regex("\\b(ads|sponsored|advertisement)\\b", RegexOption.IGNORE_CASE)
+    private val advertisementUpperEn = Regex("(?<![A-Za-z0-9_])AD(?![A-Za-z0-9_])")
+    private val advertisementEn = Regex("$EN_START(ads|sponsored|advertisement)$EN_END", RegexOption.IGNORE_CASE)
 
     private val noticeKo = listOf("점검", "공지", "안내", "알림", "업데이트", "변경")
 
@@ -47,6 +55,31 @@ internal object DecisionKeywords {
     fun isUserDecision(text: String): Boolean =
         userDecisionKo.any { it in text } || userDecisionEn.containsMatchIn(text)
 
+    // R1 (OVERWARNING_STUDY.md), narrowed after A's review of #30. Only purchase and membership words
+    // count, and only as the condition itself: "가입하면", "결제 시", "구매하면", "sign up and get".
+    // Consent, permission, personal data, deletion, cancellation and transfers never do.
+    private val conditionedDecision = Regex(
+        """(결제|구매|구독|가입|로그인)\s?(하면|하시면|하고|할 때|하실 때|시(?=[\s,.!]|$))""" +
+            """|$EN_START(sign up|subscribe|buy|purchase|pay|log in|sign in)$EN_END(\s+now)?\s+(and|to)\s+get$EN_END""" +
+            """|$EN_START(when|if)\s+you\s+(sign up|subscribe|buy|purchase|pay|log in|sign in)$EN_END""",
+        RegexOption.IGNORE_CASE,
+    )
+    private val benefitWord = Regex("""할인|쿠폰|포인트|혜택|이벤트|특가|무료|증정|적립|배송|$EN_START(off|free|bonus|coupon)$EN_END""", RegexOption.IGNORE_CASE)
+    // A question or A's fixed summary ("결제 선택 필요") is always a decision, never a mention.
+    private val asksForDecision = Regex("""\?|하시겠|할까요|시겠어요|필요""")
+
+    /**
+     * True only when every decision word in [text] sits inside a purchase or membership condition
+     * of a benefit ("가입하면 포인트를 드립니다"). Any other decision word in the same text, such as
+     * "개인정보 제공에 동의하세요" or "지금 결제하세요", keeps it a decision, as do questions, A's fixed
+     * summaries and texts no longer than a button name (10 chars).
+     */
+    fun isBenefitMention(text: String): Boolean {
+        if (text.length <= 10 || !benefitWord.containsMatchIn(text) || asksForDecision.containsMatchIn(text)) return false
+        val rest = conditionedDecision.replace(text, " ")
+        return rest != text && !isUserDecision(rest)
+    }
+
     fun isDecisionButtonLabel(label: String): Boolean =
         isUserDecision(label) || decisionButtonOnlyKo.any { it in label } ||
             decisionButtonOnlyEn.containsMatchIn(label)
@@ -55,26 +88,11 @@ internal object DecisionKeywords {
         isDecisionButtonLabel(label) || riskyButtonKo.any { it in label } || riskyButtonEn.containsMatchIn(label)
 
     /**
-     * CLOSE or SKIP only when the whole label says so, so "오늘 하루 닫기" (grade K) or "닫기 전 저장"
-     * are neither. Shared by the candidate finder and the policy's recheck of a supplied role.
+     * CLOSE or SKIP only when the whole label says so, by the team's shared label contract, so
+     * "오늘 하루 닫기" (grade K), "닫기 전 저장" or a bare "X" are neither. Used by the policy's
+     * recheck of a supplied role; the finder judges whole nodes with [ButtonLabelRules.judgeNode].
      */
-    fun buttonRoleOf(label: String): ButtonRole? {
-        if (isRiskyButtonLabel(label)) return null
-        val normalized = label.lowercase().filterNot { it.isWhitespace() || it in "[]()<>·." }
-        return when (normalized) {
-            in closeLabels -> ButtonRole.CLOSE
-            in skipLabels -> ButtonRole.SKIP
-            else -> null
-        }
-    }
-
-    // A bare "X"/"×" is not a close label: A's gate keeps refusing it until the button's meaning and
-    // popup membership can be proven (agreed after PR #11), so B must not offer it as pressable.
-    private val closeLabels = setOf(
-        "닫기", "닫음", "창닫기", "팝업닫기", "광고닫기", "공지닫기", "안내닫기", "닫기버튼",
-        "close", "closead", "closepopup", "closedialog", "closebutton", "dismiss",
-    )
-    private val skipLabels = setOf("건너뛰기", "광고건너뛰기", "건너뛰기버튼", "스킵", "광고스킵", "skip", "skipad", "skipads", "skipbutton")
+    fun buttonRoleOf(label: String): ButtonRole? = ButtonLabelRules.roleOf(label)
 
     fun isAdvertisement(text: String): Boolean =
         advertisementKo.any { it in text } ||
