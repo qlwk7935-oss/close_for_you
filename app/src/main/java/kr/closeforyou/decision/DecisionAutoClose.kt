@@ -170,10 +170,11 @@ internal class DecisionAutoClose(
      * A's result for any press, read from its observed [ActionResult.outcome] (contract v2):
      * - LEFT_APP (a fake close): that popup and the whole app stop for this session, even when the
      *   result comes after the timeout or the press was the person's own choice.
-     * - For a popup B approved: no press (not executed, blocked, stale) frees it for a later screen;
-     *   CLOSED_CONFIRMED marks it closed once (asked if it shows again: repeating is the person's F12
-     *   choice); STILL_PRESENT, UNKNOWN or no observation after a press is a failure, never retried.
-     *   A delivered click (MECHANICAL_SUCCESS) alone is not a closed popup.
+     * - For a popup B approved: no press (not executed, blocked, stale) frees it for a later screen.
+     *   A success is the team rule (10/25): attempted + MECHANICAL_SUCCESS + CLOSED_CONFIRMED; it marks
+     *   the popup closed once (asked if it shows again: repeating is the person's F12 choice).
+     *   Anything else after a press is a failure, never retried: STILL_PRESENT, UNKNOWN, no
+     *   observation, and a popup that vanished although the press failed or its outcome is unknown.
      */
     @Synchronized
     fun onResult(result: ActionResult) {
@@ -190,12 +191,16 @@ internal class DecisionAutoClose(
             approvedAt[result.token.packageName]?.let { list -> list.lastOrNull { it.first == key }?.let(list::remove) }
             return
         }
-        when (result.outcome) {
-            ClickOutcome.CLOSED_CONFIRMED -> remember(closed, key)
-            ClickOutcome.LEFT_APP -> Unit // already stopped above
-            ClickOutcome.STILL_PRESENT, ClickOutcome.UNKNOWN, null -> remember(failed, key)
+        when {
+            result.outcome == ClickOutcome.LEFT_APP -> Unit // already stopped above
+            isConfirmedClose(result) -> remember(closed, key)
+            else -> remember(failed, key)
         }
     }
+
+    /** The team's single success rule (A #42, C PressSuccess, 10/25): all three, never one alone. */
+    private fun isConfirmedClose(result: ActionResult): Boolean =
+        result.attempted && result.status == ActionStatus.MECHANICAL_SUCCESS && result.outcome == ClickOutcome.CLOSED_CONFIRMED
 
     private fun target(analysis: PopupAnalysis, kind: DecisionKind, blocks: MutableSet<AutoCloseBlock>): String? {
         val verified = analysis.closeCandidates.filter { it.isVerifiedTarget() }

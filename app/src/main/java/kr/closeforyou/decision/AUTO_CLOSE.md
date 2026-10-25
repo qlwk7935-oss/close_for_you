@@ -102,11 +102,11 @@
 | A 결과 | B가 하는 일 |
 |---|---|
 | 누르지 않음 (NOT_EXECUTED·BLOCKED·STALE, attempted=false) | 기록을 풀어 준다. 횟수 제한에도 세지 않는다 |
-| `CLOSED_CONFIRMED` | 그 팝업은 세션 동안 "이미 닫음"(16). 다시 뜨면 묻는다. 반복은 F12에서 사용자가 허락했을 때만 |
-| `STILL_PRESENT`·`UNKNOWN`·관측 없음, 실패·attempted=true인 STALE·30초 무응답 | 그 팝업은 세션 끝까지 자동 금지. `MECHANICAL_SUCCESS`만으로는 닫힘으로 보지 않는다 |
+| 성공 = `attempted` + `MECHANICAL_SUCCESS` + `CLOSED_CONFIRMED` (팀 기준 10/25, A #42·C PressSuccess와 같음) | 그 팝업은 세션 동안 "이미 닫음"(16). 다시 뜨면 묻는다. 반복은 F12에서 사용자가 허락했을 때만 |
+| 그 밖에 누른 뒤 결과 전부: `STILL_PRESENT`·`UNKNOWN`·관측 없음, 실패·결과 불명인데 팝업이 사라짐, attempted=true인 STALE, 30초 무응답 | 그 팝업은 세션 끝까지 자동 금지. 셋 중 하나만으로는 닫힘으로 보지 않는다 |
 | `LEFT_APP` (가짜 닫기) | 그 팝업과 그 앱 전체를 세션 동안 자동 금지. 결과가 늦게 와도, 사용자가 직접 고른 누르기여도 적용한다 |
 
-**A 적격 근거:** `PopupAnalysis.autoEligibility`에 다섯 검사가 다 있고, 같은 토큰이고, 발급 후 5초 안이어야 한다. 아니면 `NOT_AUTO_ELIGIBLE`로 묻는다.
+**A 적격 근거:** `PopupAnalysis.autoEligibility`에 다섯 검사가 다 있고, 같은 토큰이고, **원본 화면 수집 시각** 후 5초 안이어야 한다(#38). B 배선은 근거의 수집 시각이 그 화면과 다르면 버린다. 아니면 `NOT_AUTO_ELIGIBLE`로 묻는다.
 
 **정책 출력** (`DecisionActionPolicy`, 계약 v2)
 
@@ -228,10 +228,12 @@ held-out에서 틀린 7개는 **모두 조심하는 쪽**이다.
 
 ## 9. 남은 일
 
-- #37·#38 병합 뒤 이 브랜치를 main에 맞춰 PR로 올린다.
-- 8절(처리 보고·제목) 계약을 A·C와 정한다.
-- A: `AutoEligibility`·`outcome` 채우기. 정책은 `DecisionActionPolicy { SystemClock.uptimeMillis() }`로 만든다.
-  JVM 기본 시계와 같은 기준인지는 실기기 확인 필요.
+- #37·#38 병합 완료(10/25). 이 브랜치를 main에 맞춰 PR로 올린다. 다음은 처리 보고(8절) 계약 PR.
+- **A F9(#42) 연결 방법 (F9PolicyBridge):**
+  - `authorize`: B 배선 extractor로 받은 분석과 `DecisionContext(현재 토큰, null, null, 사용자 조작 중, 안내 가능, autoCloseKinds)`로 `decide`한다.
+    `next == EXECUTE && source == PRESET`일 때만 `F9Approval(decision, analysis.autoEligibility, CONTRACT_V2)`.
+  - `onActionResult`: **누르지 않고 막은 결과(NOT_EXECUTED·BLOCKED·STALE, attempted=false)도 넘긴다.** 안 넘기면 B는 30초 뒤 "결과 모름"으로 보고 그 팝업을 세션 내내 자동 금지한다.
+  - 정책은 `DecisionActionPolicy { SystemClock.uptimeMillis() }`로 만든다(A 적격 근거와 같은 시계).
 - D 정답지에 COUPON 열과 프리셋별 기대값을 추가한다.
 - 실제 앱 문구로 쿠폰·광고 단어를 다듬는다. 다듬은 뒤에는 새 held-out 세트로 다시 측정한다.
 - 실기기 TalkBack 확인(LG/S26).

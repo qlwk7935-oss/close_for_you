@@ -454,4 +454,15 @@ class DecisionAutoCloseTest {
             assertEquals(entry.key.toString(), setOf(entry.value), decide(a).blocks)
         }
     }
+
+    @Test fun aPopupThatVanishedAfterAFailedPressIsAFailure() {
+        // Team rule (10/25): success needs attempted + MECHANICAL_SUCCESS + CLOSED_CONFIRMED. A popup that
+        // disappeared by itself after a failed or unknown press is never "closed by us".
+        for ((i, status) in listOf(ActionStatus.ATTEMPT_FAILED, ActionStatus.OUTCOME_UNKNOWN).withIndex()) {
+            val a = popup(tree("광고", "닫기"), close, token = token("v$i", app = "vanish$i"))
+            assertTrue(decide(a).approved)
+            auto.onResult(result(a, status, attempted = true, outcome = ClickOutcome.CLOSED_CONFIRMED))
+            assertEquals(status.name, setOf(AutoCloseBlock.FAILED_BEFORE), decide(a).blocks)
+        }
+    }
 }
