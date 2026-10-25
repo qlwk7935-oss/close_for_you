@@ -81,6 +81,7 @@ import kr.closeforyou.ui.voice.BatchSentence
 import kr.closeforyou.ui.voice.BatchSummary
 import kr.closeforyou.ui.voice.PressResultSpeech
 import kr.closeforyou.ui.voice.TtsPopupAnnouncer
+import kr.closeforyou.ui.voice.settings.OnboardingGatePolicy
 import kr.closeforyou.ui.voice.settings.UiVoiceOnboardingScreen
 import kr.closeforyou.ui.voice.settings.UiVoicePreferences
 import kr.closeforyou.ui.voice.settings.UiVoiceSettingsRoute
@@ -525,7 +526,7 @@ private fun OnboardingPage(onBack: () -> Unit) {
     val core = remember { CorePreferences.get(context) }
     Scaffold { innerPadding ->
         UiVoiceOnboardingScreen(
-            initialPreset = preferences.current().handlingPreset,
+            initialPreset = OnboardingGatePolicy.initialPreset(preferences.current()),
             initialAutoCloseConsent = preferences.current().autoCloseConsent,
             onStart = { preset, autoCloseConsent, helpApps ->
                 helpApps?.let { HelpAppsSync.save(it.draft, it.catalog, preferences, CoreAllowedApps(core)) }

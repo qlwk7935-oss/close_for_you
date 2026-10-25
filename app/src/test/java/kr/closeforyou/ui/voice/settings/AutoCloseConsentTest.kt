@@ -215,4 +215,50 @@ class AutoCloseConsentTest {
         assertTrue(textOf(ConsentText.switchHelpRes(false)).contains("물어봐요"))
         assertTrue(textOf(ConsentText.switchHelpRes(true)).contains("끌 수 있어요"))
     }
+
+    // --- first run starts with no preset chosen (A #34 10/25) ---
+
+    @Test fun firstRunShowsNoPresetChosen() {
+        assertNull(OnboardingGatePolicy.initialPreset(UiVoiceSettings()))
+        // Even a stored preset (e.g. a debug run) is not shown as chosen before setup is finished.
+        HandlingPreset.entries.forEach { assertNull("$it", OnboardingGatePolicy.initialPreset(UiVoiceSettings(handlingPreset = it))) }
+    }
+
+    @Test fun nextWaitsForAPreset() {
+        assertFalse(OnboardingGatePolicy.canContinue(null))
+        HandlingPreset.entries.forEach { assertTrue("$it", OnboardingGatePolicy.canContinue(it)) }
+        assertTrue(textOf(R.string.ui_onboarding_choose_preset_first).contains("고르면"))
+    }
+
+    @Test fun savedPresetIsKeptAfterSetup() = HandlingPreset.entries.forEach { preset ->
+        assertEquals(preset, OnboardingGatePolicy.initialPreset(UiVoiceSettings(handlingPreset = preset, onboardingDone = true)))
+    }
+
+    /** No saved value: the internal safe default stays (settings screen shows it), only first run hides it. */
+    @Test fun internalSafeDefaultIsKept() {
+        assertEquals(HandlingPreset.CLOSE_ADS_ONLY, HandlingPreset.DEFAULT)
+        assertEquals(HandlingPreset.DEFAULT, UiVoiceSettings().handlingPreset)
+        assertEquals(HandlingPreset.DEFAULT, UiVoicePreferences.enumOrDefault<HandlingPreset>(null, HandlingPreset.DEFAULT))
+        assertEquals(HandlingPreset.DEFAULT, OnboardingGatePolicy.initialPreset(UiVoiceSettings(onboardingDone = true)))
+        assertTrue(AutoCloseConsentPolicy.switchEnabled(UiVoiceSettings(onboardingDone = true).handlingPreset))
+    }
+
+    @Test fun switchIsDisabledUntilAPresetIsChosen() {
+        assertFalse(AutoCloseConsentPolicy.switchEnabled(null))
+        HandlingPreset.entries.forEach { assertTrue("$it", AutoCloseConsentPolicy.switchEnabled(it)) }
+        assertEquals(R.string.ui_preset_consent_switch_choose_first, ConsentText.switchHelpRes(on = false, enabled = false))
+        assertTrue(textOf(R.string.ui_preset_consent_switch_choose_first).contains("고르면"))
+        // Off by default, and no range is "wider" to confirm while it is off.
+        assertFalse(UiVoiceSettings().autoCloseConsent)
+        HandlingPreset.entries.forEach { assertFalse("$it", AutoCloseConsentPolicy.needsReconfirm(false, null, it)) }
+    }
+
+    @Test fun choosingAPresetOnFirstRunStillExportsNothing() = HandlingPreset.entries.forEach { preset ->
+        val started = UiVoiceSettings().completedOnboarding(preset, autoCloseConsent = false, nowEpochMillis = 5L)
+        assertEquals(preset, started.handlingPreset)
+        assertTrue("$preset", started.autoCloseKinds(live = true).isEmpty())
+        assertTrue("$preset", started.autoCloseKinds().isEmpty())
+        // Even with the switch confirmed, the build default (not live) exports nothing.
+        assertTrue("$preset", UiVoiceSettings().completedOnboarding(preset, true, 5L).autoCloseKinds().isEmpty())
+    }
 }

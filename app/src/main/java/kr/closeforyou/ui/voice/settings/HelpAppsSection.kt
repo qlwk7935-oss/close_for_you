@@ -235,8 +235,13 @@ private fun HelpAppsModeSection(
  * then "사용 중지됨".
  */
 @Composable
-fun HelpAppsSaveButton(label: String, enabled: Boolean, onClick: () -> Unit) {
-    val reason = stringResource(R.string.ui_help_apps_choose_first)
+fun HelpAppsSaveButton(
+    label: String,
+    enabled: Boolean,
+    onClick: () -> Unit,
+    /** Shown above and read as the state while disabled. */
+    reason: String = stringResource(R.string.ui_help_apps_choose_first),
+) {
     if (!enabled) Text(reason)
     Button(
         onClick = onClick,

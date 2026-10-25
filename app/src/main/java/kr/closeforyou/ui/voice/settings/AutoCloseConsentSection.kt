@@ -31,12 +31,14 @@ import kr.closeforyou.R
  * - While on, choosing a preset that closes more kinds asks again ("범위를 넓힐까요?"); [취소] keeps
  *   the old preset. A narrower preset applies at once. [onPresetChange]'s second value says the
  *   wider range was confirmed.
+ * - [selected] null (first run, nothing chosen yet): the switch is disabled and off; its help line
+ *   says to choose a way first ([AutoCloseConsentPolicy.switchEnabled]).
  * Reading order: presets → fixed decision line → switch → (not live) "지금은 닫기 전에 물어봐요".
  * Focus is never moved; the dialogs are system dialogs TalkBack enters by itself.
  */
 @Composable
 fun HandlingPresetWithConsent(
-    selected: HandlingPreset,
+    selected: HandlingPreset?,
     consentOn: Boolean,
     onPresetChange: (HandlingPreset, Boolean) -> Unit,
     onConsentChange: (Boolean) -> Unit,
@@ -55,12 +57,13 @@ fun HandlingPresetWithConsent(
         )
         ConsentSwitchRow(
             checked = consentOn,
+            enabled = AutoCloseConsentPolicy.switchEnabled(selected),
             onCheckedChange = { on -> if (on) confirmTurnOn = true else onConsentChange(false) },
         )
         if (!PresetAutoCloseFeature.live) Text(stringResource(R.string.ui_preset_not_live))
     }
 
-    if (confirmTurnOn) {
+    if (confirmTurnOn && selected != null) {
         ConsentDialog(
             titleRes = R.string.ui_preset_consent_title,
             preset = selected,
@@ -86,24 +89,24 @@ fun HandlingPresetWithConsent(
     }
 }
 
-/** One toggleable node: TalkBack reads label, help line, "스위치", 켜짐/꺼짐. 48dp. */
+/** One toggleable node: TalkBack reads label, help line, "스위치", 켜짐/꺼짐 (disabled: "사용 중지됨"). 48dp. */
 @Composable
-private fun ConsentSwitchRow(checked: Boolean, onCheckedChange: (Boolean) -> Unit) {
+private fun ConsentSwitchRow(checked: Boolean, enabled: Boolean, onCheckedChange: (Boolean) -> Unit) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .heightIn(min = 48.dp)
-            .toggleable(value = checked, role = Role.Switch, onValueChange = onCheckedChange),
+            .toggleable(value = checked, enabled = enabled, role = Role.Switch, onValueChange = onCheckedChange),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Column(Modifier.weight(1f).padding(end = 8.dp).padding(vertical = 4.dp)) {
             Text(stringResource(R.string.ui_preset_consent_switch))
             Text(
-                stringResource(ConsentText.switchHelpRes(checked)),
+                stringResource(ConsentText.switchHelpRes(checked, enabled)),
                 style = MaterialTheme.typography.bodySmall,
             )
         }
-        Switch(checked = checked, onCheckedChange = null)
+        Switch(checked = checked, onCheckedChange = null, enabled = enabled)
     }
 }
 
@@ -137,6 +140,9 @@ internal object ConsentText {
         if (!live) add(R.string.ui_preset_consent_not_live)
     }
 
-    fun switchHelpRes(on: Boolean) =
-        if (on) R.string.ui_preset_consent_switch_on_help else R.string.ui_preset_consent_switch_off_help
+    fun switchHelpRes(on: Boolean, enabled: Boolean = true) = when {
+        !enabled -> R.string.ui_preset_consent_switch_choose_first
+        on -> R.string.ui_preset_consent_switch_on_help
+        else -> R.string.ui_preset_consent_switch_off_help
+    }
 }

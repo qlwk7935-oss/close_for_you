@@ -46,9 +46,12 @@ object AutoCloseConsentPolicy {
     fun isWider(from: HandlingPreset?, to: HandlingPreset): Boolean =
         from == null || !from.autoCloseKinds().containsAll(to.autoCloseKinds())
 
-    /** Selecting [to] needs the "범위를 넓힐까요?" dialog first. */
-    fun needsReconfirm(consentOn: Boolean, current: HandlingPreset, to: HandlingPreset): Boolean =
+    /** Selecting [to] needs the "범위를 넓힐까요?" dialog first. [current] null = none chosen yet. */
+    fun needsReconfirm(consentOn: Boolean, current: HandlingPreset?, to: HandlingPreset): Boolean =
         consentOn && isWider(current, to)
+
+    /** The switch can be turned on only once a preset is chosen (first run starts with none, A #34). */
+    fun switchEnabled(selected: HandlingPreset?): Boolean = selected != null
 }
 
 /** Switch on = consent for the preset chosen now; off clears the range at once (no dialog). */

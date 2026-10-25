@@ -168,6 +168,8 @@
     <string name="ui_preset_consent_switch">자동 닫기</string>
     <string name="ui_preset_consent_switch_on_help">고른 방식대로 묻지 않고 처리해요. 언제든 끌 수 있어요.</string>
     <string name="ui_preset_consent_switch_off_help">꺼 두면 팝업마다 물어봐요.</string>
+    <!-- 첫 실행에서 프리셋을 아직 고르지 않았을 때 (A #34 10/25). 스위치는 사용 중지됨. -->
+    <string name="ui_preset_consent_switch_choose_first">팝업 처리 방식을 먼저 고르면 켤 수 있어요.</string>
     <string name="ui_preset_consent_title">자동으로 닫을까요?</string>
     <string name="ui_preset_consent_widen_title">자동으로 닫는 범위를 넓힐까요?</string>
     <string name="ui_preset_consent_kinds_ads">고른 방식대로 광고 팝업은 묻지 않고 바로 닫을게요.</string>
@@ -214,6 +216,8 @@
     <string name="ui_onboarding_step_preset">2단계 중 1단계: 팝업 처리 방식</string>
     <string name="ui_onboarding_step_help_apps">2단계 중 2단계: 도와줄 앱</string>
     <string name="ui_onboarding_next">다음</string>
+    <!-- 첫 실행 1단계: 프리셋을 고르기 전 [다음] 비활성 이유 (A #34 10/25, 도와줄 앱 단계와 같은 방식). -->
+    <string name="ui_onboarding_choose_preset_first">팝업 처리 방식 중 하나를 고르면 누를 수 있어요.</string>
     <string name="ui_onboarding_back">이전 단계</string>
     <string name="ui_onboarding_skip">건너뛰기</string>
     <string name="ui_onboarding_skip_help">건너뛰면 아직 아무 앱도 돕지 않아요. 나중에 안내·음성 설정의 \'도와줄 앱\'에서 고를 수 있어요.</string>
