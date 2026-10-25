@@ -63,6 +63,12 @@ object ScenarioCatalog {
     /** P16 빈 영상 표면(VideoView)의 리소스 ID. 재생하지 않으며 영상 광고의 증거가 아니다. */
     const val VIDEO_SURFACE_ID = "video_surface"
 
+    /**
+     * C09: 글자는 N01과 같고 닫기 버튼만 본문 위로 옮긴 공지. 대상 버튼의 위치가 달라졌으므로
+     * N01 기억을 재사용하면 안 된다(F12 대상 지문에 상대 위치가 들어감).
+     */
+    const val BUTTON_MOVED_NOTICE_ID = "N08"
+
     /** P18 타임세일 남은 시간(초). 건너뛰기와 상관없는 카운트다운이다. */
     const val SALE_COUNTDOWN_SECONDS = 300
 
@@ -242,7 +248,7 @@ object ScenarioCatalog {
             experiments = setOf("C05", "C09"), note = body,
         )
 
-    /** C05: 같은 공지와 일부만 바뀐 공지. N02만 N01의 기억을 재사용할 수 있다. */
+    /** C05·C09: 같은 공지와 일부만 바뀐 공지. N02만 N01의 기억을 재사용할 수 있다. */
     private fun noticeVariants(): List<PopupScenario> = listOf(
         notice("N01", "공지 원본", NOTICE_BASE, null, "10월 25일 02:00~04:00 결제 중단"),
         notice("N02", "공지 동일 반복", NOTICE_BASE, "N01", "10월 25일 02:00~04:00 결제 중단"),
@@ -260,6 +266,8 @@ object ScenarioCatalog {
             null, "업데이트 요구 추가"),
         notice("N07", "공지 본문 완전 변경",
             "개인정보 처리방침이 11월 1일부터 변경됩니다.", null, "다른 공지"),
+        notice(BUTTON_MOVED_NOTICE_ID, "공지 닫기 버튼 위치만 변경", NOTICE_BASE, null,
+            "글자는 원본과 같고 닫기 버튼만 위로 옮김"),
     )
 
     fun find(id: String): PopupScenario? = all.firstOrNull { it.id == id }
