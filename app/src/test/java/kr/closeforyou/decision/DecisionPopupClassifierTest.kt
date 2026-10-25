@@ -63,8 +63,10 @@ class DecisionPopupClassifierTest {
         assertEquals(PopupClassification.UNKNOWN, classify("광고 여부 불명" to TextSource.ACCESSIBILITY_TREE))
     }
 
-    @Test fun installAdvertisementStaysAnAdvertisement() = runBlocking {
-        assertEquals(PopupClassification.ADVERTISEMENT, classify("광고 · 가상 앱 설치하고 쿠폰 받기" to TextSource.ACCESSIBILITY_TREE))
+    @Test fun installAdvertisementIsNotADecision() = runBlocking {
+        // "설치" is grade P (navigation), not a decision; the named coupon makes it a COUPON (contract v2).
+        assertEquals(PopupClassification.COUPON, classify("광고 · 가상 앱 설치하고 쿠폰 받기" to TextSource.ACCESSIBILITY_TREE))
+        assertEquals(PopupClassification.ADVERTISEMENT, classify("광고 · 가상 앱 설치하고 혜택 받기" to TextSource.ACCESSIBILITY_TREE))
     }
 
     @Test fun decisionButtonLabelOrRoleMakesAUserDecision() = runBlocking {
@@ -107,8 +109,13 @@ class DecisionPopupClassifierTest {
             assertEquals(text, PopupClassification.USER_DECISION, classify("광고" to tree, text to tree))
         }
         // The narrowed R1 still lets a pure benefit condition through.
-        for (text in listOf("가입하면 포인트를 드립니다. 시험용 광고입니다.", "앱 첫 결제 시 30% 할인 쿠폰", "회원가입하고 웰컴 혜택 받으세요")) {
-            assertEquals(text, PopupClassification.ADVERTISEMENT, classify("광고" to tree, text to tree))
+        // A named benefit is a COUPON (contract v2); a benefit without one stays an advertisement.
+        for ((text, expected) in listOf(
+            "가입하면 포인트를 드립니다. 시험용 광고입니다." to PopupClassification.COUPON,
+            "앱 첫 결제 시 30% 할인 쿠폰" to PopupClassification.COUPON,
+            "회원가입하고 웰컴 혜택 받으세요" to PopupClassification.ADVERTISEMENT,
+        )) {
+            assertEquals(text, expected, classify("광고" to tree, text to tree))
         }
     }
 

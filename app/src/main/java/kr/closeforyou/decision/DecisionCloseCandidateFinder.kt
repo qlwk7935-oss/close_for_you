@@ -29,8 +29,11 @@ class DecisionCloseCandidateFinder {
             .toPersistentList()
     }
 
-    /** The popup's own nodes: an optional subtree root and the bounds that must contain them. */
-    private class PopupScope(private val rootPath: String?, private val bounds: ScreenBounds) {
+    /**
+     * The popup's own nodes: an optional subtree root and the bounds that must contain them.
+     * [rootPath] is null for a new window, whose nodes are all the popup's.
+     */
+    internal class PopupScope(val rootPath: String?, val bounds: ScreenBounds) {
         fun contains(node: NodeSnapshot): Boolean = inside(node.bounds, bounds) &&
             (rootPath == null || node.path == rootPath || node.path.startsWith("$rootPath/"))
     }
@@ -40,9 +43,9 @@ class DecisionCloseCandidateFinder {
      * the page behind, so only the subtree of one unambiguous Dialog node counts: a page button
      * lying under the Dialog's bounds is still not the popup's. A full-screen transition may be an
      * ordinary Activity change and an uncertain detection may be anything, so neither yields
-     * candidates (agreed with A in the PR #8 review).
+     * candidates (agreed with A in the PR #8 review). Shared with [DecisionPopupScope].
      */
-    private fun popupScope(snapshot: PopupSnapshot, signals: Set<PopupSignal>): PopupScope? = when {
+    internal fun popupScope(snapshot: PopupSnapshot, signals: Set<PopupSignal>): PopupScope? = when {
         PopupSignal.INSUFFICIENT_EVIDENCE in signals || PopupSignal.FULL_SCREEN_TRANSITION in signals -> null
         PopupSignal.NEW_WINDOW in signals -> PopupScope(null, snapshot.screenBounds)
         PopupSignal.SAME_WINDOW_OVERLAY in signals -> dialogScope(snapshot.nodes)

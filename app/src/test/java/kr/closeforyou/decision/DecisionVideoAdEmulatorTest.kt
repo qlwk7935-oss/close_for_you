@@ -78,10 +78,11 @@ class DecisionVideoAdEmulatorTest {
         assertNull(s.report.countdownSeconds)
         assertNull(s.report.countdownSource)
         assertTrue(s.report.skipCandidateIds.isEmpty())
-        // "5초 안에 결제하면 추가 할인" mentions 결제 only as a benefit condition (R1), so it is no longer
-        // a decision; with no word from B's advertisement dictionary it is "unknown", never a decision.
-        assertEquals(PopupClassification.UNKNOWN, s.analysis.classification)
-        assertFalse(s.report.advertisementEvidence)
+        // "5초 안에 결제하면 추가 할인" mentions 결제 only as a benefit condition (R1), so it is not a
+        // decision on the raw tree; "타임세일" makes it an advertisement (six kinds). Through A, 결제 is
+        // summarized and it is a decision (DecisionAutoCloseScenarioTest).
+        assertEquals(PopupClassification.ADVERTISEMENT, s.analysis.classification)
+        assertTrue(s.report.advertisementEvidence)
     }
 
     // ---- uiautomator XML → A's node DTOs (same rules as A's AndroidSnapshotCollector) ----

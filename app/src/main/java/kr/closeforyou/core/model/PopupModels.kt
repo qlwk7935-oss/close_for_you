@@ -171,6 +171,12 @@ data class PopupAnalysis(
     val videoSurfaceObserved: Boolean = false,
     /** Contract v2: set by A only when every [EligibilityCheck] holds; null (also when unsure) keeps automation off. */
     val autoEligibility: AutoEligibility? = null,
+    /**
+     * Contract v3: the popup's title, for C to say ("'가을 할인 쿠폰' 쿠폰을 닫았어요"). Set by B only when
+     * it is confirmed inside the popup: the first popup text that is neither a close-candidate label
+     * nor decision or scam wording. Screen text: spoken only, never logged or stored. Null = no title.
+     */
+    val title: String? = null,
 ) {
     override fun toString(): String = "PopupAnalysis(classification=$classification, redacted)"
 }
@@ -297,6 +303,45 @@ data class ActionResult(
     val outcome: ClickOutcome? = null,
 ) {
     init { require(outcome == null || attempted) }
+}
+
+/**
+ * Contract v3, A → C: what happened to a popup handled without asking the person on this screen
+ * (a preset or a remembered F12 rule). A sends one after `decide`, and after `execute` and
+ * `ActionPolicy.onActionResult(result)` when [decision] said EXECUTE. C picks its sentence from
+ * `decision.next` and `result.outcome`; on ASK it opens the usual choice prompt. Screen data:
+ * never logged, persisted or sent anywhere.
+ */
+data class HandlingReport(
+    val token: SnapshotToken,
+    val classification: PopupClassification,
+    /** B's decision, with its source, next step and reasons. */
+    val decision: ActionDecision,
+    /** A's result, only when [decision] said EXECUTE (it may still be NOT_EXECUTED: A's gate decides). */
+    val result: ActionResult? = null,
+    /** [PopupAnalysis.title] of the same screen, or null. */
+    val title: String? = null,
+) {
+    init {
+        require(decision.token == token && (result == null || result.token == token)) { "one screen only" }
+        // Only the person's own choice goes through the choice prompt instead of a report.
+        require(decision.source == DecisionSource.PRESET || decision.source == DecisionSource.REMEMBERED_RULE) {
+            "automatic handling only"
+        }
+        require(result == null || decision.next == NextStep.EXECUTE) { "a result exists only for an executed decision" }
+        require(title == null || title.isNotBlank())
+    }
+
+    /**
+     * "닫았어요" is said and counted only for this: the team's single success rule (10/25, A #42, C
+     * PressSuccess) — attempted + MECHANICAL_SUCCESS + CLOSED_CONFIRMED. A popup that vanished after a
+     * failed or unknown press, a left-app press or no press never counts as closed.
+     */
+    val closedConfirmed: Boolean get() = result != null && result.attempted &&
+        result.status == ActionStatus.MECHANICAL_SUCCESS && result.outcome == ClickOutcome.CLOSED_CONFIRMED
+
+    override fun toString(): String =
+        "HandlingReport(classification=$classification, next=${decision.next}, outcome=${result?.outcome}, redacted)"
 }
 
 enum class ChoiceKind { CLOSE_ONCE, SKIP_ONCE, READ_CONTENT, KEEP_OPEN, REMEMBER_EXACT_POPUP, STOP_ASKING, REVOKE_RULE }

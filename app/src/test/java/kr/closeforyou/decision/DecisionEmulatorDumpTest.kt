@@ -61,7 +61,8 @@ class DecisionEmulatorDumpTest {
     @Test fun p01DialogAdvertisementOffersOnlyItsCloseButton() {
         val s = screen("p01_dialog_ad.xml", PopupSignal.NEW_WINDOW)
         assertEquals(listOf("CLOSE:E2_LABELED_NODE:닫기:btn_close"), s.summary())
-        assertEquals(PopupClassification.ADVERTISEMENT, s.classification)
+        // "가을 할인 쿠폰 · 지금 받으면 30퍼센트 할인": a claimable coupon (contract v2 COUPON).
+        assertEquals(PopupClassification.COUPON, s.classification)
         val decision = pressClose(s)
         assertEquals("the person's confirmed choice may reach A's gate once", ActionAuthorization.ALLOW_ONCE, decision.authorization)
     }
