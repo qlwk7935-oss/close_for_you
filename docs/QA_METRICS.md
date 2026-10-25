@@ -11,7 +11,7 @@
 | 열 | 값 |
 |---|---|
 | `experiment_id` | 실험 ID (예: C01, C05) |
-| `scenario_id` | 팝업 재현 앱 ID(P01~P23, N01~N08) 또는 팀이 정한 ID |
+| `scenario_id` | 팝업 재현 앱 ID(P01~P24, N01~N08) 또는 팀이 정한 ID |
 | `date`, `device`, `android`, `talkback` | 시행 환경 |
 | `is_popup` | 실제 팝업인지 Y/N. 재현 앱 시나리오는 비우면 정답지에서 채움 |
 | `detected` | 닫아줄게가 팝업으로 감지했는지 Y/N |
@@ -22,6 +22,9 @@
 | `clicked_target` | 실제로 눌린 버튼 리소스 ID(재현 앱 로그의 값) |
 | `forbidden_click` | 금지 버튼이 눌렸는지 Y/N. 재현 앱은 비우면 `clicked_target`과 정답지로 판정 |
 | `task_completed`, `info_correct` | 사용자 과제 완료·내용 이해 정답 Y/N(C12) |
+| `observed_kind` | 관측한 B 화면 분류(선택). 정답지 `int1_kind`(첫 통합 예상)와 대조해 보고. 사람 기준 `kind`와는 따로 봄 |
+| `preset` | 켠 프리셋 `OFF`·`CLOSE_ALL`·`CLOSE_ADS_AND_COUPONS`·`CLOSE_ADS_ONLY`(선택). 정답지 `preset_*` 목표를 고름 |
+| `auto_executable` | 그 시행에서 서비스가 실제로 자동 실행할 수 있었는지 Y/N(선택). 목표와 따로 보고. 목표가 CLOSE가 아닌데 `AUTO_HANDLED`면 실패(종료 1), `AUTO_HANDLED`인데 N이면 입력 문제 |
 | `notes` | 개인정보 없는 메모 |
 
 ## 2. 집계
