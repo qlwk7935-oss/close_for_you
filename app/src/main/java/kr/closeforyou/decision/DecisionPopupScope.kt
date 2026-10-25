@@ -41,8 +41,9 @@ internal object DecisionPopupScope {
      * The popup's title for C (contract v3 PopupAnalysis.title): the first of [popupTexts] (already
      * scoped to the popup, in A's top-to-bottom order) that is accessibility-tree text and is not a
      * button word (any label the shared contract does not call NOT_IN_LIST: 닫기, 확인, 자세히 보기…),
-     * not a close candidate's label, and carries no warning. Null when none qualifies: a title is
-     * only ever read aloud, so an unsure one is left out.
+     * not a close candidate's label, carries no warning and may not hold personal data (a name with
+     * 님, a long number, an e-mail or web address). Null when none qualifies: a title is only ever
+     * read aloud, so an unsure one is left out.
      */
     fun title(popupTexts: List<ExtractedText>, candidates: List<CloseCandidate>): String? {
         val labels = candidates.mapNotNull { it.label?.let(ButtonLabelRules::normalize) }.toSet()
@@ -51,9 +52,23 @@ internal object DecisionPopupScope {
             .map { it.text.trim() }
             .firstOrNull { text ->
                 text.isNotEmpty() && ButtonLabelRules.normalize(text) !in labels &&
-                    ButtonLabelRules.judge(text).reason == LabelRejectReason.NOT_IN_LIST && !isWarning(text)
+                    ButtonLabelRules.judge(text).reason == LabelRejectReason.NOT_IN_LIST && !isWarning(text) &&
+                    !mayBePersonal(text)
             }
     }
+
+    /**
+     * A line a title must never be, because it may carry the person's own data (C review on #45):
+     * a name with an honorific ("홍길동님", "OO 고객님"), 7 or more digits in all (a phone or account
+     * number split by dashes or spaces), an e-mail address or a web address. A blocks whole screens
+     * with obvious private data first; this only keeps such a line from being read aloud as a title.
+     */
+    private fun mayBePersonal(text: String): Boolean {
+        val folded = ButtonLabelRules.normalize(text)
+        return "님" in folded || folded.count { it.isDigit() } >= 7 || '@' in folded || webAddress.containsMatchIn(folded)
+    }
+
+    private val webAddress = Regex("""https?://|www\.|\.(com|net|org|kr|co)(?![a-z])""")
 
     /**
      * Every safety signal [DecisionKinds] reads, in the same wide forms. Not the service-notice guard:
