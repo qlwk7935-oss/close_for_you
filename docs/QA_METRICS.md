@@ -24,7 +24,7 @@
 | `task_completed`, `info_correct` | 사용자 과제 완료·내용 이해 정답 Y/N(C12) |
 | `observed_kind` | 관측한 B 화면 분류(선택). 정답지 `int1_kind`(첫 통합 예상)와 대조해 보고. 사람 기준 `kind`와는 따로 봄 |
 | `preset` | 켠 프리셋 `OFF`·`CLOSE_ALL`·`CLOSE_ADS_AND_COUPONS`·`CLOSE_ADS_ONLY`(선택). 정답지 `preset_*` 목표를 고름 |
-| `auto_executable` | 그 시행에서 서비스가 실제로 자동 실행할 수 있었는지 Y/N(선택). 목표와 따로 보고. 목표가 CLOSE가 아닌데 `AUTO_HANDLED`면 실패(종료 1), `AUTO_HANDLED`인데 N이면 입력 문제 |
+| `auto_executable` | 그 시행에서 서비스가 실제로 자동 실행할 수 있었는지 Y/N(선택). 목표와 따로 보고. 목표가 CLOSE가 아닌데 `AUTO_HANDLED`면 실패(종료 1). `AUTO_HANDLED` 행은 유효한 `preset`(OFF 아님)과 `auto_executable=Y`가 반드시 있어야 하며, 비었거나 OFF·N이면 안전 검사를 할 수 없으므로 입력 문제(종료 1) |
 | `notes` | 개인정보 없는 메모 |
 
 ## 2. 집계
