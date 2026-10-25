@@ -18,8 +18,9 @@ import kr.closeforyou.accessibility.capture.KoreanMlKitOcr
 import kr.closeforyou.accessibility.capture.EvidenceOutcome
 import kr.closeforyou.accessibility.capture.EvidenceIssue
 import kr.closeforyou.core.model.*
+import kr.closeforyou.accessibility.integration.F9ServiceConnection
 
-/** A owns nodes, privacy preflight and candidate detection; no external action is performed. */
+/** A owns collection, F0, cleanup and the explicit C user-choice boundary. Automatic execution OFF. */
 class CloseForYouAccessibilityService : AccessibilityService() {
     private var serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val freshness = ScreenFreshness()
@@ -30,6 +31,7 @@ class CloseForYouAccessibilityService : AccessibilityService() {
     private lateinit var pipeline: CaptureOcrPipeline
     private var expiry: Job? = null
     private var settingsObserver: Job? = null
+    private var f9: F9ServiceConnection? = null
     private var touching = false
     private var connected = false
     private var inputMethodPackages: Set<String> = emptySet()
@@ -56,6 +58,7 @@ class CloseForYouAccessibilityService : AccessibilityService() {
     }
 
     private fun initializeConnectedService() {
+        f9?.close(freshness.version + 1); f9 = null
         collector.resetGeometry()
         serviceScope.cancel()
         serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
@@ -72,10 +75,14 @@ class CloseForYouAccessibilityService : AccessibilityService() {
         AccessibilityRuntime.attachCaptureCapability(screenshots)
         pipeline = CaptureOcrPipeline(screenshots, KoreanMlKitOcr(), ::isCurrent, { verifyScreen(it) })
         AccessibilityRuntime.connect()
+        f9 = F9ServiceConnection(this, serviceScope, { connected }, { touching },
+            requestObservation = ::observeAfterCleanup,
+            policyChanged = { invalidate(clearBaseline = true, permissionOrInteraction = true) },
+            epoch = { freshness.version }, verifyPresentation = ::verifyForChoice).also { it.start() }
         invalidate(clearBaseline = true)
         settingsObserver = serviceScope.launch {
             preferences.state.collect {
-                invalidate(clearBaseline = true)
+                invalidate(clearBaseline = true, permissionOrInteraction = true)
                 if (!it.consentGranted) AccessibilityRuntime.block(PrivacyBlockReason.NO_CONSENT, freshness.version)
                 else if (it.paused) AccessibilityRuntime.block(PrivacyBlockReason.PAUSED, freshness.version)
             }
@@ -84,9 +91,22 @@ class CloseForYouAccessibilityService : AccessibilityService() {
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         if (!connected || event == null || event.eventType !in OBSERVED_EVENTS) return
+        val owner = f9
+        val receipt = owner?.observeEvent(event)
+        var processed = false
+        try { handleAccessibilityEvent(event); processed = true }
+        finally { if (processed) owner?.processed(receipt) else owner?.cleanupFailed() }
+    }
+
+    private fun handleAccessibilityEvent(event: AccessibilityEvent) {
+        if (f9?.shouldIgnore(event) == true) return
+        val ownedRetirement = f9?.isOwnedRetirement(event) == true
+        if (f9?.hasPrompt() == true) AccessibilityRuntime.manualInvalidation(event.eventType, event.windowChanges)
         // Copy only primitive enums/IDs, never keep the event or request event.source.
         val eventType = event.eventType
-        val epoch = invalidate(clearBaseline = false)
+        val resumeObservation = resumePendingObservationAfterFocus(pendingCapture?.isActive == true, eventType)
+        val interaction = eventType !in SCREEN_EVENTS
+        val epoch = invalidate(clearBaseline = false, permissionOrInteraction = interaction, ownedRetirement = ownedRetirement)
         if (eventType == AccessibilityEvent.TYPE_TOUCH_INTERACTION_START ||
             eventType == AccessibilityEvent.TYPE_TOUCH_EXPLORATION_GESTURE_START) {
             touching = true
@@ -115,20 +135,33 @@ class CloseForYouAccessibilityService : AccessibilityService() {
                 return
             }
         }
-        if (touching || eventType !in SCREEN_EVENTS) return
+        if (touching) return
+        if (eventType !in SCREEN_EVENTS) {
+            // The focus event invalidates the epoch. Only carry an already pending screen read,
+            // never an analysis or permission; standalone user focus creates no collection.
+            if (resumeObservation) scheduleCapture(epoch, PopupTrigger.WINDOW_CHANGED, -1)
+            return
+        }
         val trigger = if (eventType == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED ||
             eventType == AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED) PopupTrigger.CONTENT_CHANGED
             else PopupTrigger.WINDOW_CHANGED
         // All Android objects have been released before this delayed job can run.
         val eventWindowId = event.windowId
+        scheduleCapture(epoch, trigger, eventWindowId)
+    }
+
+    private fun scheduleCapture(epoch: Long, trigger: PopupTrigger, eventWindowId: Int) {
         pendingCapture = serviceScope.launch {
             delay(DEBOUNCE_MILLIS)
-            if (!freshness.isCurrent(epoch) || touching) return@launch
+            val owner = f9 ?: return@launch
+            val permit = owner.awaitObservationPermit()
+            if (!connected || f9 !== owner || !freshness.isCurrent(epoch) || touching || !owner.permitsObservation(permit)) return@launch
             capture(epoch, trigger, eventWindowId)
         }
     }
 
     private fun capture(epoch: Long, trigger: PopupTrigger, eventWindowId: Int) {
+        if (f9?.observationReady != true) return
         val trace = CaptureDiagnostics.trace(eventWindowId, epoch)
         when (val result = collector.capture(this, epoch, trigger, ::packageBlock, trace = trace)) {
             is CollectionResult.Blocked -> {
@@ -137,17 +170,19 @@ class CloseForYouAccessibilityService : AccessibilityService() {
             }
             is CollectionResult.Ready -> {
                 if (!freshness.isCurrent(epoch) || touching) return
+                f9?.observePage()
                 val signals = detector.detect(result.frame)
                 if (signals.isEmpty()) {
                     trace.detail(CaptureDetail.NO_POPUP_SIGNAL)
                     return
                 }
                 trace.stage(CaptureStage.POPUP_DETECTED)
-                AccessibilityRuntime.begin(result.snapshot.token)
+                AccessibilityRuntime.begin(result.snapshot.token, result.snapshot.capturedAtUptimeMillis)
                 // Replace the transient event with Invalidated even if a collector stalled.
                 expiry = serviceScope.launch {
-                    delay(SNAPSHOT_TTL_MILLIS)
-                    if (freshness.isCurrent(epoch)) invalidate(clearBaseline = false)
+                    val remaining = result.snapshot.capturedAtUptimeMillis + SNAPSHOT_TTL_MILLIS - android.os.SystemClock.uptimeMillis()
+                    if (remaining > 0) delay(remaining)
+                    if (freshness.isCurrent(epoch)) invalidate(clearBaseline = false, ttl = true)
                 }
                 evidenceJob = serviceScope.launch {
                     try {
@@ -158,6 +193,9 @@ class CloseForYouAccessibilityService : AccessibilityService() {
                                 AccessibilityRuntime.publish(evidence.snapshot,
                                     PopupDetection(result.snapshot.token, signals.toPersistentSet(), requiresUserReview = true),
                                     evidence.analysis)
+                                f9?.collected(result.snapshot,
+                                    PopupDetection(result.snapshot.token, signals.toPersistentSet(), requiresUserReview = true),
+                                    evidence.snapshot, evidence.analysis)
                                 trace.stage(CaptureStage.PUBLISHED)
                             }
                             is EvidenceOutcome.Blocked -> if (isCurrent(result.snapshot.token)) {
@@ -208,12 +246,26 @@ class CloseForYouAccessibilityService : AccessibilityService() {
         }
     }
 
+    /** A fresh F0 read, including after native C removal; original collection age is never renewed. */
+    private fun verifyForChoice(snapshot: PopupSnapshot): Boolean {
+        val now = android.os.SystemClock.uptimeMillis()
+        if (!connected || touching || now < snapshot.capturedAtUptimeMillis ||
+            now - snapshot.capturedAtUptimeMillis >= SNAPSHOT_TTL_MILLIS || packageBlock(snapshot.token.packageName) != null) return false
+        return when (val fresh = collector.capture(this, freshness.version, snapshot.trigger, ::packageBlock)) {
+            is CollectionResult.Blocked -> false
+            is CollectionResult.Ready -> {
+                EvidenceSnapshotComparison.firstMismatch(snapshot, fresh.snapshot) == EvidenceMismatch.NONE
+            }
+        }
+    }
+
     private fun packageBlock(targetPackage: String): PrivacyBlockReason? = preferences.currentSettings().let {
         PrivacyPolicy.packageBlock(targetPackage, packageName, it.consentGranted, it.paused,
             it.allowedPackages, inputMethodPackages)
     }
 
-    private fun invalidate(clearBaseline: Boolean): Long {
+    private fun invalidate(clearBaseline: Boolean, permissionOrInteraction: Boolean = false,
+        ttl: Boolean = false, ownedRetirement: Boolean = false): Long {
         pendingCapture?.cancel()
         pendingCapture = null
         evidenceJob?.cancel()
@@ -221,15 +273,28 @@ class CloseForYouAccessibilityService : AccessibilityService() {
         expiry?.cancel()
         expiry = null
         if (clearBaseline) detector.clear()
-        return freshness.invalidate().also(AccessibilityRuntime::invalidate)
+        return freshness.invalidate().also { version ->
+            f9?.invalidate(version, permissionOrInteraction, ttl, ownedRetirement)
+            AccessibilityRuntime.invalidate(version)
+        }
     }
 
-    override fun onInterrupt() { invalidate(clearBaseline = true) }
+    private fun observeAfterCleanup() {
+        if (!connected || touching || f9?.observationReady != true) return
+        val epoch = invalidate(clearBaseline = true)
+        pendingCapture = serviceScope.launch {
+            delay(DEBOUNCE_MILLIS)
+            if (connected && !touching && freshness.isCurrent(epoch) && f9?.observationReady == true)
+                capture(epoch, PopupTrigger.WINDOW_CHANGED, -1)
+        }
+    }
+
+    override fun onInterrupt() { invalidate(clearBaseline = true, permissionOrInteraction = true) }
 
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
         collector.resetGeometry()
-        invalidate(clearBaseline = true)
+        invalidate(clearBaseline = true, permissionOrInteraction = true)
     }
 
     override fun onUnbind(intent: Intent?): Boolean {
@@ -247,6 +312,7 @@ class CloseForYouAccessibilityService : AccessibilityService() {
         AccessibilityRuntime.serviceLifecycle.phase(ServiceLifecyclePhase.UNBOUND)
         connected = false
         touching = false
+        f9?.close(freshness.version + 1); f9 = null
         settingsObserver?.cancel()
         invalidate(clearBaseline = true)
         AccessibilityRuntime.disconnect(freshness.version)
@@ -272,3 +338,8 @@ class CloseForYouAccessibilityService : AccessibilityService() {
         )
     }
 }
+
+/** #29: focus may cancel the final queued SCREEN event; it still invalidates all old evidence. */
+internal fun resumePendingObservationAfterFocus(hadPending: Boolean, eventType: Int): Boolean = hadPending &&
+    eventType in setOf(AccessibilityEvent.TYPE_VIEW_FOCUSED, AccessibilityEvent.TYPE_VIEW_ACCESSIBILITY_FOCUSED,
+        AccessibilityEvent.TYPE_VIEW_ACCESSIBILITY_FOCUS_CLEARED)

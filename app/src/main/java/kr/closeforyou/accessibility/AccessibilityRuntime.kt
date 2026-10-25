@@ -28,6 +28,19 @@ data class AccessibilityStatus(
     val lastEvidenceIssue: EvidenceIssue? = null,
     val ocrTextCount: Int = 0,
     val lastCompletedOcrTextCount: Int = 0,
+    val f9DecisionCount: Long = 0,
+    val f9AttemptedCount: Long = 0,
+    val lastF9Next: NextStep? = null,
+    val lastF9Reason: SafetyReason? = null,
+    val manualPromptCount: Long = 0,
+    val manualResultCount: Long = 0,
+    val lastManualStatus: ActionStatus? = null,
+    val lastManualOutcome: ClickOutcome? = null,
+    val lastManualReason: SafetyReason? = null,
+    val manualBoundary: String? = null,
+    val manualInvalidation: String? = null,
+    val cleanupFailure: String? = null,
+    val ownedEventRejection: String? = null,
 )
 
 /**
@@ -71,14 +84,41 @@ object AccessibilityRuntime : SnapshotSource, EvidenceExtractor, CaptureCapabili
 
     internal fun attachCaptureCapability(capability: CaptureCapability?) { captureCapability = capability }
 
-    @Synchronized internal fun begin(candidate: SnapshotToken) {
+    @Synchronized internal fun begin(candidate: SnapshotToken, capturedAtUptimeMillis: Long) {
         analysis = null
-        expiresAt = SystemClock.uptimeMillis() + CloseForYouAccessibilityService.SNAPSHOT_TTL_MILLIS
+        expiresAt = capturedAtUptimeMillis + CloseForYouAccessibilityService.SNAPSHOT_TTL_MILLIS
         token = candidate
     }
 
     internal fun recordEvidenceIssue(issue: EvidenceIssue) {
         mutableStatus.value = mutableStatus.value.copy(lastEvidenceIssue = issue)
+    }
+
+    /** Codes/counts only, for checking that the real service graph is running while execution is OFF. */
+    @Synchronized internal fun recordF9Decision(next: NextStep, attempted: Boolean, reason: SafetyReason? = null) {
+        mutableStatus.value = mutableStatus.value.copy(f9DecisionCount = mutableStatus.value.f9DecisionCount + 1,
+            f9AttemptedCount = mutableStatus.value.f9AttemptedCount + if (attempted) 1 else 0, lastF9Next = next, lastF9Reason = reason)
+    }
+
+    @Synchronized internal fun recordManualPrompt() {
+        mutableStatus.value = mutableStatus.value.copy(manualPromptCount = mutableStatus.value.manualPromptCount + 1)
+    }
+    @Synchronized internal fun manualBoundary(code: String) {
+        mutableStatus.value = mutableStatus.value.copy(manualBoundary = code)
+    }
+    @Synchronized internal fun manualInvalidation(type: Int, mask: Int) {
+        mutableStatus.value = mutableStatus.value.copy(manualInvalidation = "EVENT=$type;MASK=$mask")
+    }
+    @Synchronized internal fun cleanupFailure(code: String) {
+        mutableStatus.value = mutableStatus.value.copy(cleanupFailure = code)
+    }
+    @Synchronized internal fun ownedEventRejection(code: String) {
+        mutableStatus.value = mutableStatus.value.copy(ownedEventRejection = code)
+    }
+
+    @Synchronized internal fun recordManualResult(result: ActionResult) {
+        mutableStatus.value = mutableStatus.value.copy(manualResultCount = mutableStatus.value.manualResultCount + 1,
+            lastManualStatus = result.status, lastManualOutcome = result.outcome, lastManualReason = result.reason)
     }
 
     @Synchronized internal fun connect() {

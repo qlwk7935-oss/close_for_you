@@ -142,6 +142,11 @@ internal class OverlayWindowKeeper<W : Any>(
     /** Which added window is on screen ([Entry.windowNumber]); the same through revalidation. */
     val windowNumber: Long get() = onScreen?.windowNumber ?: NO_GENERATION
 
+    fun updateCurrent(generation: Long, update: (W) -> Unit): Boolean {
+        if (!isCurrent(generation)) return false
+        update(requireNotNull(showing).window); return true
+    }
+
     fun isCurrent(generation: Long): Boolean =
         generation != NO_GENERATION && showing?.generation == generation
 

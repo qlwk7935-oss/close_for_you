@@ -37,6 +37,7 @@ internal class AndroidSnapshotCollector {
         requireCaptureIsolation: Boolean = false,
         trace: CaptureTrace = CaptureTrace(null),
     ): CollectionResult {
+        val capturedAtUptimeMillis = SystemClock.uptimeMillis()
         val roots = mutableListOf<AccessibilityNodeInfo>()
         val androidWindows = mutableListOf<AccessibilityWindowInfo>()
         fun blocked(reason: PrivacyBlockReason, detail: CaptureDetail, related: WindowType? = null): CollectionResult {
@@ -142,12 +143,12 @@ internal class AndroidSnapshotCollector {
             val structureDigest = structure.digest().hex()
             val token = SnapshotToken(epoch, root.windowId, packageName, UUID.randomUUID().toString(),
                 structureDigest, content.digest().hex(), epoch)
-            val snapshot = PopupSnapshot(token, SystemClock.uptimeMillis(), nodes.toPersistentList(),
+            val snapshot = PopupSnapshot(token, capturedAtUptimeMillis, nodes.toPersistentList(),
                 windows.toPersistentList(), screen, trigger, SnapshotCompleteness.COMPLETE)
             CollectionResult.Ready(snapshot, DetectionFrame(
                 digest(packageName), root.windowId,
                 windows.filter { it.type == WindowType.APPLICATION }.mapTo(mutableSetOf()) { it.id },
-                structureDigest, screen, outlines.toList(), trigger,
+                structureDigest, screen, outlines.toList(), trigger, targetWindow.bounds,
             ))
         } catch (failure: GuardFailure) {
             blocked(failure.reason, CaptureDetail.TREE_PROTECTION)

@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- C(ui/voice) 전용 문장. A의 strings.xml과 분리해 병합 충돌을 피한다. 이름은 ui_ 접두사. -->
 <resources>
+    <string name="ui_choice_evidence_expired">선택 시간이 만료되었습니다. 새 화면 확인이 필요합니다.</string>
     <string name="ui_announce_nothing_to_repeat">다시 들을 안내가 없어요.</string>
 
     <!-- 묶음 안내: 2초 안에 처리된 결과를 한 문장으로. "닫았어요"는 버튼을 눌렀다는 뜻일 뿐이다. -->

@@ -7,6 +7,7 @@ import android.os.Handler
 import android.os.Looper
 import android.view.Gravity
 import android.view.View
+import android.view.ViewTreeObserver
 import android.view.WindowManager
 import androidx.annotation.StringRes
 import androidx.compose.foundation.layout.navigationBarsPadding
@@ -30,6 +31,7 @@ import kr.closeforyou.ui.voice.choice.ChoicePromptContent
 import kr.closeforyou.ui.voice.choice.ChoicePromptPlanner
 import kr.closeforyou.ui.voice.choice.PromptOption
 import kr.closeforyou.ui.voice.choice.PromptSelection
+import kr.closeforyou.ui.voice.choice.PromptOptionKind
 
 /**
  * Shows [ChoicePromptContent] above other apps as a TYPE_ACCESSIBILITY_OVERLAY window.
@@ -64,12 +66,21 @@ class AccessibilityChoiceOverlay(
         val view: ComposeView,
         val owner: OverlayLifecycleOwner,
         val content: MutableStateFlow<WindowContent>,
+        val native: OverlayNativeWindowLifetime?,
+        val nativeObserver: OverlayNativeWindowObserver?,
     ) {
         val session: PromptSession get() = content.value.session
     }
 
     private val windowManager = service.getSystemService(WindowManager::class.java)
     private val keeper = OverlayWindowKeeper(WindowOps(), MainThreadTimer(Handler(Looper.getMainLooper())))
+    private var nativeObserver: OverlayNativeWindowObserver? = null
+
+    /** A registers before any View exists. Observation grants no event exemption or action. */
+    internal fun observeNativeWindows(observer: OverlayNativeWindowObserver) {
+        check(nativeObserver == null && keeper.windowGeneration == 0L)
+        nativeObserver = observer
+    }
 
     /** The prompt that was on screen when REVALIDATING began; for the closing sentence only. */
     private var revalidatingPrompt: ChoicePrompt? = null
@@ -88,6 +99,8 @@ class AccessibilityChoiceOverlay(
         revalidatingPrompt = null
         keeper.dismiss()
     }
+
+    fun expireEvidence(generation: Long): Boolean = keeper.updateCurrent(generation) { it.session.controller.expireEvidence() }
 
     override fun beginRevalidation(cause: RevalidationCause): Boolean {
         if (!revalidatingEnabled) {
@@ -134,7 +147,12 @@ class AccessibilityChoiceOverlay(
     ): PromptSession {
         // Taps and voice share this one path, so a voice choice is exactly a tap's UserChoice.
         // Anything from a closed, replaced, revalidating or failed window stops at the generation check.
-        val onOption: (PromptOption, ChoiceOrigin) -> Unit = { option, origin ->
+        lateinit var controller: PromptControlsController
+        val onOption: (PromptOption, ChoiceOrigin) -> Unit = option@ { option, origin ->
+            if (controller.state.value.evidenceExpired) {
+                if (keeper.isCurrent(generation) && option.kind == PromptOptionKind.KEEP_OPEN) keeper.dismiss()
+                return@option
+            }
             when (val selection = ChoicePromptPlanner.select(prompt, option)) {
                 // Press and keep close the prompt first; READ_CONTENT keeps it open.
                 is PromptSelection.Choice -> keeper.deliver(
@@ -149,7 +167,7 @@ class AccessibilityChoiceOverlay(
         }
         val scope = MainScope()
         try {
-            val controller = PromptControlsController(prompt, scope, controlsSupport, initialMessageRes) {
+            controller = PromptControlsController(prompt, scope, controlsSupport, initialMessageRes) {
                 onOption(it, ChoiceOrigin.VOICE)
             }
             return PromptSession(prompt, controller, scope) { onOption(it, ChoiceOrigin.TAP) }
@@ -193,7 +211,10 @@ class AccessibilityChoiceOverlay(
             }
             val lifecycleOwner = OverlayLifecycleOwner().also { owner = it }
             lifecycleOwner.attachTo(composeView)
-            return OverlayWindow(composeView, lifecycleOwner, content)
+            val observer = nativeObserver
+            val native = observer?.created(generation)
+            if (native != null) observeNativeView(composeView, native, observer)
+            return OverlayWindow(composeView, lifecycleOwner, content, native, observer)
         } catch (e: RuntimeException) {
             // Nothing was added yet: release what exists, then let the keeper report FAILED.
             session.scope.cancel()
@@ -205,6 +226,35 @@ class AccessibilityChoiceOverlay(
             throw e
         }
     }
+
+    private fun observeNativeView(view: ComposeView, native: OverlayNativeWindowLifetime, observer: OverlayNativeWindowObserver) {
+        lateinit var firstDraw: ViewTreeObserver.OnPreDrawListener
+        fun removeDraw() { if (view.viewTreeObserver.isAlive) view.viewTreeObserver.removeOnPreDrawListener(firstDraw) }
+        firstDraw = ViewTreeObserver.OnPreDrawListener {
+            removeDraw()
+            if (view.isAttachedToWindow) native.observeWindowId(NativeWindowIdObservation.FIRST_DRAW) { nativeWindowId(view) }
+            observer.changed(native); true
+        }
+        view.addOnAttachStateChangeListener(object : View.OnAttachStateChangeListener {
+            override fun onViewAttachedToWindow(v: View) {
+                native.attached(null)
+                native.observeWindowId(NativeWindowIdObservation.ATTACH) { nativeWindowId(v) }
+                observer.changed(native); v.viewTreeObserver.addOnPreDrawListener(firstDraw)
+            }
+            override fun onViewDetachedFromWindow(v: View) {
+                native.observeWindowId(NativeWindowIdObservation.DETACH) { nativeWindowId(v) }
+                native.detached(); removeDraw(); v.removeOnAttachStateChangeListener(this); observer.changed(native)
+            }
+        })
+    }
+
+    @Suppress("DEPRECATION")
+    private fun nativeWindowId(view: View): Int? = try {
+        val node = view.createAccessibilityNodeInfo()
+        if (node == null) null else try {
+            if (node.packageName?.toString() == service.packageName) node.windowId.takeIf { it >= 0 } else null
+        } finally { node.recycle() }
+    } catch (_: Exception) { null }
 
     private fun layoutParams() = WindowManager.LayoutParams(
         WindowManager.LayoutParams.MATCH_PARENT,
@@ -228,21 +278,37 @@ class AccessibilityChoiceOverlay(
     }
 
     private inner class WindowOps : OverlayWindowOps<OverlayWindow> {
-        override fun add(window: OverlayWindow) = windowManager.addView(window.view, layoutParams())
+        override fun add(window: OverlayWindow) {
+            var added = false
+            try { windowManager.addView(window.view, layoutParams()); added = true }
+            finally { window.native?.addReturned(added) }
+        }
 
         override fun announceShown(window: OverlayWindow) =
             listener.onShown(window.session.prompt, window.session.controller::speakPressed)
 
-        override fun announceDismissed(window: OverlayWindow) = listener.onDismissed()
+        override fun announceDismissed(window: OverlayWindow) {
+            window.native?.let { native ->
+                if (window.view.isAttachedToWindow) native.observeWindowId(NativeWindowIdObservation.BEFORE_REMOVE) { nativeWindowId(window.view) }
+                native.removalRequested()
+            }
+            listener.onDismissed()
+        }
 
         override fun stop(window: OverlayWindow) = stopSession(window.session)
 
-        override fun remove(window: OverlayWindow, immediate: Boolean): RemoveOutcome = try {
-            if (immediate) windowManager.removeViewImmediate(window.view) else windowManager.removeView(window.view)
-            RemoveOutcome.REMOVED
-        } catch (e: IllegalArgumentException) {
-            // WindowManagerGlobal throws this only for a view it does not hold (AOSP 36 source).
-            RemoveOutcome.NOT_ATTACHED
+        override fun remove(window: OverlayWindow, immediate: Boolean): RemoveOutcome {
+            var outcome = RemoveOutcome.FAILED
+            try {
+                if (immediate) windowManager.removeViewImmediate(window.view) else windowManager.removeView(window.view)
+                outcome = RemoveOutcome.REMOVED
+            } catch (_: IllegalArgumentException) { outcome = RemoveOutcome.NOT_ATTACHED }
+            finally {
+                window.native?.let { native ->
+                    native.removalReturned(outcome != RemoveOutcome.FAILED); window.nativeObserver?.changed(native)
+                }
+            }
+            return outcome
         }
 
         override fun blank(window: OverlayWindow) {

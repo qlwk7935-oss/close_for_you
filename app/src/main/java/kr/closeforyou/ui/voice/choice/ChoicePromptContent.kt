@@ -64,7 +64,9 @@ fun ChoicePromptContent(
             modifier = Modifier.padding(20.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            if (revalidating) {
+            if (controls.evidenceExpired) {
+                Text(text = stringResource(R.string.ui_choice_evidence_expired), modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite })
+            } else if (revalidating) {
                 Text(
                     text = stringResource(R.string.ui_revalidate_checking),
                     style = MaterialTheme.typography.titleMedium,
@@ -82,8 +84,8 @@ fun ChoicePromptContent(
                     Text(text = stringResource(PressResultSpeech.reasonRes(failure)))
                 }
             }
-            val enabled = !revalidating
             prompt.options.forEach { option ->
+                val enabled = !revalidating && (!controls.evidenceExpired || option.kind == PromptOptionKind.KEEP_OPEN)
                 val label = option.label()
                 val buttonModifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)
                 if (option.kind == PromptOptionKind.PRESS_CANDIDATE) {
@@ -114,7 +116,7 @@ private fun PromptControls(
         val listeningState = stringResource(R.string.ui_voice_listening_state)
         OutlinedButton(
             onClick = onSpeak,
-            enabled = controls.enabled,
+            enabled = controls.enabled && !controls.evidenceExpired,
             modifier = buttonModifier.fillMaxWidth().semantics {
                 if (controls.listening) stateDescription = listeningState
             },
@@ -124,7 +126,7 @@ private fun PromptControls(
     }
     if (controls.speechButtons) {
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            OutlinedButton(onClick = onRepeat, modifier = buttonModifier.weight(1f), enabled = controls.enabled) {
+            OutlinedButton(onClick = onRepeat, modifier = buttonModifier.weight(1f), enabled = controls.enabled && !controls.evidenceExpired) {
                 Text(stringResource(R.string.ui_choice_repeat))
             }
             OutlinedButton(onClick = onStopSpeaking, modifier = buttonModifier.weight(1f), enabled = controls.enabled) {

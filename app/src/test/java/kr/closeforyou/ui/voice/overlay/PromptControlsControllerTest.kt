@@ -34,6 +34,18 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class PromptControlsControllerTest {
+    @Test fun expiredEvidenceCancelsListeningAndCannotRepeatOrRestartButStopStillWorks() = runTest {
+        val h = Harness(this, prompt = prompt)
+        h.controller.onSpeak()
+        val stops = h.announcer.stops
+        h.controller.expireEvidence(); h.controller.expireEvidence()
+        assertTrue(h.controller.state.value.evidenceExpired)
+        assertFalse(h.controller.state.value.listening)
+        assertEquals(1, h.input.cancels); assertEquals(stops, h.announcer.stops)
+        h.controller.onSpeak(); h.controller.onRepeat()
+        assertEquals(1, h.input.starts); assertEquals(0, h.announcer.repeats); assertTrue(h.picked.isEmpty())
+        h.controller.onStopSpeaking(); assertEquals(stops + 1, h.announcer.stops)
+    }
     private class FakeInput(var availability: VoiceAvailability = VoiceAvailability.READY) : SpeakButtonVoiceInput {
         val results = MutableSharedFlow<VoiceUtterance>(extraBufferCapacity = 4)
         override val utterances = results
