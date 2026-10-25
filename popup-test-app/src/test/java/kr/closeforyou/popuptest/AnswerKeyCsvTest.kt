@@ -36,6 +36,12 @@ class AnswerKeyCsvTest {
             assertEquals(id, scenario.rememberable.toString(), row["rememberable"])
             assertEquals(id, scenario.memoryReusableFrom.orEmpty(), row["memory_reusable_from"])
             assertEquals(id, scenario.experiments, split(row["experiments"]))
+            assertEquals(id, ScenarioCatalog.presetGoal(scenario, TestPreset.CLOSE_ALL).name, row["preset_close_all"])
+            assertEquals(id, ScenarioCatalog.presetGoal(scenario, TestPreset.CLOSE_ADS_AND_COUPONS).name, row["preset_close_ads_and_coupons"])
+            assertEquals(id, ScenarioCatalog.presetGoal(scenario, TestPreset.CLOSE_ADS_ONLY).name, row["preset_close_ads_only"])
+            val int1 = ScenarioCatalog.int1.getValue(id)
+            assertEquals(id, int1.kind.name, row["int1_kind"])
+            assertEquals(id, int1.path.name, row["int1_path"])
         }
     }
 
