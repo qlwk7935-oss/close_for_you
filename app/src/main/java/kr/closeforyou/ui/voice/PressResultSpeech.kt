@@ -4,6 +4,7 @@ import kr.closeforyou.R
 import kr.closeforyou.core.model.ActionResult
 import kr.closeforyou.core.model.ActionStatus
 import kr.closeforyou.core.model.ChoiceKind
+import kr.closeforyou.core.model.ClickOutcome
 
 /** Why a press the person chose did not end in "pressed". Carries no screen text. */
 enum class PressFailure {
@@ -20,19 +21,24 @@ enum class PressFailure {
 /**
  * C/F10: what to say after the person chose [ChoiceKind.CLOSE_ONCE] / [ChoiceKind.SKIP_ONCE].
  *
- * - MECHANICAL_SUCCESS → counted by [AnnouncementBatcher] ("팝업 1개를 닫았어요") like any close.
+ * - Only an attempted action with CLOSED_CONFIRMED is counted as closed by [AnnouncementBatcher].
+ *   The mechanical return alone never establishes popup removal (#38).
  * - Anything else → said at once with the next choices, never "닫았어요". It is not batched because
  *   the person is waiting for the result of their own tap.
  *
  * Consistent with [AnnouncementBatcher.outcomeOf]: the same statuses are "not closed" here.
  */
 object PressResultSpeech {
-    fun failureOf(result: ActionResult): PressFailure? = when (result.status) {
-        ActionStatus.MECHANICAL_SUCCESS -> null
-        ActionStatus.BLOCKED, ActionStatus.NOT_EXECUTED -> PressFailure.NOT_PRESSED
-        ActionStatus.STALE -> PressFailure.SCREEN_CHANGED
-        ActionStatus.ATTEMPT_FAILED -> PressFailure.PRESS_FAILED
-        ActionStatus.OUTCOME_UNKNOWN -> PressFailure.NOT_CONFIRMED
+    fun failureOf(result: ActionResult): PressFailure? {
+        if (result.attempted && result.outcome == ClickOutcome.CLOSED_CONFIRMED &&
+            result.status in setOf(ActionStatus.MECHANICAL_SUCCESS, ActionStatus.ATTEMPT_FAILED, ActionStatus.OUTCOME_UNKNOWN)) return null
+        return when (result.status) {
+            ActionStatus.MECHANICAL_SUCCESS -> PressFailure.NOT_CONFIRMED
+            ActionStatus.BLOCKED, ActionStatus.NOT_EXECUTED -> PressFailure.NOT_PRESSED
+            ActionStatus.STALE -> PressFailure.SCREEN_CHANGED
+            ActionStatus.ATTEMPT_FAILED -> PressFailure.PRESS_FAILED
+            ActionStatus.OUTCOME_UNKNOWN -> PressFailure.NOT_CONFIRMED
+        }
     }
 
     /**

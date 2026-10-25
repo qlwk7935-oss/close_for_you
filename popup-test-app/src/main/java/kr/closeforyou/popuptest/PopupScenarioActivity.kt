@@ -44,7 +44,12 @@ class PopupScenarioActivity : Activity() {
         setContentView(backgroundPage())
         if (savedInstanceState != null || scenario == null) return
         when (scenarioId) {
-            "P01" -> labeledAdDialog()
+            "P01" -> {
+                // Explicit synthetic F9 fixture: collect the unchanged page before the modal hides
+                // its accessibility window. Default 0 preserves the existing P01 behaviour.
+                val delay = intent.getLongExtra("f9_popup_delay_ms", 0L).coerceIn(0L, 3_000L)
+                if (delay == 0L) labeledAdDialog() else handler.postDelayed({ labeledAdDialog() }, delay)
+            }
             "P02" -> sameWindowOverlay()
             "P03" -> bottomBanner()
             "P04" -> unlabeledXDialog()
@@ -164,7 +169,10 @@ class PopupScenarioActivity : Activity() {
             text(getString(R.string.ad_coupon_title), 20f),
             text(getString(R.string.ad_coupon_body)),
             button(R.id.btn_ad_open, getString(R.string.ad_open)) { openAdLanding() },
-            button(R.id.btn_close, getString(R.string.close)) { dismiss() },
+            button(R.id.btn_close, getString(R.string.close)) {
+                // Opt-in negative F9 fixture: ACTION_CLICK returns true but the popup stays.
+                if (!intent.getBooleanExtra("f9_keep_popup", false)) dismiss()
+            },
         ))
     }
 

@@ -8,6 +8,7 @@ import kr.closeforyou.R
 import kr.closeforyou.core.model.ActionResult
 import kr.closeforyou.core.model.ActionStatus
 import kr.closeforyou.core.model.ChoiceKind
+import kr.closeforyou.core.model.ClickOutcome
 
 /** What the person is told about one handled popup. Carries no screen text. */
 enum class HandledOutcome { CLOSED, SKIPPED, NOT_CONFIRMED }
@@ -72,11 +73,14 @@ class AnnouncementBatcher(
          * results return null: those are explained by their own announcement, not counted here.
          * MECHANICAL_SUCCESS only says the button was pressed, not that the choice was safe.
          */
-        fun outcomeOf(result: ActionResult, choice: ChoiceKind): HandledOutcome? = when (result.status) {
-            ActionStatus.MECHANICAL_SUCCESS ->
-                if (choice == ChoiceKind.SKIP_ONCE) HandledOutcome.SKIPPED else HandledOutcome.CLOSED
-            ActionStatus.ATTEMPT_FAILED, ActionStatus.OUTCOME_UNKNOWN -> HandledOutcome.NOT_CONFIRMED
-            ActionStatus.NOT_EXECUTED, ActionStatus.BLOCKED, ActionStatus.STALE -> null
+        fun outcomeOf(result: ActionResult, choice: ChoiceKind): HandledOutcome? {
+            if (PressResultSpeech.failureOf(result) == null && result.outcome == ClickOutcome.CLOSED_CONFIRMED) {
+                return if (choice == ChoiceKind.SKIP_ONCE) HandledOutcome.SKIPPED else HandledOutcome.CLOSED
+            }
+            return when (result.status) {
+                ActionStatus.MECHANICAL_SUCCESS, ActionStatus.ATTEMPT_FAILED, ActionStatus.OUTCOME_UNKNOWN -> HandledOutcome.NOT_CONFIRMED
+                ActionStatus.NOT_EXECUTED, ActionStatus.BLOCKED, ActionStatus.STALE -> null
+            }
         }
     }
 }
