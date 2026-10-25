@@ -20,6 +20,7 @@ internal data class DetectionFrame(
     val screenBounds: ScreenBounds,
     val outlines: List<DetectionOutline>,
     val trigger: PopupTrigger,
+    val windowBounds: ScreenBounds = screenBounds,
 )
 
 /** F1 emits candidates only. In particular a full-screen transition is never an ad verdict. */
@@ -39,7 +40,14 @@ internal class PopupCandidateDetector {
     fun detect(frame: DetectionFrame): Set<PopupSignal> {
         val before = previous?.takeIf { it.applicationDigest == frame.applicationDigest }
         val signals = mutableSetOf<PopupSignal>()
-        val hasNewWindow = before != null && frame.activeWindowId !in before.applicationWindowIds
+        // #29: Android's Dialog root is often a FrameLayout, including the first observed popup.
+        // An independently bounded APPLICATION window scopes the popup without guessing from text.
+        // Both axes must be inset: a normal Activity below status/navigation bars is not a dialog.
+        val boundedWindow = isBounded(frame.windowBounds, frame.screenBounds) &&
+            frame.windowBounds.width.toLong() * 100 < frame.screenBounds.width.toLong() * 96 &&
+            frame.windowBounds.height.toLong() * 100 < frame.screenBounds.height.toLong() * 90
+        val hasNewWindow = (before != null && frame.activeWindowId !in before.applicationWindowIds) ||
+            (boundedWindow && (before == null || before.activeWindowId != frame.activeWindowId))
         if (hasNewWindow) signals += PopupSignal.NEW_WINDOW
 
         val boundedOverlay = frame.outlines.any { outline ->

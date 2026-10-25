@@ -38,6 +38,7 @@ data class PromptControlsState(
     @StringRes val messageRes: Int? = null,
     /** False while REVALIDATING: the buttons stay (TalkBack reads them as unavailable) but do nothing. */
     val enabled: Boolean = true,
+    val evidenceExpired: Boolean = false,
 ) {
     val speakVisible: Boolean get() = speakButton == SpeakButtonState.SHOWN
 
@@ -108,7 +109,7 @@ class PromptControlsController(
     }
 
     fun onSpeak() {
-        if (disposed) return
+        if (disposed || mutableState.value.evidenceExpired) return
         val input = support.voiceInput ?: return
         if (!mutableState.value.speakVisible) return
         if (mutableState.value.listening) {
@@ -130,11 +131,18 @@ class PromptControlsController(
     }
 
     fun onRepeat() {
-        if (disposed) return
+        if (disposed || mutableState.value.evidenceExpired) return
         val announcer = support.announcer ?: return
         cancelListening()
         // TtsPopupAnnouncer says ui_announce_nothing_to_repeat itself when there is nothing.
-        scope.launch { announcer.repeatLast() }
+        scope.launch { if (!disposed && !mutableState.value.evidenceExpired) announcer.repeatLast() }
+    }
+
+    fun expireEvidence() {
+        if (disposed || mutableState.value.evidenceExpired) return
+        val listening = mutableState.value.listening
+        mutableState.update { it.copy(evidenceExpired = true, listening = false, messageRes = null) }
+        if (listening) support.voiceInput?.cancel()
     }
 
     fun onStopSpeaking() {
@@ -156,7 +164,7 @@ class PromptControlsController(
 
     private fun onResult(utterance: VoiceUtterance) {
         // A result after cancel, after dispose or from an older prompt's session is ignored.
-        if (disposed || !mutableState.value.listening) return
+        if (disposed || mutableState.value.evidenceExpired || !mutableState.value.listening) return
         when (val outcome = VoicePolicy.decide(utterance, prompt)) {
             is VoiceOutcome.Choose -> {
                 mutableState.update { it.copy(listening = false, messageRes = null) }

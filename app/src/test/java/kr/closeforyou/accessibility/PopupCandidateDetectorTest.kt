@@ -5,6 +5,17 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class PopupCandidateDetectorTest {
+    @Test fun boundedApplicationWindowScopesFirstDialogWithoutADialogClassOrBaseline() {
+        val detector = PopupCandidateDetector()
+        val dialog = frame().copy(windowBounds = ScreenBounds(50, 500, 950, 1_100))
+        assertEquals(setOf(PopupSignal.NEW_WINDOW), detector.detect(dialog))
+        assertTrue(detector.detect(dialog).isEmpty())
+        detector.clear()
+        assertEquals(setOf(PopupSignal.NEW_WINDOW), detector.detect(dialog))
+        // Status/navigation insets on an ordinary Activity cannot earn popup scope.
+        assertFalse(PopupSignal.NEW_WINDOW in PopupCandidateDetector().detect(
+            frame().copy(windowBounds = ScreenBounds(0, 60, 1_000, 1_940))))
+    }
     private val screen = ScreenBounds(0, 0, 1_000, 2_000)
     private fun frame(
         id: Int = 1,
