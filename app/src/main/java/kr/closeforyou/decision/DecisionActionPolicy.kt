@@ -44,6 +44,12 @@ class DecisionActionPolicy internal constructor(private val autoClose: DecisionA
     /** [nowUptimeMillis] must be the clock A stamps AutoEligibility with (SystemClock.uptimeMillis). */
     constructor(nowUptimeMillis: () -> Long) : this(DecisionAutoClose(nowUptimeMillis))
 
+    /**
+     * [allowAutoSkip]: approve automatic SKIP presses too. Leave false until A's executor presses
+     * SKIP (F9 is CLOSE-only, 10/25); then A passes true here.
+     */
+    constructor(allowAutoSkip: Boolean, nowUptimeMillis: () -> Long) : this(DecisionAutoClose(nowUptimeMillis, allowSkip = allowAutoSkip))
+
     override suspend fun decide(analysis: PopupAnalysis, context: DecisionContext): ActionDecision {
         val deny = mutableSetOf<SafetyReason>()
         val confirm = mutableSetOf<SafetyReason>()

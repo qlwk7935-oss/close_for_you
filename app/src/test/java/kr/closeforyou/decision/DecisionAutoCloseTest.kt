@@ -161,7 +161,20 @@ class DecisionAutoCloseTest {
         assertTrue(decide(popup(tree("광고", "신상 운동화", "닫기"), close, token = token("later"))).approved)
     }
 
+    @Test fun skipIsAskedWhileAsExecutorCannotPressIt() {
+        // F9 presses CLOSE only (10/25): by default a skip-only ad is asked, never approved.
+        val skip = button("skip", "건너뛰기", ButtonRole.SKIP)
+        assertEquals(setOf(AutoCloseBlock.SKIP_NOT_READY), decide(popup(tree("영상 광고", "건너뛰기"), skip, token = token("k1"))).blocks)
+        // Still waits quietly during the countdown, and a close next to the skip is still closed.
+        assertEquals(setOf(AutoCloseBlock.WAITING_FOR_TARGET),
+            decide(popup(tree("영상 광고", "3초 후 건너뛸 수 있어요", "건너뛰기"), skip, token = token("k2"))).blocks)
+        assertEquals("node:close", decide(popup(tree("광고 1/2", "건너뛰기", "닫기"), skip, close, token = token("k3"))).candidateId)
+    }
+
     @Test fun skipOnlyOnAnAdAfterItsCountdown() {
+        // Once A's executor presses SKIP it turns automatic SKIP on; the rules below then apply.
+        val skipping = DecisionAutoClose(nowMillis = { now }, allowSkip = true)
+        fun decide(a: PopupAnalysis) = skipping.evaluateScoped(eligible(a), ctx(a), DecisionAutoClose.PRESET_ALL)
         val skip = button("skip", "건너뛰기", ButtonRole.SKIP)
         assertEquals("node:skip", decide(popup(tree("영상 광고", "건너뛰기"), skip, token = token("s1"))).candidateId)
         // Countdown still on screen: wait (no prompt each second), not ask.

@@ -38,7 +38,10 @@ internal enum class AutoCloseBlock {
     NO_TARGET,
     /** More than one verified close button, or no close and more than one skip: never pick one. */
     AMBIGUOUS_TARGET,
-    /** Only a skip button, and the popup is not an ad (a skip elsewhere may move on, not close). */
+    /**
+     * Only a skip button, and either the popup is not an ad (a skip elsewhere may move on, not close)
+     * or automatic SKIP is off because A's executor cannot press it yet.
+     */
     SKIP_NOT_READY,
     /** This popup was already sent to A and its result has not come back. */
     AWAITING_RESULT,
@@ -87,6 +90,12 @@ internal class DecisionAutoClose(
     /** An approval with no result this long may have pressed: treated as an unknown outcome. */
     private val resultTimeoutMillis: Long = 30_000,
     private val remembered: Int = 256,
+    /**
+     * Automatic SKIP presses. Off until A's executor supports SKIP (F9 presses CLOSE only, 10/25):
+     * an approved skip that A refuses would leave the person neither asked nor helped. While off, a
+     * skip-only ad is asked (SKIP_NOT_READY) once its countdown is over.
+     */
+    private val allowSkip: Boolean = false,
 ) {
     private val pending = LinkedHashMap<String, Long>()
     private val closed = LinkedHashSet<String>()
@@ -215,6 +224,8 @@ internal class DecisionAutoClose(
                 kind != DecisionKind.ADVERTISEMENT -> null.also { blocks += AutoCloseBlock.SKIP_NOT_READY }
                 // A skip countdown still running: wait for a later screen instead of asking every tick.
                 DecisionVideoAd.inspect(analysis).countdownSeconds != null -> null.also { blocks += AutoCloseBlock.WAITING_FOR_TARGET }
+                // A cannot press SKIP yet: ask instead of approving a press nobody will make.
+                !allowSkip -> null.also { blocks += AutoCloseBlock.SKIP_NOT_READY }
                 else -> skips.single().id
             }
             kind == DecisionKind.NOTICE -> null.also { blocks += AutoCloseBlock.NO_TARGET }
