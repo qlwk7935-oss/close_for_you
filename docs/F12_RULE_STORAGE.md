@@ -78,19 +78,20 @@ A의 `SnapshotToken` 지문은 세션 salt를 쓰므로 재사용하지 않습�
 - 손상 행 삭제는 ID를 500개씩 나눠 지웁니다(SQLite 바인딩 변수 한도).
 - C 쪽 권장: 목록이 비어도 [전체 삭제]는 보이게 둡니다(정리 전 손상 행 대비).
 
-## 전체 삭제와 저장이 겹칠 때 (C #34 리뷰 10/24)
+## 전체 삭제와 저장이 겹칠 때 (C #34 리뷰 10/24, A #40 리뷰 10/25)
 
-지문은 클릭 전에 만들고 저장은 성공 뒤에 하므로, 그 사이에 [전체 삭제]로 지문 키가 폐기될 수 있습니다. 그대로 두면 옛 키로 만든 규칙이 삭제 뒤에 저장되어 목록에 남습니다(절대 일치하지는 않음). `KeyEraseGate`가 이를 막습니다.
+지문은 클릭 전에 만들고 저장은 성공 뒤에 하므로, 그 사이에 [전체 삭제]로 지문 키가 폐기될 수 있습니다. 그대로 두면 옛 키로 만든 규칙이 삭제 뒤에 저장되어 목록에 남습니다(절대 일치하지는 않음). `KeyEraseGate`가 이를 막습니다(fail closed).
 
-- `RuleStorage`가 프로세스에 하나인 문을 갖고, `fingerprintProvider`는 만든 키를 **만들기 시작한 세대**로 기록하고, `repository.save`와 `eraseAll`은 같은 잠금 안에서 돕니다.
-- 이 프로세스에서 전체 삭제가 있었으면 저장은 현재 세대에 만든 키만 받습니다. 옛 키·모르는 키는 `RuleRejectedException(KEY_FROM_BEFORE_ERASE)`로 거부합니다(C의 `commit`은 "기억하지 못했어요"로 안내).
-- 삭제가 도는 동안 저장은 기다리고, 삭제가 중간에 실패해도 옛 키는 계속 거부합니다.
+- `RuleStorage`가 프로세스에 하나인 문을 갖습니다. `fingerprintProvider`는 지문을 만들 때 시작·끝을 문에 알리고, `repository.save`와 `eraseAll`은 같은 잠금 안에서 돕니다.
+- **삭제와 조금이라도 겹친 지문 생성은 기록하지 않습니다**: 삭제 중에 시작했거나(Keystore 키 폐기 전이라도), 삭제 중에 끝났거나, 시작과 끝 사이에 삭제가 있었던 경우.
+- 이 프로세스에서 전체 삭제가 있었으면 저장은 "삭제와 겹치지 않고 마지막 삭제 뒤에 만든 키"만 받습니다. 그 밖의 키·모르는 키는 `RuleRejectedException(KEY_FROM_BEFORE_ERASE)`로 거부합니다(C의 `commit`은 "기억하지 못했어요"로 안내).
+- 삭제가 도는 동안 저장은 기다립니다. 삭제가 실패하거나 취소돼도 옛 키는 계속 거부되고, 진행 표시는 풀려서 그 뒤 새 키는 정상 저장됩니다.
 - 기록은 메모리에만(최대 256개, 지문 값뿐). 앱을 다시 시작하면 비지만, 클릭 전에 만든 키도 메모리에만 있으므로 함께 사라집니다.
-- **연결 규칙**: 지문은 `RuleStorage.fingerprintProvider`, 저장은 `RuleStorage.repository`로 해야 보호를 받습니다. `DeviceKeyedFingerprintProvider`를 직접 쓰면 전체 삭제 뒤 저장이 모두 거부됩니다(fail closed).
+- **연결 규칙**: 지문은 `RuleStorage.fingerprintProvider`, 저장은 `RuleStorage.repository`로 해야 보호를 받습니다. `DeviceKeyedFingerprintProvider`를 직접 쓰면 전체 삭제 뒤 저장이 모두 거부됩니다(안전한 쪽).
 
 ## 시험
 
-- JVM: `KeyEraseGateTest`(삭제 전후 키, 만드는 도중 삭제, 삭제 중 저장 대기, 삭제 실패, 기록 한도), `DeviceKeyedFingerprintProviderTest`(세션 간 동일, 날짜·시간·금액 변경, 버튼 이동·라벨 변경, 앱 버전, 기기 키, fail-closed 8종), `RoomPopupRuleRepositoryTest`(정확 일치, 만료, 철회, 교체, 실패, 정리, 손상 행, 정리 묶음 크기).
+- JVM: `KeyEraseGateTest`(삭제 전후 키, 삭제 시작 뒤·키 폐기 전에 시작한 생성, 삭제와 걸친 생성, 삭제 중 저장 대기, 삭제 실패·취소, 생성 실패·취소, 기록 한도), `DeviceKeyedFingerprintProviderTest`(세션 간 동일, 날짜·시간·금액 변경, 버튼 이동·라벨 변경, 앱 버전, 기기 키, fail-closed 8종), `RoomPopupRuleRepositoryTest`(정확 일치, 만료, 철회, 교체, 실패, 정리, 손상 행, 정리 묶음 크기).
 - 계측: `PopupRuleDatabaseTest`가 실제 Room SQL로 같은 시나리오(정리 포함)를 검사합니다. CI는 컴파일만 하며 실행은 기기에서 해야 합니다.
 - 팝업 재현 앱의 공지 변형 N01~N07(C05·C09)로 실기기 검증 예정.
 
