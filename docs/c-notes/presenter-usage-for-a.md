@@ -186,3 +186,54 @@ scope.launch {
 - `granted`는 **정책 입력값**이다. B의 PRESET/EXECUTE 승인과 A의 AutoEligibility 5조건이 그대로 필요하다.
 - 결과를 캐시하지 말고 판단할 때마다 `current()`를 부른다(끄면 즉시 빈 집합).
 
+
+## 6. 자동 처리 결과 안내 — `SpeechHandlingListener` (C, 2026-10-25, 계약 v3 #45)
+
+프리셋·F12 규칙으로 **묻지 않고 처리한** 팝업의 `HandlingReport`를 C가 말한다. 자세한 문장 표는 [handling-report-c.md](handling-report-c.md).
+
+> **결과 안내는 C 리스너 하나만 말한다.** A가 `HandlingReport`를 이 리스너에 넘기면 #42 `F9ResultFeedback.deliver(...)`는 부르지 않는다(**F9ResultFeedback 대신 이 리스너**). 둘 다 부르면 같은 팝업 결과를 두 번 듣는다. 사용자가 직접 고른 누르기는 지금처럼 `PopupChoiceFlow`가 말한다.
+
+```kotlin
+// 1장의 batcher를 이 flush로 만든다(종류가 있으면 "광고 2개, 쿠폰 1개를 닫았어요", 없으면 기존 문장).
+val format = UiFormat { res, args -> getString(res, *args) }
+val batcher = AnnouncementBatcher(scope, SpeechHandlingListener.batchFlush(tts, format) {
+    settings.current().detail == AnnouncementDetail.DETAILED
+})
+val handlingListener = SpeechHandlingListener(
+    announcer = tts,
+    batcher = batcher,                        // PopupChoiceFlow와 같은 batcher
+    format = format,
+    // ANNOUNCE일 때 기존 내용 읽기 문장. A가 같은 token의 분석을 갖고 있을 때만, 없으면 null
+    contentOf = { report -> analysisFor(report.token)?.let { PromptSpeech.content(this, it) } },
+    // 영상 광고 초 안내(F5 플래그 꺼짐이면 쓰지 않음)
+    videoAdOf = { report -> analysisFor(report.token)?.let { VideoAdInfo.from(DecisionVideoAd.inspect(it)) } },
+)
+
+// A 조립부: 묻지 않고 처리한 경우(source = PRESET / REMEMBERED_RULE)마다 1번씩
+val decision = policy.decide(analysis, context)
+if (decision.source == DecisionSource.PRESET || decision.source == DecisionSource.REMEMBERED_RULE) {
+    if (decision.next == NextStep.EXECUTE) {
+        val result = executor.execute(ActionRequest(decision, candidate))
+        policy.onActionResult(result)
+        // 첫 운영 통합: title = null (C도 제목 낭독 기본 OFF — HandlingTitleSpeechFeature)
+        handlingListener.onHandled(HandlingReport(analysis.token, analysis.classification, decision, result, title = null))
+        // F9ResultFeedback.deliver(result, tts) 는 부르지 않는다
+    } else {
+        handlingListener.onHandled(HandlingReport(analysis.token, analysis.classification, decision, title = null))
+        if (decision.next == NextStep.ASK) { /* 기존 선택 창 흐름 (리스너는 말하지 않음) */ }
+    }
+}
+
+// WAIT 1회 기록 초기화 (handling-report-c.md 1-1장)
+handlingListener.resetWaitMemory(WaitResetReason.NEW_POPUP)            // 다른 팝업이라고 판단했을 때만 (같은 팝업의 새 스냅샷마다 X)
+handlingListener.resetWaitMemory(WaitResetReason.POPUP_REMOVED)        // 팝업이 사라졌다고 확인했을 때
+handlingListener.resetWaitMemory(WaitResetReason.SERVICE_RECONNECTED)  // onServiceConnected
+
+// onDestroy
+handlingListener.clear()   // = resetWaitMemory(SERVICE_STOPPED) (batcher.cancel()은 batcher 주인이)
+```
+
+- 리스너 연결 자체에는 기능 플래그가 없다. 지금은 `PresetAutoCloseFeature.live = false`라 PRESET 경로 EXECUTE가 나오지 않으므로 실제로 말할 일은 거의 없다.
+- **`F9ResultFeedback`는 이 리스너와 같이 부르지 않는다**(자동 처리 결과는 리스너 하나만). 사용자가 직접 고른 결과는 `PopupChoiceFlow` 담당이고, USER_CHOICE 보고는 계약이 만들지 못하게 막는다.
+- **제목 낭독 기본 OFF:** `HandlingTitleSpeechFeature.enabled = false`. 제목을 넘겨도 "광고를 닫았어요"처럼 종류만 말한다. 나중에 C 설정으로 켬(생성자 `titleSpeechEnabled` 한 곳, 설정 UI는 아직 없음). 제목 원문은 로그·저장하지 않는다.
+- WAIT "같은 팝업" 기준: 기본 `windowId + structureDigest`는 **Mock 임시, 운영 기준 아님**(A의 `popupInstanceId`는 스냅샷마다 새 UUID라 못 씀). A의 같은 팝업 규칙을 `waitKeyOf = { ... }`로 넘겨 달라. 같은지 불확실하면 `null` → C는 매번 말한다(새 안내 누락 없음).

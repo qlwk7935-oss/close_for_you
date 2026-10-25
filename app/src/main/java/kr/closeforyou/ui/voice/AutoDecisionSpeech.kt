@@ -53,8 +53,8 @@ fun interface UiFormat {
 
 /**
  * C/F10, contract v2 (#38): what to say about a decision B made without asking on this screen
- * (DecisionSource.PRESET / REMEMBERED_RULE) and A's result for it. Pure; not connected yet,
- * because nothing delivers these decisions and results to C (see docs/c-notes/contract38-c-connect.md).
+ * (DecisionSource.PRESET / REMEMBERED_RULE) and A's result for it. Pure; contract v3 (#45)
+ * delivers them as HandlingReport to [SpeechHandlingListener] (docs/c-notes/handling-report-c.md).
  * The person's own taps keep [PressResultSpeech].
  *
  * - "닫았어요" only for [ClickOutcome.CLOSED_CONFIRMED]. A delivered click alone is "확인하지 못했어요".

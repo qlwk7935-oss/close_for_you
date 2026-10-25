@@ -77,7 +77,7 @@
 
 ## 3. 남은 것
 
-- [ ] A: 자동 처리 결과(`ActionDecision` + `ActionResult.outcome`)를 C에 실어 줄 경로 (위 2-1)
+- [x] A: 자동 처리 결과를 C에 실어 줄 경로 → 계약 v3 `HandlingReport`·`PopupHandlingListener`(#45). C 구현 `SpeechHandlingListener`: [handling-report-c.md](handling-report-c.md)
 - [ ] 팝업 **제목** 전달 여부: 계약에 제목이 없다. `PopupAnalysis.texts`에서 C가 첫 줄을 고르면 추측이 된다. A/B가 "제목으로 볼 글자"를 정해 줄지(예: `PopupAnalysis.title: String?`, 없으면 null) 합의 필요. 그 전에는 `title = null` → "광고를 닫았어요."
 - [x] `LEFT_APP_BEFORE` 범위: 그 앱, 접근성 서비스가 끝날 때까지(B 메모리, #38 `e35417f`). "당분간"과 맞음. 묻기는 계속됨
 - [ ] WAIT가 끝내 닫기 버튼 없이 끝났을 때(광고가 안 끝남) B가 ASK로 넘어오는지 — 그때는 기존 선택 창
