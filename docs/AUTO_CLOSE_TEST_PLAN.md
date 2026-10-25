@@ -47,4 +47,4 @@ S19는 재현 앱을 바꿀 필요가 없습니다(안내 가능 여부는 C 쪽
 
 ## 5. 기록
 
-[`templates/experiment_results.csv`](templates/experiment_results.csv) 한 줄에 시행 하나. 자동 닫기 칸은 B 체크리스트 4절 양식(켠 프리셋, 적격 근거 5개 중 있던 것, F9 결과, 안내 종류)을 `notes`에 고정 코드로 적습니다. 미실시를 성공으로 쓰지 않습니다.
+[`templates/experiment_results.csv`](templates/experiment_results.csv) 한 줄에 시행 하나. `preset`(켠 프리셋)과 `auto_executable`(그 시행에서 서비스가 실제로 자동 실행할 수 있었는지)을 **따로** 적습니다. 정답지 `preset_*`는 목표일 뿐 실행 가능 여부가 아닙니다. 관측한 B 분류는 `observed_kind`에 적습니다. 자동 닫기 칸은 B 체크리스트 4절 양식(켠 프리셋, 적격 근거 5개 중 있던 것, F9 결과, 안내 종류)을 `notes`에 고정 코드로 적습니다. 미실시를 성공으로 쓰지 않습니다.
