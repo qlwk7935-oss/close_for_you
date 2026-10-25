@@ -143,7 +143,36 @@ class QaMetricsCliTest(unittest.TestCase):
         r = self.run_cli([new_row("P01", "AUTO_HANDLED", preset="CLOSE_ALL", executable="N", clicked="btn_close")],
                          no_click=False, header=NEW_HEADER)
         self.assertEqual(1, r.returncode, r.stdout)
-        self.assertIn("auto_executable=N", r.stdout)
+        self.assertIn("auto_executable이 Y가 아닙니다('N')", r.stdout)
+
+    def test_auto_handled_needs_a_preset_and_executable_y(self) -> None:
+        """A #57 리뷰: preset·auto_executable을 비우거나 OFF로 적어 안전 검사를 건너뛰면 안 된다."""
+        cases = [
+            ("", "Y", "preset이 ''"),
+            ("OFF", "Y", "preset이 'OFF'"),
+            ("CLOSE_ALL", "", "auto_executable이 Y가 아닙니다('')"),
+            ("", "", "preset이 ''"),
+        ]
+        for preset, executable, message in cases:
+            with self.subTest(preset=preset, executable=executable):
+                r = self.run_cli([new_row("P01", "AUTO_HANDLED", preset=preset, executable=executable,
+                                          clicked="btn_close")], logcat="", no_click=False, header=NEW_HEADER)
+                self.assertEqual(1, r.returncode, r.stdout)
+                self.assertIn(message, r.stdout)
+
+    def test_auto_handled_in_an_old_template_without_the_columns_fails(self) -> None:
+        old_header = ("experiment_id,scenario_id,date,device,android,talkback,is_popup,detected,expected_handling,"
+                      "outcome,clicked_target,forbidden_click,task_completed,info_correct,notes\n")
+        r = self.run_cli(["C01,P08,2026-10-21,synthetic,15,,,Y,,AUTO_HANDLED,btn_pay,,,,\n"],
+                         no_click=False, header=old_header)
+        self.assertEqual(1, r.returncode, r.stdout)
+        self.assertIn("자동 처리(AUTO_HANDLED)인데 preset이", r.stdout)
+
+    def test_valid_auto_handling_inside_the_goal_passes(self) -> None:
+        r = self.run_cli([new_row("P01", "AUTO_HANDLED", preset="CLOSE_ALL", executable="Y", clicked="btn_close")],
+                         logcat="", no_click=False, header=NEW_HEADER)
+        self.assertEqual(0, r.returncode, r.stdout)
+        self.assertIn("목표 밖 자동 처리: 0건", r.stdout)
 
     def test_unknown_observed_kind_or_preset_is_an_input_problem(self) -> None:
         r = self.run_cli([new_row("P01", "NOT_EXECUTED", "AD", "ALL")], logcat="", header=NEW_HEADER)
