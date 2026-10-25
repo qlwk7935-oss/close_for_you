@@ -20,6 +20,45 @@ class PresetStorageAndTextTest {
         assertEquals(saved, UiVoicePreferences.readFrom(store))
     }
 
+    @Test fun nothingStoredMeansNoAutoCloseConsent() {
+        val read = UiVoicePreferences.readFrom(MapPreferences())
+        assertFalse(read.autoCloseConsent)
+        assertEquals(null, read.autoCloseConsentPreset)
+        assertEquals(null, read.autoCloseConsentChangedAt)
+    }
+
+    @Test fun autoCloseConsentIsSavedAndRestored() = HandlingPreset.entries.forEach { preset ->
+        val on = UiVoiceSettings(handlingPreset = preset, onboardingDone = true).withAutoCloseConsent(true, 1234L)
+        val off = on.withAutoCloseConsent(false, 5678L)
+        listOf(on, off, UiVoiceSettings()).forEach { saved ->
+            val store = MapPreferences()
+            store.edit().also { UiVoicePreferences.writeTo(it, saved) }.apply()
+            assertEquals(saved, UiVoicePreferences.readFrom(store))
+        }
+    }
+
+    /** Turning consent off after it was on: the stored range and time are rewritten, not left over. */
+    @Test fun consentOffOverwritesTheStoredRange() {
+        val store = MapPreferences()
+        val on = UiVoiceSettings(handlingPreset = HandlingPreset.CLOSE_ALL, onboardingDone = true).withAutoCloseConsent(true, 1L)
+        store.edit().also { UiVoicePreferences.writeTo(it, on) }.apply()
+        store.edit().also { UiVoicePreferences.writeTo(it, on.withAutoCloseConsent(false, 2L)) }.apply()
+        val read = UiVoicePreferences.readFrom(store)
+        assertFalse(read.autoCloseConsent)
+        assertEquals(null, read.autoCloseConsentPreset)
+        assertTrue(read.autoCloseKinds(live = true).isEmpty())
+    }
+
+    /** A stored range this build does not know means no confirmed range: nothing is exported. */
+    @Test fun unknownStoredConsentPresetExportsNothing() {
+        val store = MapPreferences()
+        store.edit().putBoolean("auto_close_consent_v1", true).putBoolean("onboarding_done_v1", true)
+            .putString("auto_close_consent_preset_v1", "CLOSE_EVERYTHING_NOW").apply()
+        val read = UiVoicePreferences.readFrom(store)
+        assertTrue(read.autoCloseConsent)
+        assertTrue(read.autoCloseKinds(live = true).isEmpty())
+    }
+
     @Test fun unknownStoredPresetFallsBackToDefault() {
         val store = MapPreferences()
         store.edit().putString("handling_preset_v1", "CLOSE_EVERYTHING_NOW").apply()
@@ -90,7 +129,8 @@ private class MapPreferences : SharedPreferences {
             return true
         }
         override fun apply() {
-            values.putAll(pending)
+            // Like the real one: a removed (null) key is gone, not stored as null.
+            pending.forEach { (key, value) -> if (value == null) values.remove(key) else values[key] = value }
         }
     }
 }

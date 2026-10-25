@@ -15,6 +15,8 @@ enum class AnnouncementDetail { SHORT, DETAILED }
  * repeating an exact remembered choice (F12). First-seen popups are always asked (AGENTS.md 6-2).
  * [handlingPreset] is separate: the person's preference per popup kind, for B to read later
  * (docs/c-notes/preset-contract-proposal.md). The two are never mixed.
+ * [autoCloseConsent] is a third, separate thing: the person's explicit "자동 닫기" switch (off by
+ * default). Choosing a preset is not consent; see AutoCloseConsent.kt.
  */
 data class UiVoiceSettings(
     val autoClosePackages: Set<String> = emptySet(),
@@ -31,6 +33,12 @@ data class UiVoiceSettings(
     val pendingHelpPackages: Set<String> = emptySet(),
     /** Apps the person took out of "모든 앱" (A's planned exclusion list can take these over). */
     val helpAppsExcluded: Set<String> = emptySet(),
+    /** The "자동 닫기" switch, turned on only after its confirmation dialog. Off by default. */
+    val autoCloseConsent: Boolean = false,
+    /** The preset whose kinds the person confirmed; the exported kinds never go beyond it. */
+    val autoCloseConsentPreset: HandlingPreset? = null,
+    /** When the switch or its confirmed range last changed (epoch millis); null = never. */
+    val autoCloseConsentChangedAt: Long? = null,
 ) {
     fun withAutoClose(packageName: String, enabled: Boolean) = copy(
         autoClosePackages = if (enabled) autoClosePackages + packageName else autoClosePackages - packageName,
@@ -66,11 +74,22 @@ class UiVoicePreferences private constructor(context: Context) {
 
     fun setVoiceCommandsEnabled(enabled: Boolean) = write(current().copy(voiceCommandsEnabled = enabled))
 
-    fun setHandlingPreset(preset: HandlingPreset) = write(current().copy(handlingPreset = preset))
+    /** [widerConfirmed]: the person confirmed a wider range in the dialog (see [UiVoiceSettings.withPreset]). */
+    fun setHandlingPreset(preset: HandlingPreset, widerConfirmed: Boolean = false) =
+        write(current().withPreset(preset, System.currentTimeMillis(), widerConfirmed))
 
-    /** [시작하기] on the first-run screen: saves the chosen preset and does not show the screen again. */
-    fun completeOnboarding(preset: HandlingPreset) =
-        write(current().copy(handlingPreset = preset, onboardingDone = true))
+    /** The "자동 닫기" switch. Turn on only after the confirmation dialog; off needs none. */
+    fun setAutoCloseConsent(on: Boolean) = write(current().withAutoCloseConsent(on, System.currentTimeMillis()))
+
+    /** Consent as A's F9 reads it ([AutoCloseConsentSource]); reads the latest settings each call. */
+    val autoCloseConsentSource = AutoCloseConsentSource { current().autoCloseConsentNow() }
+
+    /**
+     * [시작하기] on the first-run screen: saves the chosen preset and does not show the screen again.
+     * [autoCloseConsent] is the step-1 switch (already confirmed in its dialog for [preset]).
+     */
+    fun completeOnboarding(preset: HandlingPreset, autoCloseConsent: Boolean = false) =
+        write(current().completedOnboarding(preset, autoCloseConsent, System.currentTimeMillis()))
 
     /** "도와줄 앱" saved: the way, the person's exclusions, and the additions still waiting for A's consent. */
     fun setHelpApps(mode: HelpAppsMode, excluded: Set<String>, pending: Set<String>) =
@@ -94,6 +113,10 @@ class UiVoicePreferences private constructor(context: Context) {
         private const val KEY_HELP_APPS_MODE = "help_apps_mode_v1"
         private const val KEY_PENDING_HELP = "pending_help_packages_v1"
         private const val KEY_HELP_EXCLUDED = "help_apps_excluded_v1"
+        private const val KEY_CONSENT = "auto_close_consent_v1"
+        private const val KEY_CONSENT_PRESET = "auto_close_consent_preset_v1"
+        private const val KEY_CONSENT_AT = "auto_close_consent_changed_at_v1"
+        private const val NO_TIME = Long.MIN_VALUE
         @Volatile private var instance: UiVoicePreferences? = null
 
         fun get(context: Context): UiVoicePreferences = instance ?: synchronized(this) {
@@ -110,6 +133,9 @@ class UiVoicePreferences private constructor(context: Context) {
             editor.putString(KEY_HELP_APPS_MODE, settings.helpAppsMode?.name)
             editor.putStringSet(KEY_PENDING_HELP, settings.pendingHelpPackages)
             editor.putStringSet(KEY_HELP_EXCLUDED, settings.helpAppsExcluded)
+            editor.putBoolean(KEY_CONSENT, settings.autoCloseConsent)
+            editor.putString(KEY_CONSENT_PRESET, settings.autoCloseConsentPreset?.name)
+            settings.autoCloseConsentChangedAt?.let { editor.putLong(KEY_CONSENT_AT, it) } ?: editor.remove(KEY_CONSENT_AT)
         }
 
         internal fun readFrom(preferences: SharedPreferences) = UiVoiceSettings(
@@ -124,6 +150,12 @@ class UiVoicePreferences private constructor(context: Context) {
             helpAppsMode = HelpAppsMode.entries.firstOrNull { it.name == preferences.getString(KEY_HELP_APPS_MODE, null) },
             pendingHelpPackages = preferences.getStringSet(KEY_PENDING_HELP, emptySet()).orEmpty().toSet(),
             helpAppsExcluded = preferences.getStringSet(KEY_HELP_EXCLUDED, emptySet()).orEmpty().toSet(),
+            autoCloseConsent = preferences.getBoolean(KEY_CONSENT, false),
+            // Unknown stored preset = no confirmed range, so nothing is exported (safe side).
+            autoCloseConsentPreset = HandlingPreset.entries.firstOrNull {
+                it.name == preferences.getString(KEY_CONSENT_PRESET, null)
+            },
+            autoCloseConsentChangedAt = preferences.getLong(KEY_CONSENT_AT, NO_TIME).takeIf { it != NO_TIME },
         )
 
         /** Unknown or missing stored values fall back to the safe default. */

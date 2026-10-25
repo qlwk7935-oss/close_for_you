@@ -511,9 +511,10 @@ private fun OnboardingPage(onBack: () -> Unit) {
     Scaffold { innerPadding ->
         UiVoiceOnboardingScreen(
             initialPreset = preferences.current().handlingPreset,
-            onStart = { preset, helpApps ->
+            initialAutoCloseConsent = preferences.current().autoCloseConsent,
+            onStart = { preset, autoCloseConsent, helpApps ->
                 helpApps?.let { HelpAppsSync.save(it.draft, it.catalog, preferences, CoreAllowedApps(core)) }
-                preferences.completeOnboarding(preset)
+                preferences.completeOnboarding(preset, autoCloseConsent)
                 onBack()
             },
             consentGranted = core.currentSettings().consentGranted,

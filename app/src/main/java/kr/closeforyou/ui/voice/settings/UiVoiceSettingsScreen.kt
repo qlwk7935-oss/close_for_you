@@ -150,6 +150,7 @@ fun UiVoiceSettingsRoute(
         microphoneDenied = microphoneDenied,
         onVoiceCommandsChange = preferences::setVoiceCommandsEnabled,
         onPresetChange = preferences::setHandlingPreset,
+        onAutoCloseConsentChange = preferences::setAutoCloseConsent,
         onAllowMicrophone = { permissionLauncher.launch(Manifest.permission.RECORD_AUDIO) },
         onRevoke = { id -> scope.launch { actions.revoke(id) } },
         onDeleteAll = {
@@ -187,8 +188,11 @@ fun UiVoiceSettingsScreen(
     microphoneDenied: Boolean = false,
     onVoiceCommandsChange: (Boolean) -> Unit = {},
     onAllowMicrophone: () -> Unit = {},
-    /** "팝업 처리 방식" (per popup kind). Separate from the per-app F12 switches below. */
-    onPresetChange: (HandlingPreset) -> Unit = {},
+    /** "팝업 처리 방식" (per popup kind). Separate from the per-app F12 switches below.
+     * Second value: a wider range was confirmed in the dialog ([HandlingPresetWithConsent]). */
+    onPresetChange: (HandlingPreset, Boolean) -> Unit = { _, _ -> },
+    /** The "자동 닫기" switch under the presets: true only after its dialog, false at once. */
+    onAutoCloseConsentChange: (Boolean) -> Unit = {},
     /** Decides expired / on; the Route passes its clock. */
     nowEpochMillis: Long = System.currentTimeMillis(),
     zone: ZoneId = ZoneId.systemDefault(),
@@ -209,7 +213,12 @@ fun UiVoiceSettingsScreen(
 
         Heading(R.string.ui_preset_section)
         Text(stringResource(R.string.ui_preset_section_help))
-        HandlingPresetGroup(selected = settings.handlingPreset, onSelect = onPresetChange)
+        HandlingPresetWithConsent(
+            selected = settings.handlingPreset,
+            consentOn = settings.autoCloseConsent,
+            onPresetChange = onPresetChange,
+            onConsentChange = onAutoCloseConsentChange,
+        )
 
         if (onChangeHelpApps != null) {
             HorizontalDivider()

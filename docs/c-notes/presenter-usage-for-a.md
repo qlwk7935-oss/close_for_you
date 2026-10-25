@@ -144,3 +144,45 @@ UiVoiceSettingsRoute(storage)
 - [전체 삭제]는 **목록이 비어 있어도 항상 보인다**(D가 못 읽은 행도 지울 수 있게, 10/22 동준 부탁). 누르면 확인 창 뒤 넘긴 함수를 1번만 부른다(진행 중 두 번 눌러도 무시). 실패하면 "기억을 지우지 못했어요"를 보이고 다시 누를 수 있다.
 - 목록 상태는 `RuleStatusPolicy.statusOf(rule, now)`: 해제됨(`enabled=false`) → 꺼짐·실패(`failureCount>0`) → 꺼짐(만료일 없음·다른 스키마·저장 시각보다 이전) → 만료됨(`now ≥ expiresAt`) → 켜짐. D의 `RuleValidity.isUsable`과 같은 경계다. 만료·실패 규칙도 [해제]·[전체 삭제] 대상.
 - 시각은 `clock: Clock`(기본 `Clock.systemDefaultZone()`)으로 주입하고 화면에 돌아올 때 다시 읽는다. 날짜는 기기 로케일("11월 13일까지").
+
+## 5. F9 자동 닫기 동의 — `AutoCloseConsentSource` (C, 2026-10-25)
+
+C 설정의 "자동 닫기" 스위치(기본 꺼짐)를 A F9가 읽는 자리. `core/**`는 바꾸지 않았다. 동의 분리 표와 프리셋 변경 규칙은 [preset-contract-proposal.md](preset-contract-proposal.md) 4-1장.
+
+```kotlin
+// kr.closeforyou.ui.voice.settings
+data class AutoCloseConsent(
+    val granted: Boolean,                                   // 첫 실행 완료 && 스위치 켜짐 && PresetAutoCloseFeature.live
+    val autoCloseKinds: ImmutableSet<PopupClassification>,  // granted가 아니면 빈 집합. 결정·모름은 절대 없음
+    val changedAtEpochMillis: Long?,                        // 스위치·범위가 마지막으로 바뀐 시각
+)
+fun interface AutoCloseConsentSource { fun current(): AutoCloseConsent }  // NONE = 동의 없음
+
+UiVoicePreferences.get(context).autoCloseConsentSource   // 부를 때마다 최신 설정을 읽음
+UiVoicePreferences.get(context).current().autoCloseKinds() // DecisionContext.autoCloseKinds 에 넣는 값과 같음
+```
+
+#42 `F9ServiceConnection`에 넘기는 예 (A 코드, 제안만 — C는 고치지 않음):
+
+```kotlin
+val consent = UiVoicePreferences.get(service).autoCloseConsentSource
+F9ServiceConnection(
+    ...,
+    // 앱별 범위(allowedPackages·F12 스위치)는 A가 따로 본다. 종류 판단은 B가 DecisionContext.autoCloseKinds로.
+    presetAndFirstSeenConsent = { _ -> consent.current().granted },
+    policy = ...,
+)
+
+// 동의·범위가 바뀌면 이전 승인 무효화
+scope.launch {
+    UiVoicePreferences.get(service).state
+        .map { it.autoCloseConsentNow() }
+        .distinctUntilChanged()
+        .collect { connection.invalidatePermissionOrInteraction() }
+}
+```
+
+- 지금은 `PresetAutoCloseFeature.live = false`라 `granted`는 항상 false, `autoCloseKinds`는 빈 집합이다. 스위치를 켜도 그렇다.
+- `granted`는 **정책 입력값**이다. B의 PRESET/EXECUTE 승인과 A의 AutoEligibility 5조건이 그대로 필요하다.
+- 결과를 캐시하지 말고 판단할 때마다 `current()`를 부른다(끄면 즉시 빈 집합).
+

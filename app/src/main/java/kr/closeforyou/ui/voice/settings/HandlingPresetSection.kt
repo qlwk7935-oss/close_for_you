@@ -23,13 +23,15 @@ import kr.closeforyou.R
  * The three presets as one radio group (first-run screen and settings). Each row is one TalkBack
  * node: name, what it does to ads / notices / coupons, then "선택됨". Selecting never moves focus.
  * The fixed lines follow the group: important popups are always asked, and (while
- * [PresetAutoCloseFeature.live] is false) nothing is closed automatically yet.
+ * [PresetAutoCloseFeature.live] is false) nothing is closed automatically yet. [notLiveLine] false
+ * when the caller shows that line itself (after the "자동 닫기" switch, [HandlingPresetWithConsent]).
  */
 @Composable
 fun HandlingPresetGroup(
     selected: HandlingPreset,
     onSelect: (HandlingPreset) -> Unit,
     modifier: Modifier = Modifier,
+    notLiveLine: Boolean = true,
 ) {
     Column(modifier, verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Column(Modifier.selectableGroup()) {
@@ -38,7 +40,7 @@ fun HandlingPresetGroup(
             }
         }
         Text(stringResource(R.string.ui_preset_decision_fixed))
-        if (!PresetAutoCloseFeature.live) Text(stringResource(R.string.ui_preset_not_live))
+        if (notLiveLine && !PresetAutoCloseFeature.live) Text(stringResource(R.string.ui_preset_not_live))
     }
 }
 

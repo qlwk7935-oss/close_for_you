@@ -88,7 +88,8 @@ class HandlingPresetTest {
 
     @Test fun autoCloseKindsNeverHoldDecisionOrUnknown() = HandlingPreset.entries.forEach { preset ->
         listOf(true, false).forEach { done ->
-            val kinds = UiVoiceSettings(handlingPreset = preset, onboardingDone = done).autoCloseKinds(live = true)
+            val kinds = UiVoiceSettings(handlingPreset = preset, onboardingDone = done)
+                .withAutoCloseConsent(true, 1L).autoCloseKinds(live = true)
             assertFalse("$preset", PopupClassification.USER_DECISION in kinds)
             assertFalse("$preset", PopupClassification.UNKNOWN in kinds)
         }
@@ -100,13 +101,16 @@ class HandlingPresetTest {
         assertTrue(UiVoiceSettings().autoCloseKinds(live = true).isEmpty())
     }
 
-    @Test fun afterStartThePresetIsExported() = HandlingPreset.entries.forEach { preset ->
-        assertEquals(preset.autoCloseKinds(), UiVoiceSettings(handlingPreset = preset, onboardingDone = true).autoCloseKinds(live = true))
+    @Test fun afterStartAndConsentThePresetIsExported() = HandlingPreset.entries.forEach { preset ->
+        val consented = UiVoiceSettings(handlingPreset = preset, onboardingDone = true).withAutoCloseConsent(true, 1L)
+        assertEquals(preset.autoCloseKinds(), consented.autoCloseKinds(live = true))
     }
 
     /** While the screens say "지금은 닫기 전에 물어봐요", nothing is exported (default today). */
     @Test fun notLiveExportsNothing() = HandlingPreset.entries.forEach { preset ->
         assertTrue(UiVoiceSettings(handlingPreset = preset, onboardingDone = true).autoCloseKinds().isEmpty())
+        val consented = UiVoiceSettings(handlingPreset = preset, onboardingDone = true).withAutoCloseConsent(true, 1L)
+        assertTrue(consented.autoCloseKinds().isEmpty())
     }
 
     @Test fun firstRunGate() {

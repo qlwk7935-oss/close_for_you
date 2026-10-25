@@ -53,9 +53,10 @@ fun UiVoiceOnboardingGate(modifier: Modifier = Modifier, content: @Composable ()
         Scaffold(modifier) { insets ->
             UiVoiceOnboardingScreen(
                 initialPreset = settings.handlingPreset,
-                onStart = { preset, helpApps ->
+                initialAutoCloseConsent = settings.autoCloseConsent,
+                onStart = { preset, autoCloseConsent, helpApps ->
                     helpApps?.let { HelpAppsSync.save(it.draft, it.catalog, preferences, CoreAllowedApps(core)) }
-                    preferences.completeOnboarding(preset)
+                    preferences.completeOnboarding(preset, autoCloseConsent)
                 },
                 consentGranted = core.currentSettings().consentGranted,
                 modifier = Modifier.padding(insets),
@@ -74,7 +75,8 @@ private enum class OnboardingStep { PRESET, HELP_APPS }
 
 /**
  * First-run setup in two steps.
- * 1. Short explanation → the preset radio group → fixed lines → [다음].
+ * 1. Short explanation → the preset radio group → fixed lines → "자동 닫기" switch (off; turning it
+ *    on asks first, see [HandlingPresetWithConsent]) → [다음]. Left off, every popup is asked.
  * 2. "도와줄 앱" ([HelpAppsEditor], no way pre-selected; [시작하기] waits for one) →
  *    [시작하기] / [이전 단계] / [건너뛰기].
  * Nothing is saved before [시작하기] or [건너뛰기]; rotation keeps the choices ([rememberSaveable]).
@@ -83,21 +85,24 @@ private enum class OnboardingStep { PRESET, HELP_APPS }
 @Composable
 fun UiVoiceOnboardingScreen(
     initialPreset: HandlingPreset,
-    onStart: (HandlingPreset, OnboardingHelpApps?) -> Unit,
+    /** (preset, "자동 닫기" switch, "도와줄 앱" or null when skipped). */
+    onStart: (HandlingPreset, Boolean, OnboardingHelpApps?) -> Unit,
     modifier: Modifier = Modifier,
+    initialAutoCloseConsent: Boolean = false,
     /** A's collection consent; false adds a line that the apps apply after consent. */
     consentGranted: Boolean = false,
     /** Null = load the launcher apps; previews pass a fixed catalog. */
     catalogOverride: AppCatalog? = null,
 ) {
     var chosen by rememberSaveable { mutableStateOf(initialPreset) }
+    var autoCloseConsent by rememberSaveable { mutableStateOf(initialAutoCloseConsent) }
     var step by rememberSaveable { mutableStateOf(OnboardingStep.PRESET) }
     if (step == OnboardingStep.HELP_APPS) {
         HelpAppsStep(
             consentGranted = consentGranted,
             catalog = catalogOverride ?: rememberAppCatalog(),
             onBack = { step = OnboardingStep.PRESET },
-            onStart = { helpApps -> onStart(chosen, helpApps) },
+            onStart = { helpApps -> onStart(chosen, autoCloseConsent, helpApps) },
             modifier = modifier,
         )
         return
@@ -121,7 +126,12 @@ fun UiVoiceOnboardingScreen(
             style = MaterialTheme.typography.titleMedium,
             modifier = Modifier.semantics { heading() },
         )
-        HandlingPresetGroup(selected = chosen, onSelect = { chosen = it })
+        HandlingPresetWithConsent(
+            selected = chosen,
+            consentOn = autoCloseConsent,
+            onPresetChange = { preset, _ -> chosen = preset },
+            onConsentChange = { autoCloseConsent = it },
+        )
         Text(stringResource(R.string.ui_onboarding_later), style = MaterialTheme.typography.bodySmall)
         Button(
             onClick = { step = OnboardingStep.HELP_APPS },
@@ -177,5 +187,5 @@ private fun HelpAppsStep(
 @Preview(name = "첫 실행", showBackground = true, heightDp = 900)
 @Composable
 private fun OnboardingPreview() {
-    UiVoiceTheme { UiVoiceOnboardingScreen(initialPreset = HandlingPreset.DEFAULT, onStart = { _, _ -> }) }
+    UiVoiceTheme { UiVoiceOnboardingScreen(initialPreset = HandlingPreset.DEFAULT, onStart = { _, _, _ -> }) }
 }

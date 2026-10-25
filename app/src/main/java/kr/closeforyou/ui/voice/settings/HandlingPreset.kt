@@ -67,7 +67,12 @@ object PresetAutoCloseFeature {
 /**
  * What C hands to `DecisionContext.autoCloseKinds` (contract v2). Empty until the person pressed
  * [시작하기] on the first-run screen, even though a preset already shows as chosen there (A 10/23),
- * and empty while [live] is false, because the screens then say the app still asks first.
+ * empty while the "자동 닫기" switch is off (a preset is not consent, A 10/25), and empty while
+ * [live] is false, because the screens then say the app still asks first. Never wider than the
+ * preset the person confirmed ([UiVoiceSettings.autoCloseConsentPreset]).
  */
-fun UiVoiceSettings.autoCloseKinds(live: Boolean = PresetAutoCloseFeature.live): ImmutableSet<PopupClassification> =
-    if (onboardingDone && live) handlingPreset.autoCloseKinds() else persistentSetOf()
+fun UiVoiceSettings.autoCloseKinds(live: Boolean = PresetAutoCloseFeature.live): ImmutableSet<PopupClassification> {
+    val confirmed = autoCloseConsentPreset
+    if (!onboardingDone || !autoCloseConsent || !live || confirmed == null) return persistentSetOf()
+    return (handlingPreset.autoCloseKinds() intersect confirmed.autoCloseKinds()).toImmutableSet()
+}
