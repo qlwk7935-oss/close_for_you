@@ -149,6 +149,7 @@ internal fun PromptSummary.textRes(): Int = when (this) {
     PromptSummary.LIKELY_AD -> R.string.ui_choice_summary_ad
     PromptSummary.LIKELY_VIDEO_AD -> R.string.ui_choice_summary_video_ad
     PromptSummary.LIKELY_NOTICE -> R.string.ui_choice_summary_notice
+    PromptSummary.LIKELY_COUPON -> R.string.ui_choice_summary_coupon
     PromptSummary.NEEDS_REVIEW -> R.string.ui_choice_summary_review
     PromptSummary.UNKNOWN -> R.string.ui_choice_summary_unknown
 }

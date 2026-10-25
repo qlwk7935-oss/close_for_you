@@ -22,8 +22,8 @@ import kr.closeforyou.R
 /**
  * The three presets as one radio group (first-run screen and settings). Each row is one TalkBack
  * node: name, what it does to ads / notices / coupons, then "선택됨". Selecting never moves focus.
- * The fixed lines follow the group: important popups are always asked, coupons are not told apart
- * yet, and (while [PresetAutoCloseFeature.live] is false) nothing is closed automatically yet.
+ * The fixed lines follow the group: important popups are always asked, and (while
+ * [PresetAutoCloseFeature.live] is false) nothing is closed automatically yet.
  */
 @Composable
 fun HandlingPresetGroup(
@@ -38,7 +38,6 @@ fun HandlingPresetGroup(
             }
         }
         Text(stringResource(R.string.ui_preset_decision_fixed))
-        Text(stringResource(R.string.ui_preset_coupon_pending), style = MaterialTheme.typography.bodySmall)
         if (!PresetAutoCloseFeature.live) Text(stringResource(R.string.ui_preset_not_live))
     }
 }

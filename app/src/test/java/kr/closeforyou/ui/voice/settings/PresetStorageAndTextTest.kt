@@ -55,12 +55,8 @@ class PresetStorageAndTextTest {
         assertTrue(line.contains("결제") && line.contains("동의") && line.contains("항상"))
     }
 
-    /** Coupons are not told apart yet; the text must not say they are handled as ads. */
-    @Test fun couponLineDoesNotClaimCouponsAreAds() {
-        val line = text("ui_preset_coupon_pending")
-        assertTrue(line.contains("준비 중"))
-        assertFalse(line.contains("광고"))
-    }
+    /** Contract v2 COUPON is connected: the "준비 중" line is gone. */
+    @Test fun couponPendingLineIsGone() = assertFalse(strings.contains("ui_preset_coupon_pending"))
 
     @Test fun notLiveLineSaysItAsksFirst() = assertTrue(text("ui_preset_not_live").contains("물어봐요"))
 }

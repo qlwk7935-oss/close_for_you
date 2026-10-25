@@ -26,6 +26,8 @@
     <string name="ui_choice_summary_video_ad">영상 광고로 보이는 팝업이에요.</string>
     <string name="ui_choice_video_ad_wait">%1$d초 뒤에 넘길 수 있다고 나와요. 지금은 대신 누를 버튼이 없어요.</string>
     <string name="ui_choice_summary_notice">공지로 보이는 팝업이에요.</string>
+    <!-- 계약 v2 COUPON. 광고·공지 문장과 같은 정도로 단정하지 않는다. -->
+    <string name="ui_choice_summary_coupon">쿠폰으로 보이는 팝업이에요.</string>
     <string name="ui_choice_summary_review">확인이 필요한 팝업이에요. 직접 확인해 주세요.</string>
     <string name="ui_choice_summary_unknown">팝업이 떴어요.</string>
     <string name="ui_choice_cannot_press">이 팝업은 대신 닫을 수 없어요.</string>
@@ -146,7 +148,7 @@
     <string name="ui_settings_cancel">취소</string>
 
     <!-- 팝업 처리 방식(프리셋). 사용자의 선호일 뿐 실행 허가가 아니다. 중요한 결정·위험 버튼은 프리셋과 관계없이 묻는다.
-         '닫았어요'처럼 이미 닫은 것처럼 말하지 않는다. 쿠폰이 광고로 분류되는지는 단정하지 않는다. -->
+         '닫았어요'처럼 이미 닫은 것처럼 말하지 않는다. 쿠폰은 계약 v2 COUPON 분류를 따른다. -->
     <string name="ui_preset_section">팝업 처리 방식</string>
     <string name="ui_preset_section_help">팝업 종류마다 닫을지 알려 줄지 정해요. 언제든 바꿀 수 있어요.</string>
     <string name="ui_preset_close_all">전부 자동 닫기</string>
@@ -159,7 +161,6 @@
     <string name="ui_preset_pref_ask">물어보기</string>
     <string name="ui_preset_close_all_note">안전 확인을 통과한 팝업만 닫아요.</string>
     <string name="ui_preset_decision_fixed">결제·동의 같은 중요한 팝업은 어떤 방식이든 항상 직접 확인해요. 무엇인지 알 수 없는 팝업도 물어봐요.</string>
-    <string name="ui_preset_coupon_pending">쿠폰을 따로 알아보는 기능은 준비 중이에요.</string>
     <!-- PresetAutoCloseFeature.live 가 false인 동안만 보인다. 실제 클릭(F9)이 연결되면 플래그로 지운다. -->
     <string name="ui_preset_not_live">자동 닫기는 곧 켜질 예정이에요. 지금은 닫기 전에 물어봐요.</string>
 
@@ -168,6 +169,33 @@
     <string name="ui_onboarding_intro">다른 앱에 뜨는 팝업을 대신 처리해 드려요. 광고·공지·쿠폰을 닫을지 알려 줄지 여기서 고른 범위에서만, 안전 확인을 통과한 팝업만 닫아요.</string>
     <string name="ui_onboarding_later">고른 방식은 나중에 안내·음성 설정에서 바꿀 수 있어요.</string>
     <string name="ui_onboarding_start">시작하기</string>
+
+    <!-- 계약 v2 자동 처리 결과 안내 (AutoDecisionSpeech, 아직 연결 안 함). 프리셋·기억한 규칙으로 처리한 팝업.
+         '닫았어요'는 A가 닫힘을 확인했을 때(CLOSED_CONFIRMED)만. 누른 것만으로는 말하지 않는다.
+         음성 명령어("닫아", "닫기", "넘겨" 등)를 넣지 않는다. 제목은 화면 글자라 로그에 남기지 않는다. -->
+    <string name="ui_auto_kind_ad">광고</string>
+    <string name="ui_auto_kind_coupon">쿠폰</string>
+    <string name="ui_auto_kind_notice">공지</string>
+    <string name="ui_auto_kind_other">팝업</string>
+    <!-- 목적어 꼴(을/를)은 종류마다 따로 둔다. -->
+    <string name="ui_auto_obj_ad">광고를</string>
+    <string name="ui_auto_obj_coupon">쿠폰을</string>
+    <string name="ui_auto_obj_notice">공지를</string>
+    <string name="ui_auto_obj_other">팝업을</string>
+    <string name="ui_auto_closed_one">%1$s 닫았어요.</string>
+    <!-- %1$s: 팝업 제목 앞부분(최대 20자), %2$s: ui_auto_obj_* -->
+    <string name="ui_auto_closed_one_titled">\'%1$s\' %2$s 닫았어요.</string>
+    <!-- 2초 묶음: "광고 2개, 쿠폰 1개를 닫았어요." %1$s는 ui_auto_kind_count를 쉼표로 이은 것 -->
+    <string name="ui_auto_kind_count">%1$s %2$d개</string>
+    <string name="ui_auto_closed_counts">%1$s를 닫았어요.</string>
+    <!-- 누른 뒤 다른 앱·화면이 앞에 옴(LEFT_APP): 가짜 닫기 버튼으로 본다. 이 앱의 자동 처리는 B가 멈춘다(LEFT_APP_BEFORE). -->
+    <string name="ui_auto_left_app">%1$s 닫으려다 다른 화면이 열렸어요. 이 앱에서는 당분간 자동으로 처리하지 않을게요.</string>
+    <!-- WAIT(닫을 버튼이 아직 없음): 같은 팝업에 처음 한 번만 말한다. -->
+    <string name="ui_auto_wait_ad">광고가 끝나면 닫을게요.</string>
+    <string name="ui_auto_wait_other">%1$s 바로 닫을 수 없어서 잠시 기다릴게요.</string>
+    <!-- DENY + SUSPICIOUS_CONTENT: 누르기·이동 선택지를 주지 않는다. -->
+    <string name="ui_auto_suspicious">사기일 수 있는 팝업이에요. 아무것도 누르지 마세요.</string>
+
     <string name="ui_onboarding_step_preset">2단계 중 1단계: 팝업 처리 방식</string>
     <string name="ui_onboarding_step_help_apps">2단계 중 2단계: 도와줄 앱</string>
     <string name="ui_onboarding_next">다음</string>
