@@ -18,9 +18,9 @@ class PressResultSpeechTest {
     private val token = MockPopupFixtures.advertisement().snapshot.token
     private fun result(status: ActionStatus) = ActionResult(token, status, reason = null)
 
-    @Test fun onlyMechanicalSuccessIsNotAFailure() {
-        assertNull(PressResultSpeech.failureOf(result(ActionStatus.MECHANICAL_SUCCESS)))
-        ActionStatus.entries.filter { it != ActionStatus.MECHANICAL_SUCCESS }.forEach {
+    @Test fun statusWithoutObservedOutcomeNeverConfirmsRemoval() {
+        assertEquals(PressFailure.NOT_CONFIRMED, PressResultSpeech.failureOf(result(ActionStatus.MECHANICAL_SUCCESS)))
+        ActionStatus.entries.forEach {
             assertTrue(it.name, PressResultSpeech.failureOf(result(it)) != null)
         }
     }

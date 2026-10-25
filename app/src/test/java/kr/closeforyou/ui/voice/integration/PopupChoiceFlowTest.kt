@@ -159,6 +159,7 @@ class PopupChoiceFlowTest {
         remember: Boolean = false,
         store: RememberedPopupStore = RememberedPopupStore.NONE,
         autoClose: Boolean = false,
+        observedRemoval: Boolean = true,
     ) {
         val source = MockSnapshotSource()
         val presenter = FakePresenter()
@@ -188,7 +189,10 @@ class PopupChoiceFlowTest {
                 override suspend fun handle(choice: UserChoice, analysis: PopupAnalysis): ActionResult? {
                     handled += choice
                     log += "handle"
-                    return if (choice.kind == ChoiceKind.KEEP_OPEN) null else ActionResult(choice.token, status, reason = null)
+                    return if (choice.kind == ChoiceKind.KEEP_OPEN) null else ActionResult(choice.token, status, reason = null,
+                        attempted = status in setOf(ActionStatus.MECHANICAL_SUCCESS, ActionStatus.ATTEMPT_FAILED, ActionStatus.OUTCOME_UNKNOWN),
+                        outcome = if (observedRemoval && status == ActionStatus.MECHANICAL_SUCCESS)
+                            kr.closeforyou.core.model.ClickOutcome.CLOSED_CONFIRMED else null)
                 }
 
                 override suspend fun handle(choice: UserChoice, analysis: PopupAnalysis, origin: ChoiceOrigin): ActionResult? {
@@ -214,8 +218,9 @@ class PopupChoiceFlowTest {
         remember: Boolean = false,
         store: RememberedPopupStore = RememberedPopupStore.NONE,
         autoClose: Boolean = false,
+        observedRemoval: Boolean = true,
     ): Harness {
-        val h = Harness(this, status, remember, store, autoClose)
+        val h = Harness(this, status, remember, store, autoClose, observedRemoval)
         h.job = backgroundScope.launch { h.flow.run() }
         runCurrent()
         return h
@@ -234,6 +239,18 @@ class PopupChoiceFlowTest {
         assertTrue(h.announcer.said.none { it.kind == AnnouncementKind.ACTION_RESULT })
         advanceTimeBy(AnnouncementBatcher.DEFAULT_WINDOW_MILLIS + 1)
         assertEquals(listOf(BatchSummary(closed = 1, skipped = 0, notConfirmed = 0)), h.flushed)
+    }
+
+    @Test fun mechanicalReturnWithoutRemovalDoesNotSaveRepeatPermissionOrClaimSuccess() = runTest {
+        val store = FakeStore()
+        val h = start(remember = true, store = store, observedRemoval = false)
+        h.emit(MockPopupFixtures.advertisement()); runCurrent()
+        h.presenter.tap(PromptOptionKind.REMEMBER_ALWAYS); runCurrent()
+        assertEquals(1, h.handled.size)
+        assertTrue(store.saved.isEmpty())
+        assertEquals(PressFailure.NOT_CONFIRMED, h.presenter.prompt!!.pressFailure)
+        advanceTimeBy(AnnouncementBatcher.DEFAULT_WINDOW_MILLIS + 1)
+        assertTrue(h.flushed.isEmpty())
     }
 
     @Test fun blockedPressIsSpokenAndFollowUpHasNoPressButton() = runTest {

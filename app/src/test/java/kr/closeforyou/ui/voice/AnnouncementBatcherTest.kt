@@ -66,8 +66,8 @@ class AnnouncementBatcherTest {
     @Test fun outcomeMappingNeverCountsBlockedOrStaleAsClosed() {
         val token = MockPopupFixtures.notice().snapshot.token
         fun result(status: ActionStatus) = ActionResult(token, status, reason = null)
-        assertEquals(HandledOutcome.CLOSED, AnnouncementBatcher.outcomeOf(result(ActionStatus.MECHANICAL_SUCCESS), ChoiceKind.CLOSE_ONCE))
-        assertEquals(HandledOutcome.SKIPPED, AnnouncementBatcher.outcomeOf(result(ActionStatus.MECHANICAL_SUCCESS), ChoiceKind.SKIP_ONCE))
+        assertEquals(HandledOutcome.NOT_CONFIRMED, AnnouncementBatcher.outcomeOf(result(ActionStatus.MECHANICAL_SUCCESS), ChoiceKind.CLOSE_ONCE))
+        assertEquals(HandledOutcome.NOT_CONFIRMED, AnnouncementBatcher.outcomeOf(result(ActionStatus.MECHANICAL_SUCCESS), ChoiceKind.SKIP_ONCE))
         assertEquals(HandledOutcome.NOT_CONFIRMED, AnnouncementBatcher.outcomeOf(result(ActionStatus.ATTEMPT_FAILED), ChoiceKind.CLOSE_ONCE))
         assertEquals(HandledOutcome.NOT_CONFIRMED, AnnouncementBatcher.outcomeOf(result(ActionStatus.OUTCOME_UNKNOWN), ChoiceKind.CLOSE_ONCE))
         listOf(ActionStatus.NOT_EXECUTED, ActionStatus.BLOCKED, ActionStatus.STALE).forEach {
