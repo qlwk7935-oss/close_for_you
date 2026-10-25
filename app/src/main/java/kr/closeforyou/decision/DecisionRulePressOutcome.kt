@@ -2,18 +2,26 @@ package kr.closeforyou.decision
 
 import kr.closeforyou.core.model.ActionResult
 import kr.closeforyou.core.model.ActionStatus
+import kr.closeforyou.core.model.ClickOutcome
 import kr.closeforyou.core.model.PopupRule
 import kr.closeforyou.core.model.SnapshotToken
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
-/** What A's result means for a press, as agreed for F12 (2026-10-21). */
+/**
+ * What A's result means for a press, as agreed for F12 (2026-10-21) and with the team's single
+ * success rule (2026-10-25, A #42/#43, C PressSuccess, B DecisionAutoClose).
+ */
 enum class PressOutcome {
-    /** A pressed and observed the expected mechanical success. */
+    /** attempted + MECHANICAL_SUCCESS + CLOSED_CONFIRMED: the press was delivered and the popup is gone. */
     SUCCEEDED,
-    /** A pressed (or may have pressed) and it did not clearly work: ATTEMPT_FAILED, OUTCOME_UNKNOWN. */
+    /**
+     * A pressed (or may have pressed) and closing was not confirmed: ATTEMPT_FAILED, OUTCOME_UNKNOWN, a
+     * delivered click whose popup is still there or was not observed, a press that left the app, or a
+     * popup that vanished although the press failed.
+     */
     FAILED,
-    /** Nothing was pressed: NOT_EXECUTED, BLOCKED, STALE. Neither a success nor a failure. */
+    /** Nothing was pressed (attempted=false): NOT_EXECUTED, BLOCKED, STALE. Neither a success nor a failure. */
     NOT_ATTEMPTED,
 }
 
@@ -61,10 +69,13 @@ class DecisionRulePressOutcome(
     }
 
     companion object {
-        fun outcomeOf(result: ActionResult): PressOutcome = when (result.status) {
-            ActionStatus.MECHANICAL_SUCCESS -> PressOutcome.SUCCEEDED
-            ActionStatus.ATTEMPT_FAILED, ActionStatus.OUTCOME_UNKNOWN -> PressOutcome.FAILED
-            ActionStatus.NOT_EXECUTED, ActionStatus.BLOCKED, ActionStatus.STALE -> PressOutcome.NOT_ATTEMPTED
+        fun outcomeOf(result: ActionResult): PressOutcome = when {
+            result.attempted && result.status == ActionStatus.MECHANICAL_SUCCESS &&
+                result.outcome == ClickOutcome.CLOSED_CONFIRMED -> PressOutcome.SUCCEEDED
+            // Anything that may have pressed without a confirmed close stops the rule (the safe side).
+            result.attempted || result.status == ActionStatus.MECHANICAL_SUCCESS ||
+                result.status == ActionStatus.ATTEMPT_FAILED || result.status == ActionStatus.OUTCOME_UNKNOWN -> PressOutcome.FAILED
+            else -> PressOutcome.NOT_ATTEMPTED
         }
     }
 }

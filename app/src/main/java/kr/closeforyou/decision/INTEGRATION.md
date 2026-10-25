@@ -54,6 +54,10 @@ PopupChoiceFlow(
 - **선택 처리:** 누르기 선택(`CLOSE_ONCE`/`SKIP_ONCE`)이 아니면 `null`을 반환하고 게이트를 부르지 않습니다. 정책이 `ALLOW_ONCE`가 아니면 게이트 없이 `BLOCKED`/`STALE`/`NOT_EXECUTED`를 반환합니다. `ALLOW_ONCE`면 토큰을 한 번 더 확인하고 게이트를 정확히 1번 부릅니다. 게이트 예외는 재시도 없이 `OUTCOME_UNKNOWN`(attempted=true)입니다.
 - **`ALLOW_ONCE`는 요청일 뿐입니다.** 실제 화면 재검증과 실행 결정은 A 게이트가 합니다.
 - **기억 규칙:** 첫 통합에서는 쓰지 않습니다(`matchingRule = null`). F12 연결 때 B가 정책 전에 `findExact` 결과를 받고, 기억으로 실행했는데 실패하면 D의 `recordFailure`를 부르는 부분을 추가합니다.
+- **기억 실행 결과:** `DecisionRulePressOutcome.afterRulePress(rule, result)`가 실패를 판단합니다.
+  - 성공은 팀 기준(10/25)인 `attempted` + `MECHANICAL_SUCCESS` + `CLOSED_CONFIRMED`일 때만입니다.
+  - 눌렀는데(attempted=true 또는 누른 상태 값) 닫힘이 확인되지 않으면 실패이고, D의 `recordFailure`로 규칙을 끕니다. 팝업이 그대로 남은 경우, 결과 모름, 앱 이탈, 실패했는데 팝업이 사라진 경우가 모두 여기에 해당합니다.
+  - 누르지 않은 결과(attempted=false인 NOT_EXECUTED·BLOCKED·STALE)는 실패로 세지 않습니다.
 - **F12 주의:** 후보는 현재 화면일 때만 붙으므로, "클릭 성공 뒤 저장"을 하려면 D의 지문(`RuleKey`)은 **클릭 전에** 만들어 두고 성공이 확인된 뒤 `save`해야 합니다. 클릭 뒤에는 팝업이 닫혀 화면이 바뀌므로 후보가 0개가 되어 지문이 `UNKNOWN_TARGET`으로 실패합니다.
 
 ## 4. 브랜치·PR

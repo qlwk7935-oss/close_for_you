@@ -22,19 +22,42 @@ class DecisionRulePressOutcomeTest {
         expiresAtEpochMillis = 30L * 24 * 60 * 60 * 1000,
     )
 
-    private fun result(status: ActionStatus, attempted: Boolean, at: SnapshotToken = token) = ActionResult(at, status, null, attempted)
+    private fun result(status: ActionStatus, attempted: Boolean, at: SnapshotToken = token, outcome: ClickOutcome? = null) =
+        ActionResult(at, status, null, attempted, outcome = outcome)
+
+    /** A real success under the team rule (10/25): delivered and the popup confirmed gone. */
+    private fun closed(at: SnapshotToken = token) = result(ActionStatus.MECHANICAL_SUCCESS, true, at, ClickOutcome.CLOSED_CONFIRMED)
+
+    @Test fun onlyAConfirmedCloseIsASuccess() {
+        assertEquals(PressOutcome.SUCCEEDED, DecisionRulePressOutcome.outcomeOf(closed()))
+        // A delivered click alone, a popup still there, an unknown or left-app outcome: the rule stops.
+        for (outcome in listOf(null, ClickOutcome.STILL_PRESENT, ClickOutcome.UNKNOWN, ClickOutcome.LEFT_APP)) {
+            assertEquals(outcome.toString(), PressOutcome.FAILED,
+                DecisionRulePressOutcome.outcomeOf(result(ActionStatus.MECHANICAL_SUCCESS, true, outcome = outcome)))
+        }
+        // The popup vanished although the press failed or its outcome is unknown: not a success either.
+        for (status in listOf(ActionStatus.ATTEMPT_FAILED, ActionStatus.OUTCOME_UNKNOWN)) {
+            assertEquals(status.name, PressOutcome.FAILED,
+                DecisionRulePressOutcome.outcomeOf(result(status, true, outcome = ClickOutcome.CLOSED_CONFIRMED)))
+        }
+    }
 
     @Test fun everyStatusHasTheAgreedMeaning() {
-        val expected = mapOf(
-            ActionStatus.MECHANICAL_SUCCESS to PressOutcome.SUCCEEDED,
-            ActionStatus.ATTEMPT_FAILED to PressOutcome.FAILED,
-            ActionStatus.OUTCOME_UNKNOWN to PressOutcome.FAILED,
+        // Not pressed (attempted=false) is never a failure (A, 10/25); pressed without a confirmed close is.
+        val notPressed = mapOf(
             ActionStatus.NOT_EXECUTED to PressOutcome.NOT_ATTEMPTED,
             ActionStatus.BLOCKED to PressOutcome.NOT_ATTEMPTED,
             ActionStatus.STALE to PressOutcome.NOT_ATTEMPTED,
+            ActionStatus.ATTEMPT_FAILED to PressOutcome.FAILED,
+            ActionStatus.OUTCOME_UNKNOWN to PressOutcome.FAILED,
+            ActionStatus.MECHANICAL_SUCCESS to PressOutcome.FAILED,
         )
-        assertEquals("every status is decided", ActionStatus.entries.toSet(), expected.keys)
-        for ((status, outcome) in expected) assertEquals(status.name, outcome, DecisionRulePressOutcome.outcomeOf(result(status, true)))
+        assertEquals("every status is decided", ActionStatus.entries.toSet(), notPressed.keys)
+        for ((status, outcome) in notPressed) assertEquals(status.name, outcome, DecisionRulePressOutcome.outcomeOf(result(status, false)))
+        // Any status with attempted=true and no confirmed close is a failure.
+        for (status in ActionStatus.entries) {
+            assertEquals(status.name, PressOutcome.FAILED, DecisionRulePressOutcome.outcomeOf(result(status, true)))
+        }
     }
 
     /** A different screen (a separate attempt) for each status. */
@@ -43,10 +66,15 @@ class DecisionRulePressOutcomeTest {
     @Test fun onlyFailuresAreRecorded() = runBlocking {
         val recorded = mutableListOf<String>()
         val outcome = DecisionRulePressOutcome { recorded += it }
-        ActionStatus.entries.forEachIndexed { i, status ->
-            outcome.afterRulePress(rule, result(status, attempted = status != ActionStatus.NOT_EXECUTED, at = screen(i)))
+        // One confirmed close, three presses without one, three results that pressed nothing.
+        outcome.afterRulePress(rule, closed(at = screen(0)))
+        outcome.afterRulePress(rule, result(ActionStatus.ATTEMPT_FAILED, true, at = screen(1)))
+        outcome.afterRulePress(rule, result(ActionStatus.OUTCOME_UNKNOWN, true, at = screen(2)))
+        outcome.afterRulePress(rule, result(ActionStatus.MECHANICAL_SUCCESS, true, at = screen(3), outcome = ClickOutcome.STILL_PRESENT))
+        for ((i, status) in listOf(ActionStatus.NOT_EXECUTED, ActionStatus.BLOCKED, ActionStatus.STALE).withIndex()) {
+            outcome.afterRulePress(rule, result(status, attempted = false, at = screen(4 + i)))
         }
-        assertEquals("ATTEMPT_FAILED and OUTCOME_UNKNOWN, once each", listOf("rule-1", "rule-1"), recorded)
+        assertEquals("the three presses without a confirmed close, once each", listOf("rule-1", "rule-1", "rule-1"), recorded)
     }
 
     @Test fun theSameFailedAttemptDeliveredTwiceIsRecordedOnce() = runBlocking {
