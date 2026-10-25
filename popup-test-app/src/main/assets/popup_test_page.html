@@ -31,6 +31,7 @@
   <a href="#notice">W05 공지 모달</a>
   <a href="#payment">W06 가짜 결제 확인</a>
   <a href="#consent">W07 가짜 동의 요청</a>
+  <a href="#ad-risky-back">W08 뒤 페이지에 결정 문구가 있는 광고 모달</a>
 </nav>
 <div id="log" aria-live="off"></div>
 <div id="root"></div>
@@ -66,6 +67,12 @@
     'ad': function () {
       modal('<h2 id="t">가을 할인 쿠폰</h2><p>지금 받으면 30퍼센트 할인. 시험용 광고입니다.</p>' +
         '<button data-id="btn_ad_open">자세히 보기</button><button data-id="btn_close">닫기</button>');
+    },
+    'ad-risky-back': function () {
+      // 실제 앱처럼 뒤 페이지에 결정 문구가 남아 있는 쿠폰 모달(P24, A 10/25 회귀). 팝업이 쿠폰이어도 A가 결정으로 막아야 한다.
+      modal('<h2 id="t">가을 할인 쿠폰</h2><p>지금 받으면 30퍼센트 할인. 시험용 광고입니다.</p>' +
+        '<button data-id="btn_ad_open">자세히 보기</button><button data-id="btn_close">닫기</button>');
+      root.insertAdjacentHTML('afterbegin', '<p>결제 수단을 바꾸려면 약관에 동의해 주세요(시험용 뒤 페이지 문구).</p>');
     },
     'unlabeled-x': function () {
       // 클릭은 되지만 role·이름·텍스트가 없는 div(E3에 해당).

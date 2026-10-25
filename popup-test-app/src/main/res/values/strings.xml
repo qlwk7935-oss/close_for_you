@@ -69,4 +69,24 @@
     <string name="sale_title">타임세일(시험용)</string>
     <string name="sale_remaining">세일 종료까지 %1$02d:%2$02d</string>
     <string name="sale_delivery">오늘 주문하면 내일 오전 10시 도착. 5초 안에 결제하면 추가 할인(시험용).</string>
+
+    <!-- 자동 닫기 시나리오(B 실기기 체크리스트 S16~S20). -->
+    <string name="leave_title">신작 게임 광고</string>
+    <string name="leave_body">지금 다운로드 순위 1위. 시험용 광고입니다.</string>
+    <string name="ad_series_1_title">봄맞이 특가 광고</string>
+    <string name="ad_series_1_body">가구 최대 40퍼센트 할인. 시험용 광고입니다.</string>
+    <string name="ad_series_2_title">여행 상품 광고</string>
+    <string name="ad_series_2_body">제주 항공권 특가. 시험용 광고입니다.</string>
+    <string name="ad_series_3_title">도서 할인 광고</string>
+    <string name="ad_series_3_body">베스트셀러 20퍼센트 할인. 시험용 광고입니다.</string>
+    <string name="ad_series_4_title">영화 예매 광고</string>
+    <string name="ad_series_4_body">주말 영화 특가 상영. 시험용 광고입니다.</string>
+    <string name="prize_title">축하합니다! 1등 당첨</string>
+    <string name="prize_body">가상 경품을 받으려면 아래 버튼을 누르세요(시험용).</string>
+    <string name="prize_claim">경품 받기</string>
+    <string name="infected_title">휴대폰이 감염되었습니다</string>
+    <string name="infected_body">바이러스 2개가 발견되었습니다(시험용).</string>
+    <string name="scan_now">지금 검사하기</string>
+    <string name="delayed_title">적립금 쿠폰 도착</string>
+    <string name="delayed_body">3초 뒤 닫기 버튼이 나타납니다(시험용).</string>
 </resources>

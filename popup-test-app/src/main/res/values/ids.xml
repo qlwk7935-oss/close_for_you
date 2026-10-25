@@ -16,4 +16,7 @@
     <item name="btn_skip" type="id" />
     <item name="video_surface" type="id" />
     <item name="field_password" type="id" />
+    <item name="btn_fake_close" type="id" />
+    <item name="btn_prize_claim" type="id" />
+    <item name="btn_scan_now" type="id" />
 </resources>

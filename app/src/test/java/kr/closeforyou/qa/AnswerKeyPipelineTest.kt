@@ -14,6 +14,8 @@ import kr.closeforyou.core.model.ScreenBounds
 import kr.closeforyou.core.model.SnapshotCompleteness
 import kr.closeforyou.core.model.SnapshotToken
 import kr.closeforyou.core.model.TextSource
+import kr.closeforyou.decision.DecisionKind
+import kr.closeforyou.decision.DecisionKinds
 import kr.closeforyou.decision.DecisionPopupClassifier
 import kr.closeforyou.ui.voice.settings.HandlingPreset
 import kr.closeforyou.ui.voice.settings.PopupHandlingPreference
@@ -92,6 +94,17 @@ class AnswerKeyPipelineTest {
         "P16" -> listOf(res("video_title"), fmt("video_playing", 0, 3), res("ad_open"), fmt("video_skip_countdown", 2))
         "P17" -> listOf(res("two_ads_first_title"), res("two_ads_body"), res("skip"), res("close"))
         "P18" -> listOf(res("sale_title"), fmt("sale_remaining", 4, 59), res("sale_delivery"), res("ad_open"), res("close"))
+        "P19" -> listOf(res("leave_title"), res("leave_body"), res("close"))
+        "P20" -> listOf(res("ad_series_1_title"), res("ad_series_1_body"), res("close"))
+        "P21" -> listOf(res("prize_title"), res("prize_body"), res("prize_claim"), res("close"))
+        "P22" -> listOf(res("infected_title"), res("infected_body"), res("scan_now"), res("close"))
+        // 버튼이 생기기 전 화면.
+        "P23" -> listOf(res("delayed_title"), res("delayed_body"))
+        "P24" -> listOf(
+            webText("시험 본문 화면(웹)"), webText("팝업을 닫은 뒤 이 첫 문단을 찾을 수 있어야 합니다. 이 페이지는 합성 시험용입니다."),
+            webText("결제 수단을 바꾸려면 약관에 동의해 주세요(시험용 뒤 페이지 문구)."),
+            webText(res("ad_coupon_title")), webText(res("ad_coupon_body")), webText(res("ad_open")), webText(res("close")),
+        )
         else -> listOf(res("notice_title"), catalogText(NOTICES[id] ?: error("시험 fixture 없음: $id")), res("close"))
     }
 
@@ -134,6 +147,26 @@ class AnswerKeyPipelineTest {
         assertTrue("nav.hidden = true" in webPage)
     }
 
+    /** S17: 이어서 나오는 광고 4개가 모두 광고로 분류되어야 속도 제한(4번째 묻기)을 볼 수 있다. */
+    @Test
+    fun adSeriesIsAllAdvertisements() {
+        (1..4).forEach { i ->
+            val texts = listOf(res("ad_series_${i}_title"), res("ad_series_${i}_body"), res("close"))
+            assertEquals("ad_series_$i", "ADVERTISEMENT" to "TREE", int1(texts))
+        }
+    }
+
+    /** S18: 사기 의심 팝업은 B가 SUSPICIOUS로 본다(화면 분류 UNKNOWN, 정책은 SUSPICIOUS_CONTENT로 거부). */
+    @Test
+    fun scamPopupsAreSuspiciousToB() {
+        listOf("P21", "P22").forEach { id ->
+            val texts = popupTexts(id)!!.map {
+                ExtractedText(it, ScreenBounds(0, 0, 100, 10), TextSource.ACCESSIBILITY_TREE, null)
+            }
+            assertEquals(id, DecisionKind.SUSPICIOUS, DecisionKinds.of(PopupAnalysis(SNAPSHOT.token, texts = texts.toPersistentList())))
+        }
+    }
+
     @Test
     fun presetGoalColumnsAgreeWithCHandlingPreset() {
         val columns = mapOf(
@@ -154,7 +187,7 @@ class AnswerKeyPipelineTest {
             "AD" -> PopupClassification.ADVERTISEMENT
             "COUPON" -> PopupClassification.COUPON
             "NOTICE" -> PopupClassification.NOTICE
-            "USER_DECISION" -> return "ASK"
+            "USER_DECISION", "SUSPICIOUS" -> return "ASK"
             "SENSITIVE" -> return "BLOCK"
             "NOT_POPUP" -> return "NONE"
             else -> error("알 수 없는 kind: $kind")

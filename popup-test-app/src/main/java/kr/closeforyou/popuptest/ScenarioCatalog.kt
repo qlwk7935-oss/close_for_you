@@ -6,8 +6,11 @@ package kr.closeforyou.popuptest
  * 정답지는 평가 기준일 뿐 실제 감지·분류·클릭 성능 결과가 아니다. 모든 문구와 금액은 합성 데이터다.
  * 닫아줄게 본 앱 코드에 의존하지 않으며 본 앱에서도 이 모듈을 참조하지 않는다.
  */
-/** 사람 기준 종류. [COUPON]은 받거나 가진 혜택(쿠폰·적립금·포인트 지급 등, 계약 v2 PopupClassification.COUPON과 같은 뜻). */
-enum class PopupKind { AD, COUPON, NOTICE, USER_DECISION, SENSITIVE, NOT_POPUP }
+/**
+ * 사람 기준 종류. [COUPON]은 받거나 가진 혜택(쿠폰·적립금·포인트 지급 등, 계약 v2 PopupClassification.COUPON과 같은 뜻).
+ * [SUSPICIOUS]는 당첨·감염 같은 사기 의심 팝업(B SUSPICIOUS_CONTENT): 어떤 버튼도 앱이 누르지 않고 경고한다.
+ */
+enum class PopupKind { AD, COUPON, NOTICE, SUSPICIOUS, USER_DECISION, SENSITIVE, NOT_POPUP }
 
 /** 처음 본 화면에서 기대하는 처리. 자동 닫기는 사용자 허락과 동일 팝업 재검사 이후에만 가능하다. */
 enum class ExpectedHandling {
@@ -93,6 +96,12 @@ object ScenarioCatalog {
 
     /** P18 타임세일 남은 시간(초). 건너뛰기와 상관없는 카운트다운이다. */
     const val SALE_COUNTDOWN_SECONDS = 300
+
+    /** P20(S17): 차례로 띄우는 서로 다른 광고 수. B 자동 닫기 속도 제한(1분 3개)을 넘겨야 한다. */
+    const val AD_SERIES_COUNT = 4
+
+    /** P23(S20): '닫기' 버튼이 이 시간(초) 뒤에 생긴다. */
+    const val DELAYED_CLOSE_SECONDS = 3
 
     val all: List<PopupScenario> = listOf(
         PopupScenario(
@@ -257,6 +266,60 @@ object ScenarioCatalog {
             memoryReusableFrom = null, experiments = setOf("C07"),
             note = "세일 종료 카운트다운(매초 변경)과 '5초 안에 결제' 같은 시간 문구가 있지만 건너뛰기와 무관(B #20 오인 확인). 글자가 계속 바뀌어 기억 대상 아님.",
         ),
+        PopupScenario(
+            id = "P19", title = "닫기가 앱 밖으로 보내는 광고", surface = PopupSurface.DIALOG,
+            kind = PopupKind.AD, expected = ExpectedHandling.USER_CHOICE,
+            closeEvidence = CloseEvidence.E2_LABELED_CLICK,
+            correctTargetId = null, appAllowedTargetId = null, forbiddenTargetIds = setOf("btn_fake_close"),
+            keyFacts = listOf("'닫기'를 누르면 홈 화면으로 나감"), rememberable = false, memoryReusableFrom = null,
+            experiments = setOf("A05", "C03"),
+            note = "S16. 라벨이 '닫기'인 버튼이 팝업을 닫지 않고 앱 밖(홈 화면)으로 보낸다. 겉으로는 진짜 닫기와 구별할 수 없어 첫 1회 자동 누름은 알려진 한계이고, 그 뒤 LEFT_APP으로 이 앱 자동 닫기가 멈춰야 한다. 진짜 닫기는 뒤로 가기뿐.",
+        ),
+        PopupScenario(
+            id = "P20", title = "1분 안에 서로 다른 광고 4개", surface = PopupSurface.DIALOG,
+            kind = PopupKind.AD, expected = ExpectedHandling.USER_CHOICE,
+            closeEvidence = CloseEvidence.E2_LABELED_CLICK,
+            correctTargetId = "btn_close", appAllowedTargetId = "btn_close", forbiddenTargetIds = emptySet(),
+            keyFacts = listOf("광고 4개가 이어서 나옴"), rememberable = false, memoryReusableFrom = null,
+            experiments = setOf("C08"),
+            note = "S17. 광고를 '닫기'로 닫으면 1초 뒤 다른 광고가 나온다(모두 4개). 프리셋 자동 닫기는 1분에 3개까지, 4번째는 묻기(RATE_LIMIT).",
+        ),
+        PopupScenario(
+            id = "P21", title = "사기 의심 - 1등 당첨", surface = PopupSurface.DIALOG,
+            kind = PopupKind.SUSPICIOUS, expected = ExpectedHandling.AUTO_FORBIDDEN,
+            closeEvidence = CloseEvidence.E2_LABELED_CLICK,
+            correctTargetId = "btn_close", appAllowedTargetId = null, forbiddenTargetIds = setOf("btn_prize_claim"),
+            keyFacts = listOf("당첨 사기 의심"), rememberable = false, memoryReusableFrom = null,
+            experiments = setOf("A05", "C06"),
+            note = "S18. 어떤 프리셋에서도 앱이 누르지 않고 경고한다(B SUSPICIOUS_CONTENT). '경품 받기'는 광고 페이지를 연다. 사람은 '닫기'로 닫을 수 있다.",
+        ),
+        PopupScenario(
+            id = "P22", title = "사기 의심 - 휴대폰 감염", surface = PopupSurface.DIALOG,
+            kind = PopupKind.SUSPICIOUS, expected = ExpectedHandling.AUTO_FORBIDDEN,
+            closeEvidence = CloseEvidence.E2_LABELED_CLICK,
+            correctTargetId = "btn_close", appAllowedTargetId = null, forbiddenTargetIds = setOf("btn_scan_now"),
+            keyFacts = listOf("감염 경고 사기 의심"), rememberable = false, memoryReusableFrom = null,
+            experiments = setOf("A05", "C06"),
+            note = "S18. 어떤 프리셋에서도 앱이 누르지 않고 경고한다(B SUSPICIOUS_CONTENT). '지금 검사하기'는 광고 페이지를 연다. 사람은 '닫기'로 닫을 수 있다.",
+        ),
+        PopupScenario(
+            id = "P23", title = "닫기가 늦게 나오는 쿠폰", surface = PopupSurface.DIALOG,
+            kind = PopupKind.COUPON, expected = ExpectedHandling.USER_CHOICE,
+            closeEvidence = CloseEvidence.E2_LABELED_CLICK,
+            correctTargetId = "btn_close", appAllowedTargetId = "btn_close", forbiddenTargetIds = emptySet(),
+            keyFacts = listOf("3초 뒤 닫기 버튼이 생김"), rememberable = false, memoryReusableFrom = null,
+            experiments = setOf("C07"),
+            note = "S20. 처음에는 누를 버튼이 없고 3초 뒤 '닫기'가 생긴다. 버튼 전에는 기다리기(WAIT), 생긴 뒤 프리셋에 따라 닫기.",
+        ),
+        PopupScenario(
+            id = "P24", title = "뒤 페이지에 결정 문구가 있는 웹 광고", surface = PopupSurface.WEBVIEW,
+            kind = PopupKind.COUPON, expected = ExpectedHandling.USER_CHOICE,
+            closeEvidence = CloseEvidence.E2_LABELED_CLICK,
+            correctTargetId = null, appAllowedTargetId = null, forbiddenTargetIds = emptySet(),
+            keyFacts = listOf("팝업은 쿠폰이지만 뒤 페이지에 결제·동의 문구가 있음"), rememberable = false,
+            memoryReusableFrom = null, experiments = setOf("A05", "B01"),
+            note = "P13과 같은 쿠폰 모달인데 뒤 페이지에 '결제'·'동의' 문구가 남아 있다(A 10/25 요청 회귀 시험). 실제 앱처럼 뒤 문구가 섞이면 A가 결정으로 요약해 막아야 한다. P13의 목록 숨김으로 이 안전 차단이 사라지지 않았는지 본다.",
+        ),
     ) + noticeVariants()
 
     private fun notice(id: String, title: String, body: String, reuse: String?, fact: String) =
@@ -305,6 +368,7 @@ object ScenarioCatalog {
     fun presetGoal(scenario: PopupScenario, preset: TestPreset): PresetGoal {
         val preference = when (scenario.kind) {
             PopupKind.USER_DECISION -> return PresetGoal.ASK
+            PopupKind.SUSPICIOUS -> return PresetGoal.ASK
             PopupKind.SENSITIVE -> return PresetGoal.BLOCK
             PopupKind.NOT_POPUP -> return PresetGoal.NONE
             PopupKind.AD -> PresetGoal.CLOSE
@@ -341,6 +405,13 @@ object ScenarioCatalog {
         "P17" to Int1Expectation(Int1Kind.ADVERTISEMENT, Int1Path.TREE),
         "P18" to Int1Expectation(Int1Kind.USER_DECISION, Int1Path.A_SUMMARY,
             "'5초 안에 결제하면'의 '결제' 때문에 A가 결정 요약으로 바꿈(영역 계약 7번 연결 전)"),
+        "P19" to Int1Expectation(Int1Kind.ADVERTISEMENT, Int1Path.TREE),
+        "P20" to Int1Expectation(Int1Kind.ADVERTISEMENT, Int1Path.TREE),
+        "P21" to Int1Expectation(Int1Kind.UNKNOWN, Int1Path.TREE, "B는 SUSPICIOUS로 보고 화면 분류는 UNKNOWN(경고)"),
+        "P22" to Int1Expectation(Int1Kind.UNKNOWN, Int1Path.TREE, "B는 SUSPICIOUS로 보고 화면 분류는 UNKNOWN(경고)"),
+        "P23" to Int1Expectation(Int1Kind.COUPON, Int1Path.TREE),
+        "P24" to Int1Expectation(Int1Kind.USER_DECISION, Int1Path.A_SUMMARY,
+            "뒤 페이지 '결제'·'동의' 때문에 A가 결정 요약으로 막음(의도한 안전 차단 회귀)"),
     ) + noticeVariants().associate { it.id to Int1Expectation(Int1Kind.NOTICE, Int1Path.TREE) }
 
     fun find(id: String): PopupScenario? = all.firstOrNull { it.id == id }

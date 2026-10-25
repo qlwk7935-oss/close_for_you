@@ -150,7 +150,7 @@ class ScenarioCatalogTest {
     fun int1GapsAreListedAndExplained() {
         assertEquals(all.map { it.id }.toSet(), ScenarioCatalog.int1.keys)
         val gaps = all.filter { ScenarioCatalog.int1.getValue(it.id).kind != humanInt1(it.kind) }.map { it.id }.toSet()
-        assertEquals(setOf("P02", "P03", "P05", "P07", "P18"), gaps)
+        assertEquals(setOf("P02", "P03", "P05", "P07", "P18", "P24"), gaps)
         gaps.forEach { assertTrue(it, ScenarioCatalog.int1.getValue(it).reason.isNotBlank()) }
     }
 
@@ -158,6 +158,7 @@ class ScenarioCatalogTest {
         PopupKind.AD -> Int1Kind.ADVERTISEMENT
         PopupKind.COUPON -> Int1Kind.COUPON
         PopupKind.NOTICE -> Int1Kind.NOTICE
+        PopupKind.SUSPICIOUS -> Int1Kind.UNKNOWN
         PopupKind.USER_DECISION -> Int1Kind.USER_DECISION
         PopupKind.SENSITIVE -> Int1Kind.BLOCKED
         PopupKind.NOT_POPUP -> Int1Kind.NONE
@@ -179,7 +180,46 @@ class ScenarioCatalogTest {
 
     @Test
     fun couponScenariosAreTheClaimableBenefits() {
-        assertEquals(setOf("P01", "P02", "P12", "P13"), all.filter { it.kind == PopupKind.COUPON }.map { it.id }.toSet())
+        assertEquals(setOf("P01", "P02", "P12", "P13", "P23", "P24"), all.filter { it.kind == PopupKind.COUPON }.map { it.id }.toSet())
+    }
+
+    /** S18: 사기 의심은 어떤 프리셋에서도 앱이 누르지 않는다. */
+    @Test
+    fun suspiciousPopupsAreNeverAutomatable() {
+        val suspicious = all.filter { it.kind == PopupKind.SUSPICIOUS }
+        assertEquals(setOf("P21", "P22"), suspicious.map { it.id }.toSet())
+        suspicious.forEach { s ->
+            assertEquals(s.id, ExpectedHandling.AUTO_FORBIDDEN, s.expected)
+            assertNull(s.id, s.appAllowedTargetId)
+            assertFalse(s.id, s.rememberable)
+            assertTrue(s.id, s.forbiddenTargetIds.isNotEmpty())
+            TestPreset.entries.forEach { assertEquals(s.id, PresetGoal.ASK, ScenarioCatalog.presetGoal(s, it)) }
+        }
+    }
+
+    /** S16: 라벨이 '닫기'여도 앱 밖으로 보내는 버튼은 앱 허용 버튼이 아니다. */
+    @Test
+    fun fakeCloseThatLeavesTheAppIsNotAppAllowed() {
+        val s = ScenarioCatalog.find("P19")!!
+        assertNull(s.appAllowedTargetId)
+        assertTrue("btn_fake_close" in s.forbiddenTargetIds)
+    }
+
+    /** S17은 B 속도 제한(1분 3개)을 넘겨야 4번째 묻기를 볼 수 있다. S20은 몇 초 안에 버튼이 생겨야 한다. */
+    @Test
+    fun autoCloseScenarioTimingFitsTheChecklist() {
+        assertTrue(ScenarioCatalog.AD_SERIES_COUNT > 3)
+        assertTrue(ScenarioCatalog.DELAYED_CLOSE_SECONDS in 1..10)
+    }
+
+    /** A 10/25: 실제 앱처럼 뒤 페이지에 위험 문구가 있으면 팝업이 쿠폰이어도 A 결정 요약으로 막혀야 한다. */
+    @Test
+    fun riskyBackPageStaysBlockedAfterHidingTheList() {
+        val p24 = ScenarioCatalog.int1.getValue("P24")
+        assertEquals(Int1Kind.USER_DECISION, p24.kind)
+        assertEquals(Int1Path.A_SUMMARY, p24.path)
+        assertEquals(Int1Kind.COUPON, ScenarioCatalog.int1.getValue("P13").kind)
+        assertNull(ScenarioCatalog.find("P24")!!.appAllowedTargetId)
     }
 
     @Test
