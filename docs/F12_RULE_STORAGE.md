@@ -47,7 +47,7 @@ A의 `SnapshotToken` 지문은 세션 salt를 쓰므로 재사용하지 않습�
 - C의 [기억하기]는 저장 의사입니다. **실제 클릭이 필요한 기억은 아래 "누르기 성공"일 때만 `save`를 호출**합니다(호출하는 쪽 책임).
 - **지문(`RuleKey`)은 클릭 전에 만듭니다.** `createKey`는 현재 분석의 닫기 후보를 다시 확인하므로, 클릭 뒤 팝업이 사라진 화면에서는 항상 `UNKNOWN_TARGET`으로 실패합니다. 클릭 전 같은 토큰에서 키를 만들어 두고, 누르기 성공이면 그 키로 `save`, 그 밖에는 버립니다(B 리뷰 10/21).
 
-### 누르기 성공 (A·C #34/#42 리뷰 10/25)
+### 누르기 성공 (A·C #34/#42 리뷰, B #48, 10/25)
 
 저장할 수 있는 "성공"은 **세 가지가 모두일 때만**입니다.
 
@@ -62,11 +62,12 @@ result.attempted == true
 | 위 세 가지 모두 | 저장 | |
 | `MECHANICAL_SUCCESS`인데 닫힘 관측 없음 | **안 함** | 눌렸다는 신호만으로는 닫혔는지 모름 |
 | `ATTEMPT_FAILED`·`OUTCOME_UNKNOWN` + `CLOSED_CONFIRMED` | **안 함** | 다른 이유로 팝업이 사라졌을 수 있음. 그 클릭이 닫았다는 근거 없음 |
-| `NOT_EXECUTED`·`BLOCKED`·`STALE` | 안 함 | 누르지 않음 |
+| `attempted=false`인 `NOT_EXECUTED`·`BLOCKED`·`STALE` | 안 함 | 누르지 않음 |
+| `attempted=true`인 `STALE` 등 | 안 함 | 눌렀을 수 있음 |
 
-- 이 기준은 #34(C `PressSuccess.isConfirmed`)와 #42(A F9)에서 맞추는 중입니다. 저장소(`RoomPopupRuleRepository`)는 A 결과를 보지 않으므로 코드 변경은 없고, **호출하는 쪽이 이 기준 하나로만 판정**해야 합니다.
+- 같은 기준을 C(#34 `PressSuccess.isConfirmed`), A F9(#42), B 기억 실행 판정(#48 `DecisionRulePressOutcome`, 병합)이 씁니다. 저장소(`RoomPopupRuleRepository`)는 A 결과를 보지 않으므로 코드 변경은 없고, **호출하는 쪽이 이 기준 하나로만 판정**해야 합니다.
 - C 안내도 같은 기준입니다. "닫았어요"는 성공일 때만, 나머지는 "닫혔는지 확인하지 못했어요"(C #34).
-- 기억으로 실제 실행을 시도했다가 실패하면 A의 결과를 받은 B가 `recordFailure`를 호출합니다. 실행하지 않은 경우는 성공으로 취급하지 않고 따로 구분합니다.
+- 기억으로 실제로 눌렀는데 위 성공이 아니면(**닫힘 미확인 포함**) A의 결과를 받은 B가 `recordFailure`로 그 규칙을 끕니다. `attempted=false`인 차단·미실행은 실패로 세지 않습니다(우진 10/25, B #48).
 - `INCOMPLETE_EVIDENCE`는 A가 일괄 제거하지 않습니다. "근거가 충분한 경우" 기준을 A·D가 합의하기 전까지 지문 생성은 계속 실패(기억 불가)합니다.
 - `INCOMPLETE_EVIDENCE` 해제 기준은 F0 보호 검사, 화면·토큰 현재성, 필요한 본문 근거의 완전성을 함께 봅니다.
 - 닫기 후보는 B가 같은 토큰에 붙인 분석을 지문 생성기의 `EvidenceExtractor`로 전달합니다(연결: 준영, 런타임 조립: 우진). D는 후보 탐지를 구현하지 않습니다.
@@ -118,8 +119,7 @@ result.attempted == true
 ## F12 연결 PR 때 정할 것 (B 리뷰 10/21)
 
 - **`recordFailure` 전달**: A 조립에서 B에 실패 기록 콜백을 넘기는 방향(우진 제안 10/21).
-- **실패로 볼 결과**: `ATTEMPT_FAILED`, `OUTCOME_UNKNOWN`(실제로 눌렀을 수 있음)은 실패로 기록합니다. `NOT_EXECUTED`·`BLOCKED`·`STALE`(누르지 않음)은 실패도 성공도 아닙니다(A·B 합의 10/21).
-- **기억으로 눌렀는데 닫힘 미확인**(`MECHANICAL_SUCCESS`만 있고 `CLOSED_CONFIRMED` 없음): 위 성공 기준으로는 성공이 아닙니다. D 제안은 안전한 쪽으로 `recordFailure`(그 규칙 끄기)입니다. 자동 반복 실행이 꺼져 있는 동안(`EXECUTION_ENABLED=false`)은 생기지 않으며, 켜기 전에 A·B가 확정합니다.
+- **실패로 볼 결과 (확정, B #48)**: `attempted=true`이고 "누르기 성공"이 아니면 모두 실패로 기록합니다(`MECHANICAL_SUCCESS` + 닫힘 미확인·`STILL_PRESENT`·`LEFT_APP`, `ATTEMPT_FAILED`, `OUTCOME_UNKNOWN`, `attempted=true`인 `STALE`). `attempted=false`인 `NOT_EXECUTED`·`BLOCKED`·`STALE`은 실패도 성공도 아닙니다.
 - **규칙이 맞은 후보**: 닫기·건너뛰기가 함께 있으면 B는 후보가 1개가 아니어서 막습니다. 후보별 키로 `findExact`가 맞은 후보 id를 `DecisionContext`로 넘기는 방안(공통 계약 변경, 별도 PR).
 - **[다시 묻지 않기]의 대상 없는 키**: `createKey`는 대상 버튼이 필수입니다. 닫기 버튼이 없는 팝업용 키를 어떻게 만들지는 C가 이 기능을 켤 때 정합니다(현재 C에서 꺼짐).
 
@@ -129,4 +129,5 @@ result.attempted == true
 - C의 규칙 목록·해제·전체 삭제 UI 연동(`RuleStorage.eraseAll`, `RuleStorage.cleanUp`).
 - 스키마 변경 시 Migration과 스키마 JSON 커밋.
 - `INCOMPLETE_EVIDENCE` 해제 기준(A·D 합의).
-- 실기기 계측 실행, C09 시나리오(앱 업데이트·버튼 위치 변경) 추가.
+- 실기기 계측 실행. C09 재현 화면은 #47(N08 버튼 위치, 재현 앱 버전 변경).
+- F12 운영 연결 때 확인(우진 #48 리뷰): A 서비스 `afterRulePress` → D `recordFailure` 연결, 같은 결과를 정확히 1회 전달, Room·Keystore 기기 검증.
