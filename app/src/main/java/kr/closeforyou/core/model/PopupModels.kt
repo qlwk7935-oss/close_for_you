@@ -79,7 +79,12 @@ enum class PrivacyBlockReason {
 }
 
 /** Display classification is never an action authorization. B owns its implementation. */
-enum class PopupClassification { ADVERTISEMENT, NOTICE, USER_DECISION, UNKNOWN }
+/**
+ * COUPON (contract v2): a benefit the person can claim or already holds (쿠폰·적립금·상품권…).
+ * Appended last so existing ordinals stay. A scam-like popup is not a class: it is UNKNOWN with
+ * [SafetyReason.SUSPICIOUS_CONTENT].
+ */
+enum class PopupClassification { ADVERTISEMENT, NOTICE, USER_DECISION, UNKNOWN, COUPON }
 enum class EvidenceLevel { E1_DISMISS, E2_LABELED_NODE, E3_USER_BOUND_NODE, E4_VISUAL_ONLY }
 enum class ButtonRole { CLOSE, SKIP, ACKNOWLEDGE, USER_DECISION, NAVIGATE, UNKNOWN }
 enum class TextSource { ACCESSIBILITY_TREE, OCR }
@@ -108,6 +113,54 @@ data class CloseCandidate(
 
 enum class AnalysisLimit { MOCK_ONLY, OCR_NOT_IMPLEMENTED, IMAGE_MODEL_NOT_IMPLEMENTED, INCOMPLETE_EVIDENCE }
 
+/** Contract v2: one thing A verified on this exact screen. All are needed before any automatic close. */
+enum class EligibilityCheck {
+    /** F0 protection ran on this screen and blocked nothing. */
+    F0_PASSED,
+    /** The popup's own nodes are known (its window, or one unambiguous Dialog subtree). */
+    POPUP_SCOPE_CONFIRMED,
+    /** The popup's tree was read completely (not truncated, not partial). */
+    TREE_COMPLETE,
+    /**
+     * Decision text within the popup was all kept and judged (#38 review): A's collection and decision
+     * summary covered the whole popup scope and dropped nothing from it, AND B checked every popup
+     * text for decision wording (B keeps every warning when it narrows texts to the popup). A sets
+     * this only once both halves are agreed and connected; until then it stays unset.
+     */
+    DECISION_TEXT_SCOPED,
+    /** Every close candidate lies inside the popup's own nodes. */
+    TARGETS_IN_POPUP,
+}
+
+/**
+ * Contract v2, from A: the evidence that makes this analysis eligible for an automatic close. It is
+ * not an authorization and does not override [AnalysisLimit.INCOMPLETE_EVIDENCE] for anything
+ * else. Absent (the default) means no automatic close at all, as today. Valid only for [token] and
+ * for [TTL_MILLIS] after [capturedAtUptimeMillis].
+ *
+ * The 5 s run from when the screen was captured, never from when this evidence was issued (#38
+ * review): A copies the [PopupSnapshot.capturedAtUptimeMillis] of the screen it checked, so evidence
+ * issued late cannot outlive A's own evidence TTL.
+ */
+data class AutoEligibility(
+    val token: SnapshotToken,
+    val checks: ImmutableSet<EligibilityCheck>,
+    /** The capture time of the screen this evidence is about ([PopupSnapshot.capturedAtUptimeMillis]). */
+    val capturedAtUptimeMillis: Long,
+) {
+    val complete: Boolean get() = checks.containsAll(EligibilityCheck.entries)
+
+    fun validFor(analysisToken: SnapshotToken, nowUptimeMillis: Long): Boolean =
+        complete && token == analysisToken && nowUptimeMillis >= capturedAtUptimeMillis &&
+            nowUptimeMillis - capturedAtUptimeMillis < TTL_MILLIS
+
+    override fun toString(): String = "AutoEligibility(checks=$checks, redacted)"
+
+    companion object {
+        const val TTL_MILLIS = 5_000L
+    }
+}
+
 data class PopupAnalysis(
     val token: SnapshotToken,
     val classification: PopupClassification = PopupClassification.UNKNOWN,
@@ -116,6 +169,8 @@ data class PopupAnalysis(
     val limitations: ImmutableSet<AnalysisLimit> = persistentSetOf(),
     /** F5: video evidence alone must not imply an advertisement. F6 is excluded. */
     val videoSurfaceObserved: Boolean = false,
+    /** Contract v2: set by A only when every [EligibilityCheck] holds; null (also when unsure) keeps automation off. */
+    val autoEligibility: AutoEligibility? = null,
 ) {
     override fun toString(): String = "PopupAnalysis(classification=$classification, redacted)"
 }
@@ -125,6 +180,61 @@ enum class SafetyReason {
     NOT_IMPLEMENTED, FIRST_SEEN, PRIVACY_BLOCKED, IMPORTANT_DECISION, STALE_SCREEN,
     USER_INTERACTION, UNVERIFIED_TARGET, RULE_MISMATCH, EXPLICIT_PERMISSION_REQUIRED,
     INCOMPLETE_EVIDENCE, ALREADY_ATTEMPTED, FEEDBACK_UNAVAILABLE,
+
+    // Contract v2 (automatic close). Appended so existing ordinals stay.
+    /** Prize-win, infection or urgent-install wording: warn, and never close for the person. */
+    SUSPICIOUS_CONTENT,
+    /** The person's preset does not close this kind ([DecisionContext.autoCloseKinds]). */
+    PRESET_NOT_ALLOWED,
+    /** A close button may still appear (delayed ad, skip countdown): observe again, do not prompt yet. */
+    WAITING_FOR_TARGET,
+    /** This popup was already sent to A and its result has not come back. */
+    AWAITING_RESULT,
+    /** A did not supply a complete, current [AutoEligibility]. */
+    NOT_AUTO_ELIGIBLE,
+    /** Too many automatic closes in this app in a short time. */
+    AUTO_LIMIT_REACHED,
+    /**
+     * An earlier press in this app left the app ([ClickOutcome.LEFT_APP]): automatic closing stops for
+     * that app until the accessibility service session ends (B keeps it in memory only). Asking the
+     * person still works.
+     */
+    LEFT_APP_BEFORE,
+    /** Closed automatically once already; repeating needs the person's F12 permission. */
+    REPEAT_NOT_ALLOWED,
+}
+
+/** Contract v2: who asked for the action a decision answers. A source is never an authorization. */
+enum class DecisionSource {
+    /** The person chose on this screen (UserChoice). */
+    USER_CHOICE,
+    /** The person's F12 rule for this exact popup (PopupRule with repeat automation allowed). */
+    REMEMBERED_RULE,
+    /** The person's preset for first-seen popups of a kind ([DecisionContext.autoCloseKinds]). */
+    PRESET,
+}
+
+/**
+ * Contract v2: what happens next. EXECUTE is B's approval only, never a completed click: A's gate
+ * still rereads F0, the screen and the target before at most one press.
+ */
+enum class NextStep {
+    EXECUTE,
+    /** Observe again without prompting (WAITING_FOR_TARGET, AWAITING_RESULT, the person acting). */
+    WAIT,
+    /** Tell the content; nothing is pressed unless the person then chooses. */
+    ANNOUNCE,
+    /** Ask the person, as for a first-seen popup today. */
+    ASK,
+    /** Explain only (decision, suspicious): no option to press for the person. */
+    DENY,
+}
+
+/** The [NextStep] an older caller means by [authorization] alone. */
+fun defaultNextStep(authorization: ActionAuthorization): NextStep = when (authorization) {
+    ActionAuthorization.ALLOW_ONCE -> NextStep.EXECUTE
+    ActionAuthorization.NEEDS_CONFIRMATION -> NextStep.ASK
+    ActionAuthorization.DENY -> NextStep.DENY
 }
 
 data class ActionDecision(
@@ -132,11 +242,46 @@ data class ActionDecision(
     val authorization: ActionAuthorization,
     val reasons: ImmutableSet<SafetyReason>,
     val candidateId: String? = null,
+    /** Contract v2. Null where the caller has not said yet (decisions made before v2). */
+    val source: DecisionSource? = null,
+    /** Contract v2. Defaults to what [authorization] meant before v2. */
+    val next: NextStep = defaultNextStep(authorization),
 ) {
-    init { require(authorization != ActionAuthorization.ALLOW_ONCE || candidateId != null) }
+    init {
+        require(authorization != ActionAuthorization.ALLOW_ONCE || candidateId != null)
+        // Only an approval executes, and an approval always executes.
+        require((next == NextStep.EXECUTE) == (authorization == ActionAuthorization.ALLOW_ONCE))
+        // "No option to press" cannot sit on a decision that still offers one.
+        require(next != NextStep.DENY || authorization == ActionAuthorization.DENY)
+        // An important decision or a scam-like popup is only ever explained (#38 review, C).
+        require(reasons.none { it in DENY_ONLY_REASONS } || next == NextStep.DENY)
+        // Waiting always says what it waits for, so C can say it once and stay quiet (#38 review, C).
+        require(next != NextStep.WAIT || reasons.any { it in WAIT_REASONS })
+    }
+
+    companion object {
+        val DENY_ONLY_REASONS: Set<SafetyReason> = setOf(SafetyReason.IMPORTANT_DECISION, SafetyReason.SUSPICIOUS_CONTENT)
+        val WAIT_REASONS: Set<SafetyReason> = setOf(
+            SafetyReason.WAITING_FOR_TARGET, SafetyReason.AWAITING_RESULT, SafetyReason.USER_INTERACTION, SafetyReason.STALE_SCREEN,
+        )
+    }
 }
 
 enum class ActionStatus { NOT_EXECUTED, BLOCKED, STALE, ATTEMPT_FAILED, MECHANICAL_SUCCESS, OUTCOME_UNKNOWN }
+
+/**
+ * Contract v2, from A: what the screen showed after a press. A delivered click
+ * ([ActionStatus.MECHANICAL_SUCCESS]) is never by itself a closed popup.
+ */
+enum class ClickOutcome {
+    /** The popup's window or nodes are gone, the same app is in front and no new window opened. */
+    CLOSED_CONFIRMED,
+    /** Another app or page came to the front: treat the button as a fake close. */
+    LEFT_APP,
+    /** The popup is still there. */
+    STILL_PRESENT,
+    UNKNOWN,
+}
 
 /** Mechanical success never establishes semantic safety or that the user heard feedback. */
 data class ActionResult(
@@ -145,7 +290,14 @@ data class ActionResult(
     val reason: SafetyReason?,
     val attempted: Boolean = false,
     val semanticSafetyConfirmedByUser: Boolean = false,
-)
+    /**
+     * Contract v2. Observed only after an attempted press, whoever asked for it (the person, an F12
+     * rule or a preset); null when A did not observe. C says "닫았어요" only on CLOSED_CONFIRMED.
+     */
+    val outcome: ClickOutcome? = null,
+) {
+    init { require(outcome == null || attempted) }
+}
 
 enum class ChoiceKind { CLOSE_ONCE, SKIP_ONCE, READ_CONTENT, KEEP_OPEN, REMEMBER_EXACT_POPUP, STOP_ASKING, REVOKE_RULE }
 

@@ -3,6 +3,7 @@ package kr.closeforyou.core.contract
 import kr.closeforyou.core.model.*
 import kotlinx.collections.immutable.ImmutableList
 import kotlinx.collections.immutable.ImmutableSet
+import kotlinx.collections.immutable.persistentSetOf
 import kotlinx.coroutines.flow.Flow
 
 /** Ephemeral stream: no replay, logging, persistence, or retaining a snapshot across invalidation. */
@@ -33,12 +34,20 @@ interface PopupClassifier {
     suspend fun classify(analysis: PopupAnalysis): PopupClassification
 }
 
+/**
+ * The person's consent comes in two separate scopes:
+ * - [autoCloseKinds] (contract v2, preset): kinds the person lets B close when first seen, once per
+ *   popup per session. Empty by default = no automatic close, even when C shows a preset as chosen.
+ *   USER_DECISION and UNKNOWN are ignored whoever puts them in. A policy input, not an authorization.
+ * - [matchingRule] (F12): repeating for one exact popup, only when the rule allows repeat automation.
+ */
 data class DecisionContext(
     val currentToken: SnapshotToken?,
     val userChoice: UserChoice?,
     val matchingRule: PopupRule?,
     val userInteracting: Boolean,
     val announcementAvailable: Boolean,
+    val autoCloseKinds: ImmutableSet<PopupClassification> = persistentSetOf(),
 )
 
 interface ActionPolicy {
