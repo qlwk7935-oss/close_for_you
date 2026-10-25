@@ -38,7 +38,7 @@ adb logcat -s PopupTest > popuptest.log                       # 로그 저장(�
 
 **클릭 비활성 단계**(첫 통합 실측)에서는 `--no-click`을 붙입니다. 판정은 **실패**(종료 1: CSV에 앱이 누른 행, 또는 측정 구간 logcat에 재현 앱 버튼 기록 1줄 이상), **미검증**(종료 2: logcat을 주지 않음), **통과(검증됨)**(종료 0) 중 하나입니다. logcat에는 누가 눌렀는지 남지 않으므로 측정 구간 기록은 원인과 상관없이 실패로 봅니다. 기록 방법은 [첫 통합 실측 검증표](FIRST_INTEGRATION_CHECKLIST.md)를 따릅니다. 회귀 시험: `python3 -m unittest discover -s tools -p "test_*.py"`(CI에서도 실행).
 
-정답지 CSV [`templates/popup_answer_key.csv`](templates/popup_answer_key.csv)는 `ScenarioCatalog`와 같아야 합니다. `AnswerKeyCsvTest`가 CI에서 두 값을 비교합니다.
+정답지 CSV [`templates/popup_answer_key.csv`](templates/popup_answer_key.csv)는 `ScenarioCatalog`와 같아야 합니다. `AnswerKeyCsvTest`가 CI에서 두 값을 비교합니다. 10/25부터 `kind`에 `COUPON`이 있고, 프리셋별 목표(`preset_close_all`·`preset_close_ads_and_coupons`·`preset_close_ads_only`)와 첫 통합 예상(`int1_kind`·`int1_path`) 칸이 있습니다. 뒤의 두 묶음은 앱 모듈 `AnswerKeyPipelineTest`가 지금 A·B·C 코드와 대조합니다([재현 앱 문서](POPUP_TEST_APP.md)).
 
 ## 3. 앱 안 진단 횟수
 
