@@ -62,6 +62,7 @@ class PopupScenarioActivity : Activity() {
             "P16" -> videoAd()
             "P17" -> closeOrSkipDialog()
             "P18" -> timeSaleDialog()
+            ScenarioCatalog.BUTTON_MOVED_NOTICE_ID -> textNotice(scenario.note, closeOnTop = true)
             else -> if (scenario.kind == PopupKind.NOTICE) textNotice(scenario.note)
         }
     }
@@ -273,12 +274,12 @@ class PopupScenarioActivity : Activity() {
         ))
     }
 
-    private fun textNotice(body: String) {
-        showDialog(column(
-            text(getString(R.string.notice_title), 20f),
-            text(body),
-            button(R.id.btn_close, getString(R.string.close)) { dismiss() },
-        ))
+    /** 글 공지. [closeOnTop]이면 닫기 버튼을 제목 위로 옮긴다(C09 N08: 글자는 같고 버튼 위치만 다름). */
+    private fun textNotice(body: String, closeOnTop: Boolean = false) {
+        val title = text(getString(R.string.notice_title), 20f)
+        val content = text(body)
+        val close = button(R.id.btn_close, getString(R.string.close)) { dismiss() }
+        showDialog(if (closeOnTop) column(close, title, content) else column(title, content, close))
     }
 
     private fun fakePayment() {

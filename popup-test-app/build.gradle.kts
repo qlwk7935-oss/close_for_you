@@ -11,7 +11,10 @@ android {
         applicationId = "kr.closeforyou.popuptest"
         minSdk = 30
         targetSdk = 35
-        versionCode = 1
+        // C09 앱 업데이트 시험: ./gradlew :popup-test-app:assembleDebug -PpopupTestVersionCode=2 (기본 1).
+        versionCode = providers.gradleProperty("popupTestVersionCode").orNull?.let { value ->
+            value.toIntOrNull()?.takeIf { it >= 1 } ?: error("popupTestVersionCode must be a positive integer: $value")
+        } ?: 1
         versionName = "0.1.0-test"
     }
     compileOptions {
