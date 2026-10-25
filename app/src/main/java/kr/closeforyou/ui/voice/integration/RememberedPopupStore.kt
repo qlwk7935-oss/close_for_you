@@ -33,7 +33,8 @@ class PreparedRule(val token: SnapshotToken, val key: RuleKey)
  * Where [PopupChoiceFlow] hands a [앞으로 항상 닫기] choice, in two steps (team decision 10/21):
  * 1. [prepare] before the one-time press, on the same token. The fingerprint needs the button in
  *    the current analysis; after a successful press the popup is gone and D's provider fails.
- * 2. [commit] only after A reports MECHANICAL_SUCCESS. Any other result drops the prepared key.
+ * 2. [commit] only when [kr.closeforyou.ui.voice.PressSuccess.isConfirmed] (attempted +
+ *    MECHANICAL_SUCCESS + CLOSED_CONFIRMED). Any other result drops the prepared key.
  *
  * D owns the real storage (Room, fingerprints). Saving is never an authorization: a later auto close
  * still re-checks B's policy, A's gate, the exact popup and the app's auto close setting (AGENTS 6-4).

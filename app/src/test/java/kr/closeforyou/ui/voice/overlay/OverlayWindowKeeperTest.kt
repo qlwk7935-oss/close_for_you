@@ -46,6 +46,9 @@ class OverlayWindowKeeperTest {
             log += "destroy $window"
             if (cleanupThrows) throw IllegalStateException("destroy")
         }
+        override fun enterRevalidating(window: String) {
+            log += "revalidate $window"
+        }
 
         fun count(step: String) = log.count { it == step }
     }

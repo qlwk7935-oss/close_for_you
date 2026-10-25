@@ -51,6 +51,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import kotlinx.collections.immutable.persistentListOf
 import kr.closeforyou.R
+import kr.closeforyou.app.CorePreferences
 import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
@@ -63,6 +64,8 @@ import kr.closeforyou.core.model.ActionResult
 import kr.closeforyou.core.model.ActionStatus
 import kr.closeforyou.core.model.ButtonRole
 import kr.closeforyou.core.model.ChoiceKind
+import kr.closeforyou.core.model.ClickOutcome
+import kr.closeforyou.core.model.SnapshotToken
 import kr.closeforyou.core.model.UserChoice
 import kr.closeforyou.testing.mock.MockPopupFixture
 import kr.closeforyou.testing.mock.MockPopupFixtures
@@ -78,7 +81,13 @@ import kr.closeforyou.ui.voice.BatchSentence
 import kr.closeforyou.ui.voice.BatchSummary
 import kr.closeforyou.ui.voice.PressResultSpeech
 import kr.closeforyou.ui.voice.TtsPopupAnnouncer
+import kr.closeforyou.ui.voice.settings.OnboardingGatePolicy
+import kr.closeforyou.ui.voice.settings.UiVoiceOnboardingScreen
+import kr.closeforyou.ui.voice.settings.UiVoicePreferences
 import kr.closeforyou.ui.voice.settings.UiVoiceSettingsRoute
+import kr.closeforyou.ui.voice.settings.CoreAllowedApps
+import kr.closeforyou.ui.voice.settings.HelpAppsEditScreen
+import kr.closeforyou.ui.voice.settings.HelpAppsSync
 import kr.closeforyou.ui.voice.overlay.PromptAnnouncementListener
 import kr.closeforyou.ui.voice.overlay.PromptSpeech
 
@@ -91,12 +100,22 @@ class ChoicePreviewActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val openSettings = intent?.getBooleanExtra(EXTRA_OPEN_SETTINGS, false) == true
-        setContent { UiVoiceTheme { ChoicePreviewScreen(openSettings) } }
+        val openOnboarding = intent?.getBooleanExtra(EXTRA_OPEN_ONBOARDING, false) == true
+        val openAppPicker = intent?.getBooleanExtra(EXTRA_OPEN_APP_PICKER, false) == true
+        setContent { UiVoiceTheme { ChoicePreviewScreen(openSettings, openOnboarding, openAppPicker) } }
         if (savedInstanceState == null) scheduleOverlayFromIntent(intent)
     }
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
+        // singleTop: the screen may already be in front, so open the first-run page here too.
+        if (intent.getBooleanExtra(EXTRA_OPEN_ONBOARDING, false)) {
+            intent.removeExtra(EXTRA_OPEN_ONBOARDING)
+            setContent { UiVoiceTheme { ChoicePreviewScreen(openSettings = false, openOnboarding = true) } }
+        } else if (intent.getBooleanExtra(EXTRA_OPEN_APP_PICKER, false)) {
+            intent.removeExtra(EXTRA_OPEN_APP_PICKER)
+            setContent { UiVoiceTheme { ChoicePreviewScreen(openSettings = false, openOnboarding = false, openAppPicker = true) } }
+        }
         scheduleOverlayFromIntent(intent)
     }
 
@@ -106,22 +125,70 @@ class ChoicePreviewActivity : ComponentActivity() {
      * singleTop (debug manifest) delivers the extra even when this screen is already in front, and a
      * freshly started process waits briefly for the test service to connect.
      * Optional `--el ui_debug_tts_delay_ms <ms>` changes when our own TTS speaks (default 700).
+     * Optional `--ez ui_debug_c29_diag true` logs window facts for that show under C29Diag (issue #29).
+     * `--el ui_debug_c29_watch_ms <ms>` (no scenario) only watches events for that long (issue #29).
+     * Optional `--ez ui_debug_revalidate_demo true` (REVALIDATING, #29): 3 s after the prompt shows it
+     * starts "다시 확인 중", and 2 s later the same prompt is confirmed into the same window. Adding
+     * `--ez ui_debug_revalidate_timeout true` skips the confirmation, so the 3 s timeout closes it.
      */
     private fun scheduleOverlayFromIntent(intent: Intent?) {
+        // `--ez ui_debug_c34_dump true` (alone): logs the shown prompt's node tree under C34Nodes.
+        if (intent?.getBooleanExtra(EXTRA_C34_DUMP, false) == true) {
+            intent.removeExtra(EXTRA_C34_DUMP)
+            if (!ChoiceOverlayTestService.dumpOwnNodes()) {
+                Toast.makeText(this, R.string.ui_debug_overlay_service_off, Toast.LENGTH_LONG).show()
+            }
+            return
+        }
+        // `--el ui_debug_c34_focus_ms <ms>` (alone): logs TalkBack focus moves under C34Nodes for that long, and
+        // C's nodes 4 s after each prompt shown meanwhile. Read-only: TalkBack's focus is not moved unless
+        // `--ez ui_debug_c34_focus_move true` is added too.
+        val focusMillis = intent?.getLongExtra(EXTRA_C34_FOCUS_MS, -1L)?.takeIf { it in 1..MAX_C29_WATCH_MILLIS * 3 }
+        val moveFocus = intent?.getBooleanExtra(EXTRA_C34_FOCUS_MOVE, false) == true
+        intent?.removeExtra(EXTRA_C34_FOCUS_MS)
+        intent?.removeExtra(EXTRA_C34_FOCUS_MOVE)
+        if (focusMillis != null) {
+            if (!ChoiceOverlayTestService.watchFocus(focusMillis, moveFocus)) {
+                Toast.makeText(this, R.string.ui_debug_overlay_service_off, Toast.LENGTH_LONG).show()
+            }
+            return
+        }
+        val watchMillis = intent?.getLongExtra(EXTRA_C29_WATCH_MS, -1L)?.takeIf { it in 1..MAX_C29_WATCH_MILLIS }
+        intent?.removeExtra(EXTRA_C29_WATCH_MS)
+        if (watchMillis != null) {
+            lifecycleScope.launch {
+                val connected = withTimeoutOrNull(SERVICE_WAIT_MILLIS) {
+                    ChoiceOverlayTestService.connected.first { it }
+                } == true
+                if (!connected || !ChoiceOverlayTestService.watchEvents(watchMillis)) {
+                    Toast.makeText(this@ChoicePreviewActivity, R.string.ui_debug_overlay_service_off, Toast.LENGTH_LONG).show()
+                }
+            }
+            return
+        }
         val index = intent?.getIntExtra(EXTRA_OVERLAY_SCENARIO, -1) ?: -1
         val fixture = scenarios.getOrNull(index)?.fixture ?: return
         val ttsDelay = intent?.getLongExtra(EXTRA_TTS_DELAY_MS, -1L)?.takeIf { it in 0..MAX_TTS_DELAY_MILLIS }
             ?: PromptAnnouncementListener.DEFAULT_TTS_DELAY_MILLIS
+        val diagnose = intent?.getBooleanExtra(EXTRA_C29_DIAG, false) == true
+        val revalidateDemo = when {
+            intent?.getBooleanExtra(EXTRA_REVALIDATE_DEMO, false) != true -> RevalidateDemo.OFF
+            intent.getBooleanExtra(EXTRA_REVALIDATE_TIMEOUT, false) -> RevalidateDemo.TIMEOUT
+            else -> RevalidateDemo.CONFIRM
+        }
+        intent?.removeExtra(EXTRA_REVALIDATE_DEMO)
+        intent?.removeExtra(EXTRA_REVALIDATE_TIMEOUT)
         // Consume the extras so a configuration change does not show the prompt again.
         intent?.removeExtra(EXTRA_OVERLAY_SCENARIO)
         intent?.removeExtra(EXTRA_TTS_DELAY_MS)
+        intent?.removeExtra(EXTRA_C29_DIAG)
         val prompt = ChoicePromptPlanner.plan(fixture.analysis, fixture.expectedDisplayClassification)
         val content = PromptSpeech.content(this, fixture.analysis)
         lifecycleScope.launch {
             val connected = withTimeoutOrNull(SERVICE_WAIT_MILLIS) {
                 ChoiceOverlayTestService.connected.first { it }
             } == true
-            if (!connected || !ChoiceOverlayTestService.scheduleShow(prompt, content, OVERLAY_DELAY_MILLIS, ttsDelay)) {
+            if (!connected || !ChoiceOverlayTestService.scheduleShow(prompt, content, OVERLAY_DELAY_MILLIS, ttsDelay, diagnose, revalidateDemo)) {
                 Toast.makeText(this@ChoicePreviewActivity, R.string.ui_debug_overlay_service_off, Toast.LENGTH_LONG).show()
             }
         }
@@ -132,8 +199,20 @@ class ChoicePreviewActivity : ComponentActivity() {
         const val SERVICE_WAIT_MILLIS = 3_000L
         const val EXTRA_TTS_DELAY_MS = "ui_debug_tts_delay_ms"
         const val MAX_TTS_DELAY_MILLIS = 10_000L
+        const val EXTRA_C29_DIAG = "ui_debug_c29_diag"
+        const val EXTRA_REVALIDATE_DEMO = "ui_debug_revalidate_demo"
+        const val EXTRA_REVALIDATE_TIMEOUT = "ui_debug_revalidate_timeout"
+        const val EXTRA_C29_WATCH_MS = "ui_debug_c29_watch_ms"
+        const val MAX_C29_WATCH_MILLIS = 60_000L
+        const val EXTRA_C34_DUMP = "ui_debug_c34_dump"
+        const val EXTRA_C34_FOCUS_MS = "ui_debug_c34_focus_ms"
+        const val EXTRA_C34_FOCUS_MOVE = "ui_debug_c34_focus_move"
         /** adb: `--ez ui_debug_open_settings true` opens the settings page directly. */
         const val EXTRA_OPEN_SETTINGS = "ui_debug_open_settings"
+        /** adb: `--ez ui_debug_open_onboarding true` opens the first-run setup directly. */
+        const val EXTRA_OPEN_ONBOARDING = "ui_debug_open_onboarding"
+        /** adb: `--ez ui_debug_open_app_picker true` opens "도와줄 앱" (settings' editor) directly. */
+        const val EXTRA_OPEN_APP_PICKER = "ui_debug_open_app_picker"
     }
 }
 
@@ -164,8 +243,21 @@ private fun closeAndSkipFixture(): MockPopupFixture {
 private const val SKIP_LABEL = "건너뛰기"
 
 @Composable
-private fun ChoicePreviewScreen(openSettings: Boolean) {
+private fun ChoicePreviewScreen(openSettings: Boolean, openOnboarding: Boolean, openAppPicker: Boolean = false) {
     var showSettings by rememberSaveable { mutableStateOf(openSettings) }
+    var showOnboarding by rememberSaveable { mutableStateOf(openOnboarding) }
+    var showAppPicker by rememberSaveable { mutableStateOf(openAppPicker) }
+    if (showAppPicker) {
+        // Real A preferences: [저장] calls CorePreferences.addAllowedPackage like the settings screen.
+        Scaffold { innerPadding ->
+            HelpAppsEditScreen(onClose = { showAppPicker = false }, modifier = Modifier.padding(innerPadding))
+        }
+        return
+    }
+    if (showOnboarding) {
+        OnboardingPage(onBack = { showOnboarding = false })
+        return
+    }
     if (showSettings) {
         SettingsPage(onBack = { showSettings = false })
         return
@@ -198,6 +290,14 @@ private fun ChoicePreviewScreen(openSettings: Boolean) {
                 onClick = { showSettings = true },
                 modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
             ) { Text(stringResource(R.string.ui_debug_open_settings)) }
+            OutlinedButton(
+                onClick = { showOnboarding = true },
+                modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
+            ) { Text(stringResource(R.string.ui_debug_open_onboarding)) }
+            OutlinedButton(
+                onClick = { showAppPicker = true },
+                modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
+            ) { Text(stringResource(R.string.ui_debug_open_app_picker)) }
             SectionTitle(R.string.ui_debug_section_scenario)
             Column(Modifier.selectableGroup()) {
                 scenarios.forEach { scenario ->
@@ -230,8 +330,9 @@ private fun ChoicePreviewScreen(openSettings: Boolean) {
                 lastChoice = choice
                 val status = simulated
                 if (status != null && PressResultSpeech.isPressChoice(choice.kind)) {
-                    val speech = simulatedResultSpeech(context, ActionResult(choice.token, status, reason = null), choice.kind)
-                    PressResultSpeech.failureOf(ActionResult(choice.token, status, reason = null))?.let {
+                    val result = simulatedResult(choice.token, status)
+                    val speech = simulatedResultSpeech(context, result, choice.kind)
+                    PressResultSpeech.failureOf(result)?.let {
                         followUp = ChoicePromptPlanner.afterFailedPress(basePrompt, it)
                     }
                     scope.launch {
@@ -348,6 +449,18 @@ private val simulateOptions = listOf(
     ActionStatus.OUTCOME_UNKNOWN to R.string.ui_debug_simulate_unknown,
 )
 
+/**
+ * A fake result shaped like A's: "눌림" is a press A attempted and saw close (CLOSED_CONFIRMED), so
+ * it sounds like success ([kr.closeforyou.ui.voice.PressSuccess]); failed / unknown were attempted
+ * but not observed; blocked / stale were never attempted.
+ */
+private fun simulatedResult(token: SnapshotToken, status: ActionStatus): ActionResult = when (status) {
+    ActionStatus.MECHANICAL_SUCCESS ->
+        ActionResult(token, status, reason = null, attempted = true, outcome = ClickOutcome.CLOSED_CONFIRMED)
+    ActionStatus.ATTEMPT_FAILED, ActionStatus.OUTCOME_UNKNOWN -> ActionResult(token, status, reason = null, attempted = true)
+    ActionStatus.NOT_EXECUTED, ActionStatus.BLOCKED, ActionStatus.STALE -> ActionResult(token, status, reason = null)
+}
+
 /** Picks a fake ActionResult for the next press. Nothing is pressed; only the speech is tried. */
 @Composable
 private fun SimulateSection(selected: ActionStatus?, onSelect: (ActionStatus?) -> Unit, onReset: () -> Unit) {
@@ -397,6 +510,32 @@ private fun SettingsPage(onBack: () -> Unit) {
             ) { Text(stringResource(R.string.ui_debug_back_to_preview)) }
             UiVoiceSettingsRoute(DebugRules.repository)
         }
+    }
+}
+
+/**
+ * First-run setup, shown even when it was already finished. [시작하기] saves the preset and the
+ * "done" flag in C's real preferences (this build's MainActivity has no gate yet), then comes back.
+ * "도와줄 앱" is saved through A's real CorePreferences (pending until A's collection consent).
+ */
+@Composable
+private fun OnboardingPage(onBack: () -> Unit) {
+    BackHandler(onBack = onBack)
+    val context = LocalContext.current
+    val preferences = remember { UiVoicePreferences.get(context) }
+    val core = remember { CorePreferences.get(context) }
+    Scaffold { innerPadding ->
+        UiVoiceOnboardingScreen(
+            initialPreset = OnboardingGatePolicy.initialPreset(preferences.current()),
+            initialAutoCloseConsent = preferences.current().autoCloseConsent,
+            onStart = { preset, autoCloseConsent, helpApps ->
+                helpApps?.let { HelpAppsSync.save(it.draft, it.catalog, preferences, CoreAllowedApps(core)) }
+                preferences.completeOnboarding(preset, autoCloseConsent)
+                onBack()
+            },
+            consentGranted = core.currentSettings().consentGranted,
+            modifier = Modifier.padding(innerPadding),
+        )
     }
 }
 

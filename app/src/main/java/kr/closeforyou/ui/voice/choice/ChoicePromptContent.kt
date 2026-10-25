@@ -44,6 +44,12 @@ fun ChoicePromptContent(
     onSpeak: () -> Unit = {},
     onRepeat: () -> Unit = {},
     onStopSpeaking: () -> Unit = {},
+    /**
+     * REVALIDATING: the summary and its extra lines give way to one "다시 확인하고 있어요." line
+     * (liveRegion, said once as it appears) and every button is disabled. The buttons stay in place
+     * so a TalkBack focus on one of them is not dropped (device unverified). paneTitle is unchanged.
+     */
+    revalidating: Boolean = false,
 ) {
     val paneTitle = stringResource(R.string.ui_choice_pane_title)
     Surface(
@@ -58,23 +64,35 @@ fun ChoicePromptContent(
             modifier = Modifier.padding(20.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            Text(text = stringResource(prompt.summary.textRes()), style = MaterialTheme.typography.titleMedium)
-            if (prompt.cannotPressForUser) {
-                Text(text = stringResource(R.string.ui_choice_cannot_press))
+            if (revalidating) {
+                Text(
+                    text = stringResource(R.string.ui_revalidate_checking),
+                    style = MaterialTheme.typography.titleMedium,
+                    modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
+                )
+            } else {
+                Text(text = stringResource(prompt.summary.textRes()), style = MaterialTheme.typography.titleMedium)
+                val countdown = prompt.countdownSeconds
+                if (countdown != null) {
+                    Text(text = stringResource(R.string.ui_choice_video_ad_wait, countdown))
+                } else if (prompt.cannotPressForUser) {
+                    Text(text = stringResource(R.string.ui_choice_cannot_press))
+                }
+                prompt.pressFailure?.let { failure ->
+                    Text(text = stringResource(PressResultSpeech.reasonRes(failure)))
+                }
             }
-            prompt.pressFailure?.let { failure ->
-                Text(text = stringResource(PressResultSpeech.reasonRes(failure)))
-            }
+            val enabled = !revalidating
             prompt.options.forEach { option ->
                 val label = option.label()
                 val buttonModifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)
                 if (option.kind == PromptOptionKind.PRESS_CANDIDATE) {
-                    Button(onClick = { onOption(option) }, modifier = buttonModifier) { Text(label) }
+                    Button(onClick = { onOption(option) }, modifier = buttonModifier, enabled = enabled) { Text(label) }
                 } else {
-                    OutlinedButton(onClick = { onOption(option) }, modifier = buttonModifier) { Text(label) }
+                    OutlinedButton(onClick = { onOption(option) }, modifier = buttonModifier, enabled = enabled) { Text(label) }
                 }
             }
-            PromptControls(controls, onSpeak, onRepeat, onStopSpeaking)
+            PromptControls(if (revalidating) controls.copy(enabled = false, messageRes = null) else controls, onSpeak, onRepeat, onStopSpeaking)
         }
     }
 }
@@ -96,6 +114,7 @@ private fun PromptControls(
         val listeningState = stringResource(R.string.ui_voice_listening_state)
         OutlinedButton(
             onClick = onSpeak,
+            enabled = controls.enabled,
             modifier = buttonModifier.fillMaxWidth().semantics {
                 if (controls.listening) stateDescription = listeningState
             },
@@ -105,14 +124,16 @@ private fun PromptControls(
     }
     if (controls.speechButtons) {
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            OutlinedButton(onClick = onRepeat, modifier = buttonModifier.weight(1f)) {
+            OutlinedButton(onClick = onRepeat, modifier = buttonModifier.weight(1f), enabled = controls.enabled) {
                 Text(stringResource(R.string.ui_choice_repeat))
             }
-            OutlinedButton(onClick = onStopSpeaking, modifier = buttonModifier.weight(1f)) {
+            OutlinedButton(onClick = onStopSpeaking, modifier = buttonModifier.weight(1f), enabled = controls.enabled) {
                 Text(stringResource(R.string.ui_choice_stop_speaking))
             }
         }
     }
+    // Status line and hint exist only while they have words: an empty Text would still be a node
+    // TalkBack can land on. The Row above has no semantics, so it is not a node either (LG check 10/23).
     controls.messageRes?.let {
         Text(
             text = stringResource(it),
@@ -126,7 +147,9 @@ private fun PromptControls(
 
 internal fun PromptSummary.textRes(): Int = when (this) {
     PromptSummary.LIKELY_AD -> R.string.ui_choice_summary_ad
+    PromptSummary.LIKELY_VIDEO_AD -> R.string.ui_choice_summary_video_ad
     PromptSummary.LIKELY_NOTICE -> R.string.ui_choice_summary_notice
+    PromptSummary.LIKELY_COUPON -> R.string.ui_choice_summary_coupon
     PromptSummary.NEEDS_REVIEW -> R.string.ui_choice_summary_review
     PromptSummary.UNKNOWN -> R.string.ui_choice_summary_unknown
 }

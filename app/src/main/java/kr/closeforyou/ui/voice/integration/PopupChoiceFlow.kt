@@ -2,7 +2,9 @@ package kr.closeforyou.ui.voice.integration
 
 import kotlin.coroutines.resume
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import kr.closeforyou.R
@@ -21,8 +23,9 @@ import kr.closeforyou.core.model.PopupSnapshot
 import kr.closeforyou.core.model.SnapshotToken
 import kr.closeforyou.core.model.UserChoice
 import kr.closeforyou.ui.voice.AnnouncementBatcher
+import kr.closeforyou.ui.voice.PressFailure
 import kr.closeforyou.ui.voice.PressResultSpeech
-import kr.closeforyou.ui.voice.choice.AGateLabelPolicy
+import kr.closeforyou.ui.voice.PressSuccess
 import kr.closeforyou.ui.voice.choice.ChoicePrompt
 import kr.closeforyou.ui.voice.choice.ChoicePromptPlanner
 import kr.closeforyou.ui.voice.choice.MoveToButtonFeature
@@ -31,11 +34,18 @@ import kr.closeforyou.ui.voice.choice.PressableLabelPolicy
 import kr.closeforyou.ui.voice.choice.PromptOptionKind
 import kr.closeforyou.ui.voice.choice.RememberChoiceFeature
 import kr.closeforyou.ui.voice.choice.RememberChoiceSpeech
+import kr.closeforyou.ui.voice.choice.SharedLabelPolicy
+import kr.closeforyou.ui.voice.choice.VideoAdAnnouncementFeature
+import kr.closeforyou.ui.voice.choice.VideoAdInfo
 import kr.closeforyou.ui.voice.overlay.ChoiceOrigin
 import kr.closeforyou.ui.voice.overlay.ChoicePromptPresenter
 import kr.closeforyou.ui.voice.overlay.OverlayWindowKeeper
+import kr.closeforyou.ui.voice.overlay.OverlayWindowStatus
 import kr.closeforyou.ui.voice.overlay.PromptAnswer
 import kr.closeforyou.ui.voice.overlay.PromptShowResult
+import kr.closeforyou.ui.voice.overlay.RevalidatingFeature
+import kr.closeforyou.ui.voice.overlay.RevalidationCause
+import kr.closeforyou.ui.voice.overlay.RevalidationEnd
 
 /**
  * A (or B) hands C's choice to the safety path: B's ActionPolicy, then A's single action gate.
@@ -77,8 +87,17 @@ fun interface UiText {
  * - [앞으로 항상 닫기] (REMEMBER_EXACT_POPUP, team decision 10/20 (가)): B's policy does not press
  *   for REMEMBER_EXACT_POPUP, so [handler] gets the same token and candidate as CLOSE_ONCE (SKIP_ONCE
  *   for a skip button, as B checks the role). The rule key is prepared by [rememberStore] before
- *   the press (team decision 10/21); only MECHANICAL_SUCCESS commits it, once; any other result
+ *   the press (team decision 10/21); only [PressSuccess.isConfirmed] (attempted + MECHANICAL_SUCCESS +
+ *   CLOSED_CONFIRMED) commits it, once; any other result
  *   drops it and is spoken like a one-time press. The handler is still called at most once per tap.
+ * - REVALIDATING ([revalidatingEnabled], off by default; off = everything above unchanged):
+ *   `Invalidated` puts the prompt on screen into "다시 확인 중" instead of closing it (signal 1).
+ *   The next `Candidate` for which A's [isSamePopup] says yes refills the same window (signal 2);
+ *   any other `Candidate` closes it with one sentence and shows its own prompt, `Blocked` closes it
+ *   silently (signal 3). Whether it is "the same popup" is A's rule only: C never guesses, and
+ *   until A provides [isSamePopup] every candidate counts as different. A can also call
+ *   [ChoicePromptPresenter.endRevalidation] directly; with no answer the window closes after
+ *   [kr.closeforyou.ui.voice.overlay.RevalidatingFeature.TIMEOUT_MILLIS].
  *
  * Call [run] from a main-thread coroutine owned by the service; cancel it when the service stops.
  */
@@ -93,28 +112,81 @@ class PopupChoiceFlow(
     private val text: UiText,
     private val contentText: (PopupAnalysis) -> String,
     private val onMoveToButton: (MoveToButtonRequest) -> Unit = {},
-    private val labelPolicy: PressableLabelPolicy = AGateLabelPolicy,
+    private val labelPolicy: PressableLabelPolicy = SharedLabelPolicy,
     private val moveToButtonEnabled: Boolean = MoveToButtonFeature.enabled,
     private val rememberChoicesEnabled: Boolean = RememberChoiceFeature.enabled,
     private val rememberStore: RememberedPopupStore = RememberedPopupStore.NONE,
     /** C's per-app auto close setting (default off); decides the sentence after remembering. */
     private val autoCloseEnabledForApp: (packageName: String) -> Boolean = { false },
+    /**
+     * B's F5 facts for this analysis, from A's assembly:
+     * `{ VideoAdInfo.from(DecisionVideoAd.inspect(it)) }`. Wording only (see [ChoicePromptPlanner.plan]).
+     */
+    private val videoAdOf: (PopupAnalysis) -> VideoAdInfo? = { null },
+    private val videoAdEnabled: Boolean = VideoAdAnnouncementFeature.enabled,
+    /** [RevalidatingFeature]; false keeps the old "invalidated → close" path exactly. */
+    private val revalidatingEnabled: Boolean = RevalidatingFeature.enabled,
+    /**
+     * A's signal 2, asked on the main thread only while C's window is REVALIDATING: true when A's
+     * new F0 check says [PopupEvent.Candidate] is the popup the prompt was asking about.
+     * [팀 확정 필요] No A signal exists yet, so the default says "different" for every candidate.
+     */
+    private val isSamePopup: (PopupEvent.Candidate) -> Boolean = { false },
 ) {
     suspend fun run() {
-        source.events.collectLatest { event ->
-            when (event) {
-                is PopupEvent.Candidate -> try {
-                    handleCandidate(event)
-                } finally {
-                    // Covers cancellation by a newer event as well as normal completion.
-                    closePrompt()
+        if (!revalidatingEnabled) {
+            source.events.collectLatest { event ->
+                when (event) {
+                    is PopupEvent.Candidate -> try {
+                        handleCandidate(event)
+                    } finally {
+                        // Covers cancellation by a newer event as well as normal completion.
+                        closePrompt()
+                    }
+                    is PopupEvent.Blocked, is PopupEvent.Invalidated -> closePrompt()
                 }
-                is PopupEvent.Blocked, is PopupEvent.Invalidated -> closePrompt()
             }
+            return
+        }
+        try {
+            source.events.collectLatest { event ->
+                when (event) {
+                    is PopupEvent.Candidate -> {
+                        val same = presenter.windowState.status == OverlayWindowStatus.REVALIDATING && isSamePopup(event)
+                        if (!same) closeOrEndRevalidation(RevalidationEnd.DIFFERENT_POPUP)
+                        try {
+                            handleCandidate(event, confirmSamePopup = same)
+                        } finally {
+                            // Cancelled by a newer event: that event decides what happens to the
+                            // window (an Invalidated one may keep it for the re-check). Finished: close.
+                            if (currentCoroutineContext().isActive) closePrompt() else forgetPrompt()
+                        }
+                    }
+                    is PopupEvent.Invalidated -> {
+                        forgetPrompt()
+                        announcer.stop()
+                        presenter.beginRevalidation(RevalidationCause.SCREEN_EVENT)
+                    }
+                    is PopupEvent.Blocked -> closePrompt()
+                }
+            }
+        } finally {
+            // The flow ends (service stops) while a window may be revalidating with no work running.
+            closePrompt()
         }
     }
 
-    private suspend fun handleCandidate(event: PopupEvent.Candidate) {
+    /** A new candidate that is not "the same popup": a revalidating window says why it closes. */
+    private fun closeOrEndRevalidation(end: RevalidationEnd) {
+        if (presenter.windowState.status == OverlayWindowStatus.REVALIDATING) {
+            forgetPrompt()
+            presenter.endRevalidation(end)
+        } else {
+            closePrompt()
+        }
+    }
+
+    private suspend fun handleCandidate(event: PopupEvent.Candidate, confirmSamePopup: Boolean = false) {
         val token = event.snapshot.token
         if (source.currentToken() != token) return
         val evidence = extractor.extract(event.snapshot)
@@ -123,10 +195,16 @@ class PopupChoiceFlow(
         val analysis = evidence.copy(classification = classification)
         if (source.currentToken() != token) return
 
-        var prompt: ChoicePrompt? =
-            ChoicePromptPlanner.plan(analysis, classification, labelPolicy, moveToButtonEnabled, rememberChoicesEnabled)
+        val videoAd = if (videoAdEnabled) videoAdOf(analysis) else null
+        var prompt: ChoicePrompt? = ChoicePromptPlanner.plan(
+            analysis, classification, labelPolicy, moveToButtonEnabled, rememberChoicesEnabled, videoAd, videoAdEnabled,
+        )
+        // Only the first prompt of a confirmed same popup goes into the revalidating window.
+        var refill = confirmSamePopup
         while (prompt != null) {
-            prompt = when (val answer = awaitAnswer(prompt)) {
+            val answer = awaitAnswer(prompt, refill)
+            refill = false
+            prompt = when (answer) {
                 is Answer.Move -> {
                     onMoveToButton(answer.request)
                     null
@@ -166,14 +244,14 @@ class PopupChoiceFlow(
         val prepared = if (remember) rememberStore.prepare(choice, snapshot, analysis) else null
         val result = handler.handle(sent, analysis, origin) ?: return null
         if (!PressResultSpeech.isPressChoice(sent.kind)) return null
-        val failure = PressResultSpeech.failureOf(result)
-        if (failure == null) {
+        if (PressSuccess.isConfirmed(result)) {
             AnnouncementBatcher.outcomeOf(result, sent.kind)?.let(batcher::add)
             if (remember && result.token == choice.token) rememberAfterSuccess(choice, prepared)
             return null
         }
-        // Not pressed or not confirmed (ATTEMPT_FAILED, OUTCOME_UNKNOWN, NOT_EXECUTED, BLOCKED, STALE):
-        // the prepared key is dropped here, nothing is saved.
+        // Not pressed or not confirmed closed (any status without attempted + MECHANICAL_SUCCESS +
+        // CLOSED_CONFIRMED): the prepared key is dropped here, nothing is saved.
+        val failure = PressResultSpeech.failureOf(result) ?: PressFailure.NOT_CONFIRMED
         val followUp = if (source.currentToken() == choice.token) {
             ChoicePromptPlanner.afterFailedPress(prompt, failure, moveToButtonEnabled)
         } else {
@@ -251,7 +329,7 @@ class PopupChoiceFlow(
      * until one tap. Taps that arrive while nobody waits are dropped. Cancelling this coroutine
      * leaves closing the prompt to [run]'s finally block.
      */
-    private suspend fun awaitAnswer(prompt: ChoicePrompt): Answer = suspendCancellableCoroutine { cont ->
+    private suspend fun awaitAnswer(prompt: ChoicePrompt, refill: Boolean = false): Answer = suspendCancellableCoroutine { cont ->
         pending = { answer ->
             pending = null
             if (cont.isActive) cont.resume(answer)
@@ -260,7 +338,9 @@ class PopupChoiceFlow(
         if (shown !== prompt || !presenter.isShowing) {
             shown = prompt
             shownGeneration = OverlayWindowKeeper.NO_GENERATION
-            if (presenter.present(prompt, ::deliver) == PromptShowResult.SHOWN) {
+            // confirmSamePopup falls back to a new window when the re-check already timed out.
+            val result = if (refill) presenter.confirmSamePopup(prompt, ::deliver) else presenter.present(prompt, ::deliver)
+            if (result == PromptShowResult.SHOWN) {
                 shownGeneration = presenter.windowState.generation
             } else {
                 shown = null
@@ -281,10 +361,15 @@ class PopupChoiceFlow(
     }
 
     private fun closePrompt() {
+        forgetPrompt()
+        presenter.dismiss()
+        announcer.stop()
+    }
+
+    /** Lets go of the prompt without touching the window: no answer of it reaches B/A any more. */
+    private fun forgetPrompt() {
         shown = null
         shownGeneration = OverlayWindowKeeper.NO_GENERATION
         pending = null
-        presenter.dismiss()
-        announcer.stop()
     }
 }

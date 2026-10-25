@@ -1,18 +1,13 @@
 package kr.closeforyou.ui.voice.choice
 
 import kr.closeforyou.R
+import kr.closeforyou.core.model.LabelRejectReason
 import kr.closeforyou.core.model.SafetyReason
 
 /**
- * TEMPORARY C mirror of the shared label contract v3 reject reasons (B, PR not opened yet).
- * Same names and order as the draft. Carries no screen text, only the code.
- * REPLACE-WITH-CONTRACT: core/model/ButtonLabelRules.LabelRejectReason
+ * Off until the team decides to say reasons and the prompt is wired (the contract is on main).
+ * Off = prompt keeps "이 팝업은 대신 닫을 수 없어요".
  */
-enum class UiLabelRejectReason {
-    NO_LABEL, SYMBOL_ONLY, DECISION_WORD, CONDITIONAL_WORD, NAVIGATION_WORD, AMBIGUOUS_WORD, NOT_IN_LIST, LABEL_CONFLICT,
-}
-
-/** Off until the contract lands and the prompt is wired. Off = prompt keeps "이 팝업은 대신 닫을 수 없어요". */
 object CannotPressReasonFeature {
     val enabled: Boolean get() = false
 }
@@ -22,7 +17,7 @@ sealed interface CannotPressExplanation {
     /** B's ActionPolicy reason for the whole popup. */
     data class Policy(val reason: SafetyReason) : CannotPressExplanation
     /** Why a button's label was rejected (no label text is kept). */
-    data class Label(val reason: UiLabelRejectReason) : CannotPressExplanation
+    data class Label(val reason: LabelRejectReason) : CannotPressExplanation
 }
 
 /**
@@ -44,20 +39,20 @@ object CannotPressReasonSpeech {
 
     /** With several rejected buttons, the reason most worth knowing for safety is said first. */
     private val labelOrder = listOf(
-        UiLabelRejectReason.DECISION_WORD,
-        UiLabelRejectReason.CONDITIONAL_WORD,
-        UiLabelRejectReason.NAVIGATION_WORD,
-        UiLabelRejectReason.AMBIGUOUS_WORD,
-        UiLabelRejectReason.LABEL_CONFLICT,
-        UiLabelRejectReason.NOT_IN_LIST,
-        UiLabelRejectReason.SYMBOL_ONLY,
-        UiLabelRejectReason.NO_LABEL,
+        LabelRejectReason.DECISION_WORD,
+        LabelRejectReason.CONDITIONAL_WORD,
+        LabelRejectReason.NAVIGATION_WORD,
+        LabelRejectReason.AMBIGUOUS_WORD,
+        LabelRejectReason.LABEL_CONFLICT,
+        LabelRejectReason.NOT_IN_LIST,
+        LabelRejectReason.SYMBOL_ONLY,
+        LabelRejectReason.NO_LABEL,
     )
 
     /** Null when the feature is off or nothing explains the refusal (keep the generic sentence). */
     fun explain(
         policyReasons: Set<SafetyReason>,
-        labelReasons: Collection<UiLabelRejectReason>,
+        labelReasons: Collection<LabelRejectReason>,
         enabled: Boolean = CannotPressReasonFeature.enabled,
     ): CannotPressExplanation? {
         if (!enabled) return null
@@ -70,15 +65,15 @@ object CannotPressReasonSpeech {
         is CannotPressExplanation.Label -> labelRes(explanation.reason)
     }
 
-    fun labelRes(reason: UiLabelRejectReason): Int = when (reason) {
-        UiLabelRejectReason.NO_LABEL -> R.string.ui_label_reject_no_label
-        UiLabelRejectReason.SYMBOL_ONLY -> R.string.ui_label_reject_symbol_only
-        UiLabelRejectReason.DECISION_WORD -> R.string.ui_label_reject_decision_word
-        UiLabelRejectReason.CONDITIONAL_WORD -> R.string.ui_label_reject_conditional_word
-        UiLabelRejectReason.NAVIGATION_WORD -> R.string.ui_label_reject_navigation_word
-        UiLabelRejectReason.AMBIGUOUS_WORD -> R.string.ui_label_reject_ambiguous_word
-        UiLabelRejectReason.NOT_IN_LIST -> R.string.ui_label_reject_not_in_list
-        UiLabelRejectReason.LABEL_CONFLICT -> R.string.ui_label_reject_label_conflict
+    fun labelRes(reason: LabelRejectReason): Int = when (reason) {
+        LabelRejectReason.NO_LABEL -> R.string.ui_label_reject_no_label
+        LabelRejectReason.SYMBOL_ONLY -> R.string.ui_label_reject_symbol_only
+        LabelRejectReason.DECISION_WORD -> R.string.ui_label_reject_decision_word
+        LabelRejectReason.CONDITIONAL_WORD -> R.string.ui_label_reject_conditional_word
+        LabelRejectReason.NAVIGATION_WORD -> R.string.ui_label_reject_navigation_word
+        LabelRejectReason.AMBIGUOUS_WORD -> R.string.ui_label_reject_ambiguous_word
+        LabelRejectReason.NOT_IN_LIST -> R.string.ui_label_reject_not_in_list
+        LabelRejectReason.LABEL_CONFLICT -> R.string.ui_label_reject_label_conflict
     }
 
     /** Only reasons in [policyOrder] reach here through [explain]. */

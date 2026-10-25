@@ -36,6 +36,8 @@ data class PromptControlsState(
     val speechButtons: Boolean = false,
     /** Fixed sentence after a voice attempt; announced politely (liveRegion), never the heard words. */
     @StringRes val messageRes: Int? = null,
+    /** False while REVALIDATING: the buttons stay (TalkBack reads them as unavailable) but do nothing. */
+    val enabled: Boolean = true,
 ) {
     val speakVisible: Boolean get() = speakButton == SpeakButtonState.SHOWN
 
@@ -77,12 +79,15 @@ class PromptControlsController(
     private val prompt: ChoicePrompt,
     private val scope: CoroutineScope,
     private val support: PromptControlsSupport,
+    /** First status line (liveRegion), e.g. "다시 확인했어요." after a same-popup refill. */
+    @StringRes initialMessageRes: Int? = null,
     private val onVoiceOption: (PromptOption) -> Unit,
 ) {
     private val mutableState = MutableStateFlow(
         PromptControlsState(
             speakButton = if (support.voiceInput != null) support.speakButtonState() else SpeakButtonState.TURNED_OFF,
             speechButtons = support.announcer != null,
+            messageRes = initialMessageRes,
         ),
     )
     val state: StateFlow<PromptControlsState> = mutableState.asStateFlow()

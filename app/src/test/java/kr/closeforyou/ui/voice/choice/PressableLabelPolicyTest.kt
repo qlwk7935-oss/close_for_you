@@ -4,56 +4,50 @@ import kotlinx.collections.immutable.persistentListOf
 import kr.closeforyou.core.model.ButtonRole
 import kr.closeforyou.core.model.CloseCandidate
 import kr.closeforyou.core.model.EvidenceLevel
+import kr.closeforyou.core.model.LabelVectorFile
 import kr.closeforyou.core.model.PopupClassification
 import kr.closeforyou.core.model.ScreenBounds
 import kr.closeforyou.testing.mock.MockPopupFixtures
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
+/**
+ * C behaviour only: when the prompt shows a press button. The label contract itself is tested in
+ * core (`ButtonLabelRulesTest`); here its vector file is reused, not copied.
+ */
 class PressableLabelPolicyTest {
-    @Test fun aGateCurrentEightLabelsAreAccepted() {
-        listOf("닫기", "창 닫기", "팝업 닫기", "close", "dismiss").forEach {
-            assertEquals(it, ButtonRole.CLOSE, AGateLabelPolicy.roleOf(it))
+    @Test fun pressButtonShownExactlyWhenContractRoleEqualsCandidateRole() {
+        val rows = LabelVectorFile.read(resource(LabelVectorFile.VECTORS))
+        assertEquals(176, rows.size)
+        val wrong = rows.flatMap { row ->
+            val label = LabelVectorFile.label(row["label_escaped"]!!)
+            listOf(ButtonRole.CLOSE, ButtonRole.SKIP).mapNotNull { role ->
+                val expected = row["expected_role"] == role.name
+                val shown = pressIds(PopupClassification.ADVERTISEMENT, candidate("c", label, role)) == listOf("c")
+                if (shown == expected) null else "${row["id"]}/$role"
+            }
         }
-        listOf("건너뛰기", "스킵", "skip").forEach {
-            assertEquals(it, ButtonRole.SKIP, AGateLabelPolicy.roleOf(it))
-        }
+        // Ids only: labels are screen-like text and stay out of failure messages.
+        assertTrue("wrong: $wrong", wrong.isEmpty())
     }
 
-    @Test fun caseOuterSpaceAndFullWidthFollowA() {
-        listOf("Close", "CLOSE", "ＣＬＯＳＥ", " 닫기 ", "\t닫기", "닫기\n", "　닫기", " 닫기").forEach {
-            assertEquals(it, ButtonRole.CLOSE, AGateLabelPolicy.roleOf(it))
-        }
+    @Test fun sixLabelsAddedByContractV1NowGetAPressButton() {
+        val close = listOf("광고 닫기", "공지 닫기", "닫기 버튼", "close ad")
+        val skip = listOf("skip ad", "광고 건너뛰기")
+        val candidates = close.mapIndexed { i, it -> candidate("c$i", it) } +
+            skip.mapIndexed { i, it -> candidate("s$i", it, ButtonRole.SKIP) }
+        assertEquals(candidates.map { it.id }, pressIds(PopupClassification.ADVERTISEMENT, *candidates.toTypedArray()))
     }
 
-    @Test fun xAndUnlistedLabelsAreRejected() {
-        listOf(null, "", "  ", "X", "x", "×", "✕", "[X]", "확인", "OK", "오늘 하루 닫기", "동의하고 닫기",
-            "[닫기]", "닫기.", "닫 기", "닫​기", "광고 닫기", "창  닫기").forEach {
-            assertNull(it.toString(), AGateLabelPolicy.roleOf(it))
-        }
-    }
-
-    /** B draft v1 vectors (175): the temporary policy must equal A's current gate (`a_current`). */
-    @Test fun allSharedVectorsMatchAGateCurrentColumn() {
-        val rows = loadVectors()
-        assertEquals(175, rows.size)
-        val mismatches = rows.filter { AGateLabelPolicy.roleOf(it.label) != it.aCurrent }
-        assertTrue("Mismatched categories: ${mismatches.map { it.category }}", mismatches.isEmpty())
-        // Rejection categories (R1~R9) must never become pressable.
-        rows.filter { it.category.startsWith("R") }.forEach {
-            assertNull(it.category, AGateLabelPolicy.roleOf(it.label))
-        }
-    }
-
-    @Test fun plannerHidesPressButtonWhenGateWouldRejectLabel() {
+    @Test fun xAndRiskyLabelsGetNoPressButton() {
         val analysis = MockPopupFixtures.notice().analysis.copy(
             closeCandidates = persistentListOf(
                 candidate("x", "X"),
                 candidate("times", "×"),
                 candidate("ok", "확인"),
-                candidate("ad", "광고 닫기"),
+                candidate("today", "오늘 하루 닫기"),
+                candidate("agree", "동의하고 닫기"),
                 candidate("dismiss", null, evidence = EvidenceLevel.E1_DISMISS),
             ),
         )
@@ -62,16 +56,13 @@ class PressableLabelPolicyTest {
         assertTrue(prompt.cannotPressForUser)
     }
 
-    @Test fun labelIsShownTrimmedButCheckedLikeA() {
-        val analysis = MockPopupFixtures.notice().analysis.copy(
-            closeCandidates = persistentListOf(
-                candidate("spaced", "  닫기  "),
-                candidate("dismiss", "Dismiss", evidence = EvidenceLevel.E1_DISMISS),
-                candidate("skip", "SKIP", role = ButtonRole.SKIP),
-            ),
+    @Test fun labelIsShownTrimmedButCheckedByTheContract() {
+        val press = pressOptions(
+            PopupClassification.NOTICE,
+            candidate("spaced", "  닫기  "),
+            candidate("dismiss", "Dismiss", evidence = EvidenceLevel.E1_DISMISS),
+            candidate("skip", "SKIP", role = ButtonRole.SKIP),
         )
-        val press = ChoicePromptPlanner.plan(analysis, PopupClassification.NOTICE).options
-            .filter { it.kind == PromptOptionKind.PRESS_CANDIDATE }
         assertEquals(listOf("spaced", "dismiss", "skip"), press.map { it.candidateId })
         assertEquals("닫기", press.first().buttonLabel)
     }
@@ -83,21 +74,35 @@ class PressableLabelPolicyTest {
     }
 
     @Test fun roleMustAgreeWithLabel() {
-        // B says SKIP but the label means CLOSE: A's gate rejects this, so C must not offer it.
+        // B says SKIP but the label means CLOSE (and the reverse): A's gate rejects this, so C must not offer it.
         val analysis = MockPopupFixtures.notice().analysis.copy(
-            closeCandidates = persistentListOf(candidate("c", "닫기", ButtonRole.SKIP)),
+            closeCandidates = persistentListOf(candidate("c", "닫기", ButtonRole.SKIP), candidate("s", "광고 건너뛰기", ButtonRole.CLOSE)),
         )
         assertTrue(ChoicePromptPlanner.plan(analysis, PopupClassification.NOTICE).cannotPressForUser)
     }
 
-    @Test fun injectedPolicyCanWidenLikeFutureContract() {
-        val analysis = MockPopupFixtures.notice().analysis.copy(
-            closeCandidates = persistentListOf(candidate("ad", "광고 닫기")),
-        )
-        val future = PressableLabelPolicy { if (it == "광고 닫기") ButtonRole.CLOSE else null }
-        val prompt = ChoicePromptPlanner.plan(analysis, PopupClassification.ADVERTISEMENT, future)
-        assertEquals(listOf("ad"), prompt.options.mapNotNull { it.candidateId })
+    @Test fun decisionPopupNeverGetsAPressButtonEvenForAllowedLabel() {
+        assertTrue(pressIds(PopupClassification.USER_DECISION, candidate("c", "닫기")).isEmpty())
     }
+
+    @Test fun narrowerPolicyCanBeInjected() {
+        // E.g. while A's gate still has its own 8 labels, an integration test can pass that list.
+        val gateOnly = PressableLabelPolicy { if (it == "닫기") ButtonRole.CLOSE else null }
+        val analysis = MockPopupFixtures.notice().analysis.copy(
+            closeCandidates = persistentListOf(candidate("ad", "광고 닫기"), candidate("c", "닫기")),
+        )
+        val prompt = ChoicePromptPlanner.plan(analysis, PopupClassification.ADVERTISEMENT, gateOnly)
+        assertEquals(listOf("c"), prompt.options.filter { it.kind == PromptOptionKind.PRESS_CANDIDATE }.map { it.candidateId })
+    }
+
+    private fun pressOptions(classification: PopupClassification, vararg candidates: CloseCandidate) =
+        ChoicePromptPlanner.plan(
+            MockPopupFixtures.notice().analysis.copy(closeCandidates = persistentListOf(*candidates)),
+            classification,
+        ).options.filter { it.kind == PromptOptionKind.PRESS_CANDIDATE }
+
+    private fun pressIds(classification: PopupClassification, vararg candidates: CloseCandidate) =
+        pressOptions(classification, *candidates).map { it.candidateId }
 
     private fun candidate(
         id: String,
@@ -106,44 +111,6 @@ class PressableLabelPolicyTest {
         evidence: EvidenceLevel = EvidenceLevel.E2_LABELED_NODE,
     ) = CloseCandidate(id, "1", null, label, ScreenBounds(0, 0, 10, 10), evidence, role)
 
-    private data class Vector(val category: String, val label: String?, val aCurrent: ButtonRole?) {
-        override fun toString(): String = "Vector($category)"
-    }
-
-    private fun loadVectors(): List<Vector> {
-        val stream = requireNotNull(javaClass.getResourceAsStream("label_test_vectors.csv"))
-        val lines = stream.bufferedReader(Charsets.UTF_8).readLines().map { it.removePrefix("﻿") }
-        val header = parseCsvLine(lines.first())
-        val labelAt = header.indexOf("label_escaped")
-        val aAt = header.indexOf("a_current")
-        return lines.drop(1).filter { it.isNotBlank() }.map { line ->
-            val f = parseCsvLine(line)
-            val raw = f[labelAt]
-            Vector(
-                category = f[0],
-                label = if (raw == "(null)") null else raw.replace("\\n", "\n").replace("\\t", "\t"),
-                aCurrent = if (f[aAt] == "NONE") null else ButtonRole.valueOf(f[aAt]),
-            )
-        }
-    }
-
-    /** Minimal RFC 4180 line parser: quoted fields, doubled quotes. No field spans lines here. */
-    private fun parseCsvLine(line: String): List<String> {
-        val out = mutableListOf<String>()
-        val cur = StringBuilder()
-        var quoted = false
-        var i = 0
-        while (i < line.length) {
-            val c = line[i]
-            when {
-                quoted && c == '"' && i + 1 < line.length && line[i + 1] == '"' -> { cur.append('"'); i++ }
-                c == '"' -> quoted = !quoted
-                c == ',' && !quoted -> { out += cur.toString(); cur.clear() }
-                else -> cur.append(c)
-            }
-            i++
-        }
-        out += cur.toString()
-        return out
-    }
+    private fun resource(name: String): String =
+        requireNotNull(javaClass.classLoader!!.getResourceAsStream(name)) { name }.use { it.readBytes().toString(Charsets.UTF_8) }
 }

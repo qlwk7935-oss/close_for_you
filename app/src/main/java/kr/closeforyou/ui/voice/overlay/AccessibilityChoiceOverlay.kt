@@ -3,9 +3,12 @@ package kr.closeforyou.ui.voice.overlay
 import kr.closeforyou.ui.voice.UiVoiceTheme
 import android.accessibilityservice.AccessibilityService
 import android.graphics.PixelFormat
+import android.os.Handler
+import android.os.Looper
 import android.view.Gravity
 import android.view.View
 import android.view.WindowManager
+import androidx.annotation.StringRes
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -19,6 +22,7 @@ import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.MainScope
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.MutableStateFlow
 import kr.closeforyou.R
 import kr.closeforyou.core.model.ChoiceKind
 import kr.closeforyou.ui.voice.choice.ChoicePrompt
@@ -34,39 +38,102 @@ import kr.closeforyou.ui.voice.choice.PromptSelection
  * permission. FLAG_NOT_FOCUSABLE keeps the keyboard and input focus in the app the person was
  * using; TalkBack focus is never moved by code. Mock-based: not yet wired to A's real service.
  *
- * Window bookkeeping (generations, failed add/remove, exactly-once cleanup) is in
- * [OverlayWindowKeeper]; this class only supplies the Android steps.
+ * Window bookkeeping (generations, failed add/remove, exactly-once cleanup, REVALIDATING) is in
+ * [OverlayWindowKeeper]; this class only supplies the Android steps. One window holds one prompt
+ * session at a time; a same-popup confirmation swaps the session inside the same window.
  */
 class AccessibilityChoiceOverlay(
     private val service: AccessibilityService,
     private val listener: OverlayListener = OverlayListener.NONE,
     /** [말하기]·[다시 듣기]·[그만 말하기]; [PromptControlsSupport.NONE] shows the choices only. */
     private val controlsSupport: PromptControlsSupport = PromptControlsSupport.NONE,
+    /** [RevalidatingFeature]; false = [beginRevalidation] only dismisses, as before. */
+    private val revalidatingEnabled: Boolean = RevalidatingFeature.enabled,
 ) : ChoicePromptPresenter {
-    private class OverlayWindow(
+    /** One prompt's voice controller and coroutine scope; [onTap] carries its generation. */
+    private class PromptSession(
         val prompt: ChoicePrompt,
-        val view: ComposeView,
-        val owner: OverlayLifecycleOwner,
         val controller: PromptControlsController,
         val scope: CoroutineScope,
+        val onTap: (PromptOption) -> Unit,
     )
 
+    private data class WindowContent(val session: PromptSession, val revalidating: Boolean = false)
+
+    private class OverlayWindow(
+        val view: ComposeView,
+        val owner: OverlayLifecycleOwner,
+        val content: MutableStateFlow<WindowContent>,
+    ) {
+        val session: PromptSession get() = content.value.session
+    }
+
     private val windowManager = service.getSystemService(WindowManager::class.java)
-    private val keeper = OverlayWindowKeeper(WindowOps())
+    private val keeper = OverlayWindowKeeper(WindowOps(), MainThreadTimer(Handler(Looper.getMainLooper())))
+
+    /** The prompt that was on screen when REVALIDATING began; for the closing sentence only. */
+    private var revalidatingPrompt: ChoicePrompt? = null
 
     override val isShowing: Boolean get() = keeper.status == OverlayWindowStatus.SHOWING
 
     override val windowState: OverlayWindowState
-        get() = OverlayWindowState(keeper.status, keeper.windowGeneration)
+        get() = OverlayWindowState(keeper.status, keeper.windowGeneration, keeper.windowNumber)
 
-    override fun present(prompt: ChoicePrompt, onAnswer: (PromptAnswer) -> Unit): PromptShowResult =
-        keeper.show { generation -> createWindow(prompt, generation, onAnswer) }
+    override fun present(prompt: ChoicePrompt, onAnswer: (PromptAnswer) -> Unit): PromptShowResult {
+        revalidatingPrompt = null
+        return keeper.show { generation -> createWindow(prompt, generation, onAnswer) }
+    }
 
-    override fun dismiss() = keeper.dismiss()
+    override fun dismiss() {
+        revalidatingPrompt = null
+        keeper.dismiss()
+    }
 
-    private fun createWindow(prompt: ChoicePrompt, generation: Long, onAnswer: (PromptAnswer) -> Unit): OverlayWindow {
+    override fun beginRevalidation(cause: RevalidationCause): Boolean {
+        if (!revalidatingEnabled) {
+            dismiss()
+            return false
+        }
+        val started = keeper.beginRevalidation(onTimeout = {
+            val prompt = revalidatingPrompt
+            revalidatingPrompt = null
+            if (prompt != null) safely { listener.onRevalidationClosed(prompt, RevalidationEnd.TIMED_OUT) }
+        })
+        if (!started) dismiss()
+        return started
+    }
+
+    override fun confirmSamePopup(prompt: ChoicePrompt, onAnswer: (PromptAnswer) -> Unit): PromptShowResult {
+        if (keeper.status != OverlayWindowStatus.REVALIDATING) return present(prompt, onAnswer)
+        revalidatingPrompt = null
+        val result = keeper.confirmRevalidation { window, generation ->
+            // Same window, no add/remove: only the content and its generation change.
+            val session = newSession(prompt, generation, onAnswer, R.string.ui_revalidate_confirmed)
+            window.content.value = WindowContent(session)
+        }
+        if (result == PromptShowResult.SHOWN) safely { listener.onRevalidated(prompt) }
+        return result
+    }
+
+    override fun endRevalidation(end: RevalidationEnd) {
+        val prompt = revalidatingPrompt
+        if (keeper.status != OverlayWindowStatus.REVALIDATING || prompt == null) {
+            dismiss()
+            return
+        }
+        revalidatingPrompt = null
+        keeper.endRevalidation()
+        safely { listener.onRevalidationClosed(prompt, end) }
+    }
+
+    private fun newSession(
+        prompt: ChoicePrompt,
+        generation: Long,
+        onAnswer: (PromptAnswer) -> Unit,
+        @StringRes initialMessageRes: Int? = null,
+    ): PromptSession {
         // Taps and voice share this one path, so a voice choice is exactly a tap's UserChoice.
-        // Anything from a closed, replaced or failed window stops at the generation check.
+        // Anything from a closed, replaced, revalidating or failed window stops at the generation check.
         val onOption: (PromptOption, ChoiceOrigin) -> Unit = { option, origin ->
             when (val selection = ChoicePromptPlanner.select(prompt, option)) {
                 // Press and keep close the prompt first; READ_CONTENT keeps it open.
@@ -81,20 +148,36 @@ class AccessibilityChoiceOverlay(
             }
         }
         val scope = MainScope()
+        try {
+            val controller = PromptControlsController(prompt, scope, controlsSupport, initialMessageRes) {
+                onOption(it, ChoiceOrigin.VOICE)
+            }
+            return PromptSession(prompt, controller, scope) { onOption(it, ChoiceOrigin.TAP) }
+        } catch (e: RuntimeException) {
+            scope.cancel()
+            throw e
+        }
+    }
+
+    private fun createWindow(prompt: ChoicePrompt, generation: Long, onAnswer: (PromptAnswer) -> Unit): OverlayWindow {
+        val session = newSession(prompt, generation, onAnswer)
         var owner: OverlayLifecycleOwner? = null
         try {
-            val controller = PromptControlsController(prompt, scope, controlsSupport) { onOption(it, ChoiceOrigin.VOICE) }
+            val content = MutableStateFlow(WindowContent(session))
             val composeView = ComposeView(service).apply {
                 setContent {
-                    val controlsState by controller.state.collectAsState()
+                    val current by content.collectAsState()
+                    val shown = current.session
+                    val controlsState by shown.controller.state.collectAsState()
                     UiVoiceTheme {
                         ChoicePromptContent(
-                            prompt = prompt,
-                            onOption = { onOption(it, ChoiceOrigin.TAP) },
+                            prompt = shown.prompt,
+                            onOption = shown.onTap,
                             controls = controlsState,
-                            onSpeak = controller::onSpeak,
-                            onRepeat = controller::onRepeat,
-                            onStopSpeaking = controller::onStopSpeaking,
+                            onSpeak = shown.controller::onSpeak,
+                            onRepeat = shown.controller::onRepeat,
+                            onStopSpeaking = shown.controller::onStopSpeaking,
+                            revalidating = current.revalidating,
                             // Scrolls when large fonts make the prompt taller than the screen
                             // (the window is WRAP_CONTENT, so its height is capped by the display).
                             // statusBarsPadding: a full-height prompt stays below the status bar
@@ -110,10 +193,10 @@ class AccessibilityChoiceOverlay(
             }
             val lifecycleOwner = OverlayLifecycleOwner().also { owner = it }
             lifecycleOwner.attachTo(composeView)
-            return OverlayWindow(prompt, composeView, lifecycleOwner, controller, scope)
+            return OverlayWindow(composeView, lifecycleOwner, content)
         } catch (e: RuntimeException) {
             // Nothing was added yet: release what exists, then let the keeper report FAILED.
-            scope.cancel()
+            session.scope.cancel()
             try {
                 owner?.destroy()
             } catch (ignored: RuntimeException) {
@@ -136,20 +219,23 @@ class AccessibilityChoiceOverlay(
         title = service.getString(R.string.ui_choice_pane_title)
     }
 
+    private inline fun safely(block: () -> Unit) {
+        try {
+            block()
+        } catch (e: RuntimeException) {
+            // A listener failure must not undo the window bookkeeping that already happened.
+        }
+    }
+
     private inner class WindowOps : OverlayWindowOps<OverlayWindow> {
         override fun add(window: OverlayWindow) = windowManager.addView(window.view, layoutParams())
 
-        override fun announceShown(window: OverlayWindow) = listener.onShown(window.prompt, window.controller::speakPressed)
+        override fun announceShown(window: OverlayWindow) =
+            listener.onShown(window.session.prompt, window.session.controller::speakPressed)
 
         override fun announceDismissed(window: OverlayWindow) = listener.onDismissed()
 
-        override fun stop(window: OverlayWindow) {
-            try {
-                window.controller.dispose()
-            } finally {
-                window.scope.cancel()
-            }
-        }
+        override fun stop(window: OverlayWindow) = stopSession(window.session)
 
         override fun remove(window: OverlayWindow, immediate: Boolean): RemoveOutcome = try {
             if (immediate) windowManager.removeViewImmediate(window.view) else windowManager.removeView(window.view)
@@ -169,6 +255,31 @@ class AccessibilityChoiceOverlay(
         }
 
         override fun destroy(window: OverlayWindow) = window.owner.destroy()
+
+        override fun enterRevalidating(window: OverlayWindow) {
+            revalidatingPrompt = window.session.prompt
+            // Listening and our speech stop first, then the content changes; focus is left alone.
+            stopSession(window.session)
+            listener.onRevalidating()
+            window.content.value = window.content.value.copy(revalidating = true)
+        }
+
+        private fun stopSession(session: PromptSession) {
+            try {
+                session.controller.dispose()
+            } finally {
+                session.scope.cancel()
+            }
+        }
+    }
+
+    /** Main-looper timer for the REVALIDATING timeout; cancelled by every way out of that state. */
+    private class MainThreadTimer(private val handler: Handler) : RevalidationTimer {
+        override fun schedule(delayMillis: Long, action: () -> Unit): () -> Unit {
+            val runnable = Runnable { action() }
+            handler.postDelayed(runnable, delayMillis)
+            return { handler.removeCallbacks(runnable) }
+        }
     }
 }
 
@@ -177,6 +288,15 @@ interface OverlayListener {
     /** [speakPressed]: true once [말하기] started listening on this prompt (checked when speaking). */
     fun onShown(prompt: ChoicePrompt, speakPressed: () -> Boolean = { false }) = Unit
     fun onDismissed() = Unit
+
+    /** REVALIDATING began: stop speaking now (default: same as [onDismissed]). */
+    fun onRevalidating() = onDismissed()
+
+    /** Same popup confirmed; [prompt] is now in the same window. */
+    fun onRevalidated(prompt: ChoicePrompt) = Unit
+
+    /** The re-check closed the window ([end] = why); the window is already gone. */
+    fun onRevalidationClosed(prompt: ChoicePrompt, end: RevalidationEnd) = Unit
 
     companion object {
         val NONE = object : OverlayListener {}

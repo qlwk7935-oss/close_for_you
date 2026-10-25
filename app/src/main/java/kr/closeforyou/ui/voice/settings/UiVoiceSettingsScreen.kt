@@ -69,10 +69,11 @@ import java.time.ZoneId
 
 /**
  * Stateful entry: C settings plus A's pause state (read only) and D's remembered rules.
- * The repository is whatever D provides; today the debug screen passes the in-memory mock.
- * [deleteAll] is what [전체 삭제] runs. The default only deletes the rules; the F12 wiring PR (A)
- * passes D's `RuleStorage.repository(context)` and `{ RuleStorage.eraseAll(context) }`, which also
- * destroys the fingerprint key. [clock] decides which rules show as expired (re-read on resume).
+ * The repository is whatever is passed; the debug screen passes the in-memory mock, and the real
+ * app uses [RoomBackedRuleSettings] (D's Room, `eraseAll`, `cleanUp`).
+ * [deleteAll] is what [전체 삭제] runs. The default only deletes the rules; D's
+ * `RuleStorage.eraseAll(context)` also destroys the fingerprint key.
+ * [clock] decides which rules show as expired (re-read on resume).
  * [onOpenCleanUp] runs once each time the screen is opened (not on rotation); the default does nothing.
  */
 @Composable
@@ -81,8 +82,6 @@ fun UiVoiceSettingsRoute(
     modifier: Modifier = Modifier,
     deleteAll: suspend () -> Unit = repository::deleteAll,
     clock: Clock = Clock.systemDefaultZone(),
-    // TODO(D #25): after RuleStorage.cleanUp(context) is merged, the wiring passes
-    //  `{ RuleStorage.cleanUp(context.applicationContext) }` here. Not called directly: #25 is not on main yet.
     onOpenCleanUp: suspend () -> Unit = {},
 ) {
     val context = LocalContext.current
@@ -108,6 +107,10 @@ fun UiVoiceSettingsRoute(
             // Tidying only: the list still shows what D has, and the next open tries again.
         }
     }
+    // "도와줄 앱" saved before A's consent is added once consent is there (also on opening).
+    PendingHelpAppsEffect()
+    val helpOutcome by HelpAppsSync.lastOutcome.collectAsState()
+    var editingHelpApps by rememberSaveable { mutableStateOf(false) }
     var now by remember { mutableLongStateOf(clock.millis()) }
     val labelSource = remember { PackageManagerAppLabelSource(context.packageManager) }
     val packages = coreSettings.allowedPackages + rules.map { it.key.packageName }
@@ -128,6 +131,11 @@ fun UiVoiceSettingsRoute(
         onPauseOrDispose {}
     }
 
+    if (editingHelpApps) {
+        HelpAppsEditScreen(onClose = { editingHelpApps = false }, modifier = modifier)
+        return
+    }
+
     UiVoiceSettingsScreen(
         settings = settings,
         coreAllowedPackages = coreSettings.allowedPackages,
@@ -141,6 +149,8 @@ fun UiVoiceSettingsRoute(
         microphoneState = microphoneState,
         microphoneDenied = microphoneDenied,
         onVoiceCommandsChange = preferences::setVoiceCommandsEnabled,
+        onPresetChange = preferences::setHandlingPreset,
+        onAutoCloseConsentChange = preferences::setAutoCloseConsent,
         onAllowMicrophone = { permissionLauncher.launch(Manifest.permission.RECORD_AUDIO) },
         onRevoke = { id -> scope.launch { actions.revoke(id) } },
         onDeleteAll = {
@@ -151,6 +161,8 @@ fun UiVoiceSettingsRoute(
         nowEpochMillis = now,
         zone = clock.zone,
         deleteAllFailed = deleteFailed,
+        helpOutcome = helpOutcome,
+        onChangeHelpApps = { editingHelpApps = true },
     )
 }
 
@@ -176,10 +188,19 @@ fun UiVoiceSettingsScreen(
     microphoneDenied: Boolean = false,
     onVoiceCommandsChange: (Boolean) -> Unit = {},
     onAllowMicrophone: () -> Unit = {},
+    /** "팝업 처리 방식" (per popup kind). Separate from the per-app F12 switches below.
+     * Second value: a wider range was confirmed in the dialog ([HandlingPresetWithConsent]). */
+    onPresetChange: (HandlingPreset, Boolean) -> Unit = { _, _ -> },
+    /** The "자동 닫기" switch under the presets: true only after its dialog, false at once. */
+    onAutoCloseConsentChange: (Boolean) -> Unit = {},
     /** Decides expired / on; the Route passes its clock. */
     nowEpochMillis: Long = System.currentTimeMillis(),
     zone: ZoneId = ZoneId.systemDefault(),
     deleteAllFailed: Boolean = false,
+    /** Counts of the last "도와줄 앱" save or retry (in memory only). */
+    helpOutcome: HelpAppsOutcome? = null,
+    /** Opens [HelpAppsEditScreen]; null hides the "도와줄 앱" block. */
+    onChangeHelpApps: (() -> Unit)? = null,
 ) {
     var confirmDeleteAll by rememberSaveable { mutableStateOf(false) }
     Column(
@@ -190,6 +211,28 @@ fun UiVoiceSettingsScreen(
     ) {
         Heading(R.string.ui_settings_title, MaterialTheme.typography.titleLarge)
 
+        Heading(R.string.ui_preset_section)
+        Text(stringResource(R.string.ui_preset_section_help))
+        HandlingPresetWithConsent(
+            selected = settings.handlingPreset,
+            consentOn = settings.autoCloseConsent,
+            onPresetChange = onPresetChange,
+            onConsentChange = onAutoCloseConsentChange,
+        )
+
+        if (onChangeHelpApps != null) {
+            HorizontalDivider()
+            Heading(R.string.ui_help_apps_section)
+            HelpAppsStatus(
+                mode = settings.helpAppsMode,
+                allowedCount = coreAllowedPackages.size,
+                pendingCount = (settings.pendingHelpPackages - coreAllowedPackages).size,
+                outcome = helpOutcome,
+                onChange = onChangeHelpApps,
+            )
+        }
+
+        HorizontalDivider()
         Heading(R.string.ui_settings_section_status)
         Text(
             stringResource(

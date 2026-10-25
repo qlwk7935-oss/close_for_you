@@ -43,13 +43,7 @@ class OnDeviceVoiceCommandInput(context: Context) : SpeakButtonVoiceInput {
 
     private var recognizer: SpeechRecognizer? = null
 
-    override fun availability(): VoiceAvailability = when {
-        appContext.checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED ->
-            VoiceAvailability.MICROPHONE_PERMISSION_REQUIRED
-        Build.VERSION.SDK_INT < Build.VERSION_CODES.S -> VoiceAvailability.ON_DEVICE_UNAVAILABLE
-        !SpeechRecognizer.isOnDeviceRecognitionAvailable(appContext) -> VoiceAvailability.ON_DEVICE_UNAVAILABLE
-        else -> VoiceAvailability.READY
-    }
+    override fun availability(): VoiceAvailability = OnDeviceRecognition.availability(appContext)
 
     override fun startFromSpeakButton(token: SnapshotToken): VoiceAvailability {
         val availability = availability()
@@ -72,14 +66,7 @@ class OnDeviceVoiceCommandInput(context: Context) : SpeakButtonVoiceInput {
         val created = SpeechRecognizer.createOnDeviceSpeechRecognizer(appContext)
         recognizer = created
         created.setRecognitionListener(Listener(token, created))
-        created.startListening(
-            Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH)
-                .putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-                .putExtra(RecognizerIntent.EXTRA_LANGUAGE, LANGUAGE_TAG)
-                .putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
-                .putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, false)
-                .putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1),
-        )
+        created.startListening(OnDeviceRecognition.intent())
     }
 
     private fun release() {
@@ -92,26 +79,11 @@ class OnDeviceVoiceCommandInput(context: Context) : SpeakButtonVoiceInput {
         private val owner: SpeechRecognizer,
     ) : RecognitionListener {
         override fun onResults(results: Bundle?) {
-            // Only the top result: lower-ranked alternatives are more likely to be wrong.
-            val top = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull()
-            finish(KoreanVoiceCommandMatcher.classify(top))
+            finish(KoreanVoiceCommandMatcher.classify(OnDeviceRecognition.topResult(results)))
         }
 
         override fun onError(error: Int) {
-            finish(
-                when (error) {
-                    SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS,
-                    SpeechRecognizer.ERROR_LANGUAGE_NOT_SUPPORTED,
-                    SpeechRecognizer.ERROR_LANGUAGE_UNAVAILABLE,
-                    SpeechRecognizer.ERROR_RECOGNIZER_BUSY,
-                    SpeechRecognizer.ERROR_SERVER_DISCONNECTED,
-                    -> VoiceUtterance.Unavailable
-                    // Nothing was said: end quietly (error meaning from the SpeechRecognizer docs;
-                    // which code each device sends is not yet checked on a real device).
-                    SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> VoiceUtterance.Silent
-                    else -> VoiceUtterance.NotUnderstood
-                },
-            )
+            finish(OnDeviceRecognition.failure(error))
         }
 
         private fun finish(utterance: VoiceUtterance) {
@@ -130,8 +102,46 @@ class OnDeviceVoiceCommandInput(context: Context) : SpeakButtonVoiceInput {
         override fun onEvent(eventType: Int, params: Bundle?) = Unit
     }
 
-    private companion object {
-        const val LANGUAGE_TAG = "ko-KR"
+}
+
+/**
+ * What every C speak button shares: the on-device check, one Korean free-form request with a single
+ * result, and the meaning of each recognizer error. Shared by [OnDeviceVoiceCommandInput] and
+ * [OnDeviceDictation] so both behave the same on a device.
+ */
+internal object OnDeviceRecognition {
+    private const val LANGUAGE_TAG = "ko-KR"
+
+    fun availability(context: Context): VoiceAvailability = when {
+        context.checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED ->
+            VoiceAvailability.MICROPHONE_PERMISSION_REQUIRED
+        Build.VERSION.SDK_INT < Build.VERSION_CODES.S -> VoiceAvailability.ON_DEVICE_UNAVAILABLE
+        !SpeechRecognizer.isOnDeviceRecognitionAvailable(context) -> VoiceAvailability.ON_DEVICE_UNAVAILABLE
+        else -> VoiceAvailability.READY
+    }
+
+    fun intent(): Intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH)
+        .putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+        .putExtra(RecognizerIntent.EXTRA_LANGUAGE, LANGUAGE_TAG)
+        .putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
+        .putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, false)
+        .putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
+
+    /** Only the top result: lower-ranked alternatives are more likely to be wrong. */
+    fun topResult(results: Bundle?): String? =
+        results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull()
+
+    fun failure(error: Int): VoiceUtterance = when (error) {
+        SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS,
+        SpeechRecognizer.ERROR_LANGUAGE_NOT_SUPPORTED,
+        SpeechRecognizer.ERROR_LANGUAGE_UNAVAILABLE,
+        SpeechRecognizer.ERROR_RECOGNIZER_BUSY,
+        SpeechRecognizer.ERROR_SERVER_DISCONNECTED,
+        -> VoiceUtterance.Unavailable
+        // Nothing was said: end quietly (error meaning from the SpeechRecognizer docs;
+        // which code each device sends is not yet checked on a real device).
+        SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> VoiceUtterance.Silent
+        else -> VoiceUtterance.NotUnderstood
     }
 }
 

@@ -17,6 +17,7 @@ import kr.closeforyou.core.contract.AnnouncementState
 import kr.closeforyou.core.contract.EvidenceExtractor
 import kr.closeforyou.core.contract.PopupAnnouncer
 import kr.closeforyou.core.contract.PopupClassifier
+import kr.closeforyou.core.contract.PopupEvent
 import kr.closeforyou.core.contract.PopupFingerprintProvider
 import kr.closeforyou.core.contract.PopupRuleRepository
 import kr.closeforyou.core.model.ActionResult
@@ -24,11 +25,15 @@ import kr.closeforyou.core.model.ActionStatus
 import kr.closeforyou.core.model.ButtonRole
 import kr.closeforyou.core.model.CloseCandidate
 import kr.closeforyou.core.model.ChoiceKind
+import kr.closeforyou.core.model.ClickOutcome
+import kr.closeforyou.core.model.ExtractedText
 import kr.closeforyou.core.model.PopupAnalysis
 import kr.closeforyou.core.model.PopupRule
 import kr.closeforyou.core.model.PopupSnapshot
 import kr.closeforyou.core.model.RuleKey
+import kr.closeforyou.core.model.TextSource
 import kr.closeforyou.core.model.UserChoice
+import kr.closeforyou.decision.DecisionVideoAd
 import kr.closeforyou.testing.mock.FixtureOnlyFingerprintProvider
 import kr.closeforyou.testing.mock.InMemoryMockPopupRuleRepository
 import kr.closeforyou.testing.mock.MockPopupFixture
@@ -38,11 +43,14 @@ import kr.closeforyou.ui.voice.AnnouncementBatcher
 import kr.closeforyou.ui.voice.BatchSummary
 import kr.closeforyou.ui.voice.PressFailure
 import kr.closeforyou.ui.voice.PressResultSpeech
+import kr.closeforyou.ui.voice.PressSuccessCases
 import kr.closeforyou.ui.voice.choice.ChoicePrompt
 import kr.closeforyou.ui.voice.choice.ChoicePromptPlanner
 import kr.closeforyou.ui.voice.choice.MoveToButtonRequest
 import kr.closeforyou.ui.voice.choice.PromptOptionKind
 import kr.closeforyou.ui.voice.choice.PromptSelection
+import kr.closeforyou.ui.voice.choice.PromptSummary
+import kr.closeforyou.ui.voice.choice.VideoAdInfo
 import kr.closeforyou.ui.voice.overlay.ChoiceOrigin
 import kr.closeforyou.ui.voice.overlay.ChoicePromptPresenter
 import kr.closeforyou.ui.voice.overlay.OverlayWindowKeeper
@@ -52,6 +60,9 @@ import kr.closeforyou.ui.voice.overlay.OverlayWindowStatus
 import kr.closeforyou.ui.voice.overlay.PromptAnswer
 import kr.closeforyou.ui.voice.overlay.PromptShowResult
 import kr.closeforyou.ui.voice.overlay.RemoveOutcome
+import kr.closeforyou.ui.voice.overlay.RevalidationCause
+import kr.closeforyou.ui.voice.overlay.RevalidationEnd
+import kr.closeforyou.ui.voice.overlay.RevalidationTimer
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -73,23 +84,61 @@ class PopupChoiceFlowTest {
         var addFails = false
         var removeFails = false
         var last: Shown? = null
-        private val keeper = OverlayWindowKeeper(object : OverlayWindowOps<Long> {
-            override fun add(window: Long) {
-                if (addFails) throw IllegalStateException("BadToken")
-            }
-            override fun announceShown(window: Long) = Unit
-            override fun announceDismissed(window: Long) = Unit
-            override fun stop(window: Long) = Unit
-            override fun remove(window: Long, immediate: Boolean) =
-                if (removeFails) RemoveOutcome.FAILED else RemoveOutcome.REMOVED
-            override fun blank(window: Long) = Unit
-            override fun destroy(window: Long) = Unit
-        })
+        /** WindowManager.addView calls; a same-popup refill must not add a window. */
+        var adds = 0
+        /** Mirrors AccessibilityChoiceOverlay's flag (off by default). */
+        var revalidatingEnabled = false
+        var refills = 0
+        val ended = mutableListOf<RevalidationEnd>()
+        /** The pending REVALIDATING timeout; a test fires it by hand. */
+        var timeout: (() -> Unit)? = null
+        private val keeper = OverlayWindowKeeper(
+            object : OverlayWindowOps<Long> {
+                override fun add(window: Long) {
+                    adds++
+                    if (addFails) throw IllegalStateException("BadToken")
+                }
+                override fun announceShown(window: Long) = Unit
+                override fun announceDismissed(window: Long) = Unit
+                override fun stop(window: Long) = Unit
+                override fun remove(window: Long, immediate: Boolean) =
+                    if (removeFails) RemoveOutcome.FAILED else RemoveOutcome.REMOVED
+                override fun blank(window: Long) = Unit
+                override fun destroy(window: Long) = Unit
+                override fun enterRevalidating(window: Long) = Unit
+            },
+            RevalidationTimer { _, action ->
+                timeout = action
+                { timeout = null }
+            },
+        )
 
         val prompt: ChoicePrompt? get() = if (isShowing) last?.prompt else null
         val status: OverlayWindowStatus get() = keeper.status
         override val isShowing: Boolean get() = keeper.status == OverlayWindowStatus.SHOWING
-        override val windowState get() = OverlayWindowState(keeper.status, keeper.windowGeneration)
+        override val windowState get() = OverlayWindowState(keeper.status, keeper.windowGeneration, keeper.windowNumber)
+
+        override fun beginRevalidation(cause: RevalidationCause): Boolean {
+            if (!revalidatingEnabled) {
+                dismiss()
+                return false
+            }
+            return keeper.beginRevalidation { ended += RevalidationEnd.TIMED_OUT }.also { if (!it) dismiss() }
+        }
+
+        override fun confirmSamePopup(prompt: ChoicePrompt, onAnswer: (PromptAnswer) -> Unit): PromptShowResult {
+            if (keeper.status != OverlayWindowStatus.REVALIDATING) return present(prompt, onAnswer)
+            val result = keeper.confirmRevalidation { _, _ -> }
+            if (result == PromptShowResult.SHOWN) {
+                last = Shown(prompt, keeper.currentGeneration, onAnswer)
+                refills++
+            }
+            return result
+        }
+
+        override fun endRevalidation(end: RevalidationEnd) {
+            if (keeper.endRevalidation()) ended += end else dismiss()
+        }
 
         override fun present(prompt: ChoicePrompt, onAnswer: (PromptAnswer) -> Unit): PromptShowResult {
             val result = keeper.show { it }
@@ -159,8 +208,14 @@ class PopupChoiceFlowTest {
         remember: Boolean = false,
         store: RememberedPopupStore = RememberedPopupStore.NONE,
         autoClose: Boolean = false,
+        videoAd: Boolean = false,
+        revalidating: Boolean = false,
+        isSamePopup: (PopupEvent.Candidate) -> Boolean = { false },
+        /** Replaces the result shaped like A's ([shapedLikeA]); for the success-rule cases. */
+        private val resultOverride: ((UserChoice) -> ActionResult)? = null,
     ) {
         val source = MockSnapshotSource()
+        var videoAdCalls = 0
         val presenter = FakePresenter()
         val announcer = FakeAnnouncer()
         val handled = mutableListOf<UserChoice>()
@@ -188,7 +243,8 @@ class PopupChoiceFlowTest {
                 override suspend fun handle(choice: UserChoice, analysis: PopupAnalysis): ActionResult? {
                     handled += choice
                     log += "handle"
-                    return if (choice.kind == ChoiceKind.KEEP_OPEN) null else ActionResult(choice.token, status, reason = null)
+                    if (choice.kind == ChoiceKind.KEEP_OPEN) return null
+                    return resultOverride?.invoke(choice) ?: shapedLikeA(choice, status)
                 }
 
                 override suspend fun handle(choice: UserChoice, analysis: PopupAnalysis, origin: ChoiceOrigin): ActionResult? {
@@ -201,6 +257,13 @@ class PopupChoiceFlowTest {
             rememberChoicesEnabled = remember,
             rememberStore = store,
             autoCloseEnabledForApp = { autoClose },
+            videoAdOf = {
+                videoAdCalls++
+                VideoAdInfo.from(DecisionVideoAd.inspect(it))
+            },
+            videoAdEnabled = videoAd,
+            revalidatingEnabled = revalidating,
+            isSamePopup = isSamePopup,
         )
 
         suspend fun emit(f: MockPopupFixture) {
@@ -214,8 +277,13 @@ class PopupChoiceFlowTest {
         remember: Boolean = false,
         store: RememberedPopupStore = RememberedPopupStore.NONE,
         autoClose: Boolean = false,
+        videoAd: Boolean = false,
+        revalidating: Boolean = false,
+        isSamePopup: (PopupEvent.Candidate) -> Boolean = { false },
+        resultOverride: ((UserChoice) -> ActionResult)? = null,
     ): Harness {
-        val h = Harness(this, status, remember, store, autoClose)
+        val h = Harness(this, status, remember, store, autoClose, videoAd, revalidating, isSamePopup, resultOverride)
+        h.presenter.revalidatingEnabled = revalidating
         h.job = backgroundScope.launch { h.flow.run() }
         runCurrent()
         return h
@@ -310,6 +378,45 @@ class PopupChoiceFlowTest {
         h.emit(MockPopupFixtures.decision())
         runCurrent()
         assertTrue(h.presenter.prompt!!.options.none { it.kind == PromptOptionKind.PRESS_CANDIDATE })
+    }
+
+    // --- F5 video ad wording (VideoAdAnnouncementFeature, off by default) ---
+
+    private val countdownAd: PopupAnalysis = MockPopupFixtures.videoWithoutAdEvidence().analysis.let { v ->
+        val bounds = v.texts.first().bounds
+        v.copy(
+            texts = persistentListOf(
+                ExtractedText("광고 · 가상 상품", bounds, TextSource.ACCESSIBILITY_TREE, null),
+                ExtractedText("5초 후 건너뛰기", bounds, TextSource.ACCESSIBILITY_TREE, null),
+            ),
+            closeCandidates = persistentListOf(),
+            videoSurfaceObserved = true,
+        )
+    }
+
+    @Test fun videoAdCountdownIsSaidAndNothingIsPressedWhenItEnds() = runTest {
+        val h = start(videoAd = true)
+        h.analysisOverride = countdownAd
+        h.emit(MockPopupFixtures.advertisement())
+        runCurrent()
+        val prompt = h.presenter.prompt!!
+        assertEquals(PromptSummary.LIKELY_VIDEO_AD, prompt.summary)
+        assertEquals(5, prompt.countdownSeconds)
+        assertTrue(prompt.options.none { it.kind == PromptOptionKind.PRESS_CANDIDATE })
+        advanceTimeBy(10_000)
+        runCurrent()
+        assertTrue("no automatic press after the countdown", h.handled.isEmpty())
+        assertTrue(h.presenter.isShowing)
+    }
+
+    @Test fun videoAdFlagOffDoesNotAskBAndKeepsTheOldPrompt() = runTest {
+        val h = start()
+        h.analysisOverride = countdownAd
+        h.emit(MockPopupFixtures.advertisement())
+        runCurrent()
+        assertEquals(PromptSummary.LIKELY_AD, h.presenter.prompt!!.summary)
+        assertNull(h.presenter.prompt!!.videoAd)
+        assertEquals(0, h.videoAdCalls)
     }
 
     // --- [앞으로 항상 닫기] (10/20 (가)): one-time press first, save only after success ---
@@ -415,6 +522,33 @@ class PopupChoiceFlowTest {
             }
             if (status == ActionStatus.STALE) assertNull(h.presenter.prompt)
         }
+    }
+
+    /** 우진 #34: only attempted + MECHANICAL_SUCCESS + CLOSED_CONFIRMED saves the rule and is counted closed. */
+    @Test fun rememberSavesOnlyOnConfirmedSuccess() = runTest {
+        val token = MockPopupFixtures.advertisement().snapshot.token
+        for ((name, result) in PressSuccessCases.notConfirmed(token)) {
+            val store = FakeStore()
+            val h = start(remember = true, store = store, resultOverride = { result })
+            tapRemember(h)
+            assertEquals("$name: handler once", 1, h.handled.size)
+            assertEquals("$name: key dropped", listOf("prepare", "handle"), h.log)
+            assertTrue("$name: nothing saved", store.saved.isEmpty())
+            assertEquals(
+                name,
+                PressResultSpeech.sentence(PressFailure.NOT_CONFIRMED, moveToButtonAvailable = false) { "res$it" },
+                h.announcer.said.single().text,
+            )
+            advanceTimeBy(AnnouncementBatcher.DEFAULT_WINDOW_MILLIS + 1)
+            assertTrue("$name: not batched as closed", h.flushed.none { it.closed > 0 || it.skipped > 0 })
+            h.job?.cancel()
+        }
+        val store = FakeStore()
+        val h = start(remember = true, store = store, resultOverride = { PressSuccessCases.confirmed(it.token) })
+        tapRemember(h)
+        assertEquals(1, store.saved.size)
+        advanceTimeBy(AnnouncementBatcher.DEFAULT_WINDOW_MILLIS + 1)
+        assertEquals(listOf(BatchSummary(closed = 1, skipped = 0, notConfirmed = 0)), h.flushed)
     }
 
     @Test fun rememberFailureThenKeepOpenStillSavesNothing() = runTest {
@@ -648,4 +782,145 @@ class PopupChoiceFlowTest {
         assertEquals(listOf(ChoiceOrigin.VOICE), h.origins)
         assertEquals(ChoiceKind.CLOSE_ONCE, h.handled.single().kind)
     }
+
+    // --- REVALIDATING (issue #29, RevalidatingFeature off by default) ---
+
+    @Test fun revalidationOffKeepsOldInvalidationPath() = runTest {
+        val h = start(revalidating = false)
+        h.presenter.revalidatingEnabled = true // even a capable presenter is not asked
+        h.emit(MockPopupFixtures.advertisement())
+        runCurrent()
+        h.source.invalidate(screenVersion = 1)
+        runCurrent()
+        assertEquals(OverlayWindowStatus.HIDDEN, h.presenter.status)
+        assertNull(h.presenter.timeout)
+        assertTrue(h.presenter.ended.isEmpty())
+    }
+
+    @Test fun invalidationStartsRevalidatingAndDropsOldTapsAndVoice() = runTest {
+        val h = start(revalidating = true)
+        h.emit(MockPopupFixtures.advertisement())
+        runCurrent()
+        val old = h.presenter.last
+        val stopsBefore = h.announcer.stops
+        h.source.invalidate(screenVersion = 1)
+        runCurrent()
+        assertEquals(OverlayWindowStatus.REVALIDATING, h.presenter.status)
+        assertTrue("speech stops", h.announcer.stops > stopsBefore)
+        assertTrue(h.presenter.windowState.generation != old!!.generation)
+        h.presenter.tap(PromptOptionKind.PRESS_CANDIDATE, target = old)
+        h.presenter.tap(PromptOptionKind.PRESS_CANDIDATE, ChoiceOrigin.VOICE, target = old)
+        runCurrent()
+        assertTrue("nothing from the old prompt reaches B/A", h.handled.isEmpty())
+        assertEquals(OverlayWindowStatus.REVALIDATING, h.presenter.status)
+    }
+
+    @Test fun samePopupRefillsTheSameWindowWithNewGeneration() = runTest {
+        val h = start(revalidating = true, isSamePopup = { true })
+        h.emit(MockPopupFixtures.advertisement())
+        runCurrent()
+        val old = h.presenter.last!!
+        val window = h.presenter.windowState.windowNumber
+        h.source.invalidate(screenVersion = 1)
+        runCurrent()
+        h.emit(MockPopupFixtures.advertisement())
+        runCurrent()
+        assertEquals(OverlayWindowStatus.SHOWING, h.presenter.status)
+        assertEquals("no second addView", 1, h.presenter.adds)
+        assertEquals(1, h.presenter.refills)
+        assertEquals("same window", window, h.presenter.windowState.windowNumber)
+        assertTrue(h.presenter.last!!.generation > old.generation + 1)
+
+        h.presenter.tap(PromptOptionKind.PRESS_CANDIDATE, target = old)
+        runCurrent()
+        assertTrue("the pre-revalidation prompt stays dead", h.handled.isEmpty())
+        h.presenter.tap(PromptOptionKind.PRESS_CANDIDATE)
+        runCurrent()
+        assertEquals(ChoiceKind.CLOSE_ONCE, h.handled.single().kind)
+    }
+
+    @Test fun differentPopupClosesWithReasonAndShowsItsOwnPrompt() = runTest {
+        val h = start(revalidating = true)
+        h.emit(MockPopupFixtures.advertisement())
+        runCurrent()
+        h.source.invalidate(screenVersion = 1)
+        runCurrent()
+        h.emit(MockPopupFixtures.notice())
+        runCurrent()
+        assertEquals(listOf(RevalidationEnd.DIFFERENT_POPUP), h.presenter.ended)
+        assertEquals(0, h.presenter.refills)
+        assertEquals("a new window for the new popup", 2, h.presenter.adds)
+        assertEquals(OverlayWindowStatus.SHOWING, h.presenter.status)
+        assertNull("timeout cancelled", h.presenter.timeout)
+    }
+
+    @Test fun timeoutClosesTheWindowAndTheNextCandidateGetsANewOne() = runTest {
+        val h = start(revalidating = true, isSamePopup = { true })
+        h.emit(MockPopupFixtures.advertisement())
+        runCurrent()
+        h.source.invalidate(screenVersion = 1)
+        runCurrent()
+        requireNotNull(h.presenter.timeout).invoke()
+        assertEquals(OverlayWindowStatus.HIDDEN, h.presenter.status)
+        assertEquals(listOf(RevalidationEnd.TIMED_OUT), h.presenter.ended)
+
+        h.emit(MockPopupFixtures.advertisement())
+        runCurrent()
+        assertEquals("not revalidating any more: a fresh window", 2, h.presenter.adds)
+        assertEquals(0, h.presenter.refills)
+    }
+
+    @Test fun blockedWhileRevalidatingClosesSilently() = runTest {
+        val h = start(revalidating = true)
+        h.emit(MockPopupFixtures.advertisement())
+        runCurrent()
+        h.source.invalidate(screenVersion = 1)
+        runCurrent()
+        h.source.emitBlocked(screenVersion = 2)
+        runCurrent()
+        assertEquals(OverlayWindowStatus.HIDDEN, h.presenter.status)
+        assertTrue("no closing sentence on a sensitive screen", h.presenter.ended.isEmpty())
+        assertNull(h.presenter.timeout)
+    }
+
+    @Test fun repeatedInvalidationDoesNotRestartTheTimeout() = runTest {
+        val h = start(revalidating = true)
+        h.emit(MockPopupFixtures.advertisement())
+        runCurrent()
+        h.source.invalidate(screenVersion = 1)
+        runCurrent()
+        val first = h.presenter.timeout
+        h.source.invalidate(screenVersion = 2)
+        runCurrent()
+        assertEquals(OverlayWindowStatus.REVALIDATING, h.presenter.status)
+        assertTrue(first === h.presenter.timeout)
+    }
+
+    @Test fun stoppingTheFlowWhileRevalidatingClosesTheWindowAndCancelsTheTimeout() = runTest {
+        val h = start(revalidating = true)
+        h.emit(MockPopupFixtures.advertisement())
+        runCurrent()
+        h.source.invalidate(screenVersion = 1)
+        runCurrent()
+        h.job!!.cancel()
+        runCurrent()
+        assertEquals(OverlayWindowStatus.HIDDEN, h.presenter.status)
+        assertNull(h.presenter.timeout)
+    }
+
+    @Test fun invalidationWithNothingShownJustDismisses() = runTest {
+        val h = start(revalidating = true)
+        h.source.invalidate(screenVersion = 1)
+        runCurrent()
+        assertEquals(OverlayWindowStatus.HIDDEN, h.presenter.status)
+        assertNull(h.presenter.timeout)
+    }
+}
+
+/** What A sends back: a returned press was observed closed; failed / unknown were attempted, not observed. */
+private fun shapedLikeA(choice: UserChoice, status: ActionStatus): ActionResult = when (status) {
+    ActionStatus.MECHANICAL_SUCCESS ->
+        ActionResult(choice.token, status, reason = null, attempted = true, outcome = ClickOutcome.CLOSED_CONFIRMED)
+    ActionStatus.ATTEMPT_FAILED, ActionStatus.OUTCOME_UNKNOWN -> ActionResult(choice.token, status, reason = null, attempted = true)
+    ActionStatus.NOT_EXECUTED, ActionStatus.BLOCKED, ActionStatus.STALE -> ActionResult(choice.token, status, reason = null)
 }

@@ -35,6 +35,8 @@ class PromptAnnouncementListener internal constructor(
     private val ttsDelayMillis: Long,
     private val detail: () -> AnnouncementDetail,
     private val sentence: (ChoicePrompt, AnnouncementDetail) -> String,
+    /** C's fixed sentences by resource id (REVALIDATING close); blank = say nothing. */
+    private val text: (Int) -> String = { "" },
 ) : OverlayListener {
     constructor(
         context: Context,
@@ -43,7 +45,11 @@ class PromptAnnouncementListener internal constructor(
         mode: () -> PromptAnnounceMode,
         ttsDelayMillis: Long = DEFAULT_TTS_DELAY_MILLIS,
         detail: () -> AnnouncementDetail = { AnnouncementDetail.SHORT },
-    ) : this(announcer, scope, mode, ttsDelayMillis, detail, { prompt, level -> PromptSpeech.sentence(context, prompt, level) })
+    ) : this(
+        announcer, scope, mode, ttsDelayMillis, detail,
+        { prompt, level -> PromptSpeech.sentence(context, prompt, level) },
+        { context.getString(it) },
+    )
 
     private var speaking: Job? = null
 
@@ -67,6 +73,31 @@ class PromptAnnouncementListener internal constructor(
         announcer.stop()
     }
 
+    /** Our TTS must not talk over the re-check; a first announcement still waiting is dropped. */
+    override fun onRevalidating() = onDismissed()
+
+    /**
+     * Same popup confirmed: no TTS. The window's own status line says "다시 확인했어요." once
+     * (liveRegion), and the person has heard this popup already, so it is not read in full again.
+     */
+    override fun onRevalidated(prompt: ChoicePrompt) {
+        speaking?.cancel()
+        speaking = null
+    }
+
+    /**
+     * The window was closed by the re-check: one sentence, whatever the announce mode, because the
+     * window is gone and its liveRegion can no longer speak (same rule as the press-failure result).
+     */
+    override fun onRevalidationClosed(prompt: ChoicePrompt, end: RevalidationEnd) {
+        speaking?.cancel()
+        val res = RevalidationSpeech.closedRes(end) ?: return
+        val sentence = text(res).ifBlank { return }
+        speaking = scope.launch {
+            announcer.announce(AnnouncementRequest(prompt.token, AnnouncementKind.ACTION_RESULT, sentence))
+        }
+    }
+
     companion object {
         const val DEFAULT_TTS_DELAY_MILLIS = 700L
     }
@@ -81,7 +112,8 @@ object PromptSpeech {
         parts(prompt, detail).joinToString(" ") { context.getString(it.resId, *it.args.toTypedArray()) }
 
     /**
-     * SHORT: summary (+ "대신 닫을 수 없어요" / failed-press result) + where to choose.
+     * SHORT: summary (+ "대신 닫을 수 없어요" or a video ad's countdown wait / failed-press result)
+     * + where to choose.
      * DETAILED adds only facts C already has, never a classification reason: the names of the
      * buttons offered and how many choices the prompt has. Wording stays hedged.
      */
@@ -93,7 +125,13 @@ object PromptSpeech {
             add(SpeechPart(PressResultSpeech.nextRes(failure, prompt.hasMoveOption())))
         } else {
             add(SpeechPart(prompt.summary.textRes()))
-            if (prompt.cannotPressForUser) add(SpeechPart(R.string.ui_choice_cannot_press))
+            val countdown = prompt.countdownSeconds
+            if (countdown != null) {
+                // B's read value only; C does not wait and press when it ends.
+                add(SpeechPart(R.string.ui_choice_video_ad_wait, listOf(countdown)))
+            } else if (prompt.cannotPressForUser) {
+                add(SpeechPart(R.string.ui_choice_cannot_press))
+            }
         }
         if (detail == AnnouncementDetail.DETAILED) {
             prompt.labelsOf(PromptOptionKind.PRESS_CANDIDATE)?.let {
