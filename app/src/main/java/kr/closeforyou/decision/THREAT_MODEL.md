@@ -303,7 +303,7 @@
 - 개인정보 정적 점검(로그·파일·네트워크·Android import 금지)을 자동 시험으로 고정 (T15)
 - 평가 정답의 교차 검토(D)와 실제 앱 분류 정확도 측정 (T16, C04·A03). D 정답지에 COUPON 종류와 프리셋별 기대값 추가
 - androidTest(한글 옆 영어 경계 등)를 CI에서도 실행할지 A와 논의 (T18)
-- F9 연결 시 `F9PolicyBridge` 어댑터와 결과 전달 확인 (T21·T22, [연결 안내](INTEGRATION.md) 4절)
+- A의 F9 연결 PR에서 `F9PolicyBridge` 어댑터와 결과 전달을 B가 리뷰 (T21·T22, [연결 안내](INTEGRATION.md) 4절)
 - 기억 규칙 자동 반복 계약(반복 허락, `INCOMPLETE_EVIDENCE` 처리) (T10·T13)
 - AGENTS.md 6장 2번 개정 (팀, T9)
 - 실기기·TalkBack 검증 (D QA와 함께, C03·C05·C08)

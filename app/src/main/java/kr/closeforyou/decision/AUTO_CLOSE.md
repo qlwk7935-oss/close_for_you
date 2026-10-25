@@ -238,7 +238,7 @@ held-out에서 틀린 7개는 **모두 조심하는 쪽**이다.
 | 1 | 서비스 조립: A 이벤트 → B 배선 → C 흐름을 main에 연결 | A | `transfer/…` 브랜치에만 있음 (#29) |
 | 2 | `AutoEligibility` 5개 검사 채우기 (`DECISION_TEXT_SCOPED`는 A·B 절반씩 합의 뒤) | A | 미구현 |
 | 3 | F9 병합 | A | #42 Draft |
-| 4 | `F9PolicyBridge` 어댑터 (아래) | A·B 합의 | 없음. 없으면 F9가 `POLICY_UNAVAILABLE`로 전부 막음 |
+| 4 | `F9PolicyBridge` 어댑터 (아래) | A (B 리뷰) | 없음. A가 연결 예정(우진 10/25 우선순위 2). 없으면 F9가 `POLICY_UNAVAILABLE`로 전부 막음 |
 | 5 | `autoCloseKinds` 전달 + 운영 스위치 | C (팀 결정) | `PresetAutoCloseFeature.live = false` |
 | 6 | 처리 보고 → C 안내 연결 | A → C | C 수신부 `SpeechHandlingListener`는 main(#51, 제목 낭독 기본 꺼짐). A 조립에서 넘기는 부분이 남음 |
 | 7 | AGENTS.md 6장 2번 개정 | 팀 | 옛 문구 그대로 |

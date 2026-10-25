@@ -26,7 +26,7 @@
 ## 남은 일
 
 - **조립:** A 서비스 → B 배선 → C 흐름 연결이 main에 들어와야 B가 실제로 쓰입니다(A 주도).
-- **F9 연결:** A #42의 `F9PolicyBridge`를 B 정책으로 구현하는 어댑터가 아직 없습니다. 정책은 `DecisionActionPolicy { SystemClock.uptimeMillis() }`로 만들어야 합니다(기본 생성자는 시험용 시계). 방법은 [자동 닫기 문서](AUTO_CLOSE.md) 9절.
+- **F9 연결:** A #42의 `F9PolicyBridge`를 B 정책으로 구현하는 어댑터가 아직 없습니다. A가 연결하고(우진 10/25 우선순위 2) B가 리뷰합니다. 정책은 `DecisionActionPolicy { SystemClock.uptimeMillis() }`로 만들어야 합니다(기본 생성자는 시험용 시계). 방법은 [자동 닫기 문서](AUTO_CLOSE.md) 9절.
 - **A 입력:** `AutoEligibility`, `videoSurfaceObserved`를 A가 채우기 전까지 자동 닫기와 F5는 열리지 않습니다.
 - **분류 근거:** 정확도는 합성 문구 기준입니다. 실제 앱 문구 수집 뒤 다시 측정해야 합니다.
 - **미구현 (팀 결정):** 라벨 없는 X(E3) 자동, F4 이미지 분석, 클릭 가능한 부모 + 라벨 자식 패턴, Dialog 노드가 없는 같은 창 덮개.

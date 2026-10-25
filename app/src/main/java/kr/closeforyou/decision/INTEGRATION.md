@@ -69,7 +69,7 @@ PopupChoiceFlow(
 |---|---|---|
 | A | `PopupAnalysis.autoEligibility`: 5개 검사 전부, 같은 토큰, 원본 화면 `capturedAtUptimeMillis` | B가 `NOT_AUTO_ELIGIBLE`로 묻기 |
 | C | `DecisionContext.autoCloseKinds` = `UiVoiceSettings.autoCloseKinds()` (온보딩·동의·운영 스위치를 모두 거친 값) | 빈 집합 → 지금처럼 묻기 |
-| A/B | `F9PolicyBridge` 어댑터 (아직 없음, 담당 합의 필요) | F9가 `POLICY_UNAVAILABLE`로 전부 막음 |
+| A (B 리뷰) | `F9PolicyBridge` 어댑터 (아직 없음. A가 연결, 우진 10/25 우선순위 2) | F9가 `POLICY_UNAVAILABLE`로 전부 막음 |
 | A | 누르든 안 누르든 모든 결과를 `policy.onActionResult`로 | B가 30초 뒤 "결과 모름"으로 보고 그 팝업을 세션 내내 자동 금지 |
 | A → C | `PopupHandlingListener.onHandled(HandlingReport)` (PRESET·REMEMBERED_RULE만, 결과는 EXECUTE일 때만). C 구현은 `SpeechHandlingListener`(#51) | 자동으로 닫은 사실을 사용자가 모름 |
 
