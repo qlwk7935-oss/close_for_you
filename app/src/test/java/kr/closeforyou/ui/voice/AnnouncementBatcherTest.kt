@@ -66,12 +66,24 @@ class AnnouncementBatcherTest {
     @Test fun outcomeMappingNeverCountsBlockedOrStaleAsClosed() {
         val token = MockPopupFixtures.notice().snapshot.token
         fun result(status: ActionStatus) = ActionResult(token, status, reason = null)
-        assertEquals(HandledOutcome.CLOSED, AnnouncementBatcher.outcomeOf(result(ActionStatus.MECHANICAL_SUCCESS), ChoiceKind.CLOSE_ONCE))
-        assertEquals(HandledOutcome.SKIPPED, AnnouncementBatcher.outcomeOf(result(ActionStatus.MECHANICAL_SUCCESS), ChoiceKind.SKIP_ONCE))
+        val confirmed = PressSuccessCases.confirmed(token)
+        assertEquals(HandledOutcome.CLOSED, AnnouncementBatcher.outcomeOf(confirmed, ChoiceKind.CLOSE_ONCE))
+        assertEquals(HandledOutcome.SKIPPED, AnnouncementBatcher.outcomeOf(confirmed, ChoiceKind.SKIP_ONCE))
+        // A returned press without CLOSED_CONFIRMED is not counted as closed (우진 #34).
+        assertEquals(HandledOutcome.NOT_CONFIRMED, AnnouncementBatcher.outcomeOf(result(ActionStatus.MECHANICAL_SUCCESS), ChoiceKind.CLOSE_ONCE))
         assertEquals(HandledOutcome.NOT_CONFIRMED, AnnouncementBatcher.outcomeOf(result(ActionStatus.ATTEMPT_FAILED), ChoiceKind.CLOSE_ONCE))
         assertEquals(HandledOutcome.NOT_CONFIRMED, AnnouncementBatcher.outcomeOf(result(ActionStatus.OUTCOME_UNKNOWN), ChoiceKind.CLOSE_ONCE))
         listOf(ActionStatus.NOT_EXECUTED, ActionStatus.BLOCKED, ActionStatus.STALE).forEach {
             assertNull(AnnouncementBatcher.outcomeOf(result(it), ChoiceKind.CLOSE_ONCE))
+        }
+    }
+
+    @Test fun notConfirmedPressesAreNeverClosedOrSkipped() {
+        val token = MockPopupFixtures.notice().snapshot.token
+        PressSuccessCases.notConfirmed(token).forEach { (name, result) ->
+            listOf(ChoiceKind.CLOSE_ONCE, ChoiceKind.SKIP_ONCE).forEach { choice ->
+                assertEquals("$name/$choice", HandledOutcome.NOT_CONFIRMED, AnnouncementBatcher.outcomeOf(result, choice))
+            }
         }
     }
 

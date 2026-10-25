@@ -4,6 +4,7 @@ import kr.closeforyou.R
 import kr.closeforyou.core.model.ActionResult
 import kr.closeforyou.core.model.ActionStatus
 import kr.closeforyou.core.model.ChoiceKind
+import kr.closeforyou.core.model.ClickOutcome
 import kr.closeforyou.core.model.PopupClassification
 import kr.closeforyou.testing.mock.MockPopupFixtures
 import kr.closeforyou.ui.voice.choice.ChoicePromptPlanner
@@ -16,13 +17,40 @@ import org.junit.Test
 
 class PressResultSpeechTest {
     private val token = MockPopupFixtures.advertisement().snapshot.token
-    private fun result(status: ActionStatus) = ActionResult(token, status, reason = null)
+    /** Shaped like A's: a returned press is observed closed; failed / unknown attempted, not observed. */
+    private fun result(status: ActionStatus) = when (status) {
+        ActionStatus.MECHANICAL_SUCCESS ->
+            ActionResult(token, status, reason = null, attempted = true, outcome = ClickOutcome.CLOSED_CONFIRMED)
+        ActionStatus.ATTEMPT_FAILED, ActionStatus.OUTCOME_UNKNOWN -> ActionResult(token, status, reason = null, attempted = true)
+        else -> ActionResult(token, status, reason = null)
+    }
 
-    @Test fun onlyMechanicalSuccessIsNotAFailure() {
+    @Test fun onlyConfirmedSuccessIsNotAFailure() {
         assertNull(PressResultSpeech.failureOf(result(ActionStatus.MECHANICAL_SUCCESS)))
         ActionStatus.entries.filter { it != ActionStatus.MECHANICAL_SUCCESS }.forEach {
             assertTrue(it.name, PressResultSpeech.failureOf(result(it)) != null)
         }
+    }
+
+    /** 우진 #34: attempted + MECHANICAL_SUCCESS + CLOSED_CONFIRMED, nothing less. */
+    @Test fun notConfirmedPressesAreNotSuccess() {
+        PressSuccessCases.notConfirmed(token).forEach { (name, result) ->
+            assertFalse(name, PressSuccess.isConfirmed(result))
+            assertEquals(name, PressFailure.NOT_CONFIRMED, PressResultSpeech.failureOf(result))
+        }
+        assertTrue(PressSuccess.isConfirmed(PressSuccessCases.confirmed(token)))
+        assertNull(PressResultSpeech.failureOf(PressSuccessCases.confirmed(token)))
+    }
+
+    @Test fun failedPressNotObservedIsStillPressFailed() = assertEquals(
+        PressFailure.PRESS_FAILED,
+        PressResultSpeech.failureOf(ActionResult(token, ActionStatus.ATTEMPT_FAILED, null, attempted = true, outcome = ClickOutcome.STILL_PRESENT)),
+    )
+
+    /** The contract itself rejects an observed outcome without an attempt. */
+    @Test(expected = IllegalArgumentException::class)
+    fun outcomeWithoutAttemptCannotExist() {
+        ActionResult(token, ActionStatus.MECHANICAL_SUCCESS, null, attempted = false, outcome = ClickOutcome.CLOSED_CONFIRMED)
     }
 
     @Test fun statusesMapToReasons() {

@@ -25,6 +25,7 @@ import kr.closeforyou.core.model.ActionStatus
 import kr.closeforyou.core.model.ButtonRole
 import kr.closeforyou.core.model.CloseCandidate
 import kr.closeforyou.core.model.ChoiceKind
+import kr.closeforyou.core.model.ClickOutcome
 import kr.closeforyou.core.model.ExtractedText
 import kr.closeforyou.core.model.PopupAnalysis
 import kr.closeforyou.core.model.PopupRule
@@ -42,6 +43,7 @@ import kr.closeforyou.ui.voice.AnnouncementBatcher
 import kr.closeforyou.ui.voice.BatchSummary
 import kr.closeforyou.ui.voice.PressFailure
 import kr.closeforyou.ui.voice.PressResultSpeech
+import kr.closeforyou.ui.voice.PressSuccessCases
 import kr.closeforyou.ui.voice.choice.ChoicePrompt
 import kr.closeforyou.ui.voice.choice.ChoicePromptPlanner
 import kr.closeforyou.ui.voice.choice.MoveToButtonRequest
@@ -209,6 +211,8 @@ class PopupChoiceFlowTest {
         videoAd: Boolean = false,
         revalidating: Boolean = false,
         isSamePopup: (PopupEvent.Candidate) -> Boolean = { false },
+        /** Replaces the result shaped like A's ([shapedLikeA]); for the success-rule cases. */
+        private val resultOverride: ((UserChoice) -> ActionResult)? = null,
     ) {
         val source = MockSnapshotSource()
         var videoAdCalls = 0
@@ -239,7 +243,8 @@ class PopupChoiceFlowTest {
                 override suspend fun handle(choice: UserChoice, analysis: PopupAnalysis): ActionResult? {
                     handled += choice
                     log += "handle"
-                    return if (choice.kind == ChoiceKind.KEEP_OPEN) null else ActionResult(choice.token, status, reason = null)
+                    if (choice.kind == ChoiceKind.KEEP_OPEN) return null
+                    return resultOverride?.invoke(choice) ?: shapedLikeA(choice, status)
                 }
 
                 override suspend fun handle(choice: UserChoice, analysis: PopupAnalysis, origin: ChoiceOrigin): ActionResult? {
@@ -275,8 +280,9 @@ class PopupChoiceFlowTest {
         videoAd: Boolean = false,
         revalidating: Boolean = false,
         isSamePopup: (PopupEvent.Candidate) -> Boolean = { false },
+        resultOverride: ((UserChoice) -> ActionResult)? = null,
     ): Harness {
-        val h = Harness(this, status, remember, store, autoClose, videoAd, revalidating, isSamePopup)
+        val h = Harness(this, status, remember, store, autoClose, videoAd, revalidating, isSamePopup, resultOverride)
         h.presenter.revalidatingEnabled = revalidating
         h.job = backgroundScope.launch { h.flow.run() }
         runCurrent()
@@ -516,6 +522,33 @@ class PopupChoiceFlowTest {
             }
             if (status == ActionStatus.STALE) assertNull(h.presenter.prompt)
         }
+    }
+
+    /** 우진 #34: only attempted + MECHANICAL_SUCCESS + CLOSED_CONFIRMED saves the rule and is counted closed. */
+    @Test fun rememberSavesOnlyOnConfirmedSuccess() = runTest {
+        val token = MockPopupFixtures.advertisement().snapshot.token
+        for ((name, result) in PressSuccessCases.notConfirmed(token)) {
+            val store = FakeStore()
+            val h = start(remember = true, store = store, resultOverride = { result })
+            tapRemember(h)
+            assertEquals("$name: handler once", 1, h.handled.size)
+            assertEquals("$name: key dropped", listOf("prepare", "handle"), h.log)
+            assertTrue("$name: nothing saved", store.saved.isEmpty())
+            assertEquals(
+                name,
+                PressResultSpeech.sentence(PressFailure.NOT_CONFIRMED, moveToButtonAvailable = false) { "res$it" },
+                h.announcer.said.single().text,
+            )
+            advanceTimeBy(AnnouncementBatcher.DEFAULT_WINDOW_MILLIS + 1)
+            assertTrue("$name: not batched as closed", h.flushed.none { it.closed > 0 || it.skipped > 0 })
+            h.job?.cancel()
+        }
+        val store = FakeStore()
+        val h = start(remember = true, store = store, resultOverride = { PressSuccessCases.confirmed(it.token) })
+        tapRemember(h)
+        assertEquals(1, store.saved.size)
+        advanceTimeBy(AnnouncementBatcher.DEFAULT_WINDOW_MILLIS + 1)
+        assertEquals(listOf(BatchSummary(closed = 1, skipped = 0, notConfirmed = 0)), h.flushed)
     }
 
     @Test fun rememberFailureThenKeepOpenStillSavesNothing() = runTest {
@@ -882,4 +915,12 @@ class PopupChoiceFlowTest {
         assertEquals(OverlayWindowStatus.HIDDEN, h.presenter.status)
         assertNull(h.presenter.timeout)
     }
+}
+
+/** What A sends back: a returned press was observed closed; failed / unknown were attempted, not observed. */
+private fun shapedLikeA(choice: UserChoice, status: ActionStatus): ActionResult = when (status) {
+    ActionStatus.MECHANICAL_SUCCESS ->
+        ActionResult(choice.token, status, reason = null, attempted = true, outcome = ClickOutcome.CLOSED_CONFIRMED)
+    ActionStatus.ATTEMPT_FAILED, ActionStatus.OUTCOME_UNKNOWN -> ActionResult(choice.token, status, reason = null, attempted = true)
+    ActionStatus.NOT_EXECUTED, ActionStatus.BLOCKED, ActionStatus.STALE -> ActionResult(choice.token, status, reason = null)
 }

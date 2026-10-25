@@ -64,6 +64,8 @@ import kr.closeforyou.core.model.ActionResult
 import kr.closeforyou.core.model.ActionStatus
 import kr.closeforyou.core.model.ButtonRole
 import kr.closeforyou.core.model.ChoiceKind
+import kr.closeforyou.core.model.ClickOutcome
+import kr.closeforyou.core.model.SnapshotToken
 import kr.closeforyou.core.model.UserChoice
 import kr.closeforyou.testing.mock.MockPopupFixture
 import kr.closeforyou.testing.mock.MockPopupFixtures
@@ -327,8 +329,9 @@ private fun ChoicePreviewScreen(openSettings: Boolean, openOnboarding: Boolean, 
                 lastChoice = choice
                 val status = simulated
                 if (status != null && PressResultSpeech.isPressChoice(choice.kind)) {
-                    val speech = simulatedResultSpeech(context, ActionResult(choice.token, status, reason = null), choice.kind)
-                    PressResultSpeech.failureOf(ActionResult(choice.token, status, reason = null))?.let {
+                    val result = simulatedResult(choice.token, status)
+                    val speech = simulatedResultSpeech(context, result, choice.kind)
+                    PressResultSpeech.failureOf(result)?.let {
                         followUp = ChoicePromptPlanner.afterFailedPress(basePrompt, it)
                     }
                     scope.launch {
@@ -444,6 +447,18 @@ private val simulateOptions = listOf(
     ActionStatus.ATTEMPT_FAILED to R.string.ui_debug_simulate_failed,
     ActionStatus.OUTCOME_UNKNOWN to R.string.ui_debug_simulate_unknown,
 )
+
+/**
+ * A fake result shaped like A's: "눌림" is a press A attempted and saw close (CLOSED_CONFIRMED), so
+ * it sounds like success ([kr.closeforyou.ui.voice.PressSuccess]); failed / unknown were attempted
+ * but not observed; blocked / stale were never attempted.
+ */
+private fun simulatedResult(token: SnapshotToken, status: ActionStatus): ActionResult = when (status) {
+    ActionStatus.MECHANICAL_SUCCESS ->
+        ActionResult(token, status, reason = null, attempted = true, outcome = ClickOutcome.CLOSED_CONFIRMED)
+    ActionStatus.ATTEMPT_FAILED, ActionStatus.OUTCOME_UNKNOWN -> ActionResult(token, status, reason = null, attempted = true)
+    ActionStatus.NOT_EXECUTED, ActionStatus.BLOCKED, ActionStatus.STALE -> ActionResult(token, status, reason = null)
+}
 
 /** Picks a fake ActionResult for the next press. Nothing is pressed; only the speech is tried. */
 @Composable

@@ -4,6 +4,7 @@ import kr.closeforyou.R
 import kr.closeforyou.core.model.ActionResult
 import kr.closeforyou.core.model.ActionStatus
 import kr.closeforyou.core.model.ChoiceKind
+import kr.closeforyou.core.model.ClickOutcome
 
 /** Why a press the person chose did not end in "pressed". Carries no screen text. */
 enum class PressFailure {
@@ -13,25 +14,31 @@ enum class PressFailure {
     SCREEN_CHANGED,
     /** ATTEMPT_FAILED: A tried once and the press itself failed. No retry (AGENTS 6-6). */
     PRESS_FAILED,
-    /** OUTCOME_UNKNOWN: A tried once but cannot tell whether the popup closed. */
+    /**
+     * OUTCOME_UNKNOWN, or a press that is not [PressSuccess.isConfirmed] although it returned
+     * (no CLOSED_CONFIRMED) or although the popup is gone (ATTEMPT_FAILED + CLOSED_CONFIRMED).
+     */
     NOT_CONFIRMED,
 }
 
 /**
  * C/F10: what to say after the person chose [ChoiceKind.CLOSE_ONCE] / [ChoiceKind.SKIP_ONCE].
  *
- * - MECHANICAL_SUCCESS → counted by [AnnouncementBatcher] ("팝업 1개를 닫았어요") like any close.
+ * - [PressSuccess.isConfirmed] (attempted + MECHANICAL_SUCCESS + CLOSED_CONFIRMED) → counted by
+ *   [AnnouncementBatcher] ("팝업 1개를 닫았어요") like any close. MECHANICAL_SUCCESS alone is not enough.
  * - Anything else → said at once with the next choices, never "닫았어요". It is not batched because
  *   the person is waiting for the result of their own tap.
  *
  * Consistent with [AnnouncementBatcher.outcomeOf]: the same statuses are "not closed" here.
  */
 object PressResultSpeech {
-    fun failureOf(result: ActionResult): PressFailure? = when (result.status) {
-        ActionStatus.MECHANICAL_SUCCESS -> null
+    fun failureOf(result: ActionResult): PressFailure? = if (PressSuccess.isConfirmed(result)) null else when (result.status) {
+        ActionStatus.MECHANICAL_SUCCESS -> PressFailure.NOT_CONFIRMED
         ActionStatus.BLOCKED, ActionStatus.NOT_EXECUTED -> PressFailure.NOT_PRESSED
         ActionStatus.STALE -> PressFailure.SCREEN_CHANGED
-        ActionStatus.ATTEMPT_FAILED -> PressFailure.PRESS_FAILED
+        // The popup went away by itself after a failed press: closed, but not by us.
+        ActionStatus.ATTEMPT_FAILED ->
+            if (result.outcome == ClickOutcome.CLOSED_CONFIRMED) PressFailure.NOT_CONFIRMED else PressFailure.PRESS_FAILED
         ActionStatus.OUTCOME_UNKNOWN -> PressFailure.NOT_CONFIRMED
     }
 

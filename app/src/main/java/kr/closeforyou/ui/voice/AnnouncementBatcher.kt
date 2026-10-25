@@ -103,13 +103,18 @@ class AnnouncementBatcher(
         /**
          * Maps an executed close/skip to what may be said. Blocked, stale or never-attempted
          * results return null: those are explained by their own announcement, not counted here.
-         * MECHANICAL_SUCCESS only says the button was pressed, not that the choice was safe.
+         * Closed / skipped only when [PressSuccess.isConfirmed]; any other attempted press is
+         * "확인하지 못했어요". Even a confirmed close only says the popup went away, not that the
+         * choice was safe.
          */
-        fun outcomeOf(result: ActionResult, choice: ChoiceKind): HandledOutcome? = when (result.status) {
-            ActionStatus.MECHANICAL_SUCCESS ->
+        fun outcomeOf(result: ActionResult, choice: ChoiceKind): HandledOutcome? = when {
+            PressSuccess.isConfirmed(result) ->
                 if (choice == ChoiceKind.SKIP_ONCE) HandledOutcome.SKIPPED else HandledOutcome.CLOSED
-            ActionStatus.ATTEMPT_FAILED, ActionStatus.OUTCOME_UNKNOWN -> HandledOutcome.NOT_CONFIRMED
-            ActionStatus.NOT_EXECUTED, ActionStatus.BLOCKED, ActionStatus.STALE -> null
+            else -> when (result.status) {
+                ActionStatus.MECHANICAL_SUCCESS, ActionStatus.ATTEMPT_FAILED, ActionStatus.OUTCOME_UNKNOWN ->
+                    HandledOutcome.NOT_CONFIRMED
+                ActionStatus.NOT_EXECUTED, ActionStatus.BLOCKED, ActionStatus.STALE -> null
+            }
         }
     }
 }

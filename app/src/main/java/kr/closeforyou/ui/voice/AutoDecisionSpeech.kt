@@ -100,7 +100,10 @@ object AutoDecisionSpeech {
     private fun afterExecute(result: ActionResult?, kind: ClosedKind, title: String?): AutoSpeech {
         result ?: return AutoSpeech.Quiet
         return when (result.outcome) {
-            ClickOutcome.CLOSED_CONFIRMED -> AutoSpeech.Batch(HandledOutcome.CLOSED, kind, shortTitle(title))
+            // Gone after a failed or unknown press: not claimed as ours ([PressSuccess]).
+            ClickOutcome.CLOSED_CONFIRMED ->
+                if (PressSuccess.isConfirmed(result)) AutoSpeech.Batch(HandledOutcome.CLOSED, kind, shortTitle(title))
+                else AutoSpeech.Batch(HandledOutcome.NOT_CONFIRMED, kind)
             ClickOutcome.LEFT_APP -> AutoSpeech.Say(
                 listOf(SpokenLine(R.string.ui_auto_left_app, listOf(SpokenLine.Arg.Res(objectRes(kind))))),
             )

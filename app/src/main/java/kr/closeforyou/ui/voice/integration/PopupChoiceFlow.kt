@@ -23,7 +23,9 @@ import kr.closeforyou.core.model.PopupSnapshot
 import kr.closeforyou.core.model.SnapshotToken
 import kr.closeforyou.core.model.UserChoice
 import kr.closeforyou.ui.voice.AnnouncementBatcher
+import kr.closeforyou.ui.voice.PressFailure
 import kr.closeforyou.ui.voice.PressResultSpeech
+import kr.closeforyou.ui.voice.PressSuccess
 import kr.closeforyou.ui.voice.choice.ChoicePrompt
 import kr.closeforyou.ui.voice.choice.ChoicePromptPlanner
 import kr.closeforyou.ui.voice.choice.MoveToButtonFeature
@@ -85,7 +87,8 @@ fun interface UiText {
  * - [앞으로 항상 닫기] (REMEMBER_EXACT_POPUP, team decision 10/20 (가)): B's policy does not press
  *   for REMEMBER_EXACT_POPUP, so [handler] gets the same token and candidate as CLOSE_ONCE (SKIP_ONCE
  *   for a skip button, as B checks the role). The rule key is prepared by [rememberStore] before
- *   the press (team decision 10/21); only MECHANICAL_SUCCESS commits it, once; any other result
+ *   the press (team decision 10/21); only [PressSuccess.isConfirmed] (attempted + MECHANICAL_SUCCESS +
+ *   CLOSED_CONFIRMED) commits it, once; any other result
  *   drops it and is spoken like a one-time press. The handler is still called at most once per tap.
  * - REVALIDATING ([revalidatingEnabled], off by default; off = everything above unchanged):
  *   `Invalidated` puts the prompt on screen into "다시 확인 중" instead of closing it (signal 1).
@@ -241,14 +244,14 @@ class PopupChoiceFlow(
         val prepared = if (remember) rememberStore.prepare(choice, snapshot, analysis) else null
         val result = handler.handle(sent, analysis, origin) ?: return null
         if (!PressResultSpeech.isPressChoice(sent.kind)) return null
-        val failure = PressResultSpeech.failureOf(result)
-        if (failure == null) {
+        if (PressSuccess.isConfirmed(result)) {
             AnnouncementBatcher.outcomeOf(result, sent.kind)?.let(batcher::add)
             if (remember && result.token == choice.token) rememberAfterSuccess(choice, prepared)
             return null
         }
-        // Not pressed or not confirmed (ATTEMPT_FAILED, OUTCOME_UNKNOWN, NOT_EXECUTED, BLOCKED, STALE):
-        // the prepared key is dropped here, nothing is saved.
+        // Not pressed or not confirmed closed (any status without attempted + MECHANICAL_SUCCESS +
+        // CLOSED_CONFIRMED): the prepared key is dropped here, nothing is saved.
+        val failure = PressResultSpeech.failureOf(result) ?: PressFailure.NOT_CONFIRMED
         val followUp = if (source.currentToken() == choice.token) {
             ChoicePromptPlanner.afterFailedPress(prompt, failure, moveToButtonEnabled)
         } else {

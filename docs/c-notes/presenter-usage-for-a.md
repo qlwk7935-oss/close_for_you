@@ -118,7 +118,7 @@ overlay.dismiss()
 ## 3. A에게 부탁하는 것
 1. **C 창 이벤트 구분:** C 창 버튼·`liveRegion` 안내도 우리 앱 패키지의 접근성 이벤트다. **패키지명만으로는 구분하지 않는다**(A 서비스도 같은 패키지). 창 종류 + 루트 패키지 + 고정 창 제목 + C가 알려 주는 창 상태·세대 + windowId로 판정하는 `OwnOverlayWindowTracker`를 쓴다 → [overlay-identity-contract.md](overlay-identity-contract.md) 2장. **C 창 이벤트라고 토큰 무효화를 전부 빼지는 않는다** (10/20 우진): A가 C 오버레이의 소유권과 이벤트 출처를 확인한 뒤, C 자체의 무해한 이벤트만 새 팝업 판정·baseline 초기화에서 뺀다. 대상 앱의 실제 화면 변경과 사용자 조작에 따른 현재성 검사는 그대로 유지하고 회귀 시험으로 확인한다 (설계 F11).
 2. **버튼으로 이동 (계약 후):** `ButtonFocusMover.moveFocusTo(MoveToButtonRequest(token, candidateId))` — 토큰이 현재인지 확인하고 그 노드에 접근성 포커스만 (`ACTION_ACCESSIBILITY_FOCUS`). 누르지 않음. C는 `MoveToButtonFeature.enabled`가 꺼져 있어서 지금은 호출하지 않는다.
-3. **실행 결과:** `ChoiceHandler`가 돌려주는 `ActionResult.status`로 C가 문장을 고른다. 성공 = `MECHANICAL_SUCCESS`만. 실패 후 다시 누르지 않는 것은 A 게이트 규칙과 같다.
+3. **실행 결과:** `ChoiceHandler`가 돌려주는 `ActionResult.status`로 C가 문장을 고른다. 성공 = `attempted && status == MECHANICAL_SUCCESS && outcome == CLOSED_CONFIRMED` 하나(`PressSuccess.isConfirmed`, 10/25 우진 #34 요청). `MECHANICAL_SUCCESS`만으로는 "닫혔는지 확인하지 못했어요"이고 기억(F12)도 저장하지 않는다. 실패 후 다시 누르지 않는 것은 A 게이트 규칙과 같다.
 
 ## 4. 설정 화면 — 기억 목록 (F12 연결)
 

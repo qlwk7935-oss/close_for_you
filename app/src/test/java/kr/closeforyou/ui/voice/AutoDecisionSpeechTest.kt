@@ -134,6 +134,20 @@ class AutoDecisionSpeechTest {
         }
     }
 
+    /** 우진 #34: gone after a failed or unknown press is not "닫았어요". */
+    @Test fun closedWithoutConfirmedPressIsNotConfirmed() {
+        listOf(
+            pressed(ClickOutcome.CLOSED_CONFIRMED, ActionStatus.ATTEMPT_FAILED),
+            pressed(ClickOutcome.CLOSED_CONFIRMED, ActionStatus.OUTCOME_UNKNOWN),
+        ).forEach { result ->
+            assertEquals(AutoSpeech.Batch(HandledOutcome.NOT_CONFIRMED, ClosedKind.AD), AutoDecisionSpeech.speechFor(execute, ad, result))
+        }
+        assertEquals(
+            AutoSpeech.Batch(HandledOutcome.CLOSED, ClosedKind.AD),
+            AutoDecisionSpeech.speechFor(execute, ad, pressed(ClickOutcome.CLOSED_CONFIRMED)),
+        )
+    }
+
     @Test fun nothingPressedOrNoResultYetIsQuiet() {
         assertEquals(AutoSpeech.Quiet, AutoDecisionSpeech.speechFor(execute, ad, result = null))
         listOf(ActionStatus.NOT_EXECUTED, ActionStatus.BLOCKED, ActionStatus.STALE).forEach {
