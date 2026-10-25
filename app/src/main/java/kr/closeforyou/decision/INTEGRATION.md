@@ -68,7 +68,7 @@ PopupChoiceFlow(
 | 누가 | 무엇을 | 없으면 |
 |---|---|---|
 | A | `PopupAnalysis.autoEligibility`: 5개 검사 전부, 같은 토큰, 원본 화면 `capturedAtUptimeMillis` | B가 `NOT_AUTO_ELIGIBLE`로 묻기 |
-| C | `DecisionContext.autoCloseKinds` = `UiVoiceSettings.autoCloseKinds()` (온보딩·동의·운영 스위치를 모두 거친 값) | 빈 집합 → 지금처럼 묻기 |
+| C | `DecisionContext.autoCloseKinds` = `consent.current().autoCloseKinds` (`consent = UiVoicePreferences.get(service).autoCloseConsentSource`, 판단할 때마다 `current()`로 새로 읽기, 캐시 금지). 첫 실행 완료·자동 닫기 스위치·`PresetAutoCloseFeature.live`를 모두 거친 값이고, F9의 `presetAndFirstSeenConsent`(`granted`)와 같은 객체에서 읽음. **`HandlingPreset.autoCloseKinds()`(프리셋 값 그대로)는 스위치를 건너뛰므로 쓰지 않음** (재호 #52 리뷰) | 빈 집합 → 지금처럼 묻기 |
 | A (B 리뷰) | `F9PolicyBridge` 어댑터 (아직 없음. A가 연결, 우진 10/25 우선순위 2) | F9가 `POLICY_UNAVAILABLE`로 전부 막음 |
 | A | 누르든 안 누르든 모든 결과를 `policy.onActionResult`로 | B가 30초 뒤 "결과 모름"으로 보고 그 팝업을 세션 내내 자동 금지 |
 | A → C | `PopupHandlingListener.onHandled(HandlingReport)` (PRESET·REMEMBERED_RULE만, 결과는 EXECUTE일 때만). C 구현은 `SpeechHandlingListener`(#51) | 자동으로 닫은 사실을 사용자가 모름 |
@@ -78,6 +78,8 @@ PopupChoiceFlow(
 ```kotlin
 // 서비스 세션마다 하나. 사용자 선택 경로의 DecisionChoiceHandler와 같은 인스턴스를 씁니다.
 val policy = DecisionActionPolicy { SystemClock.uptimeMillis() }
+// C의 자동 닫기 동의. 객체는 한 번 받아 두고, 값은 판단할 때마다 current()로 읽습니다.
+val consent = UiVoicePreferences.get(service).autoCloseConsentSource
 
 // authorize: B 배선 extractor로 받은 분석으로 판단
 val analysis = wiring.extractor.extract(snapshot) // wiring.source 이벤트로 받은 같은 화면
@@ -85,7 +87,7 @@ val decision = policy.decide(analysis, DecisionContext(
     currentToken = wiring.source.currentToken(),
     userChoice = null, matchingRule = null,
     userInteracting = /* A */, announcementAvailable = /* C */,
-    autoCloseKinds = /* C */,
+    autoCloseKinds = consent.current().autoCloseKinds, // C: 매번 새로 읽기 (위 표)
 ))
 // 승인은 이것뿐: next == EXECUTE && source == PRESET (곧 ALLOW_ONCE, 사유 없음)
 // → F9Approval(decision, analysis.autoEligibility, CONTRACT_V2), 대상은 decision.candidateId
