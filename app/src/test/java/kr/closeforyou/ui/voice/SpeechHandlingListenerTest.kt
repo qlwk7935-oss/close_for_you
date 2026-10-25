@@ -57,7 +57,10 @@ class SpeechHandlingListenerTest {
         contentOf: suspend (HandlingReport) -> String? = { null },
         videoAdOf: (HandlingReport) -> VideoAdInfo? = { null },
         waitKeyOf: (HandlingReport) -> String? = SpeechHandlingListener::defaultWaitKey,
-    ) = SpeechHandlingListener(announcer, batcher, Strings.format, waitKeyOf, contentOf, videoAdOf)
+        titleSpeechEnabled: () -> Boolean = { HandlingTitleSpeechFeature.enabled },
+    ) = SpeechHandlingListener(announcer, batcher, Strings.format, waitKeyOf, contentOf, videoAdOf, titleSpeechEnabled = titleSpeechEnabled)
+
+    private val titlesOn = listener(titleSpeechEnabled = { true })
 
     private fun decision(next: NextStep, vararg reasons: SafetyReason, on: SnapshotToken = token) = ActionDecision(
         token = on,
@@ -116,8 +119,22 @@ class SpeechHandlingListenerTest {
         }
     }
 
-    @Test fun closedWithTitleSaysTheShortTitle() {
-        handle(closed(ad, title = "가을맞이 특가 이벤트 지금 바로 확인하시고 혜택 받으세요"))
+    /** First live integration (10/25): the title is not spoken by default, whatever A sends. */
+    @Test fun titleIsOffByDefault() {
+        assertFalse(HandlingTitleSpeechFeature.enabled)
+        mapOf(ad to "광고를 닫았어요.", coupon to "쿠폰을 닫았어요.", notice to "공지를 닫았어요.").forEach { (kind, line) ->
+            announcer.said.clear()
+            handle(closed(kind, title = "가을맞이 특가 이벤트"))
+            assertEquals(listOf(line), spoken())
+        }
+        announcer.said.clear()
+        handle(closed(ad, title = "하나"), closed(coupon, title = "둘", on = otherPopup()))
+        assertEquals(listOf("광고 1개, 쿠폰 1개를 닫았어요."), spoken())
+        announcer.said.forEach { assertFalse(it.text, it.text.contains("하나") || it.text.contains("둘")) }
+    }
+
+    @Test fun titleOnSaysTheShortTitle() {
+        handle(closed(ad, title = "가을맞이 특가 이벤트 지금 바로 확인하시고 혜택 받으세요"), l = titlesOn)
         assertEquals(listOf("'가을맞이 특가 이벤트 지금 바로 확인' 광고를 닫았어요."), spoken())
     }
 
@@ -231,6 +248,25 @@ class SpeechHandlingListenerTest {
         assertEquals(2, spoken().size)
     }
 
+    @Test fun nullKeyIsSaidEveryTime() {
+        val l = listener(waitKeyOf = { null })
+        val wait = report(NextStep.WAIT, SafetyReason.WAITING_FOR_TARGET)
+        handle(wait, wait, wait, l = l)
+        assertEquals(List(3) { "광고가 끝나면 닫을게요." }, spoken())
+    }
+
+    @Test fun everyResetReasonForgetsSaidWaits() {
+        WaitResetReason.entries.forEach { reason ->
+            announcer.said.clear()
+            val l = listener()
+            val wait = report(NextStep.WAIT, SafetyReason.WAITING_FOR_TARGET)
+            handle(wait, wait, l = l)
+            l.resetWaitMemory(reason)
+            handle(wait, wait, l = l)
+            assertEquals("$reason", 2, spoken().size)
+        }
+    }
+
     @Test fun clearForgetsSaidWaits() {
         val l = listener()
         val wait = report(NextStep.WAIT, SafetyReason.WAITING_FOR_TARGET)
@@ -262,6 +298,13 @@ class SpeechHandlingListenerTest {
         assertTrue(spoken().isEmpty())
     }
 
+    /** The person's own choice never becomes a report, so PopupChoiceFlow alone speaks its result. */
+    @Test fun userChoiceCanNotReachTheListener() {
+        val own = decision(NextStep.EXECUTE).copy(source = DecisionSource.USER_CHOICE)
+        val built = runCatching { HandlingReport(token, ad, own, result(ClickOutcome.CLOSED_CONFIRMED)) }
+        assertTrue(built.exceptionOrNull() is IllegalArgumentException)
+    }
+
     @Test fun suspiciousSaysOnlyTheWarning() {
         handle(report(NextStep.DENY, SafetyReason.SUSPICIOUS_CONTENT))
         assertEquals(listOf("사기일 수 있는 팝업이에요. 아무것도 누르지 마세요."), spoken())
@@ -289,7 +332,7 @@ class SpeechHandlingListenerTest {
             assertNull(it, SpeechHandlingListener.spokenTitle(it))
         }
         assertEquals("50% 할인 쿠폰 2024", SpeechHandlingListener.spokenTitle("50% 할인 쿠폰 2024"))
-        handle(closed(ad, title = "상담 010-1234-5678"))
+        handle(closed(ad, title = "상담 010-1234-5678"), l = titlesOn)
         assertEquals(listOf("광고를 닫았어요."), spoken())
     }
 
@@ -297,7 +340,7 @@ class SpeechHandlingListenerTest {
         val report = closed(ad, title = "비밀 제목")
         assertFalse(report.toString().contains("비밀"))
         assertFalse(listener().toString().contains("비밀"))
-        handle(report)
+        handle(report, l = titlesOn)
         spoken()
         announcer.said.forEach { assertFalse(it.toString().contains("비밀")) }
     }
