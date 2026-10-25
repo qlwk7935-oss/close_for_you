@@ -34,6 +34,8 @@ enum class RuleRejection {
     MISSING_EXPIRY,
     /** 만료일이 생성 시각에서 30일을 넘음. */
     EXPIRY_TOO_LONG,
+    /** 지문 키를 만든 뒤 [기억 전체 삭제]가 있었음. 옛 키 지문은 다시 일치할 수 없다([KeyEraseGate]). */
+    KEY_FROM_BEFORE_ERASE,
 }
 
 class RuleRejectedException(val reason: RuleRejection) :
@@ -82,7 +84,11 @@ object RuleValidity {
  *   B 정책·A 게이트가 막는다(저장소는 실행하지 않는다).
  * - 실제 클릭이 필요한 기억은 A가 실행 성공을 확인한 뒤에만 [save]를 호출한다(호출하는 쪽 책임).
  */
-class RoomPopupRuleRepository(private val dao: PopupRuleDao) : PopupRuleRepository {
+class RoomPopupRuleRepository(
+    private val dao: PopupRuleDao,
+    /** [RuleStorage]가 넘기는 프로세스 공용 문. null이면 전체 삭제와의 경쟁을 막지 않는다(시험·Mock). */
+    private val eraseGate: KeyEraseGate? = null,
+) : PopupRuleRepository {
 
     override suspend fun findExact(key: RuleKey, nowEpochMillis: Long): PopupRule? =
         dao.findUsable(
@@ -98,10 +104,12 @@ class RoomPopupRuleRepository(private val dao: PopupRuleDao) : PopupRuleReposito
             .mapNotNull { it.toRuleOrNull() }
             .firstOrNull { RuleValidity.isUsable(it, key, nowEpochMillis) }
 
-    /** @throws RuleRejectedException 만료일이 없거나 30일을 넘는 경우 */
+    /** @throws RuleRejectedException 만료일이 없거나 30일을 넘거나, 키를 만든 뒤 전체 삭제가 있었던 경우 */
     override suspend fun save(rule: PopupRule) {
         RuleValidity.checkStorable(rule)
-        dao.replace(PopupRuleEntity.from(rule))
+        val entity = PopupRuleEntity.from(rule)
+        val gate = eraseGate
+        if (gate == null) dao.replace(entity) else gate.save(rule.key) { dao.replace(entity) }
     }
 
     override suspend fun revoke(id: String) {
