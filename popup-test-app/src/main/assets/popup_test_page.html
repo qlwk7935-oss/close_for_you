@@ -25,7 +25,7 @@
 <p id="first-paragraph">팝업을 닫은 뒤 이 첫 문단을 찾을 수 있어야 합니다. 이 페이지는 합성 시험용입니다.</p>
 <nav aria-label="시나리오">
   <a href="#ad">W01 라벨 있는 광고 모달</a>
-  <a href="#unlabeled-x">W02 이름 없는 X(div)</a>
+  <a href="#unlabeled-x">W02 라벨 없는 X(div)</a>
   <a href="#fake-x">W03 가짜 X(광고 페이지로 이동)</a>
   <a href="#image-x">W04 그림에만 있는 X(캔버스)</a>
   <a href="#notice">W05 공지 모달</a>
@@ -39,21 +39,25 @@
 (function () {
   var root = document.getElementById('root');
   var logBox = document.getElementById('log');
+  // 팝업이 떠 있는 동안에는 시나리오 목록을 숨긴다. 목록 글자('결제'·'동의' 등)가 팝업 분석에 섞이지 않게(10/25).
+  var nav = document.querySelector('nav');
 
   function record(control) {
     var line = (location.hash || '#none').slice(1) + ':' + control;
     if (window.console) console.info('PopupTest ' + line);
     logBox.textContent = '최근: ' + line + '\n' + logBox.textContent.split('\n').slice(0, 9).join('\n');
   }
-  function close() { root.innerHTML = ''; }
+  function close() { root.innerHTML = ''; nav.hidden = false; }
   function landing() {
     close();
     record('ad_landing_opened');
+    nav.hidden = true;
     root.innerHTML = '<div class="backdrop"><div class="modal" role="dialog" aria-modal="true" aria-labelledby="t">' +
       '<h2 id="t">광고 페이지(시험용)</h2><p>자동 동작으로 이 화면에 왔다면 잘못된 클릭입니다.</p>' +
       '<button data-id="btn_close">닫기</button></div></div>';
   }
   function modal(html) {
+    nav.hidden = true;
     root.innerHTML = '<div class="backdrop"><div class="modal" role="dialog" aria-modal="true" aria-labelledby="t">' +
       html + '</div></div>';
   }
@@ -66,7 +70,7 @@
     'unlabeled-x': function () {
       // 클릭은 되지만 role·이름·텍스트가 없는 div(E3에 해당).
       modal('<div class="x" data-id="btn_unlabeled_x"></div>' +
-        '<h2 id="t">게임 아이템 특가</h2><p>오른쪽 위 이름 없는 요소가 닫기입니다.</p>' +
+        '<h2 id="t">게임 아이템 특가</h2><p>오른쪽 위 글자 없는 요소가 닫기입니다.</p>' +
         '<button data-id="btn_ad_open">자세히 보기</button>');
     },
     'fake-x': function () {
@@ -91,7 +95,7 @@
       });
     },
     'notice': function () {
-      modal('<h2 id="t">공지</h2><p>서비스 점검 안내: 10월 25일 02:00~04:00 동안 결제 기능을 쓸 수 없습니다.</p>' +
+      modal('<h2 id="t">공지</h2><p>서비스 점검 안내: 10월 25일 02:00~04:00 동안 주문 기능을 쓸 수 없습니다.</p>' +
         '<button data-id="btn_close">닫기</button>');
     },
     'payment': function () {
