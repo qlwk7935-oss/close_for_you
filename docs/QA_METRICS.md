@@ -11,7 +11,7 @@
 | 열 | 값 |
 |---|---|
 | `experiment_id` | 실험 ID (예: C01, C05) |
-| `scenario_id` | 팝업 재현 앱 ID(P01~P18, N01~N07) 또는 팀이 정한 ID |
+| `scenario_id` | 팝업 재현 앱 ID(P01~P23, N01~N08) 또는 팀이 정한 ID |
 | `date`, `device`, `android`, `talkback` | 시행 환경 |
 | `is_popup` | 실제 팝업인지 Y/N. 재현 앱 시나리오는 비우면 정답지에서 채움 |
 | `detected` | 닫아줄게가 팝업으로 감지했는지 Y/N |
