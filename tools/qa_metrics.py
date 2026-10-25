@@ -18,6 +18,12 @@
   offered_press C 선택 창이 누르기 버튼을 보여 줬는지 Y/N
   known_limit   검증표에 "현재 예상(알려진 한계)"로 적힌 행이면 Y. 누르기 제안률·잘못 거부 분모에서 빼고
                 따로 보고한다. 안전 판정(앱이 누름·잘못 제안·금지 버튼)에서는 빼지 않는다.
+  observed_kind 관측한 B 화면 분류(COUPON·ADVERTISEMENT·NOTICE·USER_DECISION·UNKNOWN, A가 막았으면 BLOCKED).
+                정답지 int1_kind(첫 통합 예상)와 대조한다. 사람 기준 종류(kind)와는 따로 본다.
+  preset        시행 때 켠 프리셋(OFF·CLOSE_ALL·CLOSE_ADS_AND_COUPONS·CLOSE_ADS_ONLY). 정답지 preset_* 목표를 고른다.
+  auto_executable  그 시행에서 서비스가 실제로 자동 실행할 수 있었는지 Y/N(운영 자동 닫기·동의·F9·적격 근거가 모두
+                켜짐). 프리셋 목표와 따로 적는다. 목표가 CLOSE여도 N이면 묻기가 정상이다.
+                목표가 CLOSE가 아닌데 AUTO_HANDLED면 단계와 상관없이 실패(종료 1)다.
 
 출력
   Markdown 보고서(stdout). 지표 정의는 docs/검증 실험 계획.md E절을 따른다.
@@ -45,6 +51,9 @@ DANGEROUS = {"AUTO_FORBIDDEN", "BLOCK_ANALYSIS"}
 APP_ACTED = {"AUTO_HANDLED", "USER_CONFIRMED"}
 REFUSED = {"ANNOUNCED_ONLY", "BLOCKED"}
 YES, NO = "Y", "N"
+OBSERVED_KINDS = ("COUPON", "ADVERTISEMENT", "NOTICE", "USER_DECISION", "UNKNOWN", "BLOCKED")
+PRESETS = {"CLOSE_ALL": "preset_close_all", "CLOSE_ADS_AND_COUPONS": "preset_close_ads_and_coupons",
+           "CLOSE_ADS_ONLY": "preset_close_ads_only"}
 
 LOG_LINE = re.compile(r"PopupTest(?:\(\s*\d+\))?\s*:\s*([A-Z]\d\d):([A-Za-z0-9_]+)")
 
@@ -95,7 +104,13 @@ def load_results(path: Path, key: dict[str, dict]) -> tuple[list[dict], list[str
                 continue
             if row.get("expected_handling") and row["expected_handling"] not in EXPECTED:
                 problems.append(f"{line_no}행: expected_handling '{row['expected_handling']}'을(를) 알 수 없습니다")
-            for col in ("offered_press", "known_limit"):
+            if row.get("observed_kind") and row["observed_kind"] not in OBSERVED_KINDS:
+                problems.append(f"{line_no}행: observed_kind '{row['observed_kind']}'은(는) {', '.join(OBSERVED_KINDS)} 중 하나여야 합니다")
+            if row.get("preset") and row["preset"] != "OFF" and row["preset"] not in PRESETS:
+                problems.append(f"{line_no}행: preset '{row['preset']}'은(는) OFF, {', '.join(PRESETS)} 중 하나여야 합니다")
+            if outcome == "AUTO_HANDLED" and yn(row.get("auto_executable")) is False:
+                problems.append(f"{line_no}행: 자동 처리(AUTO_HANDLED)인데 auto_executable=N입니다. 기록을 확인하세요")
+            for col in ("offered_press", "known_limit", "auto_executable"):
                 if row.get(col) and yn(row[col]) is None:
                     problems.append(f"{line_no}행: {col} '{row[col]}'은(는) Y/N이어야 합니다")
             rows.append(row)
@@ -134,6 +149,51 @@ def scan_logcat(path: Path, key: dict[str, dict]) -> tuple[list[str], list[tuple
 
 
 PASS, FAIL, UNVERIFIED = "통과(검증됨)", "실패", "미검증"
+
+
+def int1_section(rows: list[dict], key: dict[str, dict]) -> list[str]:
+    """관측한 B 분류(observed_kind)를 정답지 첫 통합 예상(int1_kind)과 대조한다. 사람 기준 kind와는 따로."""
+    seen = [r for r in rows if r.get("observed_kind") and key.get(r.get("scenario_id", ""), {}).get("int1_kind")]
+    if not seen:
+        return []
+    out = ["## 첫 통합 분류 대조(정답지 int1)", "",
+           "관측한 B 화면 분류를 지금 코드 기준 예상(`int1_kind`·`int1_path`)과 비교합니다. "
+           "사람 기준 종류(`kind`, 예: P01·P12·P13 쿠폰)와 다른 칸은 정답지에 이유가 있습니다.", ""]
+    match = [r for r in seen if r["observed_kind"] == key[r["scenario_id"]]["int1_kind"]]
+    out.append(f"- 예상과 같음: {ratio(len(match), len(seen))}")
+    for r in seen:
+        answer = key[r["scenario_id"]]
+        if r["observed_kind"] != answer["int1_kind"]:
+            out.append(f"  - {r['_line']}행 {r['scenario_id']}: 예상 {answer['int1_kind']}({answer.get('int1_path', '')}), "
+                       f"관측 {r['observed_kind']} (사람 기준 {answer.get('kind', '?')})")
+    out.append("")
+    return out
+
+
+def preset_section(rows: list[dict], key: dict[str, dict]) -> tuple[list[str], int]:
+    """프리셋 목표(정답지)와 실제 실행 가능 여부(시행 기록)를 나눠 적는다. (보고서 줄, 목표 밖 자동 처리 수)."""
+    tried = [r for r in rows if r.get("preset") in PRESETS]
+    if not tried:
+        return [], 0
+    out = ["## 프리셋 목표와 실제 실행 가능 여부", "",
+           "목표는 정답지 `preset_*`(사람 기준 종류로 정한 값)이고, 실행 가능 여부는 그 시행의 서비스 상태입니다. "
+           "목표가 CLOSE여도 실행 가능이 N이면 묻기가 정상이며 목표 미달로 세지 않습니다.", "",
+           "| 행 | 시나리오 | 프리셋 | 목표 | 실행 가능 | 결과 |", "|---|---|---|---|---|---|"]
+    unsafe = []
+    for r in tried:
+        goal = key.get(r.get("scenario_id", ""), {}).get(PRESETS[r["preset"]], "") or "-"
+        executable = {True: YES, False: NO}.get(yn(r.get("auto_executable")), "-")
+        out.append(f"| {r['_line']} | {r.get('scenario_id', '?')} | {r['preset']} | {goal} | {executable} | {r['outcome']} |")
+        if r["outcome"] == "AUTO_HANDLED" and goal != "CLOSE":
+            unsafe.append(r)
+    out.append("")
+    if unsafe:
+        out.append(f"- **목표 밖 자동 처리 {len(unsafe)}건(실패)**: 목표가 CLOSE가 아닌 시나리오를 앱이 자동으로 처리했습니다.")
+        out += [f"  - {r['_line']}행 {r.get('scenario_id', '?')} 프리셋 {r['preset']}" for r in unsafe]
+    else:
+        out.append("- 목표 밖 자동 처리: 0건")
+    out.append("")
+    return out, len(unsafe)
 
 
 def no_click_section(rows: list[dict], records: list[tuple[str, str, int]] | None,
@@ -186,6 +246,13 @@ def report(rows: list[dict], problems: list[str], log: tuple[list[str], list] | 
     if no_click:
         section, verdict = no_click_section(rows, log[1] if log else None, key or {})
         out += section
+
+    if key:
+        out += int1_section(rows, key)
+        section, unsafe = preset_section(rows, key)
+        out += section
+        if unsafe:
+            verdict = FAIL
 
     # 감지 (C01): 정밀도·재현율
     labeled = [r for r in run if yn(r.get("is_popup")) is not None and yn(r.get("detected")) is not None]
