@@ -18,10 +18,10 @@ import org.junit.Test
  * Button labels are texts too (A's analysis carries no clickability for texts).
  */
 class DecisionOverWarningStudyTest {
-    private enum class Truth { AD, NOTICE, DECISION }
-    private data class Sample(val id: String, val truth: Truth, val texts: List<String>)
+    internal enum class Truth { AD, NOTICE, DECISION }
+    internal data class Sample(val id: String, val truth: Truth, val texts: List<String>)
 
-    private val samples = listOf(
+    internal val samples = listOf(
         // Advertisements whose body mentions a decision word as a benefit condition.
         Sample("ad-01", Truth.AD, listOf("신규 가입 이벤트", "가입하면 포인트를 드립니다. 시험용 광고입니다.", "자세히 보기", "닫기")),
         Sample("ad-02", Truth.AD, listOf("타임세일(시험용)", "세일 종료까지 04:57", "오늘 주문하면 내일 오전 10시 도착. 5초 안에 결제하면 추가 할인(시험용).", "자세히 보기", "닫기")),
@@ -126,7 +126,7 @@ class DecisionOverWarningStudyTest {
         for (s in samples) {
             val c = classify(s.texts)
             if (s.truth.matches(c)) correct++ else wrong += "${s.id}→$c"
-            if (s.truth == Truth.DECISION && (c == PopupClassification.ADVERTISEMENT || c == PopupClassification.NOTICE)) dangerous++
+            if (s.truth == Truth.DECISION && (c == PopupClassification.ADVERTISEMENT || c == PopupClassification.NOTICE || c == PopupClassification.COUPON)) dangerous++
             if (s.truth != Truth.DECISION && c == PopupClassification.USER_DECISION) over++
         }
         return Score(correct, dangerous, over, wrong)
