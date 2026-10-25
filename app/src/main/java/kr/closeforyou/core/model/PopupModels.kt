@@ -332,8 +332,13 @@ data class HandlingReport(
         require(title == null || title.isNotBlank())
     }
 
-    /** "닫았어요" is said and counted only for this; failed, unknown and left-app presses never count as closed. */
-    val closedConfirmed: Boolean get() = result?.outcome == ClickOutcome.CLOSED_CONFIRMED
+    /**
+     * "닫았어요" is said and counted only for this: the team's single success rule (10/25, A #42, C
+     * PressSuccess) — attempted + MECHANICAL_SUCCESS + CLOSED_CONFIRMED. A popup that vanished after a
+     * failed or unknown press, a left-app press or no press never counts as closed.
+     */
+    val closedConfirmed: Boolean get() = result != null && result.attempted &&
+        result.status == ActionStatus.MECHANICAL_SUCCESS && result.outcome == ClickOutcome.CLOSED_CONFIRMED
 
     override fun toString(): String =
         "HandlingReport(classification=$classification, next=${decision.next}, outcome=${result?.outcome}, redacted)"

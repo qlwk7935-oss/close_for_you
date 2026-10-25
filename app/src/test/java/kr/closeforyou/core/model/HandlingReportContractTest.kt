@@ -30,6 +30,11 @@ class HandlingReportContractTest {
         for (outcome in listOf(ClickOutcome.LEFT_APP, ClickOutcome.STILL_PRESENT, ClickOutcome.UNKNOWN, null)) {
             assertFalse(outcome.toString(), HandlingReport(token, PopupClassification.ADVERTISEMENT, decision(NextStep.EXECUTE), pressed(outcome)).closedConfirmed)
         }
+        // The popup vanished but the press failed or its outcome is unknown: not closed (team rule 10/25).
+        for (status in listOf(ActionStatus.ATTEMPT_FAILED, ActionStatus.OUTCOME_UNKNOWN)) {
+            val vanished = ActionResult(token, status, null, attempted = true, outcome = ClickOutcome.CLOSED_CONFIRMED)
+            assertFalse(status.name, HandlingReport(token, PopupClassification.ADVERTISEMENT, decision(NextStep.EXECUTE), vanished).closedConfirmed)
+        }
         // A's gate did not press (non-executing today): not closed either.
         val notPressed = ActionResult(token, ActionStatus.NOT_EXECUTED, SafetyReason.NOT_IMPLEMENTED)
         assertFalse(HandlingReport(token, PopupClassification.ADVERTISEMENT, decision(NextStep.EXECUTE), notPressed).closedConfirmed)

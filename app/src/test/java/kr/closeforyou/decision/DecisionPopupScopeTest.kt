@@ -87,4 +87,23 @@ class DecisionPopupScopeTest {
         val other = DecisionPopupScope.texts(snapshot(), PopupDetection(token.copy(screenVersion = 9), persistentSetOf(PopupSignal.SAME_WINDOW_OVERLAY)), treeTexts())
         assertEquals(all, other.map { it.text })
     }
+
+    @Test fun theTitleIsTheFirstSafePopupText() {
+        fun t(vararg texts: String, ocr: Set<String> = emptySet()) = texts.mapIndexed { i, s ->
+            ExtractedText(s, ScreenBounds(100, 900 + i * 100, 900, 990 + i * 100), if (s in ocr) TextSource.OCR else TextSource.ACCESSIBILITY_TREE, null)
+        }
+        val close = CloseCandidate("node:c", "c", null, "닫기", ScreenBounds(100, 1400, 900, 1450), EvidenceLevel.E2_LABELED_NODE, ButtonRole.CLOSE)
+        // P01-like: the heading, not the body or the buttons.
+        assertEquals("가을 할인 쿠폰", DecisionPopupScope.title(t("가을 할인 쿠폰", "지금 받으면 30퍼센트 할인", "자세히 보기", "닫기"), listOf(close)))
+        // Button words, close labels, warnings and OCR are never a title; the first safe text after them is.
+        assertEquals("한정 특가 광고", DecisionPopupScope.title(t("닫기", "자세히 보기", "확인", "X", " ", "한정 특가 광고"), listOf(close)))
+        assertEquals("운영 시간 안내", DecisionPopupScope.title(t("결제 선택 필요", "당첨되었습니다", "확인되지 않은 버튼", "운영 시간 안내"), emptyList()))
+        assertEquals("쿠폰 도착", DecisionPopupScope.title(t("가을 세일", "쿠폰 도착", ocr = setOf("가을 세일")), emptyList()))
+        // Nothing safe: no title rather than a wrong one.
+        assertEquals(null, DecisionPopupScope.title(t("닫기", "주문하시겠어요?"), listOf(close)))
+        assertEquals(null, DecisionPopupScope.title(emptyList(), emptyList()))
+        // A candidate label spelled differently (spaces, width) is still a label.
+        val spaced = close.copy(label = "  닫기 ")
+        assertEquals(null, DecisionPopupScope.title(t("닫기"), listOf(spaced)))
+    }
 }
