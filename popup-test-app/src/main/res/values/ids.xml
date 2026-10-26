@@ -19,4 +19,8 @@
     <item name="btn_fake_close" type="id" />
     <item name="btn_prize_claim" type="id" />
     <item name="btn_scan_now" type="id" />
+    <item name="btn_buy_now" type="id" />
+    <item name="btn_hide_today" type="id" />
+    <item name="btn_coupon_get" type="id" />
+    <item name="btn_confirm" type="id" />
 </resources>
