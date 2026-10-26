@@ -89,4 +89,72 @@
     <string name="scan_now">지금 검사하기</string>
     <string name="delayed_title">적립금 쿠폰 도착</string>
     <string name="delayed_body">3초 뒤 닫기 버튼이 나타납니다(시험용).</string>
+
+    <!-- 시연 영상 "모아마켓" 화면(P25~P32). 가상 쇼핑몰이며 상품·가격은 합성이다. -->
+    <string name="moa_brand">모아마켓</string>
+    <string name="moa_bell">알림</string>
+    <string name="moa_cart">장바구니</string>
+    <string name="moa_search">상품을 검색해 보세요</string>
+    <string name="moa_chip_fashion">패션</string>
+    <string name="moa_chip_appliance">가전</string>
+    <string name="moa_chip_food">식품</string>
+    <string name="moa_chip_living">생활</string>
+    <string name="moa_chip_camping">캠핑</string>
+    <string name="moa_banner_title">가을 맞이 특가전</string>
+    <string name="moa_banner_sub">매일 오전 10시 새 상품</string>
+    <string name="moa_today">오늘의 추천</string>
+    <string name="moa_p1_name">무선 이어폰</string>
+    <string name="moa_p1_discount" formatted="false">32%</string>
+    <string name="moa_p1_price">49,000원</string>
+    <string name="moa_p2_name">가을 니트</string>
+    <string name="moa_p2_discount" formatted="false">45%</string>
+    <string name="moa_p2_price">29,000원</string>
+    <string name="moa_p3_name">러닝화</string>
+    <string name="moa_p3_discount" formatted="false">20%</string>
+    <string name="moa_p3_price">59,000원</string>
+    <string name="moa_p4_name">보온 텀블러</string>
+    <string name="moa_p4_discount" formatted="false">15%</string>
+    <string name="moa_p4_price">12,900원</string>
+    <string name="moa_nav_home">홈</string>
+    <string name="moa_nav_category">카테고리</string>
+    <string name="moa_nav_search">검색</string>
+    <string name="moa_nav_wish">찜</string>
+    <string name="moa_nav_cart">장바구니</string>
+    <string name="moa_ad_badge">광고</string>
+    <string name="moa_ad1_title" formatted="false">오늘만 최대 70% 할인</string>
+    <string name="moa_ad1_sub">무선 이어폰, 가을 니트 외 300종</string>
+    <string name="moa_ad1_old_price">99,000원</string>
+    <string name="moa_ad1_price">29,700원</string>
+    <string name="moa_ad1_percent" formatted="false">70%</string>
+    <string name="moa_ad2_title" formatted="false">주말 한정 최대 50% 할인</string>
+    <string name="moa_ad2_sub">캠핑, 생활용품 특가</string>
+    <string name="moa_ad2_old_price">82,000원</string>
+    <string name="moa_ad2_price">41,000원</string>
+    <string name="moa_ad2_percent" formatted="false">50%</string>
+    <string name="moa_buy_now">지금 구매하기</string>
+    <string name="moa_hide_today">오늘 하루 보지 않기</string>
+    <string name="moa_close_countdown">%1$d초 후 닫을 수 있어요</string>
+    <string name="moa_coupon_kicker">쿠폰이 도착했어요</string>
+    <string name="moa_coupon_title" formatted="false">15% 할인 쿠폰</string>
+    <string name="moa_coupon_condition">3만 원 이상 구매 시 최대 1만 원 할인</string>
+    <string name="moa_coupon_valid">유효기간 10월 31일까지</string>
+    <string name="moa_coupon_get">쿠폰 받기</string>
+    <string name="moa_notice_title">서비스 점검 안내</string>
+    <string name="moa_notice_body">더 나은 서비스를 위해 아래 시간 동안 점검을 진행합니다.</string>
+    <string name="moa_notice_when_label">일시</string>
+    <string name="moa_notice_when">10월 28일 수요일 오전 2시부터 오전 4시까지</string>
+    <string name="moa_notice_what_label">내용</string>
+    <string name="moa_notice_what">주문 기능 일시 중단</string>
+    <string name="moa_confirm">확인</string>
+    <string name="moa_video_title">가을 특가</string>
+    <string name="moa_video_title2" formatted="false">오늘만 70%</string>
+    <string name="moa_video_caption">모아마켓 가을 특가</string>
+    <string name="moa_learn_more">자세히 알아보기</string>
+    <string name="moa_video_time">%1$d:%2$02d</string>
+    <string name="moa_skip_countdown">%1$d초 후 건너뛰기</string>
+    <string name="moa_skip_now">광고 건너뛰기 ▶</string>
+    <string name="moa_main_label">영상 본편</string>
+    <string name="moa_main_title">가을 코디 추천 영상</string>
+    <string name="moa_main_meta">모아마켓 채널 · 조회수 1.2만회</string>
+    <string name="moa_main_time">%1$d:%2$02d / 3:20</string>
 </resources>
