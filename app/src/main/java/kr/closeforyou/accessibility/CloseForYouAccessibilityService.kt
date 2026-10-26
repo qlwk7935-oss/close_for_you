@@ -11,6 +11,10 @@ import android.view.inputmethod.InputMethodManager
 import kotlinx.collections.immutable.toPersistentSet
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.first
+import kr.closeforyou.accessibility.integration.unattributedManualTouch
+import kr.closeforyou.accessibility.integration.ManualTouchState
 import kr.closeforyou.app.CorePreferences
 import kr.closeforyou.accessibility.capture.AndroidScreenshotManager
 import kr.closeforyou.accessibility.capture.CaptureOcrPipeline
@@ -33,6 +37,16 @@ class CloseForYouAccessibilityService : AccessibilityService() {
     private var settingsObserver: Job? = null
     private var f9: F9ServiceConnection? = null
     private var touching = false
+    private var unattributedTouch = false
+    private val touchState = MutableStateFlow(false)
+    private val contacts = ManualTouchState()
+    private fun resetTouching() { contacts.clear(); touching = false; unattributedTouch = false; touchState.value = false }
+    private fun updateTouch(type: Int, unattributed: Boolean) {
+        contacts.observe(type, unattributed)
+        touching = contacts.active
+        unattributedTouch = contacts.active && !contacts.intentBlocked
+        touchState.value = touching
+    }
     private var connected = false
     private var inputMethodPackages: Set<String> = emptySet()
     private val preferences by lazy { CorePreferences.get(this) }
@@ -68,7 +82,7 @@ class CloseForYouAccessibilityService : AccessibilityService() {
             notificationTimeout = 0L // User interaction must invalidate tokens immediately.
         }
         connected = true
-        touching = false
+        resetTouching()
         inputMethodPackages = (getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager)
             .inputMethodList.mapTo(mutableSetOf()) { it.packageName }
         val screenshots = AndroidScreenshotManager(this, preferences, ::isCurrent) { connected && !touching }
@@ -78,7 +92,9 @@ class CloseForYouAccessibilityService : AccessibilityService() {
         f9 = F9ServiceConnection(this, serviceScope, { connected }, { touching },
             requestObservation = ::observeAfterCleanup,
             policyChanged = { invalidate(clearBaseline = true, permissionOrInteraction = true) },
-            epoch = { freshness.version }, verifyPresentation = ::verifyForChoice).also { it.start() }
+            epoch = { freshness.version }, verifyPresentation = ::verifyForChoice,
+            collectForChoice = ::collectForManualChoice, awaitInteractionEnd = { touchState.first { !it } },
+            intentInteracting = { touching && !unattributedTouch }).also { it.start() }
         invalidate(clearBaseline = true)
         settingsObserver = serviceScope.launch {
             preferences.state.collect {
@@ -106,15 +122,18 @@ class CloseForYouAccessibilityService : AccessibilityService() {
         val eventType = event.eventType
         val resumeObservation = resumePendingObservationAfterFocus(pendingCapture?.isActive == true, eventType)
         val interaction = eventType !in SCREEN_EVENTS
-        val epoch = invalidate(clearBaseline = false, permissionOrInteraction = interaction, ownedRetirement = ownedRetirement)
+        val preserveManual = (f9?.hasPrompt() == true || unattributedTouch) &&
+            unattributedManualTouch(eventType, event.windowId, event.packageName)
+        val epoch = invalidate(clearBaseline = false, permissionOrInteraction = interaction,
+            ownedRetirement = ownedRetirement, preserveManual = preserveManual)
         if (eventType == AccessibilityEvent.TYPE_TOUCH_INTERACTION_START ||
             eventType == AccessibilityEvent.TYPE_TOUCH_EXPLORATION_GESTURE_START) {
-            touching = true
+            updateTouch(eventType, preserveManual)
             return
         }
         if (eventType == AccessibilityEvent.TYPE_TOUCH_INTERACTION_END ||
             eventType == AccessibilityEvent.TYPE_TOUCH_EXPLORATION_GESTURE_END) {
-            touching = false
+            updateTouch(eventType, preserveManual)
             return
         }
         val settings = preferences.currentSettings()
@@ -259,13 +278,32 @@ class CloseForYouAccessibilityService : AccessibilityService() {
         }
     }
 
+    /** One new full collector attempt after native C teardown, never a token/time rewrite. */
+    private fun collectForManualChoice(original: PopupSnapshot, checkpoint: () -> Unit): PopupSnapshot? {
+        checkpoint()
+        if (!connected || touching || packageBlock(original.token.packageName) != null) return null
+        val epoch = invalidate(clearBaseline = false, ownedRetirement = true)
+        fun checkCurrent() {
+            checkpoint()
+            if (!connected || touching || !freshness.isCurrent(epoch) ||
+                packageBlock(original.token.packageName) != null) throw CancellationException("MANUAL_COLLECTION_STALE")
+        }
+        checkCurrent()
+        val fresh = collector.capture(this, epoch, original.trigger, ::packageBlock)
+        checkCurrent() // The existing synchronous 100 ms collector is not a cancellable Binder API.
+        return when (fresh) {
+            is CollectionResult.Blocked -> null
+            is CollectionResult.Ready -> { checkCurrent(); fresh.snapshot }
+        }
+    }
+
     private fun packageBlock(targetPackage: String): PrivacyBlockReason? = preferences.currentSettings().let {
         PrivacyPolicy.packageBlock(targetPackage, packageName, it.consentGranted, it.paused,
             it.allowedPackages, inputMethodPackages)
     }
 
     private fun invalidate(clearBaseline: Boolean, permissionOrInteraction: Boolean = false,
-        ttl: Boolean = false, ownedRetirement: Boolean = false): Long {
+        ttl: Boolean = false, ownedRetirement: Boolean = false, preserveManual: Boolean = false): Long {
         pendingCapture?.cancel()
         pendingCapture = null
         evidenceJob?.cancel()
@@ -274,7 +312,7 @@ class CloseForYouAccessibilityService : AccessibilityService() {
         expiry = null
         if (clearBaseline) detector.clear()
         return freshness.invalidate().also { version ->
-            f9?.invalidate(version, permissionOrInteraction, ttl, ownedRetirement)
+            f9?.invalidate(version, permissionOrInteraction, ttl, ownedRetirement, preserveManual)
             AccessibilityRuntime.invalidate(version)
         }
     }
@@ -311,7 +349,7 @@ class CloseForYouAccessibilityService : AccessibilityService() {
     private fun disconnect() {
         AccessibilityRuntime.serviceLifecycle.phase(ServiceLifecyclePhase.UNBOUND)
         connected = false
-        touching = false
+        resetTouching()
         f9?.close(freshness.version + 1); f9 = null
         settingsObserver?.cancel()
         invalidate(clearBaseline = true)

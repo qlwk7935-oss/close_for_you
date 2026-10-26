@@ -46,6 +46,10 @@ internal class OverlayNativeWindowLifetime(val generation: Long, private val ses
         if (!requested || returned || !success) invalid = true
         returned = success
     }
+    /** Read-only identity of THIS attached native View, not a package/title guess. */
+    fun liveWindow(owner: Any, expectedGeneration: Long): Int? =
+        if (!invalid && session === owner && generation == expectedGeneration && added && attached &&
+            !requested && !detached) id else null
     fun retirementWindow(owner: Any, expectedGeneration: Long): Int? =
         if (!invalid && session === owner && generation == expectedGeneration && attached && requested) id else null
     /** Registration may reserve blocked cleanup before attach, never complete it. */

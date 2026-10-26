@@ -230,7 +230,7 @@ class F9ManualServiceInstrumentedTest {
             assertEquals(before.f9AttemptedCount + 1, AccessibilityRuntime.status.value.f9AttemptedCount)
         }
     }
-    @Test fun originalTtlDisablesChoiceAndDisplayEndsAtThirtySecondsOrRealInvalidation() = runBlocking {
+    @Test fun originalTtlExpiresExecutionEvidenceButManualDisplayEndsAtThirtySecondsOrRealInvalidation() = runBlocking {
         realService { a ->
             popup(a)
             val before = AccessibilityRuntime.status.value
@@ -244,7 +244,7 @@ class F9ManualServiceInstrumentedTest {
             @Suppress("DEPRECATION") first?.recycle()
             delay(5_200)
             assertNull(AccessibilityRuntime.currentToken())
-            assertNull(a.choice(pressLabel())) // no enabled press survives original capture TTL
+            // A press is now an explicit REQUEST FOR A NEW F0 read, never use of expired evidence.
             val keep = InstrumentationRegistry.getInstrumentation().targetContext.getString(R.string.ui_choice_keep_open)
             @Suppress("DEPRECATION") val retained = a.choice(keep)
             if (retained == null) {
@@ -262,6 +262,9 @@ class F9ManualServiceInstrumentedTest {
                 return@realService
             }
             @Suppress("DEPRECATION") retained?.recycle()
+            @Suppress("DEPRECATION") val intent = a.choice(pressLabel())
+            assertNotNull("MANUAL_RECHECK_INTENT_MISSING", intent)
+            @Suppress("DEPRECATION") intent?.recycle()
             assertEquals(before.f9AttemptedCount, AccessibilityRuntime.status.value.f9AttemptedCount)
             delay(26_000)
             assertNull(a.choice(keep))
@@ -270,6 +273,25 @@ class F9ManualServiceInstrumentedTest {
             InstrumentationRegistry.getInstrumentation().sendStatus(0, android.os.Bundle().apply {
                 putString("f9_ttl_path", "THIRTY_SECOND_NATIVE_DEADLINE")
             })
+        }
+    }
+    @Test fun explicitChoiceSixSecondsAfterShowRecollectsBeforeOneP01Click() = runBlocking {
+        realService { a ->
+            popup(a)
+            @Suppress("DEPRECATION") val first = withTimeoutOrNull(4_000) {
+                var node: AccessibilityNodeInfo? = null
+                while (node == null) { node = a.choice(pressLabel()); if (node == null) delay(30) }; node
+            }
+            assertNotNull("MANUAL_CHOICE_NOT_SHOWN", first)
+            @Suppress("DEPRECATION") first?.recycle()
+            val before = AccessibilityRuntime.status.value
+            delay(6_000)
+            assertNull(AccessibilityRuntime.currentToken())
+            clickChoice(a)
+            resultAfter(before.manualResultCount)
+            val result = AccessibilityRuntime.status.value
+            assertEquals(before.f9AttemptedCount + 1, result.f9AttemptedCount)
+            assertEquals(ActionStatus.MECHANICAL_SUCCESS, result.lastManualStatus)
         }
     }
     @Test fun consentRevocationImmediatelyDropsManualEvidenceAndWindowWithoutClick() = runBlocking {

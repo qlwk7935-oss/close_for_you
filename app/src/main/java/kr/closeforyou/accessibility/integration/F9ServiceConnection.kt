@@ -22,6 +22,8 @@ internal class F9ServiceConnection(
     connected: () -> Boolean, userInteracting: () -> Boolean,
     private val requestObservation: () -> Unit, private val policyChanged: () -> Unit,
     epoch: () -> Long, verifyPresentation: (PopupSnapshot) -> Boolean,
+    collectForChoice: (PopupSnapshot, () -> Unit) -> PopupSnapshot?,
+    awaitInteractionEnd: suspend () -> Unit, intentInteracting: () -> Boolean,
 ) {
     private val core = CorePreferences.get(service)
     private val ui = UiVoicePreferences.get(service)
@@ -56,7 +58,8 @@ internal class F9ServiceConnection(
         }
     })
     private val manual = ManualPopupConnection(service, scope, session, cleanup, presentationHealth, tts, batcher,
-        history::clear, userInteracting, epoch, verifyPresentation, requestObservation)
+        history::clear, userInteracting, epoch, verifyPresentation, requestObservation,
+        collectForChoice, awaitInteractionEnd, intentInteracting)
     val observationReady: Boolean get() = !closed && manual.canObserve()
     fun hasPrompt() = manual.hasPrompt()
     fun shouldIgnore(event: AccessibilityEvent) = manual.shouldIgnore(event)
@@ -95,8 +98,8 @@ internal class F9ServiceConnection(
         manual.offer(snapshot, detection, display, analysis)
     }
     fun observePage() { if (observationReady) session.observePage() }
-    fun invalidate(version: Long, permissionOrInteraction: Boolean, ttl: Boolean = false, ownedRetirement: Boolean = false) {
-        manual.invalidate(version, ttl, ownedRetirement)
+    fun invalidate(version: Long, permissionOrInteraction: Boolean, ttl: Boolean = false, ownedRetirement: Boolean = false, preserveManual: Boolean = false) {
+        manual.invalidate(version, ttl, ownedRetirement, preserveManual)
         session.invalidate(version, permissionOrInteraction && !ownedRetirement)
     }
     fun observeEvent(event: AccessibilityEvent): OverlayCleanupBarrier.Receipt? {

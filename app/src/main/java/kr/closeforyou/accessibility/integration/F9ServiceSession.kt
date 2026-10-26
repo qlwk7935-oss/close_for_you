@@ -130,7 +130,8 @@ internal class F9ServiceSession(
         if (permissionOrInteraction) { revision++; page = null }
     }
     /** Explicit, generation-fenced C choice only. The caller first confirms native cleanup and
-     * revalidates the unchanged target at the new event epoch, retaining ORIGINAL capture time.
+     * supplies a NEW complete collector result after full original-popup/target comparison.
+     * The five-second gate below applies to that actual new read, never a renewed old DTO.
      * This never uses auto consent and never emits an automatic HandlingReport.
      */
     suspend fun executeUser(snapshot: PopupSnapshot, analysis: PopupAnalysis, choice: UserChoice, detection: PopupDetection,

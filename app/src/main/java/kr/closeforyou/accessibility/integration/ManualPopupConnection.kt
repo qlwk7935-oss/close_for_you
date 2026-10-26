@@ -28,9 +28,11 @@ internal class ManualPopupConnection(
     private val batcher: AnnouncementBatcher, private val clearHistory: () -> Unit,
     private val interacting: () -> Boolean, private val epoch: () -> Long,
     private val verify: (PopupSnapshot) -> Boolean, private val review: () -> Unit,
+    private val collectForChoice: (PopupSnapshot, () -> Unit) -> PopupSnapshot?,
+    private val awaitInteractionEnd: suspend () -> Unit, private val intentInteracting: () -> Boolean,
 ) {
     private val handler = Handler(Looper.getMainLooper())
-    private val lease = ChoiceDisplayLease(SystemClock::uptimeMillis)
+    private val promptLifetime = ManualPromptLifetime(SystemClock::uptimeMillis)
     private val binding = OwnedOverlayBinding()
     private val nativeOwner = Any()
     private var native: OverlayNativeWindowLifetime? = null
@@ -52,7 +54,7 @@ internal class ManualPopupConnection(
     }
     private val events = MutableSharedFlow<PopupEvent>(extraBufferCapacity = 1)
     private fun flowToken(): SnapshotToken? = if (closed || health.failed) null else
-        selected?.takeIf { selectedValid } ?: AccessibilityRuntime.currentToken()
+        selected?.takeIf { selectedValid } ?: promptLifetime.current() ?: AccessibilityRuntime.currentToken()
     private val source = object : SnapshotSource {
         override val events = this@ManualPopupConnection.events
         override fun currentToken() = flowToken()
@@ -65,12 +67,12 @@ internal class ManualPopupConnection(
         override suspend fun announce(request: AnnouncementRequest): AnnouncementReceipt {
             if (closed) return AnnouncementReceipt(AnnouncementState.NOT_IMPLEMENTED)
             if (request.kind == AnnouncementKind.ACTION_RESULT) return tts.announce(request.copy(token = null))
-            if (request.token != AccessibilityRuntime.currentToken()) return AnnouncementReceipt(AnnouncementState.NOT_IMPLEMENTED)
+            if (request.token != flowToken()) return AnnouncementReceipt(AnnouncementState.NOT_IMPLEMENTED)
             return tts.announce(request)
         }
-        override suspend fun repeatLast() = if (AccessibilityRuntime.currentToken() != null) tts.repeatLast()
+        override suspend fun repeatLast() = if (flowToken() != null) tts.repeatLast()
             else AnnouncementReceipt(AnnouncementState.NOT_IMPLEMENTED)
-        override fun stop() { if (!lease.retains(overlay.windowState)) tts.stop() }
+        override fun stop() { tts.stop() } // TTL no longer cancels this manual flow.
     }
     private val settings = UiVoicePreferences.get(service)
     private val promptListener = PromptAnnouncementListener(service, announcer, scope,
@@ -107,7 +109,12 @@ internal class ManualPopupConnection(
                 ";PRESS=" + prompt.options.count { it.kind == kr.closeforyou.ui.voice.choice.PromptOptionKind.PRESS_CANDIDATE })
             if (result == PromptShowResult.SHOWN) {
                 binding.expect(before, prompt.token, overlay.windowState.generation)
-                lease.shown(prompt.token, overlay.windowState)
+                promptLifetime.shown(prompt.token, overlay.windowState)
+                displayTimer?.cancel()
+                displayTimer = scope.launch {
+                    delay(ChoiceDisplayLease.MAX_DISPLAY_MILLIS)
+                    invalidate(epoch(), ttl = false, ownedRetirement = false)
+                }
                 AccessibilityRuntime.recordManualPrompt()
             }
             return result
@@ -117,8 +124,8 @@ internal class ManualPopupConnection(
             if (cleanup.pending) cleanup.removalReturned(overlay.windowState.status == OverlayWindowStatus.HIDDEN)
         }
     }
-    private val guarded = GuardedChoicePresenter(delegate, ::flowToken, interacting, health,
-        preserveDisplay = { lease.retains(overlay.windowState) }, onFailure = { cleanup.fail() })
+    private val guarded = GuardedChoicePresenter(delegate, ::flowToken, intentInteracting, health,
+        onFailure = { cleanup.fail() })
     private val presenter = object : ChoicePromptPresenter {
         override val isShowing get() = guarded.isShowing
         override val windowState get() = guarded.windowState
@@ -172,8 +179,12 @@ internal class ManualPopupConnection(
         val old = original?.takeIf { it.token == choice.token } ?: return null
         val detected = shownDetection?.takeIf { it.token == old.token } ?: return null
         completedKey = Triple(old.token.packageName, old.token.windowId, old.token.contentDigest)
-        if (choice.kind == ChoiceKind.KEEP_OPEN) { original = null; return null }
-        if (choice.kind != ChoiceKind.CLOSE_ONCE || !choice.buttonMeaningConfirmed) return null
+        if (choice.kind == ChoiceKind.KEEP_OPEN) {
+            original = null; shownAnalysis = null; shownDetection = null; promptLifetime.clear(); return null
+        }
+        if (choice.kind != ChoiceKind.CLOSE_ONCE || !choice.buttonMeaningConfirmed) {
+            promptLifetime.clear(); return null
+        }
         if (selected != choice.token) return ActionResult(choice.token, ActionStatus.STALE, SafetyReason.STALE_SCREEN)
         fun complete(result: ActionResult): ActionResult = result.also {
             AccessibilityRuntime.recordManualResult(it)
@@ -181,62 +192,50 @@ internal class ManualPopupConnection(
         }
         try {
             cleanup.removalReturned(overlay.windowState.status == OverlayWindowStatus.HIDDEN)
-            val remaining = old.capturedAtUptimeMillis + 5_000L - SystemClock.uptimeMillis()
-            if (remaining <= 0 || withTimeoutOrNull(remaining) { cleanup.awaitObservationPermit() } == null)
-                return complete(ActionResult(old.token, ActionStatus.STALE, SafetyReason.STALE_SCREEN))
             currentCoroutineContext().ensureActive()
-            if (!selectedValid || health.failed || interacting() || !verify(old)) {
-                return complete(ActionResult(old.token, ActionStatus.STALE, SafetyReason.STALE_SCREEN))
-            }
-            val version = epoch()
-            val token = old.token.copy(screenVersion = version, captureEpoch = version)
-            val refreshed = old.copy(token = token) // original collection time is NOT renewed
-            return session.executeUser(refreshed, analysis.copy(token = token), choice.copy(token = token), detected.copy(token = token)) {
-                selectedValid && !closed && !health.failed && epoch() == version && !interacting() && cleanup.ready
+            fun intentCurrent() = selectedValid && !closed && !health.failed && !interacting() && cleanup.ready
+            val refreshed = ManualChoiceRefresh.afterRemoval(old, analysis, choice, detected, SystemClock::uptimeMillis,
+                ::intentCurrent, awaitRemoval = { cleanup.awaitObservationPermit(); Unit }, awaitQuiet = awaitInteractionEnd
+            ) { checkpoint -> collectForChoice(old, checkpoint) }
+                ?: return complete(ActionResult(old.token, ActionStatus.STALE, SafetyReason.STALE_SCREEN))
+            val version = refreshed.snapshot.token.screenVersion
+            return session.executeUser(refreshed.snapshot, refreshed.analysis, refreshed.choice, refreshed.detection) {
+                intentCurrent() && epoch() == version
             }.let(::complete)
         } catch (cancelled: CancellationException) {
             if (!currentCoroutineContext().isActive) throw cancelled
             return complete(ActionResult(old.token, ActionStatus.NOT_EXECUTED, SafetyReason.UNVERIFIED_TARGET))
         } finally {
-            selectedValid = false; selected = null; original = null; shownAnalysis = null; shownDetection = null; gate.clear()
+            selectedValid = false; selected = null; original = null; shownAnalysis = null; shownDetection = null; gate.clear(); promptLifetime.clear()
             // A next popup may have arrived while this result was being observed. Never replay
             // it: explicitly ask F0/F1 for a new read after the accepted choice finishes.
             handler.post { if (!closed && !health.failed && cleanup.ready) review() }
         }
     }
-    fun invalidate(version: Long, ttl: Boolean, ownedRetirement: Boolean) {
+    fun invalidate(version: Long, ttl: Boolean, ownedRetirement: Boolean, preserveManual: Boolean = false) {
         gate.clear()
-        if (ownedRetirement && selectedValid) return // flow lifetime only, never an action permit
-        selectedValid = false; guarded.revoke()
-        // A continues invalidating every target token. Once C accepted an explicit choice, its
-        // coroutine owns only completion/result speech: do not cancel observation of our click.
-        // manualCurrent is now false, so this cannot authorize a click that has not happened.
-        if (selected != null) return
-        if (ttl) {
-            // Expiry is not a new review request. Native removal at the 30 s display deadline
-            // must not automatically collect and show the identical popup with another 5 s TTL.
-            original?.token?.let { completedKey = Triple(it.packageName, it.windowId, it.contentDigest) }
-        }
-        if (ttl && lease.detach(overlay.windowState, binding.boundWindowFor(overlay.windowState.generation) != null) &&
-            overlay.expireEvidence(overlay.windowState.generation)) {
-            clearHistory(); original = null; shownAnalysis = null; shownDetection = null
-            events.tryEmit(PopupEvent.Invalidated(version))
-            displayTimer?.cancel()
-            displayTimer = scope.launch { delay(lease.remainingMillis(overlay.windowState).coerceAtLeast(0)); invalidate(version, false, false) }
-            return
-        }
-        lease.clear(); displayTimer?.cancel(); original = null; shownAnalysis = null; shownDetection = null; clearHistory()
+        // Only presentation/explicit intent survives. Runtime, raw source and policy revision
+        // are still invalidated by the service; no old token can authorize ACTION_CLICK.
+        if ((ttl || preserveManual) && promptLifetime.current() != null && !health.failed) return
+        if (ownedRetirement && selectedValid) return
+        selectedValid = false; guarded.revoke(); promptLifetime.clear(); displayTimer?.cancel()
+        if (selected != null) return // Preserve observation of a click that may already have run.
+        original = null; shownAnalysis = null; shownDetection = null; clearHistory()
         events.tryEmit(PopupEvent.Invalidated(version)); overlay.dismiss(); announcer.stop()
     }
     fun shouldIgnore(event: AccessibilityEvent): Boolean {
         if (closed || health.failed) return false
-        if (inspectExpiredOverlayUpdate(overlay.windowState, lease.retains(overlay.windowState), event.eventType,
-                { event.windowChanges }, { event.packageName?.toString() }, service.packageName, { event.windowId },
-                { binding.boundWindowFor(overlay.windowState.generation) }, ::readOwned)) return true
-        return inspectOwnedOverlayEvent(overlay.windowState, { event.eventType }, { event.windowChanges },
+        val state = overlay.windowState
+        return inspectManualEvent(event.eventType, nativeControl = {
+            inspectManualOwnedInteraction(event.eventType, state, promptLifetime, { event.eventTime },
+                { event.packageName?.toString() }, service.packageName, { event.windowId },
+                { native?.liveWindow(nativeOwner, state.generation) }, before, ::readOwned)
+        }, otherEvent = {
+            inspectOwnedOverlayEvent(overlay.windowState, { event.eventType }, { event.windowChanges },
             { event.packageName?.toString() }, ::flowToken,
             { token, diagnostic -> binding.matches(event.windowId, readOwned(), token, overlay.windowState.generation, diagnostic) },
             { service.packageName }, eventDiagnostic)
+        })
     }
     fun isOwnedRetirement(event: AccessibilityEvent): Boolean = selectedValid && event.windowId == retiredId &&
         (event.packageName == null || event.packageName?.toString() == service.packageName) &&
@@ -261,7 +260,7 @@ internal class ManualPopupConnection(
     }
     fun close() {
         if (closed) return
-        closed = true; selectedValid = false; gate.clear(); lease.clear(); guarded.revoke(); displayTimer?.cancel()
+        closed = true; selectedValid = false; gate.clear(); promptLifetime.clear(); guarded.revoke(); displayTimer?.cancel()
         job?.cancel(); original = null; shownAnalysis = null; shownDetection = null; clearHistory(); eventDiagnostic.disarm()
         try { overlay.dismiss() } finally { promptListener.onDismissed(); handler.removeCallbacksAndMessages(null) }
     }
