@@ -25,6 +25,7 @@ internal class F9ServiceConnection(
     collectForChoice: (PopupSnapshot, () -> Unit) -> PopupSnapshot?,
     awaitInteractionEnd: suspend () -> Unit, intentInteracting: () -> Boolean,
 ) {
+    private val trace = ManualPromptLog.create()
     private val core = CorePreferences.get(service)
     private val ui = UiVoicePreferences.get(service)
     private val clock = F9Clock(SystemClock::uptimeMillis)
@@ -39,7 +40,10 @@ internal class F9ServiceConnection(
     val batcher = AnnouncementBatcher(scope, SpeechHandlingListener.batchFlush(tts, format))
     private val feedback = F9FeedbackRouter(tts, batcher, format)
     private val cleanup = OverlayCleanupBarrier(clock = SystemClock::uptimeMillis, onUncertain = presentationHealth::fail,
-        failureDiagnostic = { AccessibilityRuntime.cleanupFailure(it.name) })
+        failureDiagnostic = {
+            trace?.record(ManualPromptPoint.CLEANUP_FAILED, ManualPromptCause.CLEANUP_FAILED)
+            AccessibilityRuntime.cleanupFailure(it.name)
+        })
     private var closed = false
     private val pending = Channel<PopupEvent.Candidate>(Channel.CONFLATED)
     private var worker: Job? = null
@@ -59,9 +63,13 @@ internal class F9ServiceConnection(
     })
     private val manual = ManualPopupConnection(service, scope, session, cleanup, presentationHealth, tts, batcher,
         history::clear, userInteracting, epoch, verifyPresentation, requestObservation,
-        collectForChoice, awaitInteractionEnd, intentInteracting)
+        collectForChoice, awaitInteractionEnd, intentInteracting, trace)
     val observationReady: Boolean get() = !closed && manual.canObserve()
     fun hasPrompt() = manual.hasPrompt()
+    fun hasPendingPresentation() = manual.hasPendingPresentation()
+    fun focusReview(requested: Boolean) = trace?.record(ManualPromptPoint.FOCUS_REVIEW,
+        if (requested) ManualPromptCause.FOCUS_INVALIDATED_REVIEW_REQUESTED else ManualPromptCause.FOCUS_INVALIDATED_NO_REVIEW)
+    fun reviewRejected(cause: ManualPromptCause) = trace?.record(ManualPromptPoint.REVIEW_REJECTED, cause)
     fun shouldIgnore(event: AccessibilityEvent) = manual.shouldIgnore(event)
     fun isOwnedRetirement(event: AccessibilityEvent) = manual.isOwnedRetirement(event)
     suspend fun awaitObservationPermit(): Any {
@@ -98,8 +106,10 @@ internal class F9ServiceConnection(
         manual.offer(snapshot, detection, display, analysis)
     }
     fun observePage() { if (observationReady) session.observePage() }
-    fun invalidate(version: Long, permissionOrInteraction: Boolean, ttl: Boolean = false, ownedRetirement: Boolean = false, preserveManual: Boolean = false) {
-        manual.invalidate(version, ttl, ownedRetirement, preserveManual)
+    fun invalidate(version: Long, permissionOrInteraction: Boolean, ttl: Boolean = false, ownedRetirement: Boolean = false, preserveManual: Boolean = false,
+        cause: ManualPromptCause = if (ttl) ManualPromptCause.ORIGINAL_EVIDENCE_EXPIRED else
+            if (preserveManual) ManualPromptCause.UNATTRIBUTED_TOUCH else ManualPromptCause.UNKNOWN) {
+        manual.invalidate(version, ttl, ownedRetirement, preserveManual, cause)
         session.invalidate(version, permissionOrInteraction && !ownedRetirement)
     }
     fun observeEvent(event: AccessibilityEvent): OverlayCleanupBarrier.Receipt? {

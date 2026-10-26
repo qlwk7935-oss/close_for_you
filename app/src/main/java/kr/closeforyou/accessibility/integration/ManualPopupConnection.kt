@@ -30,6 +30,7 @@ internal class ManualPopupConnection(
     private val verify: (PopupSnapshot) -> Boolean, private val review: () -> Unit,
     private val collectForChoice: (PopupSnapshot, () -> Unit) -> PopupSnapshot?,
     private val awaitInteractionEnd: suspend () -> Unit, private val intentInteracting: () -> Boolean,
+    private val trace: ManualPromptTrace? = null,
 ) {
     private val handler = Handler(Looper.getMainLooper())
     private val promptLifetime = ManualPromptLifetime(SystemClock::uptimeMillis)
@@ -47,6 +48,7 @@ internal class ManualPopupConnection(
     private var shownDetection: PopupDetection? = null
     private var selected: SnapshotToken? = null
     private var selectedValid = false
+    private var endCause = ManualPromptCause.UNKNOWN
     private var completedKey: Triple<String, Int, String>? = null
     private val reviews = ChoiceReviewBudget()
     private val eventDiagnostic = OverlayEventDiagnostic { category, reason, detail, _, _, _, _, _, scan, relation, _ ->
@@ -80,6 +82,8 @@ internal class ManualPopupConnection(
     val overlay: AccessibilityChoiceOverlay = AccessibilityChoiceOverlay(service, object : OverlayListener {
         override fun onShown(prompt: ChoicePrompt, speakPressed: () -> Boolean) = promptListener.onShown(prompt, speakPressed)
         override fun onDismissed() {
+            // C invokes this listener BEFORE removeView. It is not removal confirmation.
+            trace?.record(ManualPromptPoint.OVERLAY_DISMISS_STARTED, endCause)
             val n = native
             retiredId = n?.retirementWindow(nativeOwner, n.generation)
             cleanup.retiring(binding.boundWindowFor(n?.generation ?: 0), n?.generation ?: 0, target, n, nativeOwner)
@@ -96,12 +100,19 @@ internal class ManualPopupConnection(
         cleanupCurrent = cleanup::permits,
         nextTurn = { awaitChoicePresentationTurn(handler::post, handler::removeCallbacks) },
         verify = { baseline, checkpoint -> checkpoint(); verify(baseline).also { checkpoint() } },
-        reject = { AccessibilityRuntime.manualBoundary("ADMISSION_REJECTED"); review() })
+        reject = {
+            trace?.record(ManualPromptPoint.ADMISSION_REJECTED, ManualPromptCause.PRESENTATION_GATE_REJECTED)
+            AccessibilityRuntime.manualBoundary("ADMISSION_REJECTED"); review()
+        })
     private val delegate = object : ChoicePromptPresenter {
         override val isShowing get() = overlay.isShowing
         override val windowState get() = overlay.windowState
         override fun present(prompt: ChoicePrompt, onAnswer: (PromptAnswer) -> Unit): PromptShowResult {
-            if (!cleanup.ready || overlay.windowState.status != OverlayWindowStatus.HIDDEN || health.failed) return PromptShowResult.BLOCKED
+            trace?.record(ManualPromptPoint.PRESENT_REQUESTED)
+            if (!cleanup.ready || overlay.windowState.status != OverlayWindowStatus.HIDDEN || health.failed) {
+                trace?.record(ManualPromptPoint.PRESENT_REJECTED, if (health.failed) ManualPromptCause.HEALTH_FAILED else ManualPromptCause.CLEANUP_FAILED)
+                return PromptShowResult.BLOCKED
+            }
             before = readOwned(); target = prompt.token.windowId
             eventDiagnostic.arm()
             val result = overlay.present(prompt, onAnswer)
@@ -110,22 +121,26 @@ internal class ManualPopupConnection(
             if (result == PromptShowResult.SHOWN) {
                 binding.expect(before, prompt.token, overlay.windowState.generation)
                 promptLifetime.shown(prompt.token, overlay.windowState)
+                trace?.record(ManualPromptPoint.SHOWN)
                 displayTimer?.cancel()
                 displayTimer = scope.launch {
                     delay(ChoiceDisplayLease.MAX_DISPLAY_MILLIS)
-                    invalidate(epoch(), ttl = false, ownedRetirement = false)
+                    invalidate(epoch(), ttl = false, ownedRetirement = false, cause = ManualPromptCause.DISPLAY_LEASE_EXPIRED)
                 }
                 AccessibilityRuntime.recordManualPrompt()
-            }
+            } else trace?.record(ManualPromptPoint.PRESENT_REJECTED, ManualPromptCause.UNKNOWN)
             return result
         }
         override fun dismiss() {
+            trace?.record(ManualPromptPoint.DISMISS_REQUESTED, endCause)
             overlay.dismiss()
             if (cleanup.pending) cleanup.removalReturned(overlay.windowState.status == OverlayWindowStatus.HIDDEN)
         }
     }
     private val guarded = GuardedChoicePresenter(delegate, ::flowToken, intentInteracting, health,
-        onFailure = { cleanup.fail() })
+        onFailure = {
+            trace?.record(ManualPromptPoint.CLEANUP_FAILED, ManualPromptCause.HEALTH_FAILED); cleanup.fail()
+        })
     private val presenter = object : ChoicePromptPresenter {
         override val isShowing get() = guarded.isShowing
         override val windowState get() = guarded.windowState
@@ -145,24 +160,40 @@ internal class ManualPopupConnection(
         override suspend fun extract(snapshot: PopupSnapshot): PopupAnalysis {
             val analysis = wiring.extractor.extract(snapshot)
             AccessibilityRuntime.manualBoundary("EXTRACTED")
-            if (!gate.awaitReady(snapshot.token)) throw CancellationException("MANUAL_PRESENTATION_STALE")
-            return analysis
+            trace?.record(ManualPromptPoint.ADMISSION_REQUESTED)
+            try {
+                if (!gate.awaitReady(snapshot.token)) {
+                    trace?.record(ManualPromptPoint.ADMISSION_REJECTED, ManualPromptCause.PRESENTATION_GATE_REJECTED)
+                    throw CancellationException("MANUAL_PRESENTATION_STALE")
+                }
+                trace?.record(ManualPromptPoint.ADMISSION_ACCEPTED)
+                return analysis
+            } catch (cancelled: CancellationException) {
+                trace?.record(ManualPromptPoint.FLOW_CANCELLED, ManualPromptCause.FLOW_CANCELLED)
+                throw cancelled
+            }
         }
     }
     private val flow = PopupChoiceFlow(wiring.source, admittedExtractor, DecisionPopupClassifier(), presenter, announcer, batcher,
         ChoiceHandler { choice, analysis -> handleChoice(choice, analysis) }, UiText(service::getString),
-        contentText = { PromptSpeech.content(service, it) }, rememberChoicesEnabled = false, revalidatingEnabled = false)
+        contentText = { PromptSpeech.content(service, it) }, moveToButtonEnabled = false,
+        rememberChoicesEnabled = false, revalidatingEnabled = false)
 
     fun start() {
         check(job == null)
         job = scope.launch(start = CoroutineStart.UNDISPATCHED) {
-            try { flow.run() } catch (cancelled: CancellationException) { throw cancelled }
-            catch (_: Exception) { AccessibilityRuntime.manualBoundary("FLOW_FAILED"); health.fail(); close() }
+            try { flow.run() } catch (cancelled: CancellationException) {
+                trace?.record(ManualPromptPoint.FLOW_CANCELLED, ManualPromptCause.FLOW_CANCELLED); throw cancelled
+            } catch (_: Exception) {
+                trace?.record(ManualPromptPoint.FLOW_FAILED, ManualPromptCause.HEALTH_FAILED)
+                AccessibilityRuntime.manualBoundary("FLOW_FAILED"); health.fail(); close()
+            }
         }
     }
     fun offer(snapshot: PopupSnapshot, detection: PopupDetection, display: PopupSnapshot, analysis: PopupAnalysis) {
         val key = Triple(snapshot.token.packageName, snapshot.token.windowId, snapshot.token.contentDigest)
         if (closed || health.failed || completedKey == key || !cleanup.ready || overlay.isShowing || selected != null) {
+            trace?.record(ManualPromptPoint.OFFER_REJECTED, if (health.failed) ManualPromptCause.HEALTH_FAILED else ManualPromptCause.OFFER_UNAVAILABLE)
             AccessibilityRuntime.manualBoundary("OFFER_UNAVAILABLE"); return
         }
         if (detection.signals.none { it == PopupSignal.NEW_WINDOW || it == PopupSignal.SAME_WINDOW_OVERLAY }) {
@@ -170,6 +201,7 @@ internal class ManualPopupConnection(
         }
         if (!reviews.admit(snapshot.token)) { AccessibilityRuntime.manualBoundary("REVIEW_BUDGET_EXHAUSTED"); return }
         val permit = cleanup.permit() ?: return
+        trace?.begin(); endCause = ManualPromptCause.UNKNOWN
         original = snapshot; shownAnalysis = analysis; shownDetection = detection
         gate.prepare(snapshot, permit)
         AccessibilityRuntime.manualBoundary("OFFERED")
@@ -212,17 +244,31 @@ internal class ManualPopupConnection(
             handler.post { if (!closed && !health.failed && cleanup.ready) review() }
         }
     }
-    fun invalidate(version: Long, ttl: Boolean, ownedRetirement: Boolean, preserveManual: Boolean = false) {
+    fun invalidate(version: Long, ttl: Boolean, ownedRetirement: Boolean, preserveManual: Boolean = false,
+        cause: ManualPromptCause = if (ttl) ManualPromptCause.ORIGINAL_EVIDENCE_EXPIRED else
+            if (preserveManual) ManualPromptCause.UNATTRIBUTED_TOUCH else ManualPromptCause.UNKNOWN) {
+        // Admission is never consulted again after SHOWN. Clearing it cannot expire a C lease.
         gate.clear()
-        // Only presentation/explicit intent survives. Runtime, raw source and policy revision
-        // are still invalidated by the service; no old token can authorize ACTION_CLICK.
-        if ((ttl || preserveManual) && promptLifetime.current() != null && !health.failed) return
-        if (ownedRetirement && selectedValid) return
-        selectedValid = false; guarded.revoke(); promptLifetime.clear(); displayTimer?.cancel()
-        if (selected != null) return // Preserve observation of a click that may already have run.
-        original = null; shownAnalysis = null; shownDetection = null; clearHistory()
-        events.tryEmit(PopupEvent.Invalidated(version)); overlay.dismiss(); announcer.stop()
+        trace?.record(ManualPromptPoint.INVALIDATED, cause)
+        val retained = applyManualInvalidation(cause, promptLifetime.current() != null, !health.failed,
+            selected != null, ownedRetirement && selectedValid, revoke = {
+                endCause = cause
+                selectedValid = false; guarded.revoke(); promptLifetime.clear(); displayTimer?.cancel()
+            }, remove = {
+                original = null; shownAnalysis = null; shownDetection = null; clearHistory()
+                events.tryEmit(PopupEvent.Invalidated(version))
+                val batch = kr.closeforyou.accessibility.CollectionReleaseBatch()
+                batch.attempt { overlay.dismiss() }; batch.attempt { announcer.stop() }
+                try { batch.finish() } catch (failure: Exception) {
+                    trace?.record(ManualPromptPoint.CLEANUP_FAILED, ManualPromptCause.CLEANUP_FAILED)
+                    throw failure
+                }
+            })
+        if (retained) trace?.record(if (selected == null) ManualPromptPoint.DISPLAY_RETAINED
+            else ManualPromptPoint.RESULT_RETAINED, cause)
     }
+    fun hasPendingPresentation(): Boolean = !closed && !health.failed && !overlay.isShowing &&
+        selected == null && gate.hasCurrentObservation()
     fun shouldIgnore(event: AccessibilityEvent): Boolean {
         if (closed || health.failed) return false
         val state = overlay.windowState
@@ -246,7 +292,10 @@ internal class ManualPopupConnection(
         if (closed || !cleanup.pending) return
         val hidden = overlay.windowState.status == OverlayWindowStatus.HIDDEN
         cleanup.removalReturned(hidden)
-        if (cleanup.nativeProcessed(n, hidden, presence = ::presence)) { native = null; target = null; if (selected == null) review() }
+        if (cleanup.nativeProcessed(n, hidden, presence = ::presence)) {
+            trace?.record(ManualPromptPoint.OVERLAY_REMOVED, endCause)
+            native = null; target = null; if (selected == null) review()
+        }
     }
     @Suppress("DEPRECATION") private fun presence(id: Int) = cleanupWindowPresence(id, { service.windows }, { it.id }, { it.recycle() })
     @Suppress("DEPRECATION") private fun readOwned(): Set<Int>? = readOwnedOverlayIds({ service.windows },
@@ -256,10 +305,15 @@ internal class ManualPopupConnection(
     fun processed(receipt: OverlayCleanupBarrier.Receipt?) {
         if (receipt == null || closed) return
         cleanup.processed(receipt, overlay.windowState.status == OverlayWindowStatus.HIDDEN, presence = ::presence)
-        if (cleanup.ready) { native = null; target = null; if (selected == null) handler.post { if (!closed) review() } }
+        if (cleanup.ready) {
+            trace?.record(ManualPromptPoint.OVERLAY_REMOVED, endCause)
+            native = null; target = null; if (selected == null) handler.post { if (!closed) review() }
+        }
     }
     fun close() {
         if (closed) return
+        trace?.record(ManualPromptPoint.SERVICE_CLOSED, ManualPromptCause.SERVICE_STOPPED)
+        endCause = ManualPromptCause.SERVICE_STOPPED
         closed = true; selectedValid = false; gate.clear(); promptLifetime.clear(); guarded.revoke(); displayTimer?.cancel()
         job?.cancel(); original = null; shownAnalysis = null; shownDetection = null; clearHistory(); eventDiagnostic.disarm()
         try { overlay.dismiss() } finally { promptListener.onDismissed(); handler.removeCallbacksAndMessages(null) }

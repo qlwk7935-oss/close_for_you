@@ -15,6 +15,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
 import kr.closeforyou.accessibility.integration.unattributedManualTouch
 import kr.closeforyou.accessibility.integration.ManualTouchState
+import kr.closeforyou.accessibility.integration.ManualPromptCause
 import kr.closeforyou.app.CorePreferences
 import kr.closeforyou.accessibility.capture.AndroidScreenshotManager
 import kr.closeforyou.accessibility.capture.CaptureOcrPipeline
@@ -91,14 +92,14 @@ class CloseForYouAccessibilityService : AccessibilityService() {
         AccessibilityRuntime.connect()
         f9 = F9ServiceConnection(this, serviceScope, { connected }, { touching },
             requestObservation = ::observeAfterCleanup,
-            policyChanged = { invalidate(clearBaseline = true, permissionOrInteraction = true) },
+            policyChanged = { invalidate(clearBaseline = true, permissionOrInteraction = true, cause = ManualPromptCause.POLICY_CHANGED) },
             epoch = { freshness.version }, verifyPresentation = ::verifyForChoice,
             collectForChoice = ::collectForManualChoice, awaitInteractionEnd = { touchState.first { !it } },
             intentInteracting = { touching && !unattributedTouch }).also { it.start() }
         invalidate(clearBaseline = true)
         settingsObserver = serviceScope.launch {
             preferences.state.collect {
-                invalidate(clearBaseline = true, permissionOrInteraction = true)
+                invalidate(clearBaseline = true, permissionOrInteraction = true, cause = ManualPromptCause.POLICY_CHANGED)
                 if (!it.consentGranted) AccessibilityRuntime.block(PrivacyBlockReason.NO_CONSENT, freshness.version)
                 else if (it.paused) AccessibilityRuntime.block(PrivacyBlockReason.PAUSED, freshness.version)
             }
@@ -120,12 +121,35 @@ class CloseForYouAccessibilityService : AccessibilityService() {
         if (f9?.hasPrompt() == true) AccessibilityRuntime.manualInvalidation(event.eventType, event.windowChanges)
         // Copy only primitive enums/IDs, never keep the event or request event.source.
         val eventType = event.eventType
-        val resumeObservation = resumePendingObservationAfterFocus(pendingCapture?.isActive == true, eventType)
+        // Never classify source focus as automatic. Retire evidence first, then resume only a
+        // screen review that was already running (including evidence and pre-show admission).
+        val resumeObservation = pendingFocusReview(eventType, pendingCapture?.isActive == true,
+            evidenceJob?.isActive == true, f9?.hasPendingPresentation() == true)
+        if (isReviewFocusEvent(eventType)) f9?.focusReview(resumeObservation)
         val interaction = eventType !in SCREEN_EVENTS
         val preserveManual = (f9?.hasPrompt() == true || unattributedTouch) &&
             unattributedManualTouch(eventType, event.windowId, event.packageName)
-        val epoch = invalidate(clearBaseline = false, permissionOrInteraction = interaction,
-            ownedRetirement = ownedRetirement, preserveManual = preserveManual)
+        val cause = when {
+            preserveManual -> ManualPromptCause.UNATTRIBUTED_TOUCH
+            isReviewFocusEvent(eventType) -> if (resumeObservation) ManualPromptCause.FOCUS_INVALIDATED_REVIEW_REQUESTED
+                else ManualPromptCause.FOCUS_INVALIDATED_NO_REVIEW
+            eventType == AccessibilityEvent.TYPE_TOUCH_INTERACTION_START ||
+                eventType == AccessibilityEvent.TYPE_TOUCH_EXPLORATION_GESTURE_START -> ManualPromptCause.TOUCH_STARTED
+            eventType == AccessibilityEvent.TYPE_TOUCH_INTERACTION_END ||
+                eventType == AccessibilityEvent.TYPE_TOUCH_EXPLORATION_GESTURE_END -> ManualPromptCause.TOUCH_ENDED
+            eventType == AccessibilityEvent.TYPE_VIEW_SCROLLED -> ManualPromptCause.SCROLL_INVALIDATED
+            eventType == AccessibilityEvent.TYPE_VIEW_CLICKED -> ManualPromptCause.CLICK_INVALIDATED
+            eventType == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED ||
+                eventType == AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED -> ManualPromptCause.CONTENT_INVALIDATED
+            eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED -> ManualPromptCause.WINDOW_STATE_INVALIDATED
+            eventType == AccessibilityEvent.TYPE_WINDOWS_CHANGED -> ManualPromptCause.WINDOW_SET_INVALIDATED
+            interaction -> ManualPromptCause.INTERACTION_INVALIDATED
+            else -> ManualPromptCause.SCREEN_EVENT_INVALIDATED
+        }
+        // Restart F1's review baseline ONLY for an interrupted, pre-show review. No old
+        // signals/candidates survive: a full new collector/F1 read must rediscover popup scope.
+        val epoch = invalidate(clearBaseline = resumeObservation, permissionOrInteraction = interaction,
+            ownedRetirement = ownedRetirement, preserveManual = preserveManual, cause = cause)
         if (eventType == AccessibilityEvent.TYPE_TOUCH_INTERACTION_START ||
             eventType == AccessibilityEvent.TYPE_TOUCH_EXPLORATION_GESTURE_START) {
             updateTouch(eventType, preserveManual)
@@ -138,6 +162,7 @@ class CloseForYouAccessibilityService : AccessibilityService() {
         }
         val settings = preferences.currentSettings()
         if (!settings.consentGranted || settings.paused) {
+            f9?.reviewRejected(ManualPromptCause.POLICY_BLOCKED)
             detector.clear()
             AccessibilityRuntime.block(
                 if (!settings.consentGranted) PrivacyBlockReason.NO_CONSENT else PrivacyBlockReason.PAUSED, epoch,
@@ -148,6 +173,7 @@ class CloseForYouAccessibilityService : AccessibilityService() {
         val eventPackage = event.packageName?.toString()
         if (eventPackage != null) {
             packageBlock(eventPackage)?.let {
+                f9?.reviewRejected(ManualPromptCause.PACKAGE_BLOCKED)
                 CaptureDiagnostics.excludedEvent(eventPackage)
                 detector.clear()
                 AccessibilityRuntime.block(it, epoch)
@@ -156,8 +182,8 @@ class CloseForYouAccessibilityService : AccessibilityService() {
         }
         if (touching) return
         if (eventType !in SCREEN_EVENTS) {
-            // The focus event invalidates the epoch. Only carry an already pending screen read,
-            // never an analysis or permission; standalone user focus creates no collection.
+            // Carry an interrupted review only, never analysis/permission. Standalone focus
+            // (including actual user exploration) cannot start a new review by itself.
             if (resumeObservation) scheduleCapture(epoch, PopupTrigger.WINDOW_CHANGED, -1)
             return
         }
@@ -184,6 +210,7 @@ class CloseForYouAccessibilityService : AccessibilityService() {
         val trace = CaptureDiagnostics.trace(eventWindowId, epoch)
         when (val result = collector.capture(this, epoch, trigger, ::packageBlock, trace = trace)) {
             is CollectionResult.Blocked -> {
+                f9?.reviewRejected(ManualPromptCause.COLLECTION_BLOCKED)
                 detector.clear()
                 AccessibilityRuntime.block(result.reason, epoch)
             }
@@ -192,6 +219,7 @@ class CloseForYouAccessibilityService : AccessibilityService() {
                 f9?.observePage()
                 val signals = detector.detect(result.frame)
                 if (signals.isEmpty()) {
+                    f9?.reviewRejected(ManualPromptCause.F1_NOT_CANDIDATE)
                     trace.detail(CaptureDetail.NO_POPUP_SIGNAL)
                     return
                 }
@@ -218,15 +246,18 @@ class CloseForYouAccessibilityService : AccessibilityService() {
                                 trace.stage(CaptureStage.PUBLISHED)
                             }
                             is EvidenceOutcome.Blocked -> if (isCurrent(result.snapshot.token)) {
+                                f9?.reviewRejected(ManualPromptCause.EVIDENCE_BLOCKED)
                                 trace.evidence(evidence.issue)
                                 AccessibilityRuntime.recordEvidenceIssue(evidence.issue)
                                 AccessibilityRuntime.block(evidence.reason, epoch)
                             }
                         }
                     } catch (cancelled: CancellationException) {
+                        f9?.reviewRejected(ManualPromptCause.EVIDENCE_CANCELLED)
                         trace.stage(CaptureStage.CANCELLED)
                         throw cancelled
                     } catch (_: Exception) {
+                        f9?.reviewRejected(ManualPromptCause.EVIDENCE_FAILED)
                         if (isCurrent(result.snapshot.token)) {
                             trace.detail(CaptureDetail.PIPELINE_FAILED)
                             trace.evidence(EvidenceIssue.PRIVACY_UNCERTAIN)
@@ -303,7 +334,9 @@ class CloseForYouAccessibilityService : AccessibilityService() {
     }
 
     private fun invalidate(clearBaseline: Boolean, permissionOrInteraction: Boolean = false,
-        ttl: Boolean = false, ownedRetirement: Boolean = false, preserveManual: Boolean = false): Long {
+        ttl: Boolean = false, ownedRetirement: Boolean = false, preserveManual: Boolean = false,
+        cause: ManualPromptCause = if (ttl) ManualPromptCause.ORIGINAL_EVIDENCE_EXPIRED else
+            if (preserveManual) ManualPromptCause.UNATTRIBUTED_TOUCH else ManualPromptCause.UNKNOWN): Long {
         pendingCapture?.cancel()
         pendingCapture = null
         evidenceJob?.cancel()
@@ -312,7 +345,7 @@ class CloseForYouAccessibilityService : AccessibilityService() {
         expiry = null
         if (clearBaseline) detector.clear()
         return freshness.invalidate().also { version ->
-            f9?.invalidate(version, permissionOrInteraction, ttl, ownedRetirement, preserveManual)
+            f9?.invalidate(version, permissionOrInteraction, ttl, ownedRetirement, preserveManual, cause)
             AccessibilityRuntime.invalidate(version)
         }
     }
@@ -327,12 +360,12 @@ class CloseForYouAccessibilityService : AccessibilityService() {
         }
     }
 
-    override fun onInterrupt() { invalidate(clearBaseline = true, permissionOrInteraction = true) }
+    override fun onInterrupt() { invalidate(clearBaseline = true, permissionOrInteraction = true, cause = ManualPromptCause.SERVICE_STOPPED) }
 
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
         collector.resetGeometry()
-        invalidate(clearBaseline = true, permissionOrInteraction = true)
+        invalidate(clearBaseline = true, permissionOrInteraction = true, cause = ManualPromptCause.CONFIGURATION_CHANGED)
     }
 
     override fun onUnbind(intent: Intent?): Boolean {
@@ -352,7 +385,7 @@ class CloseForYouAccessibilityService : AccessibilityService() {
         resetTouching()
         f9?.close(freshness.version + 1); f9 = null
         settingsObserver?.cancel()
-        invalidate(clearBaseline = true)
+        invalidate(clearBaseline = true, cause = ManualPromptCause.SERVICE_STOPPED)
         AccessibilityRuntime.disconnect(freshness.version)
         serviceScope.cancel()
     }

@@ -15,6 +15,59 @@ import org.junit.Test
 /** Same A source → real B wiring/policy → per-request F9 bridge as production. Fake screen only. */
 @OptIn(ExperimentalCoroutinesApi::class)
 class F9ServiceSessionTest {
+    @Test fun pr59LabeledImageButtonAndClickableTextViewRequireRealBManualApprovalAndPressOnce() = runTest {
+        for (widget in listOf("android.widget.ImageButton", "android.widget.TextView")) {
+            val r = Rig(this, false)
+            val node = r.f.node.copy(className = widget, text = if (widget.endsWith("ImageButton")) null else "닫기",
+                contentDescription = if (widget.endsWith("ImageButton")) "닫기" else null)
+            r.snapshot = r.snapshot.copy(nodes = persistentListOf(node, r.body))
+            r.f.scene = r.f.before.copy(nodes = r.snapshot.nodes); r.publish()
+            val a = r.session.wiring.extractor.extract(r.snapshot)
+            val choice = UserChoice(r.snapshot.token, ChoiceKind.CLOSE_ONCE, a.closeCandidates.single().id, true)
+            val result = r.session.executeUser(r.snapshot, a, choice, r.detection()) { true }
+            assertTrue(result.attempted); assertEquals(1, r.f.clicks); assertEquals(1, r.decisions)
+            assertFalse(r.session.executeUser(r.snapshot, a, choice, r.detection()) { true }.attempted)
+            assertEquals(1, r.f.clicks); assertTrue(r.reports.isEmpty())
+        }
+    }
+    @Test fun pr59UnlabeledRiskyAmbiguousOrMultipleTargetsNeverPress() = runTest {
+        for (widget in listOf("android.widget.ImageButton", "android.widget.TextView")) {
+            for (label in listOf(null, "X", "구매", "결제", "동의", "권한 허용", "쿠폰 받기", "오늘 하루 보지 않기", "확인")) {
+                val r = Rig(this, false)
+                val node = r.f.node.copy(className = widget, text = label, contentDescription = null)
+                r.snapshot = r.snapshot.copy(nodes = persistentListOf(node, r.body))
+                r.f.scene = r.f.before.copy(nodes = r.snapshot.nodes); r.publish()
+                val a = r.session.wiring.extractor.extract(r.snapshot)
+                val choice = UserChoice(r.snapshot.token, ChoiceKind.CLOSE_ONCE, a.closeCandidates.firstOrNull()?.id ?: "unavailable", true)
+                assertFalse(r.session.executeUser(r.snapshot, a, choice, r.detection()) { true }.attempted)
+                assertEquals(0, r.f.clicks)
+            }
+            val r = Rig(this, false)
+            val node = r.f.node.copy(className = widget)
+            r.snapshot = r.snapshot.copy(nodes = persistentListOf(node, node.copy(path = "0/2", viewId = "second"), r.body))
+            r.f.scene = r.f.before.copy(nodes = r.snapshot.nodes); r.publish()
+            val a = r.session.wiring.extractor.extract(r.snapshot)
+            assertFalse(r.session.executeUser(r.snapshot, a, UserChoice(r.snapshot.token, ChoiceKind.CLOSE_ONCE,
+                a.closeCandidates.first().id, true), r.detection()) { true }.attempted)
+            assertEquals(0, r.f.clicks)
+        }
+    }
+    @Test fun pr59WidgetsDoNotWidenAutomaticOrCustomClassScopeAndFinalChangesStillReject() = runTest {
+        for (widget in listOf("android.widget.ImageButton", "android.widget.TextView")) {
+            assertFalse(F9AutoCloser.supportedCloseWidget(widget, false))
+            val r = Rig(this, false)
+            r.snapshot = r.snapshot.copy(nodes = persistentListOf(r.f.node.copy(className = widget), r.body))
+            r.f.scene = r.f.before.copy(nodes = r.snapshot.nodes); r.publish()
+            val a = r.session.wiring.extractor.extract(r.snapshot)
+            r.f.beforePress = { r.f.scene = r.f.scene?.copy(nodes = listOf(r.f.node.copy(text = "확인"), r.body)) }
+            assertFalse(r.session.executeUser(r.snapshot, a, UserChoice(r.snapshot.token, ChoiceKind.CLOSE_ONCE,
+                a.closeCandidates.single().id, true), r.detection()) { true }.attempted)
+            assertEquals(0, r.f.clicks)
+        }
+        assertFalse(F9AutoCloser.supportedCloseWidget("custom.CloseButton", true))
+        assertFalse(F9AutoCloser.supportedCloseWidget("android.widget.CheckBox", true))
+        assertFalse(F9AutoCloser.supportedCloseWidget(null, true))
+    }
     @Test fun manualCannotInventNewWindowScopeForUncertainOrSameWindowEvidence() = runTest {
         for (signals in listOf(persistentSetOf(PopupSignal.SAME_WINDOW_OVERLAY),
             persistentSetOf(PopupSignal.INSUFFICIENT_EVIDENCE), persistentSetOf<PopupSignal>())) {

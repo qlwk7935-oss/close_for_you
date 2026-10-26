@@ -264,7 +264,7 @@ internal class F9AutoCloser(
         val closeNodes = scene.nodes.filter { n -> listOfNotNull(n.text, n.contentDescription).any { role(it) != null } && n.clickable }
         return closeNodes.size == 1 && closeNodes.single() == node && c.evidence == EvidenceLevel.E2_LABELED_NODE &&
             c.role == ButtonRole.CLOSE && role(c.label) == ButtonRole.CLOSE && c.viewId == node.viewId &&
-            c.bounds == node.bounds && node.enabled && node.clickable && node.className == "android.widget.Button" &&
+            c.bounds == node.bounds && node.enabled && node.clickable && supportedCloseWidget(node.className, r.userChoice != null) &&
             node.path in scene.visiblePaths && NodeAction.CLICK in node.actions && contains(window.bounds, node.bounds) &&
             listOfNotNull(node.text, node.contentDescription).filter { it.isNotBlank() }.let { labels ->
                 labels.isNotEmpty() && c.label in labels && labels.all { role(it) == ButtonRole.CLOSE }
@@ -291,6 +291,10 @@ internal class F9AutoCloser(
     }
 
     companion object {
+        /** Exact native classes only. New widget support is manual USER_CHOICE only; every
+         * label, unique-target, whole-screen and immediate-before-press check still applies. */
+        internal fun supportedCloseWidget(name: String?, manual: Boolean): Boolean =
+            name == "android.widget.Button" || (manual && name in setOf("android.widget.ImageButton", "android.widget.TextView"))
         fun role(label: String?): ButtonRole? = when (label) {
             "닫기", "창 닫기", "팝업 닫기", "close", "Close", "dismiss" -> ButtonRole.CLOSE
             "건너뛰기", "스킵", "skip", "Skip" -> ButtonRole.SKIP
