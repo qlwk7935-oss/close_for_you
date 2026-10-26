@@ -173,6 +173,21 @@ class DeviceKeyedFingerprintProviderTest {
         assertFailure(FingerprintFailure.NO_CONTENT) { key(screen(body = "   ", closeLabel = null)) }
     }
 
+    /**
+     * 시연 장면 4(앞으로 항상 닫기): 재현 앱 P25(모아마켓 광고) 문구로, 앱을 다시 켠 뒤(새 세션) 다시 봐도 같은 키,
+     * 가격만 바뀌어도 다른 키여야 한다. 실제 기억 저장·반복 실행은 F12 운영 연결 뒤에 실기기에서 확인한다.
+     */
+    @Test
+    fun demoAdIsTheSamePopupAfterRestartButNotAfterAPriceChange() = runBlocking {
+        val ad = "광고\n오늘만 최대 70% 할인\n무선 이어폰, 가을 니트 외 300종\n99,000원 29,700원 70%"
+        val beforeRestart = key(screen(session = 1, body = ad))
+        val afterRestart = key(screen(session = 2, body = ad))
+        assertEquals(beforeRestart, afterRestart)
+        val repriced = key(screen(session = 2, body = ad.replace("29,700원", "19,900원")))
+        assertNotEquals(beforeRestart.exactContentFingerprint, repriced.exactContentFingerprint)
+        assertEquals(beforeRestart.targetFingerprint, repriced.targetFingerprint)
+    }
+
     // ---- 합성 화면 ----
 
     private data class Screen(val snapshot: PopupSnapshot, val analysis: PopupAnalysis, val target: CloseCandidate)
