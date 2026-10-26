@@ -207,8 +207,9 @@ class AnswerKeyPipelineTest {
     }
 
     /**
-     * 시연 영상 문구의 '구매'만 바꾸면 지금 코드에서도 광고·쿠폰으로 분류된다. 팀이 고를 수 있는 대안을 확인해 둘 뿐,
-     * 재현 앱은 영상 문구 그대로다(docs/DEMO_SCRIPT.md 5절).
+     * 참고용: 시연 영상 문구의 '구매'만 바꾸면 지금 코드에서 광고·쿠폰으로 분류된다는 분류 동작만 기록한다.
+     * 문구 치환은 안전 판정 우회책으로 채택하지 않았다(#59 리뷰). 재현 앱과 시연은 영상 문구 그대로이고,
+     * 구매 버튼은 어떤 경우에도 대신 누르지 않는다(docs/DEMO_SCRIPT.md 5절 ①).
      */
     @Test
     fun demoWordingWithoutThePurchaseWordWouldBeClassifiedAsInTheVideo() {
