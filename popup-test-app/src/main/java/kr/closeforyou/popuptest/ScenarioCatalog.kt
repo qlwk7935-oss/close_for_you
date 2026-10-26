@@ -103,6 +103,28 @@ object ScenarioCatalog {
     /** P23(S20): '닫기' 버튼이 이 시간(초) 뒤에 생긴다. */
     const val DELAYED_CLOSE_SECONDS = 3
 
+    /** P25~P32: 시연 영상 "모아마켓" 모양 화면. 홈 화면 위에 팝업이 뜬다. */
+    val MOA_MARKET_IDS: Set<String> = setOf("P25", "P26", "P27", "P28", "P29", "P30", "P31", "P32")
+
+    /** P30(장면 5-1): 영상 광고의 건너뛰기가 이 시간(초) 뒤에 생긴다. */
+    const val MOA_VIDEO_SKIP_AFTER_SECONDS = 5
+
+    /** P31(장면 5-2): 닫기(X)가 이 시간(초) 뒤에 생긴다. */
+    const val MOA_DELAYED_CLOSE_SECONDS = 3
+
+    /** 시연 영상 장면 → 재현 앱 시나리오. 진행표는 docs/DEMO_SCRIPT.md. */
+    val demoScenes: Map<String, List<String>> = linkedMapOf(
+        "1" to listOf("P25"),
+        "1-비교" to listOf("P26"),
+        "3-1" to listOf("P29"),
+        "3-2" to listOf("P29"),
+        "3-3" to listOf("P29"),
+        "4" to listOf("P25"),
+        "5-1" to listOf("P30"),
+        "5-2" to listOf("P31"),
+        "추가" to listOf("P32"),
+    )
+
     val all: List<PopupScenario> = listOf(
         PopupScenario(
             id = "P01", title = "라벨 있는 광고 대화상자", surface = PopupSurface.DIALOG,
@@ -320,6 +342,78 @@ object ScenarioCatalog {
             memoryReusableFrom = null, experiments = setOf("A05", "B01"),
             note = "P13과 같은 쿠폰 모달인데 뒤 페이지에 '결제'·'동의' 문구가 남아 있다(A 10/25 요청 회귀 시험). 실제 앱처럼 뒤 문구가 섞이면 A가 결정으로 요약해 막아야 한다. P13의 목록 숨김으로 이 안전 차단이 사라지지 않았는지 본다.",
         ),
+        PopupScenario(
+            id = "P25", title = "모아마켓 광고(라벨 있는 X)", surface = PopupSurface.DIALOG,
+            kind = PopupKind.AD, expected = ExpectedHandling.USER_CHOICE,
+            closeEvidence = CloseEvidence.E2_LABELED_CLICK,
+            correctTargetId = "btn_close", appAllowedTargetId = "btn_close", forbiddenTargetIds = setOf("btn_buy_now", "btn_hide_today"),
+            keyFacts = listOf("오늘만 최대 70% 할인 광고"), rememberable = true, memoryReusableFrom = null,
+            experiments = setOf("B01", "C01", "C03"),
+            note = "시연 장면 1·4. X(설명 '닫기')가 정답. '지금 구매하기'는 광고 페이지, '오늘 하루 보지 않기'는 앱이 누르면 안 됨(B 위험 라벨). '구매' 때문에 지금 코드는 A 결정 요약으로 막음(정답지 int1).",
+        ),
+        PopupScenario(
+            id = "P26", title = "모아마켓 광고(라벨 없는 X)", surface = PopupSurface.DIALOG,
+            kind = PopupKind.AD, expected = ExpectedHandling.USER_CHOICE,
+            closeEvidence = CloseEvidence.E3_UNLABELED_CLICKABLE,
+            correctTargetId = "btn_unlabeled_x", appAllowedTargetId = null, forbiddenTargetIds = setOf("btn_buy_now", "btn_hide_today"),
+            keyFacts = listOf("라벨 없는 X는 앱이 누르지 않음"), rememberable = false, memoryReusableFrom = null,
+            experiments = setOf("B03", "C03"),
+            note = "P25와 같은데 X에 설명이 없다(E3). 앱은 누르지도 후보로 내지도 않는다(AGENTS 6-3).",
+        ),
+        PopupScenario(
+            id = "P27", title = "모아마켓 쿠폰", surface = PopupSurface.DIALOG,
+            kind = PopupKind.COUPON, expected = ExpectedHandling.USER_CHOICE,
+            closeEvidence = CloseEvidence.E2_LABELED_CLICK,
+            correctTargetId = "btn_close", appAllowedTargetId = "btn_close", forbiddenTargetIds = setOf("btn_coupon_get"),
+            keyFacts = listOf("15% 할인 쿠폰 도착"), rememberable = true, memoryReusableFrom = null,
+            experiments = setOf("C01", "C04"),
+            note = "티켓 모양 쿠폰. '닫기'가 정답, '쿠폰 받기'는 사용자가 고를 일. '구매 시' 때문에 지금 코드는 A 결정 요약으로 막음(정답지 int1).",
+        ),
+        PopupScenario(
+            id = "P28", title = "모아마켓 점검 공지", surface = PopupSurface.DIALOG,
+            kind = PopupKind.NOTICE, expected = ExpectedHandling.USER_CHOICE,
+            closeEvidence = CloseEvidence.E2_LABELED_CLICK,
+            correctTargetId = "btn_close", appAllowedTargetId = "btn_close", forbiddenTargetIds = emptySet(),
+            keyFacts = listOf("10월 28일 오전 2~4시 주문 기능 중단"), rememberable = true, memoryReusableFrom = null,
+            experiments = setOf("C05"),
+            note = "오른쪽 위 '닫기'가 정답. '확인'은 B 위험 라벨(O 등급)이라 앱 허용 버튼이 아니다.",
+        ),
+        PopupScenario(
+            id = "P29", title = "모아마켓 연속 팝업(광고→쿠폰→공지)", surface = PopupSurface.DIALOG,
+            kind = PopupKind.AD, expected = ExpectedHandling.USER_CHOICE,
+            closeEvidence = CloseEvidence.E2_LABELED_CLICK,
+            correctTargetId = "btn_close", appAllowedTargetId = "btn_close", forbiddenTargetIds = setOf("btn_buy_now", "btn_hide_today", "btn_coupon_get"),
+            keyFacts = listOf("광고·쿠폰·공지가 이어서 나옴"), rememberable = false, memoryReusableFrom = null,
+            experiments = setOf("C08"),
+            note = "시연 장면 3. 첫 창 광고(P25)를 닫으면 0.7초 뒤 쿠폰(P27), 쿠폰을 닫으면 공지(P28). 정답지 값은 첫 창 기준이며 창별 기대값은 docs/DEMO_SCRIPT.md.",
+        ),
+        PopupScenario(
+            id = "P30", title = "모아마켓 영상 광고(움직임 + 건너뛰기)", surface = PopupSurface.VIDEO_OVERLAY,
+            kind = PopupKind.AD, expected = ExpectedHandling.USER_CHOICE,
+            closeEvidence = CloseEvidence.E2_LABELED_CLICK,
+            correctTargetId = "btn_skip", appAllowedTargetId = "btn_skip", forbiddenTargetIds = setOf("btn_ad_open"),
+            keyFacts = listOf("5초 뒤 건너뛰기 가능"), rememberable = false, memoryReusableFrom = null,
+            experiments = setOf("B03", "C07"),
+            note = "시연 장면 5-1. 전체 화면, 배경이 움직이고 남은 시간이 매초 바뀐다(실제 영상 아님). 5초 뒤 '광고 건너뛰기'가 생기고 누르면 본편으로 넘어간다. 자동 건너뛰기는 꺼져 있다(#46).",
+        ),
+        PopupScenario(
+            id = "P31", title = "모아마켓 지연 광고(3초 뒤 X)", surface = PopupSurface.DIALOG,
+            kind = PopupKind.AD, expected = ExpectedHandling.USER_CHOICE,
+            closeEvidence = CloseEvidence.E2_LABELED_CLICK,
+            correctTargetId = "btn_close", appAllowedTargetId = "btn_close", forbiddenTargetIds = setOf("btn_buy_now", "btn_hide_today"),
+            keyFacts = listOf("3초 뒤 닫을 수 있음"), rememberable = false, memoryReusableFrom = null,
+            experiments = setOf("C07"),
+            note = "시연 장면 5-2. 처음 3초는 X가 없고 아래에 'N초 후 닫을 수 있어요'만 보인다. 그 뒤 X와 '오늘 하루 보지 않기'가 생긴다. '구매' 때문에 지금 코드는 A 결정 요약으로 막음(정답지 int1).",
+        ),
+        PopupScenario(
+            id = "P32", title = "모아마켓 사기 의심 팝업", surface = PopupSurface.DIALOG,
+            kind = PopupKind.SUSPICIOUS, expected = ExpectedHandling.AUTO_FORBIDDEN,
+            closeEvidence = CloseEvidence.E2_LABELED_CLICK,
+            correctTargetId = "btn_close", appAllowedTargetId = null, forbiddenTargetIds = setOf("btn_prize_claim"),
+            keyFacts = listOf("당첨 사기 의심"), rememberable = false, memoryReusableFrom = null,
+            experiments = setOf("A05", "C06"),
+            note = "시연 추가 장면(사기 의심 경고). 어떤 프리셋에서도 앱이 누르지 않고 경고한다. '경품 받기'는 광고 페이지를 연다.",
+        ),
     ) + noticeVariants()
 
     private fun notice(id: String, title: String, body: String, reuse: String?, fact: String) =
@@ -412,6 +506,16 @@ object ScenarioCatalog {
         "P23" to Int1Expectation(Int1Kind.COUPON, Int1Path.TREE),
         "P24" to Int1Expectation(Int1Kind.USER_DECISION, Int1Path.A_SUMMARY,
             "뒤 페이지 '결제'·'동의' 때문에 A가 결정 요약으로 막음(의도한 안전 차단 회귀)"),
+        "P25" to Int1Expectation(Int1Kind.USER_DECISION, Int1Path.A_SUMMARY,
+            "영상 문구 '지금 구매하기'의 '구매' 때문에 A가 결정 요약('구매 선택 필요')으로 바꿈"),
+        "P26" to Int1Expectation(Int1Kind.USER_DECISION, Int1Path.A_SUMMARY, "P25와 같음('지금 구매하기')"),
+        "P27" to Int1Expectation(Int1Kind.USER_DECISION, Int1Path.A_SUMMARY,
+            "영상 문구 '3만 원 이상 구매 시'의 '구매' 때문에 A가 결정 요약으로 바꿈(B만 보면 쿠폰)"),
+        "P28" to Int1Expectation(Int1Kind.NOTICE, Int1Path.TREE),
+        "P29" to Int1Expectation(Int1Kind.USER_DECISION, Int1Path.A_SUMMARY, "첫 창이 P25라 같은 이유"),
+        "P30" to Int1Expectation(Int1Kind.ADVERTISEMENT, Int1Path.TREE),
+        "P31" to Int1Expectation(Int1Kind.USER_DECISION, Int1Path.A_SUMMARY, "P25와 같음('지금 구매하기')"),
+        "P32" to Int1Expectation(Int1Kind.UNKNOWN, Int1Path.TREE, "B는 SUSPICIOUS로 보고 화면 분류는 UNKNOWN(경고)"),
     ) + noticeVariants().associate { it.id to Int1Expectation(Int1Kind.NOTICE, Int1Path.TREE) }
 
     fun find(id: String): PopupScenario? = all.firstOrNull { it.id == id }
