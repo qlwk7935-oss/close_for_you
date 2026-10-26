@@ -49,7 +49,7 @@ class AnswerKeyPipelineTest {
             lines.drop(1).map { header.zip(it.split(',')).toMap() }
         }
 
-    private val strings: Map<String, String> = Regex("""<string name="([a-z0-9_]+)">(.*?)</string>""")
+    private val strings: Map<String, String> = Regex("""<string name="([a-z0-9_]+)"[^>]*>(.*?)</string>""")
         .findAll(read("popup-test-app/src/main/res/values/strings.xml"))
         .associate { it.groupValues[1] to it.groupValues[2] }
 
@@ -105,7 +105,46 @@ class AnswerKeyPipelineTest {
             webText("결제 수단을 바꾸려면 약관에 동의해 주세요(시험용 뒤 페이지 문구)."),
             webText(res("ad_coupon_title")), webText(res("ad_coupon_body")), webText(res("ad_open")), webText(res("close")),
         )
+        "P25", "P29" -> moaAd(labeled = true)
+        "P26" -> moaAd(labeled = false)
+        "P27" -> listOf(
+            res("moa_coupon_kicker"), res("moa_coupon_title"), res("moa_coupon_condition"), res("moa_coupon_valid"),
+            res("moa_coupon_get"), res("close"),
+        )
+        "P28" -> listOf(
+            res("moa_notice_title"), res("close"), res("moa_notice_body"), res("moa_notice_when_label"),
+            res("moa_notice_when"), res("moa_notice_what_label"), res("moa_notice_what"), res("moa_confirm"),
+        )
+        "P30" -> listOf(
+            res("moa_ad_badge"), res("moa_video_title"), fmt("moa_video_time", 0, 15), res("moa_video_caption"),
+            res("moa_learn_more"), fmt("moa_skip_countdown", 5),
+        )
+        "P31" -> listOf(
+            res("moa_ad_badge"), res("moa_ad2_title"), res("moa_ad2_sub"), res("moa_ad2_old_price"), res("moa_ad2_price"),
+            res("moa_ad2_percent"), res("moa_buy_now"), fmt("moa_close_countdown", 3),
+        )
+        "P32" -> listOf(res("prize_title"), res("prize_body"), res("prize_claim"), res("close"))
         else -> listOf(res("notice_title"), catalogText(NOTICES[id] ?: error("시험 fixture 없음: $id")), res("close"))
+    }
+
+    /** 모아마켓 광고(P25·P26). 라벨 있는 X는 설명 "닫기"가 트리에 들어간다. */
+    private fun moaAd(labeled: Boolean): List<String> = listOfNotNull(
+        res("moa_ad_badge"), if (labeled) res("close") else null,
+        res("moa_ad1_title"), res("moa_ad1_sub"), res("moa_ad1_old_price"), res("moa_ad1_price"), res("moa_ad1_percent"),
+        res("moa_buy_now"), res("moa_hide_today"),
+    )
+
+    /** 같은 창 글자. 모아마켓은 홈 화면, 나머지는 재현 앱 본문 화면. */
+    private fun windowTexts(id: String): List<String> = if (id in MOA_MARKET) {
+        listOf(
+            "moa_brand", "moa_bell", "moa_cart", "moa_search", "moa_chip_fashion", "moa_chip_appliance", "moa_chip_food",
+            "moa_chip_living", "moa_chip_camping", "moa_banner_title", "moa_banner_sub", "moa_today",
+            "moa_p1_name", "moa_p1_discount", "moa_p1_price", "moa_p2_name", "moa_p2_discount", "moa_p2_price",
+            "moa_p3_name", "moa_p3_discount", "moa_p3_price", "moa_p4_name", "moa_p4_discount", "moa_p4_price",
+            "moa_nav_home", "moa_nav_category", "moa_nav_search", "moa_nav_wish", "moa_nav_cart",
+        ).map { res(it) } + id
+    } else {
+        listOf(res("background_title"), res("background_body"), id)
     }
 
     private fun int1(texts: List<String>): Pair<String, String> {
@@ -133,7 +172,7 @@ class AnswerKeyPipelineTest {
                 return@forEach
             }
             val popupOnly = int1(texts)
-            val withWindow = int1(texts + listOf(res("background_title"), res("background_body"), id))
+            val withWindow = int1(texts + windowTexts(id))
             if (popupOnly != expected) problems += "$id: 정답지 $expected, 코드 $popupOnly"
             if (withWindow != popupOnly) problems += "$id: 같은 창 본문·제목까지 넣으면 $withWindow"
         }
@@ -165,6 +204,18 @@ class AnswerKeyPipelineTest {
             }
             assertEquals(id, DecisionKind.SUSPICIOUS, DecisionKinds.of(PopupAnalysis(SNAPSHOT.token, texts = texts.toPersistentList())))
         }
+    }
+
+    /**
+     * 시연 영상 문구의 '구매'만 바꾸면 지금 코드에서도 광고·쿠폰으로 분류된다. 팀이 고를 수 있는 대안을 확인해 둘 뿐,
+     * 재현 앱은 영상 문구 그대로다(docs/DEMO_SCRIPT.md 5절).
+     */
+    @Test
+    fun demoWordingWithoutThePurchaseWordWouldBeClassifiedAsInTheVideo() {
+        val buyNow = res("moa_buy_now")
+        assertEquals("ADVERTISEMENT" to "TREE", int1(moaAd(labeled = true).map { if (it == buyNow) "지금 보러 가기" else it }))
+        assertEquals("COUPON" to "TREE", int1(popupTexts("P27")!!.map { it.replace("구매 시", "주문 시") }))
+        assertEquals("ADVERTISEMENT" to "TREE", int1(popupTexts("P31")!!.map { if (it == buyNow) "지금 보러 가기" else it }))
     }
 
     @Test
@@ -200,6 +251,9 @@ class AnswerKeyPipelineTest {
     }
 
     private companion object {
+        /** 시연 영상 "모아마켓" 화면(재현 앱 ScenarioCatalog.MOA_MARKET_IDS와 같음). */
+        val MOA_MARKET = setOf("P25", "P26", "P27", "P28", "P29", "P30", "P31", "P32")
+
         val SNAPSHOT = PopupSnapshot(
             token = SnapshotToken(1, 2, "kr.closeforyou.popuptest", "popup", "s", "c", 1),
             capturedAtUptimeMillis = 1_000,
