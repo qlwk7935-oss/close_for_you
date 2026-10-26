@@ -17,17 +17,23 @@ internal enum class ManualPromptCause {
     COLLECTION_BLOCKED, F1_NOT_CANDIDATE, EVIDENCE_BLOCKED, EVIDENCE_CANCELLED, EVIDENCE_FAILED,
     POLICY_BLOCKED, PACKAGE_BLOCKED, TOUCH_STARTED, TOUCH_ENDED, SCROLL_INVALIDATED,
     CONTENT_INVALIDATED, WINDOW_STATE_INVALIDATED, WINDOW_SET_INVALIDATED, CLICK_INVALIDATED,
-    UNKNOWN,
+    OFFER_CLOSED, OFFER_HEALTH_FAILED, OFFER_COMPLETED_KEY, OFFER_CLEANUP_NOT_READY,
+    OFFER_OVERLAY_SHOWING, OFFER_SELECTION_PENDING, OWNED_CONTENT_CONFIRMED, UNKNOWN,
 }
 
 /** One service-local attempt ordinal, not a screen identifier. Only fixed codes reach the sink.
  * De-duplicate boundary/cause pairs per offer; no events, tokens, timestamps or exceptions retained. */
-internal class ManualPromptTrace(private val sink: (Long, ManualPromptPoint, ManualPromptCause) -> Unit) {
+internal class ManualPromptTrace(private val actionSink: (Long, ManualActionCode) -> Unit = { _, _ -> },
+    private val sink: (Long, ManualPromptPoint, ManualPromptCause) -> Unit) {
     private var attempt = 0L
     private val recorded = mutableSetOf<Pair<ManualPromptPoint, ManualPromptCause>>()
     fun begin() { attempt = if (attempt == Long.MAX_VALUE) 1 else attempt + 1; recorded.clear(); record(ManualPromptPoint.OFFERED) }
     fun record(point: ManualPromptPoint, cause: ManualPromptCause = ManualPromptCause.NONE) {
         if (recorded.add(point to cause)) diagnosticWrite { sink(attempt, point, cause) }
+    }
+    fun action(): ManualActionTrace {
+        val acceptedAttempt = attempt
+        return ManualActionTrace { code -> actionSink(acceptedAttempt, code) }
     }
     override fun toString() = "ManualPromptTrace(redacted)"
 }

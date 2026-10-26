@@ -98,3 +98,74 @@ $adb = "$env:LOCALAPPDATA\Android\Sdk\platform-tools\adb.exe"
 6. 30초 표시 만료와 서비스 종료 시 창/음성이 정리되는지 확인한다. native 제거 실패는 성공으로 기록하지 않는다.
 
 기존 AndroidTest의 `F9ManualServiceInstrumentedTest#explicitChoiceSixSecondsAfterShowRecollectsBeforeOneP01Click` 및 다른 수동 회귀는 이번에 컴파일만 했다. 이 기존 harness는 secure accessibility settings/합성 앱 동의를 임시 변경·복구하고 UiAutomation으로 C 선택을 누르므로 실제 사람의 TalkBack 조작과 다르다. LG 사용자 설정을 보존하는 위 수동 절차를 우선하며 해당 harness를 무조건 실행하도록 요청하지 않는다.
+
+## 추가 LG 보고: CONTENT_INVALIDATED 및 선택 후 원본 팝업 유지
+
+이 절의 수정 기준은 위 작업을 커밋한 `8da31f23f9fbec1ec07d052f85bd1b107b670a0b`다. 앞 절의 2,012회 검증은 이전 실행 기록이며, 아래 결과와 구분한다. 추가 사용자 보고는 C 버튼 탭과 결과 상태는 보이지만 원본 팝업이 닫히지 않았고 마지막에 `OFFER_REJECTED / OFFER_UNAVAILABLE`이 있었다는 것이다. 이 보고만으로 선택이 A guard를 통과했는지, 실제 ACTION_CLICK을 시도했는지, 어느 단계에서 멈췄는지는 확정할 수 없다.
+
+### 음성 안내 중 콘텐츠 이벤트
+
+기존 native 소유권 경로의 대상에 `TYPE_WINDOW_CONTENT_CHANGED`를 추가했다. 표시 중인 C 창의 native owner/generation, 이벤트 시각의 현재 표시 수명, 정확한 이벤트 package/window 일치, 표시 전 창 집합과의 구별, 독립적으로 확인한 단일 live C 창이 모두 맞는 경우만 자체 콘텐츠 이벤트로 처리한다. 이때 기존 포커스/클릭과 같은 검증 함수를 사용한다. 실패했을 때 title 기반의 더 약한 경로로 fallback하지 않는다.
+
+이는 C의 실제 콘텐츠 변경 때문에 외부 화면 변경으로 처리되는 경로를 좁힌 것이다. LG에서 관측한 CONTENT_INVALIDATED가 실제 C 창에서 발생했다는 증거는 아직 없으므로 LG 원인을 확정하거나 해결됐다고 주장하지 않는다. 대상 앱의 콘텐츠 변경, null/불일치 package, 다른 창, retired/native 실패, ID 재사용, generation 불일치, 불확실한 live 창 집합은 계속 무효화한다. 단순히 C가 보이거나 TalkBack이 말하고 있다는 이유로 무시하지 않는다. 새 진단 원인은 `DISPLAY_RETAINED / OWNED_CONTENT_CONFIRMED`이다. 자동 실행 권한을 만들지 않는다.
+
+### OFFER 거부의 우선순위
+
+실제 `offer()`가 호출하는 공유 `manualOfferRejection`은 기존 short-circuit 순서를 유지한다. 여러 조건이 참이면 아래에서 **가장 먼저 참인 한 사유**를 기록하며 이후 getter는 호출하지 않는다.
+
+| 순위 | 조건 | `OFFER_REJECTED`의 CAUSE |
+| --- | --- | --- |
+| 1 | closed | OFFER_CLOSED |
+| 2 | health.failed | OFFER_HEALTH_FAILED |
+| 3 | completedKey == key | OFFER_COMPLETED_KEY |
+| 4 | !cleanup.ready | OFFER_CLEANUP_NOT_READY |
+| 5 | overlay.isShowing | OFFER_OVERLAY_SHOWING |
+| 6 | selected != null | OFFER_SELECTION_PENDING |
+
+기존 Runtime의 `OFFER_UNAVAILABLE` 상태 표기는 유지한다. 이는 새 창 요청의 거절이며 기존 선택의 클릭 실패를 뜻하지 않는다. 특히 `completedKey`는 닫기 성공 여부와 별개로 기존 선택을 처리하며 설정하던 값이다. 이미 처리한 동일 팝업의 재요청 차단을 삭제하거나 자동으로 재시도하지 않는다.
+
+### 수동 실행 진단
+
+동일한 `A_ManualPrompt` 태그에 `A_MANUAL_ACTION`을 추가했다. 선택 접수 때 현재 표시 시도 번호를 고정한 별도 진단 객체를 생성한다. 다음 OFFER가 시작돼도 이전 비동기 실행의 번호가 바뀌지 않는다. enum 코드만 보관하며 진단을 성공 조건으로 사용하지 않는다.
+
+| STEP | 의미 |
+| --- | --- |
+| CHOICE_ACCEPTED / PASSED | C의 generation/currentness guard를 통과한 CLOSE_ONCE 접수. 탭 감지만으로 기록하지 않음 |
+| OVERLAY_REMOVAL / WAITING, PASSED | 기존 cleanup permit 대기 및 확인. 이것은 C 창 제거이며 원본 팝업 닫힘이 아님 |
+| INTERACTION_END / WAITING, PASSED | 기존 터치/탐색 종료 대기 |
+| MANUAL_REFRESH / STARTED, COMPLETED, REJECTED | 실제 기존 새 F0 호출. COMPLETED는 반환 및 현재성 checkpoint 통과이며 전체 실행 승인이 아님 |
+| SNAPSHOT_MATCH / PASSED, REJECTED | 기존 freshness/completeness, `EvidenceSnapshotComparison.firstMismatch`, 전체 nodes 비교 |
+| TARGET_MATCH / PASSED, REJECTED | 기존 선택 대상 및 새 트리에서 B가 재구성한 동일 후보 비교 |
+| SESSION_ENTRY / PASSED, REJECTED | 서비스/현재성/중복 실행 보호. 거절 사유는 SafetyReason enum |
+| B_DECISION / STARTED, APPROVED, REJECTED | 실제 B 판정. NEXT와 기존 판정 사유의 첫 SafetyReason을 기록 |
+| F9_VALIDATION / STARTED, PASSED, REJECTED | 실제 F9 상태·화면·후보·승인 검사. F9Block enum으로 거절 구분 |
+| CLICK_ATTEMPT / ATTEMPTED, NOT_ATTEMPTED | 기존 F9Press/결과가 보고한 실제 시도 여부. 클릭 API 호출 전 추측으로 ATTEMPTED를 기록하지 않음 |
+| CLICK_RESULT / COMPLETED | 클릭 반환 여부와 기존 원본 팝업 관측 결과. DELIVERY_TRUE만으로 성공이라고 하지 않음 |
+| MANUAL_END / COMPLETED, CANCELLED, FAILED, REJECTED | 상위 수동 작업의 종료 경계. COMPLETED 자체가 닫힘 성공을 뜻하지 않음 |
+
+실제 진행하지 않은 단계는 PASSED로 채우지 않는다. timeout은 당시 대기 단계의 `TIMED_OUT`, 예외·취소는 해당 단계의 `FAILED/CANCELLED`로 남기며 기존 전파를 유지한다. 검사 실패를 가리기 위해 예외 원문을 저장하거나 출력하지 않는다. 첫 단계가 중단되면 뒤 단계 로그가 없는 것이 정상이다.
+
+아래는 **형식 예시이며 실측 결과가 아니다**. 실제 출력에는 사용하지 않는 enum 필드도 NONE으로 포함한다.
+
+```text
+A_MANUAL_PROMPT;ATTEMPT=1;POINT=OFFER_REJECTED;CAUSE=OFFER_COMPLETED_KEY
+A_MANUAL_ACTION;ATTEMPT=1;STEP=OVERLAY_REMOVAL;STATE=TIMED_OUT;REASON=NONE;SAFETY=NONE;F9=NONE;MISMATCH=NONE;OUTCOME=NONE;NEXT=NONE
+A_MANUAL_ACTION;ATTEMPT=1;STEP=SNAPSHOT_MATCH;STATE=REJECTED;REASON=NONE;SAFETY=NONE;F9=NONE;MISMATCH=CONTENT;OUTCOME=NONE;NEXT=NONE
+A_MANUAL_ACTION;ATTEMPT=1;STEP=B_DECISION;STATE=REJECTED;REASON=NONE;SAFETY=USER_INTERACTION;F9=NONE;MISMATCH=NONE;OUTCOME=NONE;NEXT=WAIT
+A_MANUAL_ACTION;ATTEMPT=1;STEP=F9_VALIDATION;STATE=REJECTED;REASON=NONE;SAFETY=NONE;F9=SCREEN_UNVERIFIED;MISMATCH=NONE;OUTCOME=NONE;NEXT=NONE
+A_MANUAL_ACTION;ATTEMPT=1;STEP=CLICK_RESULT;STATE=COMPLETED;REASON=DELIVERY_TRUE;SAFETY=NONE;F9=NONE;MISMATCH=NONE;OUTCOME=STILL_PRESENT;NEXT=NONE
+```
+
+`SCREEN_UNVERIFIED`는 기존 F9 scene/target 비교의 거부이며 어느 하위 비교가 원인인지 이 코드만으로 확정하지 않는다. 예를 들어 배경 페이지를 현재 읽을 수 없고 기존 page proof의 5초 fallback 조건도 충족하지 못하면 계속 차단한다. 이를 우회하기 위해 원본 시각을 갱신하거나 불완전한 배경을 채우지 않는다.
+
+진단은 기존 판정 결과만 사용하며 화면 수집·OCR·IPC·시계 조회를 추가하지 않는다. C 콘텐츠 소유권 검사는 기존 native/live-window 확인 경로를 사용한다. F9 최종 검사와 ACTION_CLICK 사이에는 진단 I/O를 넣지 않고 검사 결과를 지역 boolean에 기록한 뒤 press 반환 후 출력한다. 로그 sink의 예외·취소는 기존 처리를 바꾸지 않는다. Release 로거는 계속 null이고 두 로그 마커 모두 Release APK에 없다.
+
+### 이번 로컬 검증 및 LG 재실측
+
+신규 회귀 21개: 실제 공유 OFFER 우선순위, 선택 후 새 OFFER 거절과 실행 분리, 시도 번호 고정, cleanup timeout/예외/취소, 새 F0 미관측·snapshot/target 불일치, 실제 B 거절, F9 최종 거절, 관측된 원본 닫힘/유지 구분, 새 TTL/동의 철회, 클릭 후 취소, 최종 검사와 클릭 사이 진단 I/O 부재, 로거 실패, C content 소유권 성공/실패를 검증한다. 실제 Android getter·LG TalkBack·native 제거 성공을 JVM으로 입증한 것은 아니다.
+
+- 앱 Debug 994 / Release 979, 호스트 55, 합성 앱 26: 총 2,054 variant 실행, 실패/오류/skip 0.
+- Debug/Release 및 앱/호스트 AndroidTest APK 컴파일, 패키징/DEX 및 Release 로그 제거 확인 완료. 앱 Debug/Release·호스트 Lint 오류/경고 0, 합성 앱은 기존 TypographyFractions/SetTextI18n 경고 2건·오류 0이다. 변경 없는 일부 Gradle 작업은 UP-TO-DATE였으며 실제 Android 계측은 실행하지 않았다.
+- 자동 닫기·자동 SKIP·F12 반복은 계속 OFF. 새 F0/B/F9/5초 실행 TTL·단일 클릭·실제 제거 확인은 유지한다.
+
+LG에서는 위 설치/로그 명령을 그대로 사용하고 TalkBack OFF/ON 각각 **P01 → 실제 C 창 6초 유지 → 명시적 닫기 선택 1회 → C 제거와 원본 팝업 닫힘을 각각 확인**한다. 창이 사라지면 `INVALIDATED` 또는 `DISPLAY_RETAINED`의 원인을, 원본이 남으면 같은 선택 시도 번호의 `A_MANUAL_ACTION` 경계를 확인한다. `OFFER_REJECTED`는 별도 행으로 구분한다. DELIVERY_TRUE, C 제거 또는 결과 UI 유지 자체를 닫힘 성공으로 기록하지 않는다. 최초 실패 시 가짜 재시도 없이 종료하고 고정 코드만 전달한다. LG 미실측이므로 실제 실패 지점은 아직 미확정이다.

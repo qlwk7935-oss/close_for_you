@@ -48,6 +48,7 @@ internal class ManualPopupConnection(
     private var shownDetection: PopupDetection? = null
     private var selected: SnapshotToken? = null
     private var selectedValid = false
+    private var selectedAction: ManualActionTrace? = null
     private var endCause = ManualPromptCause.UNKNOWN
     private var completedKey: Triple<String, Int, String>? = null
     private val reviews = ChoiceReviewBudget()
@@ -149,6 +150,7 @@ internal class ManualPopupConnection(
             // suspended flow: native removal events may be next on Main's queue.
             if (answer is PromptAnswer.Picked && answer.choice.kind == ChoiceKind.CLOSE_ONCE) {
                 selected = answer.choice.token; selectedValid = true
+                selectedAction = trace?.action().also { it?.record(ManualActionStep.CHOICE_ACCEPTED, ManualActionState.PASSED) }
                 AccessibilityRuntime.manualBoundary("CHOICE_ACCEPTED")
             }
             onAnswer(answer)
@@ -192,8 +194,10 @@ internal class ManualPopupConnection(
     }
     fun offer(snapshot: PopupSnapshot, detection: PopupDetection, display: PopupSnapshot, analysis: PopupAnalysis) {
         val key = Triple(snapshot.token.packageName, snapshot.token.windowId, snapshot.token.contentDigest)
-        if (closed || health.failed || completedKey == key || !cleanup.ready || overlay.isShowing || selected != null) {
-            trace?.record(ManualPromptPoint.OFFER_REJECTED, if (health.failed) ManualPromptCause.HEALTH_FAILED else ManualPromptCause.OFFER_UNAVAILABLE)
+        val rejection = manualOfferRejection(closed, { health.failed }, { completedKey == key },
+            { cleanup.ready }, { overlay.isShowing }, { selected != null })
+        if (rejection != null) {
+            trace?.record(ManualPromptPoint.OFFER_REJECTED, rejection)
             AccessibilityRuntime.manualBoundary("OFFER_UNAVAILABLE"); return
         }
         if (detection.signals.none { it == PopupSignal.NEW_WINDOW || it == PopupSignal.SAME_WINDOW_OVERLAY }) {
@@ -208,8 +212,15 @@ internal class ManualPopupConnection(
         events.tryEmit(PopupEvent.Candidate(display, detection))
     }
     private suspend fun handleChoice(choice: UserChoice, analysis: PopupAnalysis): ActionResult? {
-        val old = original?.takeIf { it.token == choice.token } ?: return null
-        val detected = shownDetection?.takeIf { it.token == old.token } ?: return null
+        val action = selectedAction
+        val old = original?.takeIf { it.token == choice.token } ?: run {
+            action?.record(ManualActionStep.MANUAL_END, ManualActionState.REJECTED, ManualActionReason.ORIGINAL_UNAVAILABLE)
+            return null
+        }
+        val detected = shownDetection?.takeIf { it.token == old.token } ?: run {
+            action?.record(ManualActionStep.MANUAL_END, ManualActionState.REJECTED, ManualActionReason.DETECTION_UNAVAILABLE)
+            return null
+        }
         completedKey = Triple(old.token.packageName, old.token.windowId, old.token.contentDigest)
         if (choice.kind == ChoiceKind.KEEP_OPEN) {
             original = null; shownAnalysis = null; shownDetection = null; promptLifetime.clear(); return null
@@ -217,8 +228,12 @@ internal class ManualPopupConnection(
         if (choice.kind != ChoiceKind.CLOSE_ONCE || !choice.buttonMeaningConfirmed) {
             promptLifetime.clear(); return null
         }
-        if (selected != choice.token) return ActionResult(choice.token, ActionStatus.STALE, SafetyReason.STALE_SCREEN)
+        if (selected != choice.token) {
+            action?.record(ManualActionStep.MANUAL_END, ManualActionState.REJECTED, ManualActionReason.SELECTION_STALE)
+            return ActionResult(choice.token, ActionStatus.STALE, SafetyReason.STALE_SCREEN)
+        }
         fun complete(result: ActionResult): ActionResult = result.also {
+            action?.record(ManualActionStep.MANUAL_END, ManualActionState.COMPLETED, safety = it.reason, outcome = it.outcome)
             AccessibilityRuntime.recordManualResult(it)
             if (it.attempted) AccessibilityRuntime.recordF9Decision(NextStep.EXECUTE, true)
         }
@@ -227,17 +242,25 @@ internal class ManualPopupConnection(
             currentCoroutineContext().ensureActive()
             fun intentCurrent() = selectedValid && !closed && !health.failed && !interacting() && cleanup.ready
             val refreshed = ManualChoiceRefresh.afterRemoval(old, analysis, choice, detected, SystemClock::uptimeMillis,
-                ::intentCurrent, awaitRemoval = { cleanup.awaitObservationPermit(); Unit }, awaitQuiet = awaitInteractionEnd
+                ::intentCurrent, awaitRemoval = { cleanup.awaitObservationPermit(); Unit }, awaitQuiet = awaitInteractionEnd, trace = action
             ) { checkpoint -> collectForChoice(old, checkpoint) }
-                ?: return complete(ActionResult(old.token, ActionStatus.STALE, SafetyReason.STALE_SCREEN))
+                ?: run {
+                    action?.record(ManualActionStep.CLICK_ATTEMPT, ManualActionState.NOT_ATTEMPTED)
+                    return complete(ActionResult(old.token, ActionStatus.STALE, SafetyReason.STALE_SCREEN))
+                }
             val version = refreshed.snapshot.token.screenVersion
-            return session.executeUser(refreshed.snapshot, refreshed.analysis, refreshed.choice, refreshed.detection) {
+            return session.executeUser(refreshed.snapshot, refreshed.analysis, refreshed.choice, refreshed.detection, trace = action) {
                 intentCurrent() && epoch() == version
             }.let(::complete)
         } catch (cancelled: CancellationException) {
+            action?.record(ManualActionStep.MANUAL_END, ManualActionState.CANCELLED)
             if (!currentCoroutineContext().isActive) throw cancelled
             return complete(ActionResult(old.token, ActionStatus.NOT_EXECUTED, SafetyReason.UNVERIFIED_TARGET))
+        } catch (failure: Exception) {
+            action?.record(ManualActionStep.MANUAL_END, ManualActionState.FAILED)
+            throw failure
         } finally {
+            if (selectedAction === action) selectedAction = null
             selectedValid = false; selected = null; original = null; shownAnalysis = null; shownDetection = null; gate.clear(); promptLifetime.clear()
             // A next popup may have arrived while this result was being observed. Never replay
             // it: explicitly ask F0/F1 for a new read after the accepted choice finishes.
@@ -272,7 +295,7 @@ internal class ManualPopupConnection(
     fun shouldIgnore(event: AccessibilityEvent): Boolean {
         if (closed || health.failed) return false
         val state = overlay.windowState
-        return inspectManualEvent(event.eventType, nativeControl = {
+        val ignored = inspectManualEvent(event.eventType, nativeControl = {
             inspectManualOwnedInteraction(event.eventType, state, promptLifetime, { event.eventTime },
                 { event.packageName?.toString() }, service.packageName, { event.windowId },
                 { native?.liveWindow(nativeOwner, state.generation) }, before, ::readOwned)
@@ -282,6 +305,9 @@ internal class ManualPopupConnection(
             { token, diagnostic -> binding.matches(event.windowId, readOwned(), token, overlay.windowState.generation, diagnostic) },
             { service.packageName }, eventDiagnostic)
         })
+        if (ignored && event.eventType == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED)
+            trace?.record(ManualPromptPoint.DISPLAY_RETAINED, ManualPromptCause.OWNED_CONTENT_CONFIRMED)
+        return ignored
     }
     fun isOwnedRetirement(event: AccessibilityEvent): Boolean = selectedValid && event.windowId == retiredId &&
         (event.packageName == null || event.packageName?.toString() == service.packageName) &&

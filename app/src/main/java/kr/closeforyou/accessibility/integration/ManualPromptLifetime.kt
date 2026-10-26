@@ -61,7 +61,7 @@ internal class ManualTouchState {
  * An event from a retired generation / reused ID / before this show is never exempted. */
 internal fun manualControlEvent(type: Int): Boolean = type in setOf(AccessibilityEvent.TYPE_VIEW_CLICKED,
     AccessibilityEvent.TYPE_VIEW_FOCUSED, AccessibilityEvent.TYPE_VIEW_ACCESSIBILITY_FOCUSED,
-    AccessibilityEvent.TYPE_VIEW_ACCESSIBILITY_FOCUS_CLEARED)
+    AccessibilityEvent.TYPE_VIEW_ACCESSIBILITY_FOCUS_CLEARED, AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED)
 
 /** A failed native-control proof must not fall back to the older title-only focus policy. */
 internal inline fun inspectManualEvent(type: Int, nativeControl: () -> Boolean, otherEvent: () -> Boolean): Boolean =

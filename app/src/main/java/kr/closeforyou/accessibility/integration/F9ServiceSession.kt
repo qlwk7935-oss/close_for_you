@@ -135,9 +135,14 @@ internal class F9ServiceSession(
      * This never uses auto consent and never emits an automatic HandlingReport.
      */
     suspend fun executeUser(snapshot: PopupSnapshot, analysis: PopupAnalysis, choice: UserChoice, detection: PopupDetection,
-        current: () -> Boolean): ActionResult {
-        fun refused(reason: SafetyReason) = ActionResult(snapshot.token, ActionStatus.NOT_EXECUTED, reason)
+        trace: ManualActionTrace? = null, current: () -> Boolean): ActionResult {
+        fun refused(reason: SafetyReason): ActionResult {
+            trace?.record(ManualActionStep.SESSION_ENTRY, ManualActionState.REJECTED, safety = reason)
+            trace?.record(ManualActionStep.CLICK_ATTEMPT, ManualActionState.NOT_ATTEMPTED)
+            return ActionResult(snapshot.token, ActionStatus.NOT_EXECUTED, reason)
+        }
         if (closed || running || !current()) return refused(SafetyReason.STALE_SCREEN)
+        trace?.record(ManualActionStep.SESSION_ENTRY, ManualActionState.PASSED)
         running = true; activePackage = snapshot.token.packageName; manualToken = snapshot.token; manualCurrent = current
         try {
             val key = snapshot.token.packageName + "\u0000" + snapshot.token.structureDigest + "\u0000" + snapshot.token.contentDigest
@@ -146,8 +151,12 @@ internal class F9ServiceSession(
             val prepared = F9EligibilityAdapter.prepare(snapshot, detection, analysis, fresh, clock.nowMillis())
             activeClassification = prepared.classification
             val a = access(snapshot.token.packageName)
+            trace?.record(ManualActionStep.B_DECISION, ManualActionState.STARTED)
             val decision = policy.decide(prepared, DecisionContext(if (current()) snapshot.token else null,
                 choice, null, a.userInteracting, a.announcementAvailable))
+            trace?.record(ManualActionStep.B_DECISION,
+                if (decision.next == NextStep.EXECUTE) ManualActionState.APPROVED else ManualActionState.REJECTED,
+                safety = decision.reasons.firstOrNull(), next = decision.next)
             val delivered = AtomicBoolean()
             fun complete(result: ActionResult) {
                 if (delivered.compareAndSet(false, true)) policy.onActionResult(result)
@@ -155,6 +164,14 @@ internal class F9ServiceSession(
             val candidate = prepared.closeCandidates.singleOrNull { it.id == decision.candidateId }
             val eligibility = prepared.autoEligibility
             if (decision.next != NextStep.EXECUTE || candidate == null || eligibility == null || choice.kind != ChoiceKind.CLOSE_ONCE) {
+                trace?.record(ManualActionStep.F9_VALIDATION, ManualActionState.REJECTED,
+                    reason = when {
+                        decision.next != NextStep.EXECUTE -> ManualActionReason.NONE
+                        candidate == null -> ManualActionReason.TARGET_UNAVAILABLE
+                        eligibility == null -> ManualActionReason.ELIGIBILITY_UNAVAILABLE
+                        else -> ManualActionReason.INVALID_CHOICE
+                    }, safety = decision.reasons.firstOrNull(), block = F9Block.POLICY_DENIED)
+                trace?.record(ManualActionStep.CLICK_ATTEMPT, ManualActionState.NOT_ATTEMPTED)
                 val result = ActionResult(snapshot.token, ActionStatus.BLOCKED,
                     decision.reasons.firstOrNull() ?: SafetyReason.UNVERIFIED_TARGET)
                 complete(result); return result
@@ -165,7 +182,7 @@ internal class F9ServiceSession(
                 override fun onActionResult(result: ActionResult) = complete(result)
                 override fun onExecutionResult(result: ActionResult, policyConsulted: Boolean) = complete(result)
             }
-            return closer.execute(F9Reference(snapshot, candidate, generation, revision, page, choice), bridge).toActionResult()
+            return closer.execute(F9Reference(snapshot, candidate, generation, revision, page, choice), bridge, trace).toActionResult()
         } finally { running = false; activePackage = null; activeClassification = null; manualToken = null; manualCurrent = { false } }
     }
     fun close(version: Long) { closed = true; closer.close(); revision++; page = null; raw.invalidate(version) }

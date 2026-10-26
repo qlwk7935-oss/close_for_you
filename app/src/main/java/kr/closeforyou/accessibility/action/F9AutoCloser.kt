@@ -2,6 +2,10 @@ package kr.closeforyou.accessibility.action
 
 import kotlinx.coroutines.*
 import kr.closeforyou.core.model.*
+import kr.closeforyou.accessibility.integration.ManualActionTrace
+import kr.closeforyou.accessibility.integration.ManualActionStep
+import kr.closeforyou.accessibility.integration.ManualActionState
+import kr.closeforyou.accessibility.integration.ManualActionReason
 import kr.closeforyou.ui.voice.PressSuccess
 
 /** F9-local clock: no dependency on the separate, unmerged #29 read-only gate. */
@@ -112,20 +116,30 @@ internal class F9AutoCloser(
 
     fun close() = synchronized(lock) { stopped = true }
 
-    suspend fun execute(reference: F9Reference, requestPolicy: F9PolicyBridge = policy): F9Result {
+    suspend fun execute(reference: F9Reference, requestPolicy: F9PolicyBridge = policy, trace: ManualActionTrace? = null): F9Result {
         // One delivery owner per invocation, including early rejects and cancellation at dispatch.
         // Callbacks run on the same dispatcher as B's session state. A throwing receiver is never retried.
         val delivered = java.util.concurrent.atomic.AtomicBoolean()
         var policyConsulted = false
         fun complete(result: F9Result): F9Result {
             if (delivered.compareAndSet(false, true)) {
+                if (!result.attempted) trace?.record(ManualActionStep.F9_VALIDATION, ManualActionState.REJECTED, block = result.block)
+                trace?.record(ManualActionStep.CLICK_ATTEMPT,
+                    if (result.attempted) ManualActionState.ATTEMPTED else ManualActionState.NOT_ATTEMPTED)
+                trace?.record(ManualActionStep.CLICK_RESULT,
+                    if (result.attempted) ManualActionState.COMPLETED else ManualActionState.NOT_ATTEMPTED,
+                    reason = when (result.clickReturned) {
+                        true -> ManualActionReason.DELIVERY_TRUE
+                        false -> ManualActionReason.DELIVERY_FALSE
+                        null -> ManualActionReason.DELIVERY_UNKNOWN
+                    }, block = result.block, outcome = result.outcome)
                 try { requestPolicy.onExecutionResult(result.toActionResult(), policyConsulted) } catch (_: Exception) { /* No screen-data logging. */ }
             }
             return result
         }
         return try {
             withContext(dispatcher) {
-                executeOnMain(reference, ::complete, requestPolicy) { scene ->
+                executeOnMain(reference, ::complete, requestPolicy, trace) { scene ->
                     policyConsulted = true
                     requestPolicy.authorize(reference, scene)
                 }
@@ -141,12 +155,13 @@ internal class F9AutoCloser(
     }
 
     private suspend fun executeOnMain(reference: F9Reference, complete: (F9Result) -> F9Result, requestPolicy: F9PolicyBridge,
-        authorize: suspend (F9Scene) -> F9Approval?): F9Result {
+        trace: ManualActionTrace?, authorize: suspend (F9Scene) -> F9Approval?): F9Result {
         val token = reference.snapshot.token
         fun blocked(reason: F9Block) = complete(F9Result(token, false, block = reason))
         val jobContext = currentCoroutineContext()
         fun checkpoint() { jobContext.ensureActive(); check(!synchronized(lock) { stopped }) }
         jobContext.ensureActive()
+        trace?.record(ManualActionStep.F9_VALIDATION, ManualActionState.STARTED)
         if (requestPolicy === F9PolicyBridge.UNAVAILABLE) return blocked(F9Block.POLICY_UNAVAILABLE)
         val stateDenial = try { stateBlock(reference) }
         catch (cancelled: CancellationException) { throw cancelled }
@@ -185,12 +200,17 @@ internal class F9AutoCloser(
             checkpoint()
             if (!approved(reference, approval)) return blocked(F9Block.POLICY_DENIED)
             var finalBlock: F9Block? = null
+            var finalAccepted = false
             press = screen.press(reference) { fresh ->
                 // Synchronous on Main. No queued callback/coroutine can split this check and invocation.
                 checkpoint()
                 finalBlock = stateBlock(reference)
-                finalBlock == null && approved(reference, approval) && fresh == initial && matches(reference, fresh)
+                (finalBlock == null && approved(reference, approval) && fresh == initial && matches(reference, fresh))
+                    .also { finalAccepted = it } // No diagnostic I/O between validation and ACTION_CLICK.
             }
+            if (finalAccepted) trace?.record(ManualActionStep.F9_VALIDATION, ManualActionState.PASSED)
+            trace?.record(ManualActionStep.CLICK_ATTEMPT,
+                if (press.attempted) ManualActionState.ATTEMPTED else ManualActionState.NOT_ATTEMPTED)
             if (!press.attempted) return blocked(finalBlock ?: F9Block.SCREEN_UNVERIFIED)
             for (pause in observationDelays) {
                 delay(pause)

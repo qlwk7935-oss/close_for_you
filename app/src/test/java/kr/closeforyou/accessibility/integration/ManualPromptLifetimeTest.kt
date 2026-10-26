@@ -46,7 +46,7 @@ class ManualPromptLifetimeTest {
             assertFalse(inspectManualEvent(type, { owned(type, eventTime = 999) }, { fallbacks++; true }))
         }
         assertEquals(0, fallbacks)
-        assertTrue(inspectManualEvent(E.TYPE_WINDOW_CONTENT_CHANGED, { error("UNEXPECTED_CONTROL") }, { fallbacks++; true }))
+        assertTrue(inspectManualEvent(E.TYPE_WINDOWS_CHANGED, { error("UNEXPECTED_CONTROL") }, { fallbacks++; true }))
         assertEquals(1, fallbacks)
     }
     @Test fun wrongOwnershipUnknownIdentityAndUncertainLiveSetRemainExternal() {
@@ -57,6 +57,26 @@ class ManualPromptLifetimeTest {
         assertFalse(owned(E.TYPE_VIEW_CLICKED, live = setOf(98, 99)))
         assertFalse(owned(E.TYPE_VIEW_CLICKED, before = null))
         assertFalse(owned(E.TYPE_VIEW_CLICKED, eventTime = now + 1))
+    }
+    @Test fun nativeConfirmedCContentDuringSpeechAndAfterOriginalTtlRetainsOnlyItsDisplay() {
+        assertTrue(owned(E.TYPE_WINDOW_CONTENT_CHANGED))
+        now += 6_000
+        assertTrue(owned(E.TYPE_WINDOW_CONTENT_CHANGED))
+        assertEquals(token, lifetime.current()) // Presentation intent, never new execution evidence.
+    }
+    @Test fun targetContentOrUnconfirmedCContentNeverUsesTheInternalContentException() {
+        val type = E.TYPE_WINDOW_CONTENT_CHANGED
+        assertFalse(owned(type, eventId = 20)); assertFalse(owned(type, pkg = null))
+        assertFalse(owned(type, pkg = "synthetic.external")); assertFalse(owned(type, live = null))
+        assertFalse(owned(type, live = setOf(98, 99))); assertFalse(owned(type, before = setOf(99)))
+        assertFalse(owned(type, eventTime = 999)); assertFalse(owned(type, n = native(1)))
+        assertFalse(inspectManualEvent(type, { false }, { error("NO_CONTENT_FALLBACK") }))
+    }
+    @Test fun retiredOrFailedContentOwnershipAndTextChangeStillInvalidate() {
+        assertFalse(owned(E.TYPE_WINDOW_CONTENT_CHANGED, n = native().also { it.removalRequested() }))
+        assertFalse(owned(E.TYPE_WINDOW_CONTENT_CHANGED, n = native().also { it.addReturned(false) }))
+        assertFalse(owned(E.TYPE_VIEW_TEXT_CHANGED))
+        lifetime.clear(); assertFalse(owned(E.TYPE_WINDOW_CONTENT_CHANGED))
     }
     @Test fun retiredDetachedForeignOrFailedNativeLifetimeGrantsNothing() {
         for (n in listOf(native().also { it.removalRequested() },
