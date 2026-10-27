@@ -24,8 +24,9 @@ import kr.closeforyou.accessibility.capture.EvidenceOutcome
 import kr.closeforyou.accessibility.capture.EvidenceIssue
 import kr.closeforyou.core.model.*
 import kr.closeforyou.accessibility.integration.F9ServiceConnection
+import kr.closeforyou.accessibility.integration.DelayedContentEvent
 
-/** A owns collection, F0, cleanup and the explicit C user-choice boundary. Automatic execution OFF. */
+/** A owns F0, C/manual cleanup and the scoped Debug delayed-auto boundary. Release auto OFF. */
 class CloseForYouAccessibilityService : AccessibilityService() {
     private var serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val freshness = ScreenFreshness()
@@ -121,6 +122,8 @@ class CloseForYouAccessibilityService : AccessibilityService() {
         if (f9?.hasPrompt() == true) AccessibilityRuntime.manualInvalidation(event.eventType, event.windowChanges)
         // Copy only primitive enums/IDs, never keep the event or request event.source.
         val eventType = event.eventType
+        val eventWindowId = event.windowId
+        val eventPackage = event.packageName?.toString()
         // Never classify source focus as automatic. Retire evidence first, then resume only a
         // screen review that was already running (including evidence and pre-show admission).
         val resumeObservation = pendingFocusReview(eventType, pendingCapture?.isActive == true,
@@ -128,7 +131,7 @@ class CloseForYouAccessibilityService : AccessibilityService() {
         if (isReviewFocusEvent(eventType)) f9?.focusReview(resumeObservation)
         val interaction = eventType !in SCREEN_EVENTS
         val preserveManual = (f9?.hasPrompt() == true || unattributedTouch) &&
-            unattributedManualTouch(eventType, event.windowId, event.packageName)
+            unattributedManualTouch(eventType, eventWindowId, eventPackage)
         val cause = when {
             preserveManual -> ManualPromptCause.UNATTRIBUTED_TOUCH
             isReviewFocusEvent(eventType) -> if (resumeObservation) ManualPromptCause.FOCUS_INVALIDATED_REVIEW_REQUESTED
@@ -149,7 +152,14 @@ class CloseForYouAccessibilityService : AccessibilityService() {
         // Restart F1's review baseline ONLY for an interrupted, pre-show review. No old
         // signals/candidates survive: a full new collector/F1 read must rediscover popup scope.
         val epoch = invalidate(clearBaseline = resumeObservation, permissionOrInteraction = interaction,
-            ownedRetirement = ownedRetirement, preserveManual = preserveManual, cause = cause)
+            ownedRetirement = ownedRetirement, preserveManual = preserveManual, cause = cause,
+            delayedContent = when {
+                eventType == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED || eventType == AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED ->
+                    DelayedContentEvent(eventWindowId, eventPackage)
+                eventType == AccessibilityEvent.TYPE_WINDOWS_CHANGED && event.windowChanges == AccessibilityEvent.WINDOWS_CHANGE_BOUNDS ->
+                    DelayedContentEvent(eventWindowId, eventPackage, boundsOnly = true)
+                else -> null
+            })
         if (eventType == AccessibilityEvent.TYPE_TOUCH_INTERACTION_START ||
             eventType == AccessibilityEvent.TYPE_TOUCH_EXPLORATION_GESTURE_START) {
             updateTouch(eventType, preserveManual)
@@ -170,7 +180,6 @@ class CloseForYouAccessibilityService : AccessibilityService() {
             return
         }
         // Package identity here is a quick exclusion, never authoritative permission to read.
-        val eventPackage = event.packageName?.toString()
         if (eventPackage != null) {
             packageBlock(eventPackage)?.let {
                 f9?.reviewRejected(ManualPromptCause.PACKAGE_BLOCKED)
@@ -191,7 +200,6 @@ class CloseForYouAccessibilityService : AccessibilityService() {
             eventType == AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED) PopupTrigger.CONTENT_CHANGED
             else PopupTrigger.WINDOW_CHANGED
         // All Android objects have been released before this delayed job can run.
-        val eventWindowId = event.windowId
         scheduleCapture(epoch, trigger, eventWindowId)
     }
 
@@ -217,7 +225,10 @@ class CloseForYouAccessibilityService : AccessibilityService() {
             is CollectionResult.Ready -> {
                 if (!freshness.isCurrent(epoch) || touching) return
                 f9?.observePage()
-                val signals = detector.detect(result.frame)
+                val detected = detector.detect(result.frame)
+                val continued = f9?.reobserveWaiting(result.snapshot, result.frame, detector).orEmpty()
+                if (!freshness.isCurrent(epoch) || touching) return
+                val signals = continued.ifEmpty { detected }
                 if (signals.isEmpty()) {
                     f9?.reviewRejected(ManualPromptCause.F1_NOT_CANDIDATE)
                     trace.detail(CaptureDetail.NO_POPUP_SIGNAL)
@@ -242,7 +253,7 @@ class CloseForYouAccessibilityService : AccessibilityService() {
                                     evidence.analysis)
                                 f9?.collected(result.snapshot,
                                     PopupDetection(result.snapshot.token, signals.toPersistentSet(), requiresUserReview = true),
-                                    evidence.snapshot, evidence.analysis)
+                                    evidence.snapshot, evidence.analysis, result.frame)
                                 trace.stage(CaptureStage.PUBLISHED)
                             }
                             is EvidenceOutcome.Blocked -> if (isCurrent(result.snapshot.token)) {
@@ -336,7 +347,8 @@ class CloseForYouAccessibilityService : AccessibilityService() {
     private fun invalidate(clearBaseline: Boolean, permissionOrInteraction: Boolean = false,
         ttl: Boolean = false, ownedRetirement: Boolean = false, preserveManual: Boolean = false,
         cause: ManualPromptCause = if (ttl) ManualPromptCause.ORIGINAL_EVIDENCE_EXPIRED else
-            if (preserveManual) ManualPromptCause.UNATTRIBUTED_TOUCH else ManualPromptCause.UNKNOWN): Long {
+            if (preserveManual) ManualPromptCause.UNATTRIBUTED_TOUCH else ManualPromptCause.UNKNOWN,
+        delayedContent: DelayedContentEvent? = null): Long {
         pendingCapture?.cancel()
         pendingCapture = null
         evidenceJob?.cancel()
@@ -345,7 +357,7 @@ class CloseForYouAccessibilityService : AccessibilityService() {
         expiry = null
         if (clearBaseline) detector.clear()
         return freshness.invalidate().also { version ->
-            f9?.invalidate(version, permissionOrInteraction, ttl, ownedRetirement, preserveManual, cause)
+            f9?.invalidate(version, permissionOrInteraction, ttl, ownedRetirement, preserveManual, cause, delayedContent)
             AccessibilityRuntime.invalidate(version)
         }
     }

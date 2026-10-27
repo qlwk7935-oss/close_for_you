@@ -14,6 +14,10 @@
         </intent>
     </queries>
     <application>
+        <!-- A-owned explicit developer confirmation. No extras/provider can arm a real click.
+             Debug only; service/collection/allowlist/auto-close consent remain independently required. -->
+        <activity android:name="kr.closeforyou.accessibility.testing.DelayedAutoCloseActivity"
+            android:exported="true" android:label="@string/a_delayed_auto_title" />
         <!-- Only debug builds. No image/text IPC, no service activation or arbitrary app selection. -->
         <provider
             android:name="kr.closeforyou.accessibility.testing.SyntheticCaptureTestProvider"

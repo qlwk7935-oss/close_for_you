@@ -23,7 +23,8 @@ internal data class F9Handled(val decision: ActionDecision? = null, val result: 
 }
 
 /** The same session is used by the real service and the synthetic harness. The harness supplies
- * test consent/execution input; production always uses the OFF rollout gate above. Call on Main.
+ * test consent/execution input; the separate Debug UI is scoped to the synthetic app. Release
+ * always uses OFF. Every execute still needs actual B/F9 checks. Call on Main.
  * DecisionCandidateWiring.source must be collected, so it remembers each detection before handle.
  */
 internal class F9ServiceSession(
@@ -36,6 +37,12 @@ internal class F9ServiceSession(
     private val executionEnabled: () -> Boolean = { F9ServiceExecutionFeature.enabled },
     policyFactory: (() -> Long) -> ActionPolicy = { now -> DecisionActionPolicy(allowAutoSkip = false, nowUptimeMillis = now) },
     dispatcher: CoroutineDispatcher = Dispatchers.Main.immediate,
+    private val executionScope: (String) -> Boolean = { true },
+    private val onWaiting: (PopupSnapshot, PopupDetection, F9Scene?, PopupAnalysis, F9PageProof?) -> Unit = { _, _, _, _, _ -> },
+    private val onDecision: (ActionDecision) -> Unit = {},
+    private val onPageVerified: (String) -> Unit = {},
+    private val executionGuard: (PopupSnapshot, F9Scene?, F9PageProof?) -> Boolean = { _, _, _ -> true },
+    private val onExecutionStart: () -> Unit = {},
 ) {
     val wiring = DecisionCandidateWiring(raw, raw)
     private val generation = generations.incrementAndGet()
@@ -55,7 +62,8 @@ internal class F9ServiceSession(
         val token = if (manualToken != null) manualToken.takeIf { manualCurrent() } else raw.currentToken()
         val settings = access(activePackage ?: token?.packageName.orEmpty())
         val consent = settings.consent
-        val permitted = executionEnabled() && consent.granted && activeClassification in consent.autoCloseKinds && settings.announcementAvailable
+        val permitted = executionEnabled() && executionScope(activePackage ?: token?.packageName.orEmpty()) &&
+            consent.granted && activeClassification in consent.autoCloseKinds && settings.announcementAvailable
         return F9RuntimeState(token, generation, revision, !closed && settings.connected, settings.collectionConsent,
             settings.appAllowed, permitted, permitted, settings.paused || (manualToken != null && !settings.announcementAvailable),
             settings.userInteracting, cleanupReady())
@@ -69,6 +77,7 @@ internal class F9ServiceSession(
         val window = scene.windows.singleOrNull { it.id == scene.windowId } ?: return
         if (scene.complete && window.bounds == scene.screen && scene.pageWindowId == scene.windowId && scene.pageDigest != null) {
             page = F9PageProof(scene.packageName, scene.windowId, scene.pageDigest, captured)
+            onPageVerified(scene.packageName)
         }
     }
 
@@ -87,10 +96,13 @@ internal class F9ServiceSession(
             val analysis = F9EligibilityAdapter.prepare(snapshot, event.detection, wired, fresh, clock.nowMillis())
             activeClassification = analysis.classification
             val a = access(snapshot.token.packageName)
-            val kinds = if (executionEnabled() && a.connected && a.collectionConsent && a.appAllowed && !a.paused &&
+            val kinds = if (executionEnabled() && executionScope(snapshot.token.packageName) && a.connected && a.collectionConsent && a.appAllowed && !a.paused &&
                 !a.userInteracting && a.consent.granted && cleanupReady()) a.consent.autoCloseKinds else persistentSetOf()
             val context = DecisionContext(raw.currentToken(), null, null, a.userInteracting, a.announcementAvailable, kinds)
             val decision = policy.decide(analysis, context)
+            onDecision(decision)
+            if (decision.next == NextStep.WAIT && SafetyReason.WAITING_FOR_TARGET in decision.reasons)
+                onWaiting(snapshot, event.detection, fresh, analysis, page)
             val automatic = decision.source == DecisionSource.PRESET || decision.source == DecisionSource.REMEMBERED_RULE
             fun report(result: ActionResult? = null) {
                 if (automatic) try { onReport(HandlingReport(snapshot.token, analysis.classification, decision, result, title = null)) }
@@ -110,6 +122,10 @@ internal class F9ServiceSession(
                 val result = F9Result(snapshot.token, false, block = F9Block.POLICY_DENIED)
                 complete(result.toActionResult()); return F9Handled(decision, result)
             }
+            if (!executionGuard(snapshot, fresh, page)) {
+                val result = F9Result(snapshot.token, false, block = F9Block.POLICY_DENIED)
+                complete(result.toActionResult()); return F9Handled(decision, result)
+            }
             // This receipt belongs to ONE already-approved execute call, including initial-gate
             // rejection/cancellation. It never calls decide again. Other requests cannot consume it.
             val requestBridge = object : F9PolicyBridge {
@@ -118,6 +134,7 @@ internal class F9ServiceSession(
                 override fun onActionResult(result: ActionResult) = complete(result)
                 override fun onExecutionResult(result: ActionResult, policyConsulted: Boolean) = complete(result)
             }
+            onExecutionStart()
             val result = closer.execute(F9Reference(snapshot, candidate, generation, revision, page), requestBridge)
             return F9Handled(decision, result)
         } finally { running = false; activePackage = null; activeClassification = null }

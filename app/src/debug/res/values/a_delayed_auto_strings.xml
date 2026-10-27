@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="a_delayed_auto_title">합성 지연 팝업 자동 닫기 시험</string>
+    <string name="a_delayed_auto_explanation">Debug 전용 · 합성 팝업 앱 한 번의 시험만 허용합니다.\n수집 동의·허용 앱·분석 시작·자동 닫기 동의를 먼저 설정하세요.\n기존 설정 화면의 ‘아직 자동 실행 안 함’ 표시는 일반·Release 정책입니다. 이 개발 시험에서만 별도 활성화됩니다.\nB의 버튼 대기 후 새 전체 F0와 F9가 승인한 닫기만 1회 실행합니다. 구매·동의·권한·사기는 계속 차단합니다.</string>
+    <string name="a_delayed_auto_enable">합성 앱 시험 활성화</string>
+    <string name="a_delayed_auto_disable">시험 끄기</string>
+    <string name="a_delayed_auto_confirm_title">실제 닫기 버튼 1회 실행 허용</string>
+    <string name="a_delayed_auto_confirm_body">개인정보 없는 합성 테스트 앱에서만 실행합니다. 기존 자동 닫기 동의 범위를 넓히지 않습니다.</string>
+    <string name="a_delayed_auto_confirm">시험 켜기</string>
+    <string name="a_delayed_auto_status">시험 상태: %1$s</string>
+</resources>

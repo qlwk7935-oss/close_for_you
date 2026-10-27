@@ -36,6 +36,7 @@ class PopupScenarioActivity : Activity() {
     private var dialog: Dialog? = null
     private var f9DeferredP01 = false
     private var f9DeferredChain = false
+    private var f9DeferredCoupon = false
     private val handler = Handler(Looper.getMainLooper())
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -80,7 +81,10 @@ class PopupScenarioActivity : Activity() {
             "P20" -> adSeriesDialog(0)
             "P21" -> suspiciousDialog(R.string.prize_title, R.string.prize_body, R.id.btn_prize_claim, R.string.prize_claim)
             "P22" -> suspiciousDialog(R.string.infected_title, R.string.infected_body, R.id.btn_scan_now, R.string.scan_now)
-            "P23" -> delayedCloseCoupon()
+            "P23" -> {
+                f9DeferredCoupon = intent.getBooleanExtra("f9_defer_popup", false)
+                if (!f9DeferredCoupon) delayedCloseCoupon()
+            }
             "P24" -> webViewModal("ad-risky-back")
             ScenarioCatalog.BUTTON_MOVED_NOTICE_ID -> textNotice(scenario.note, closeOnTop = true)
             else -> if (scenario.kind == PopupKind.NOTICE) textNotice(scenario.note)
@@ -97,6 +101,10 @@ class PopupScenarioActivity : Activity() {
         if (scenarioId == "P12" && f9DeferredChain && intent.getBooleanExtra("f9_show_deferred_popup", false)) {
             f9DeferredChain = false
             chain()
+        }
+        if (scenarioId == "P23" && f9DeferredCoupon && intent.getBooleanExtra("f9_show_deferred_popup", false)) {
+            f9DeferredCoupon = false
+            delayedCloseCoupon() // Same native view, text, target and three-second delay.
         }
     }
 

@@ -37,15 +37,25 @@ internal class PopupCandidateDetector {
 
     fun clear() { previous = null }
 
+    /** Re-observation of an already B-WAIT-scoped separate APPLICATION window. The caller must
+     * first validate the fresh complete tree against its waiting identity. Derive window-scope
+     * evidence from THIS frame, never copy a previous detection or claim a new window was added.
+     * NEW_WINDOW is the existing B contract for a separate-window popup (not same-window scope).
+     */
+    fun reobserveBoundedApplicationWindow(frame: DetectionFrame): Set<PopupSignal> {
+        val before = previous ?: return emptySet()
+        if (before.applicationDigest != frame.applicationDigest || before.activeWindowId != frame.activeWindowId ||
+            before.applicationWindowIds != frame.applicationWindowIds) return emptySet()
+        return if (boundedApplicationWindow(frame)) setOf(PopupSignal.NEW_WINDOW) else emptySet()
+    }
+
     fun detect(frame: DetectionFrame): Set<PopupSignal> {
         val before = previous?.takeIf { it.applicationDigest == frame.applicationDigest }
         val signals = mutableSetOf<PopupSignal>()
         // #29: Android's Dialog root is often a FrameLayout, including the first observed popup.
         // An independently bounded APPLICATION window scopes the popup without guessing from text.
         // Both axes must be inset: a normal Activity below status/navigation bars is not a dialog.
-        val boundedWindow = isBounded(frame.windowBounds, frame.screenBounds) &&
-            frame.windowBounds.width.toLong() * 100 < frame.screenBounds.width.toLong() * 96 &&
-            frame.windowBounds.height.toLong() * 100 < frame.screenBounds.height.toLong() * 90
+        val boundedWindow = boundedApplicationWindow(frame)
         val hasNewWindow = (before != null && frame.activeWindowId !in before.applicationWindowIds) ||
             (boundedWindow && (before == null || before.activeWindowId != frame.activeWindowId))
         if (hasNewWindow) signals += PopupSignal.NEW_WINDOW
@@ -69,6 +79,10 @@ internal class PopupCandidateDetector {
         )
         return signals.toSet()
     }
+
+    private fun boundedApplicationWindow(frame: DetectionFrame) = isBounded(frame.windowBounds, frame.screenBounds) &&
+        frame.windowBounds.width.toLong() * 100 < frame.screenBounds.width.toLong() * 96 &&
+        frame.windowBounds.height.toLong() * 100 < frame.screenBounds.height.toLong() * 90
 
     private fun isBounded(bounds: ScreenBounds, screen: ScreenBounds): Boolean {
         val area = (bounds.right.toLong() - bounds.left) * (bounds.bottom.toLong() - bounds.top)

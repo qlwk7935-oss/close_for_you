@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <item name="a_enable_delayed_auto" type="id" />
+    <item name="a_disable_delayed_auto" type="id" />
+    <item name="a_delayed_auto_state" type="id" />
+</resources>
