@@ -75,25 +75,34 @@ internal class ManualPopupConnection(
         }
         override suspend fun repeatLast() = if (flowToken() != null) tts.repeatLast()
             else AnnouncementReceipt(AnnouncementState.NOT_IMPLEMENTED)
-        override fun stop() { tts.stop() } // TTL no longer cancels this manual flow.
+        override fun stop() {
+            manualCleanupCall(ManualCleanupSite.TTS_STOP, trace?.cleanup, cleanup) { tts.stop() }
+        } // TTL no longer cancels this manual flow.
     }
     private val settings = UiVoicePreferences.get(service)
     private val promptListener = PromptAnnouncementListener(service, announcer, scope,
         mode = { settings.current().promptAnnounceMode }, detail = { settings.current().detail })
     val overlay: AccessibilityChoiceOverlay = AccessibilityChoiceOverlay(service, object : OverlayListener {
-        override fun onShown(prompt: ChoicePrompt, speakPressed: () -> Boolean) = promptListener.onShown(prompt, speakPressed)
+        override fun onShown(prompt: ChoicePrompt, speakPressed: () -> Boolean) =
+            manualCleanupCall(ManualCleanupSite.CALLBACK_SHOWN, trace?.cleanup, cleanup) {
+                promptListener.onShown(prompt, speakPressed)
+            }
         override fun onDismissed() {
             // C invokes this listener BEFORE removeView. It is not removal confirmation.
             trace?.record(ManualPromptPoint.OVERLAY_DISMISS_STARTED, endCause)
-            val n = native
-            retiredId = n?.retirementWindow(nativeOwner, n.generation)
-            cleanup.retiring(binding.boundWindowFor(n?.generation ?: 0), n?.generation ?: 0, target, n, nativeOwner)
-            binding.clear(); promptListener.onDismissed()
+            manualCleanupCall(ManualCleanupSite.CALLBACK_DISMISSED, trace?.cleanup, cleanup) {
+                val n = native
+                retiredId = n?.retirementWindow(nativeOwner, n.generation)
+                cleanup.retiring(binding.boundWindowFor(n?.generation ?: 0), n?.generation ?: 0, target, n, nativeOwner)
+                binding.clear(); promptListener.onDismissed()
+            }
         }
     }, PromptControlsSupport(tts, null) { kr.closeforyou.ui.voice.command.SpeakButtonState.TURNED_OFF }).also { view ->
         view.observeNativeWindows(object : OverlayNativeWindowObserver {
             override fun created(generation: Long) = OverlayNativeWindowLifetime(generation, nativeOwner).also { native = it }
-            override fun changed(lifetime: OverlayNativeWindowLifetime) { handler.post { nativeProcessed(lifetime) } }
+            override fun changed(lifetime: OverlayNativeWindowLifetime) {
+                handler.post { manualCleanupCall(ManualCleanupSite.NATIVE_CALLBACK, trace?.cleanup, cleanup) { nativeProcessed(lifetime) } }
+            }
         })
     }
     private val gate = ChoicePresentationGate(SystemClock::uptimeMillis,
@@ -134,12 +143,12 @@ internal class ManualPopupConnection(
         }
         override fun dismiss() {
             trace?.record(ManualPromptPoint.DISMISS_REQUESTED, endCause)
-            overlay.dismiss()
-            if (cleanup.pending) cleanup.removalReturned(overlay.windowState.status == OverlayWindowStatus.HIDDEN)
+            dismissOverlay()
         }
     }
     private val guarded = GuardedChoicePresenter(delegate, ::flowToken, intentInteracting, health,
         onFailure = {
+            trace?.cleanup?.record(ManualCleanupSite.GUARDED_PRESENTER, ManualCleanupIssue.GUARD_REJECTED)
             trace?.record(ManualPromptPoint.CLEANUP_FAILED, ManualPromptCause.HEALTH_FAILED); cleanup.fail()
         })
     private val presenter = object : ChoicePromptPresenter {
@@ -187,6 +196,7 @@ internal class ManualPopupConnection(
             try { flow.run() } catch (cancelled: CancellationException) {
                 trace?.record(ManualPromptPoint.FLOW_CANCELLED, ManualPromptCause.FLOW_CANCELLED); throw cancelled
             } catch (_: Exception) {
+                trace?.cleanup?.record(ManualCleanupSite.FLOW, ManualCleanupIssue.EXCEPTION)
                 trace?.record(ManualPromptPoint.FLOW_FAILED, ManualPromptCause.HEALTH_FAILED)
                 AccessibilityRuntime.manualBoundary("FLOW_FAILED"); health.fail(); close()
             }
@@ -281,7 +291,7 @@ internal class ManualPopupConnection(
                 original = null; shownAnalysis = null; shownDetection = null; clearHistory()
                 events.tryEmit(PopupEvent.Invalidated(version))
                 val batch = kr.closeforyou.accessibility.CollectionReleaseBatch()
-                batch.attempt { overlay.dismiss() }; batch.attempt { announcer.stop() }
+                batch.attempt { dismissOverlay() }; batch.attempt { announcer.stop() }
                 try { batch.finish() } catch (failure: Exception) {
                     trace?.record(ManualPromptPoint.CLEANUP_FAILED, ManualPromptCause.CLEANUP_FAILED)
                     throw failure
@@ -293,21 +303,26 @@ internal class ManualPopupConnection(
     fun hasPendingPresentation(): Boolean = !closed && !health.failed && !overlay.isShowing &&
         selected == null && gate.hasCurrentObservation()
     fun shouldIgnore(event: AccessibilityEvent): Boolean {
-        if (closed || health.failed) return false
-        val state = overlay.windowState
-        val ignored = inspectManualEvent(event.eventType, nativeControl = {
-            inspectManualOwnedInteraction(event.eventType, state, promptLifetime, { event.eventTime },
-                { event.packageName?.toString() }, service.packageName, { event.windowId },
-                { native?.liveWindow(nativeOwner, state.generation) }, before, ::readOwned)
-        }, otherEvent = {
-            inspectOwnedOverlayEvent(overlay.windowState, { event.eventType }, { event.windowChanges },
-            { event.packageName?.toString() }, ::flowToken,
-            { token, diagnostic -> binding.matches(event.windowId, readOwned(), token, overlay.windowState.generation, diagnostic) },
-            { service.packageName }, eventDiagnostic)
-        })
-        if (ignored && event.eventType == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED)
-            trace?.record(ManualPromptPoint.DISPLAY_RETAINED, ManualPromptCause.OWNED_CONTENT_CONFIRMED)
-        return ignored
+        val probe = if (trace != null && event.eventType == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED)
+            ManualOwnershipProbe() else null
+        try {
+            if (closed) return probe?.reject(OwnershipCheck.CLOSED) ?: false
+            if (health.failed) return probe?.reject(OwnershipCheck.HEALTH) ?: false
+            val state = overlay.windowState
+            val ignored = inspectManualEvent(event.eventType, nativeControl = {
+                inspectManualOwnedInteraction(event.eventType, state, promptLifetime, { event.eventTime },
+                    { event.packageName?.toString() }, service.packageName, { event.windowId },
+                    { readManualNativeWindow(native, nativeOwner, state.generation, probe) }, before, ::readOwned, probe)
+            }, otherEvent = {
+                inspectOwnedOverlayEvent(overlay.windowState, { event.eventType }, { event.windowChanges },
+                    { event.packageName?.toString() }, ::flowToken,
+                    { token, diagnostic -> binding.matches(event.windowId, readOwned(), token, overlay.windowState.generation, diagnostic) },
+                    { service.packageName }, eventDiagnostic)
+            })
+            if (ignored && event.eventType == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED)
+                trace?.record(ManualPromptPoint.DISPLAY_RETAINED, ManualPromptCause.OWNED_CONTENT_CONFIRMED)
+            return ignored
+        } finally { if (probe != null) trace?.ownership(probe.code()) }
     }
     fun isOwnedRetirement(event: AccessibilityEvent): Boolean = selectedValid && event.windowId == retiredId &&
         (event.packageName == null || event.packageName?.toString() == service.packageName) &&
@@ -323,6 +338,8 @@ internal class ManualPopupConnection(
             native = null; target = null; if (selected == null) review()
         }
     }
+    private fun dismissOverlay() = dismissManualOverlay({ overlay.dismiss() },
+        { overlay.windowState.status }, cleanup, trace?.cleanup)
     @Suppress("DEPRECATION") private fun presence(id: Int) = cleanupWindowPresence(id, { service.windows }, { it.id }, { it.recycle() })
     @Suppress("DEPRECATION") private fun readOwned(): Set<Int>? = readOwnedOverlayIds({ service.windows },
         { it.type == AccessibilityWindowInfo.TYPE_ACCESSIBILITY_OVERLAY && it.displayId == 0 }, { it.root },
@@ -342,6 +359,10 @@ internal class ManualPopupConnection(
         endCause = ManualPromptCause.SERVICE_STOPPED
         closed = true; selectedValid = false; gate.clear(); promptLifetime.clear(); guarded.revoke(); displayTimer?.cancel()
         job?.cancel(); original = null; shownAnalysis = null; shownDetection = null; clearHistory(); eventDiagnostic.disarm()
-        try { overlay.dismiss() } finally { promptListener.onDismissed(); handler.removeCallbacksAndMessages(null) }
+        val batch = kr.closeforyou.accessibility.CollectionReleaseBatch()
+        batch.attempt { dismissOverlay() }
+        batch.attempt { manualCleanupCall(ManualCleanupSite.CALLBACK_DISMISSED, trace?.cleanup, cleanup) { promptListener.onDismissed() } }
+        batch.attempt { manualCleanupCall(ManualCleanupSite.SERVICE_CLOSE, trace?.cleanup, cleanup) { handler.removeCallbacksAndMessages(null) } }
+        batch.finish()
     }
 }

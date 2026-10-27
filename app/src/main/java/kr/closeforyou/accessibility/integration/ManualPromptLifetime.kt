@@ -19,14 +19,38 @@ internal class ManualPromptLifetime(private val clock: () -> Long) {
     }
     // HIDDEN is intentionally not checked here: C removes its window before delivering a choice.
     // GuardedChoicePresenter separately checks the callback generation and successful removal.
-    fun current(): SnapshotToken? {
+    fun current(diagnostic: ManualOwnershipProbe? = null): SnapshotToken? {
         val now = clock()
-        if (shownAt < 0 || now < shownAt || now - shownAt >= ChoiceDisplayLease.MAX_DISPLAY_MILLIS) clear()
+        val lease = when {
+            shownAt < 0 -> OwnershipLease.NOT_STARTED
+            now < shownAt -> OwnershipLease.CLOCK_REVERSED
+            now - shownAt >= ChoiceDisplayLease.MAX_DISPLAY_MILLIS -> OwnershipLease.EXPIRED
+            else -> OwnershipLease.ACTIVE
+        }
+        diagnostic?.lease = lease
+        if (lease != OwnershipLease.ACTIVE) clear()
         return token
     }
-    fun eventBelongsToShow(state: OverlayWindowState, eventTime: Long): Boolean = current() != null &&
-        state.status == OverlayWindowStatus.SHOWING && state.generation == generation &&
-        eventTime >= shownAt && eventTime <= clock()
+    fun eventBelongsToShow(state: OverlayWindowState, eventTime: Long, diagnostic: ManualOwnershipProbe? = null): Boolean {
+        if (current(diagnostic) == null) return diagnostic?.reject(OwnershipCheck.DISPLAY_LEASE) ?: false
+        diagnostic?.display = state.status
+        if (state.status != OverlayWindowStatus.SHOWING)
+            return diagnostic?.reject(OwnershipCheck.DISPLAY_STATE, ManualOwnership.NOT_OWNED) ?: false
+        val sameGeneration = state.generation == generation
+        diagnostic?.generation = if (sameGeneration) OwnershipRelation.MATCH else OwnershipRelation.MISMATCH
+        if (!sameGeneration) return diagnostic?.reject(OwnershipCheck.GENERATION, ManualOwnership.NOT_OWNED) ?: false
+        if (eventTime < shownAt) {
+            diagnostic?.time = OwnershipTime.BEFORE_SHOW
+            return diagnostic?.reject(OwnershipCheck.EVENT_TIME, ManualOwnership.NOT_OWNED) ?: false
+        }
+        // Preserve the original second clock read and its exact short-circuit position.
+        if (eventTime > clock()) {
+            diagnostic?.time = OwnershipTime.FUTURE
+            return diagnostic?.reject(OwnershipCheck.EVENT_TIME) ?: false
+        }
+        diagnostic?.time = OwnershipTime.WITHIN_SHOW
+        return true
+    }
     fun clear() { token = null; shownAt = -1; generation = 0 }
     override fun toString() = "ManualPromptLifetime(redacted)"
 }
@@ -70,9 +94,45 @@ internal inline fun inspectManualEvent(type: Int, nativeControl: () -> Boolean, 
 internal inline fun inspectManualOwnedInteraction(type: Int, state: OverlayWindowState,
     lifetime: ManualPromptLifetime, eventTime: () -> Long, eventPackage: () -> String?, ownPackage: String,
     eventWindow: () -> Int, nativeWindow: () -> Int?, before: Set<Int>?, live: () -> Set<Int>?,
+    diagnostic: ManualOwnershipProbe? = null,
 ): Boolean {
     if (!manualControlEvent(type)) return false
-    if (!lifetime.eventBelongsToShow(state, eventTime()) || eventPackage() != ownPackage || before == null) return false
-    val id = nativeWindow() ?: return false
-    return id >= 0 && id !in before && eventWindow() == id && live()?.singleOrNull() == id
+    diagnostic?.check = OwnershipCheck.EVENT_TIME
+    if (!lifetime.eventBelongsToShow(state, eventTime(), diagnostic)) return false
+    diagnostic?.check = OwnershipCheck.PACKAGE
+    val pkg = eventPackage()
+    diagnostic?.pkg = when (pkg) { null -> OwnershipRelation.UNAVAILABLE; ownPackage -> OwnershipRelation.MATCH; else -> OwnershipRelation.MISMATCH }
+    if (pkg != ownPackage) return diagnostic?.reject(OwnershipCheck.PACKAGE,
+        if (pkg == null) ManualOwnership.UNKNOWN else ManualOwnership.NOT_OWNED) ?: false
+    diagnostic?.before = if (before == null) OwnershipBefore.UNAVAILABLE else OwnershipBefore.AVAILABLE
+    if (before == null) return diagnostic?.reject(OwnershipCheck.BEFORE_SET) ?: false
+    diagnostic?.check = OwnershipCheck.NATIVE_LOOKUP
+    val id = nativeWindow()
+    diagnostic?.lookup = if (id == null || id < 0) OwnershipRelation.UNAVAILABLE else OwnershipRelation.MATCH
+    if (id == null) return diagnostic?.reject(OwnershipCheck.NATIVE_LOOKUP,
+        if (diagnostic?.nativeGeneration == OwnershipRelation.MISMATCH) ManualOwnership.NOT_OWNED else ManualOwnership.UNKNOWN) ?: false
+    if (id < 0) return diagnostic?.reject(OwnershipCheck.NATIVE_ID) ?: false
+    val oldWindow = id in before
+    diagnostic?.before = if (oldWindow) OwnershipBefore.NATIVE_ALREADY_PRESENT else OwnershipBefore.NATIVE_ABSENT
+    if (oldWindow) return diagnostic?.reject(OwnershipCheck.BEFORE_SET, ManualOwnership.NOT_OWNED) ?: false
+    diagnostic?.check = OwnershipCheck.EVENT_WINDOW
+    val eventId = eventWindow()
+    val sameWindow = eventId == id
+    diagnostic?.window = if (eventId < 0) OwnershipRelation.UNAVAILABLE else
+        if (sameWindow) OwnershipRelation.MATCH else OwnershipRelation.MISMATCH
+    if (!sameWindow) return diagnostic?.reject(OwnershipCheck.EVENT_WINDOW,
+        if (eventId < 0) ManualOwnership.UNKNOWN else ManualOwnership.NOT_OWNED) ?: false
+    diagnostic?.check = OwnershipCheck.LIVE_SET
+    val owned = live()
+    val single = owned?.singleOrNull()
+    diagnostic?.live = when {
+        owned == null -> OwnershipLive.UNAVAILABLE
+        owned.isEmpty() -> OwnershipLive.EMPTY
+        owned.size != 1 -> OwnershipLive.MULTIPLE
+        single == id -> OwnershipLive.SINGLE_MATCH
+        else -> OwnershipLive.SINGLE_OTHER
+    }
+    if (single != id) return diagnostic?.reject(OwnershipCheck.LIVE_SET,
+        if (single != null) ManualOwnership.NOT_OWNED else ManualOwnership.UNKNOWN) ?: false
+    return diagnostic?.accepted() ?: true
 }

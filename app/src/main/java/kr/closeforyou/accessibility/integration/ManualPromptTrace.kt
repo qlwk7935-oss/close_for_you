@@ -24,16 +24,23 @@ internal enum class ManualPromptCause {
 /** One service-local attempt ordinal, not a screen identifier. Only fixed codes reach the sink.
  * De-duplicate boundary/cause pairs per offer; no events, tokens, timestamps or exceptions retained. */
 internal class ManualPromptTrace(private val actionSink: (Long, ManualActionCode) -> Unit = { _, _ -> },
+    private val ownershipSink: (Long, ManualOwnershipCode) -> Unit = { _, _ -> },
+    cleanupSink: (Long, ManualCleanupCode) -> Unit = { _, _ -> },
     private val sink: (Long, ManualPromptPoint, ManualPromptCause) -> Unit) {
     private var attempt = 0L
     private val recorded = mutableSetOf<Pair<ManualPromptPoint, ManualPromptCause>>()
-    fun begin() { attempt = if (attempt == Long.MAX_VALUE) 1 else attempt + 1; recorded.clear(); record(ManualPromptPoint.OFFERED) }
+    private val ownership = mutableSetOf<ManualOwnershipCode>()
+    val cleanup = ManualCleanupTrace { code -> cleanupSink(attempt, code) }
+    fun begin() { attempt = if (attempt == Long.MAX_VALUE) 1 else attempt + 1; recorded.clear(); ownership.clear(); record(ManualPromptPoint.OFFERED) }
     fun record(point: ManualPromptPoint, cause: ManualPromptCause = ManualPromptCause.NONE) {
         if (recorded.add(point to cause)) diagnosticWrite { sink(attempt, point, cause) }
     }
     fun action(): ManualActionTrace {
         val acceptedAttempt = attempt
         return ManualActionTrace { code -> actionSink(acceptedAttempt, code) }
+    }
+    fun ownership(code: ManualOwnershipCode) {
+        if (ownership.size < 8 && ownership.add(code)) diagnosticWrite { ownershipSink(attempt, code) }
     }
     override fun toString() = "ManualPromptTrace(redacted)"
 }

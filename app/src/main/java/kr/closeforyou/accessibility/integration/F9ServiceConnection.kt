@@ -43,6 +43,8 @@ internal class F9ServiceConnection(
         failureDiagnostic = {
             trace?.record(ManualPromptPoint.CLEANUP_FAILED, ManualPromptCause.CLEANUP_FAILED)
             AccessibilityRuntime.cleanupFailure(it.name)
+        }, failureAttemptDiagnostic = { reason, native ->
+            trace?.cleanup?.record(ManualCleanupSite.BARRIER, ManualCleanupIssue.BARRIER_REJECTED, reason, native)
         })
     private var closed = false
     private val pending = Channel<PopupEvent.Candidate>(Channel.CONFLATED)
@@ -92,7 +94,10 @@ internal class F9ServiceConnection(
                     val handled = session.handle(event)
                     handled.decision?.let { AccessibilityRuntime.recordF9Decision(it.next, handled.result?.attempted == true, it.reasons.firstOrNull()) }
                 } catch (cancelled: CancellationException) { throw cancelled }
-                catch (_: Exception) { raw.invalidate(event.snapshot.token.screenVersion); cleanup.fail() }
+                catch (_: Exception) {
+                    trace?.cleanup?.record(ManualCleanupSite.WORKER, ManualCleanupIssue.EXCEPTION)
+                    raw.invalidate(event.snapshot.token.screenVersion); cleanup.fail()
+                }
             }
         }
         consentObserver = scope.launch { ui.state.drop(1).collect { policyChanged() } }
@@ -120,12 +125,22 @@ internal class F9ServiceConnection(
             if (event.eventType == AccessibilityEvent.TYPE_WINDOWS_CHANGED) event.windowChanges else 0)
     }
     fun processed(receipt: OverlayCleanupBarrier.Receipt?) = manual.processed(receipt)
-    fun cleanupFailed() { cleanup.fail() }
+    fun cleanupFailed() {
+        trace?.cleanup?.record(ManualCleanupSite.EVENT_HANDLER, ManualCleanupIssue.HANDLER_NOT_COMPLETED)
+        cleanup.fail()
+    }
     fun close(version: Long) {
         if (closed) return
         session.close(version); closed = true
         subscriber?.cancel(); worker?.cancel(); consentObserver?.cancel(); pending.close()
-        try { manual.close() } finally { cleanup.close(); feedback.close(); batcher.cancel(); tts.close() }
+        kr.closeforyou.accessibility.CollectionResourceSafety.run(body = { manual.close() }, cleanup = {
+            val batch = kr.closeforyou.accessibility.CollectionReleaseBatch()
+            batch.attempt { manualCleanupCall(ManualCleanupSite.SERVICE_CLOSE, trace?.cleanup, cleanup) { cleanup.close() } }
+            batch.attempt { manualCleanupCall(ManualCleanupSite.SERVICE_CLOSE, trace?.cleanup, cleanup) { feedback.close() } }
+            batch.attempt { manualCleanupCall(ManualCleanupSite.SERVICE_CLOSE, trace?.cleanup, cleanup) { batcher.cancel() } }
+            batch.attempt { manualCleanupCall(ManualCleanupSite.TTS_CLOSE, trace?.cleanup, cleanup) { tts.close() } }
+            batch.finish()
+        }, cleanupFailure = { throw kr.closeforyou.accessibility.CollectionCleanupFailure() })
     }
     private companion object { val presentationHealth = ChoicePresentationHealth() }
 }

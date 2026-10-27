@@ -26,7 +26,8 @@ internal enum class CleanupFailure {
 internal class OverlayCleanupBarrier(private val timeoutMillis: Long = 5_000L, private val onUncertain: () -> Unit = {},
     private val clock: () -> Long = { System.nanoTime() / 1_000_000L },
     private val diagnostic: OverlayEventOriginDiagnostic? = null,
-    private val failureDiagnostic: ((CleanupFailure) -> Unit)? = null) {
+    private val failureDiagnostic: ((CleanupFailure) -> Unit)? = null,
+    private val failureAttemptDiagnostic: ((CleanupFailure, CleanupNativeProgress) -> Unit)? = null) {
     internal class Receipt internal constructor(internal val identity: Any) {
         override fun toString() = "CleanupReceipt(redacted)"
     }
@@ -36,6 +37,7 @@ internal class OverlayCleanupBarrier(private val timeoutMillis: Long = 5_000L, p
         val completed = CompletableDeferred<Unit>()
         var returned = false
         var observed = false
+        var nativeProgress = if (native == null) CleanupNativeProgress.NOT_AVAILABLE else CleanupNativeProgress.REGISTERED
     }
     private var retiring: Retiring? = null
     private var revision = Any()
@@ -86,7 +88,10 @@ internal class OverlayCleanupBarrier(private val timeoutMillis: Long = 5_000L, p
         val observedId = native.retirementWindow(owner, previous.generation)
         var window = previous.window
         if (window == null) {
-            if (observedId == null) return false // No permit or window-list guess while awaiting an ID.
+            if (observedId == null) {
+                previous.nativeProgress = CleanupNativeProgress.WAITING_ID
+                return false // No permit or window-list guess while awaiting an ID.
+            }
             if (observedId < 0 || observedId == previous.targetWindow) {
                 fail(CleanupFailure.RETIREMENT_UNCONFIRMED); return false
             }
@@ -96,7 +101,10 @@ internal class OverlayCleanupBarrier(private val timeoutMillis: Long = 5_000L, p
         } else if (observedId != null && observedId != window) {
             fail(CleanupFailure.RETIREMENT_UNCONFIRMED); return false
         }
-        if (!native.removalComplete(owner, previous.generation, window)) return false
+        if (!native.removalComplete(owner, previous.generation, window)) {
+            previous.nativeProgress = CleanupNativeProgress.WAITING_NATIVE_COMPLETION
+            return false
+        }
         val absent = try { presence(window) } catch (_: Exception) { CleanupWindowPresence.UNKNOWN }
         if (failed || retiring !== previous) return false
         val failure = when {
@@ -111,11 +119,15 @@ internal class OverlayCleanupBarrier(private val timeoutMillis: Long = 5_000L, p
         // View detach may precede the system window-list removal/cache update. PRESENT before
         // the removal receipt is pending, never success or a renewed deadline. A later real
         // REMOVED callback performs the same full absence check; no timer/polling releases it.
-        if (absent == CleanupWindowPresence.PRESENT) return false
+        if (absent == CleanupWindowPresence.PRESENT) {
+            previous.nativeProgress = CleanupNativeProgress.WAITING_WINDOW_ABSENCE
+            return false
+        }
         try { beforeRelease() } catch (_: Exception) { fail(CleanupFailure.REFRESH_FAILED); return false }
         if (failed || retiring !== previous || !native.removalComplete(owner, previous.generation, window)) return false
         if (remaining(previous) <= 0) { fail(CleanupFailure.DEADLINE); return false }
         diagnostic?.nativeRemovalHandled()
+        previous.nativeProgress = CleanupNativeProgress.CONFIRMED
         retiring = null
         diagnostic?.cleanupConfirmed()
         previous.completed.complete(Unit)
@@ -222,9 +234,15 @@ internal class OverlayCleanupBarrier(private val timeoutMillis: Long = 5_000L, p
     }
 
     fun fail(reason: CleanupFailure = CleanupFailure.EXTERNAL_UNCERTAINTY) {
-        if (failed) return
+        if (failed) {
+            kr.closeforyou.accessibility.diagnosticWrite { failureAttemptDiagnostic?.invoke(reason, CleanupNativeProgress.NOT_AVAILABLE) }
+            return
+        }
         failed = true; revision = Any()
         val previous = retiring; retiring = null
+        kr.closeforyou.accessibility.diagnosticWrite {
+            failureAttemptDiagnostic?.invoke(reason, previous?.nativeProgress ?: CleanupNativeProgress.NOT_AVAILABLE)
+        }
         kr.closeforyou.accessibility.diagnosticWrite { failureDiagnostic?.invoke(reason) }
         diagnostic?.uncertain()
         previous?.completed?.complete(Unit)
