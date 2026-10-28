@@ -24,6 +24,10 @@ import kr.closeforyou.accessibility.capture.EvidenceOutcome
 import kr.closeforyou.accessibility.capture.EvidenceIssue
 import kr.closeforyou.core.model.*
 import kr.closeforyou.accessibility.integration.F9ServiceConnection
+import kr.closeforyou.accessibility.integration.DebugDelayedAutoClose
+import kr.closeforyou.accessibility.integration.DelayedAutoTrace
+import kr.closeforyou.accessibility.integration.DelayedTracePoint
+import kr.closeforyou.accessibility.integration.DelayedEventKind
 import kr.closeforyou.accessibility.integration.DelayedContentEvent
 
 /** A owns F0, C/manual cleanup and the scoped Debug delayed-auto boundary. Release auto OFF. */
@@ -112,12 +116,24 @@ class CloseForYouAccessibilityService : AccessibilityService() {
         val owner = f9
         val receipt = owner?.observeEvent(event)
         var processed = false
-        try { handleAccessibilityEvent(event); processed = true }
+        val autoTrace = DebugDelayedAutoClose.trace()
+        try { handleAccessibilityEvent(event, autoTrace); processed = true }
         finally { if (processed) owner?.processed(receipt) else owner?.cleanupFailed() }
     }
 
-    private fun handleAccessibilityEvent(event: AccessibilityEvent) {
-        if (f9?.shouldIgnore(event) == true) return
+    private fun handleAccessibilityEvent(event: AccessibilityEvent, autoTrace: DelayedAutoTrace?) {
+        autoTrace?.record(DelayedTracePoint.EVENT_RECEIVED, event = when (event.eventType) {
+            AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED, AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED -> DelayedEventKind.CONTENT
+            AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED, AccessibilityEvent.TYPE_WINDOWS_CHANGED -> DelayedEventKind.WINDOW
+            AccessibilityEvent.TYPE_VIEW_SCROLLED -> DelayedEventKind.SCROLL
+            AccessibilityEvent.TYPE_VIEW_CLICKED -> DelayedEventKind.CLICK
+            AccessibilityEvent.TYPE_TOUCH_INTERACTION_START, AccessibilityEvent.TYPE_TOUCH_INTERACTION_END,
+            AccessibilityEvent.TYPE_TOUCH_EXPLORATION_GESTURE_START, AccessibilityEvent.TYPE_TOUCH_EXPLORATION_GESTURE_END -> DelayedEventKind.TOUCH
+            AccessibilityEvent.TYPE_VIEW_FOCUSED, AccessibilityEvent.TYPE_VIEW_ACCESSIBILITY_FOCUSED,
+            AccessibilityEvent.TYPE_VIEW_ACCESSIBILITY_FOCUS_CLEARED -> DelayedEventKind.FOCUS
+            else -> DelayedEventKind.OTHER
+        })
+        if (f9?.shouldIgnore(event) == true) { autoTrace?.record(DelayedTracePoint.EVENT_IGNORED); return }
         val ownedRetirement = f9?.isOwnedRetirement(event) == true
         if (f9?.hasPrompt() == true) AccessibilityRuntime.manualInvalidation(event.eventType, event.windowChanges)
         // Copy only primitive enums/IDs, never keep the event or request event.source.
@@ -172,6 +188,8 @@ class CloseForYouAccessibilityService : AccessibilityService() {
         }
         val settings = preferences.currentSettings()
         if (!settings.consentGranted || settings.paused) {
+            autoTrace?.record(DelayedTracePoint.EVENT_REJECTED, block =
+                if (!settings.consentGranted) PrivacyBlockReason.NO_CONSENT else PrivacyBlockReason.PAUSED)
             f9?.reviewRejected(ManualPromptCause.POLICY_BLOCKED)
             detector.clear()
             AccessibilityRuntime.block(
@@ -182,6 +200,7 @@ class CloseForYouAccessibilityService : AccessibilityService() {
         // Package identity here is a quick exclusion, never authoritative permission to read.
         if (eventPackage != null) {
             packageBlock(eventPackage)?.let {
+                autoTrace?.record(DelayedTracePoint.EVENT_REJECTED, block = it)
                 f9?.reviewRejected(ManualPromptCause.PACKAGE_BLOCKED)
                 CaptureDiagnostics.excludedEvent(eventPackage)
                 detector.clear()
@@ -193,48 +212,61 @@ class CloseForYouAccessibilityService : AccessibilityService() {
         if (eventType !in SCREEN_EVENTS) {
             // Carry an interrupted review only, never analysis/permission. Standalone focus
             // (including actual user exploration) cannot start a new review by itself.
-            if (resumeObservation) scheduleCapture(epoch, PopupTrigger.WINDOW_CHANGED, -1)
+            if (resumeObservation) scheduleCapture(epoch, PopupTrigger.WINDOW_CHANGED, -1, autoTrace)
             return
         }
         val trigger = if (eventType == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED ||
             eventType == AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED) PopupTrigger.CONTENT_CHANGED
             else PopupTrigger.WINDOW_CHANGED
         // All Android objects have been released before this delayed job can run.
-        scheduleCapture(epoch, trigger, eventWindowId)
+        scheduleCapture(epoch, trigger, eventWindowId, autoTrace)
     }
 
-    private fun scheduleCapture(epoch: Long, trigger: PopupTrigger, eventWindowId: Int) {
+    private fun scheduleCapture(epoch: Long, trigger: PopupTrigger, eventWindowId: Int, autoTrace: DelayedAutoTrace? = DebugDelayedAutoClose.trace()) {
+        autoTrace?.record(DelayedTracePoint.CAPTURE_SCHEDULED)
         pendingCapture = serviceScope.launch {
-            delay(DEBOUNCE_MILLIS)
-            val owner = f9 ?: return@launch
-            val permit = owner.awaitObservationPermit()
-            if (!connected || f9 !== owner || !freshness.isCurrent(epoch) || touching || !owner.permitsObservation(permit)) return@launch
-            capture(epoch, trigger, eventWindowId)
+            try {
+                delay(DEBOUNCE_MILLIS)
+                val owner = f9 ?: return@launch
+                val permit = owner.awaitObservationPermit()
+                if (!connected || f9 !== owner || !freshness.isCurrent(epoch) || touching || !owner.permitsObservation(permit)) {
+                    autoTrace?.record(DelayedTracePoint.CAPTURE_REJECTED); return@launch
+                }
+                capture(epoch, trigger, eventWindowId, autoTrace)
+            } catch (cancelled: CancellationException) {
+                autoTrace?.record(DelayedTracePoint.CAPTURE_CANCELLED); throw cancelled
+            }
         }
     }
 
-    private fun capture(epoch: Long, trigger: PopupTrigger, eventWindowId: Int) {
-        if (f9?.observationReady != true) return
+    private fun capture(epoch: Long, trigger: PopupTrigger, eventWindowId: Int, autoTrace: DelayedAutoTrace? = DebugDelayedAutoClose.trace()) {
+        if (f9?.observationReady != true) { autoTrace?.record(DelayedTracePoint.CAPTURE_REJECTED); return }
         val trace = CaptureDiagnostics.trace(eventWindowId, epoch)
         when (val result = collector.capture(this, epoch, trigger, ::packageBlock, trace = trace)) {
             is CollectionResult.Blocked -> {
+                autoTrace?.record(DelayedTracePoint.CAPTURE_BLOCKED, block = result.reason)
                 f9?.reviewRejected(ManualPromptCause.COLLECTION_BLOCKED)
                 detector.clear()
                 AccessibilityRuntime.block(result.reason, epoch)
             }
             is CollectionResult.Ready -> {
                 if (!freshness.isCurrent(epoch) || touching) return
-                f9?.observePage()
+                autoTrace?.record(DelayedTracePoint.F0_READY)
+                f9?.observePage(result.snapshot, autoTrace) {
+                    if (!connected || !freshness.isCurrent(epoch) || touching) throw CancellationException("PAGE_OBSERVATION_STALE")
+                }
                 val detected = detector.detect(result.frame)
-                val continued = f9?.reobserveWaiting(result.snapshot, result.frame, detector).orEmpty()
+                val continued = f9?.reobserveWaiting(result.snapshot, result.frame, detector, autoTrace).orEmpty()
                 if (!freshness.isCurrent(epoch) || touching) return
                 val signals = continued.ifEmpty { detected }
                 if (signals.isEmpty()) {
+                    autoTrace?.record(DelayedTracePoint.F1_NOT_CANDIDATE)
                     f9?.reviewRejected(ManualPromptCause.F1_NOT_CANDIDATE)
                     trace.detail(CaptureDetail.NO_POPUP_SIGNAL)
                     return
                 }
                 trace.stage(CaptureStage.POPUP_DETECTED)
+                autoTrace?.record(DelayedTracePoint.POPUP_DETECTED)
                 AccessibilityRuntime.begin(result.snapshot.token, result.snapshot.capturedAtUptimeMillis)
                 // Replace the transient event with Invalidated even if a collector stalled.
                 expiry = serviceScope.launch {
@@ -246,6 +278,7 @@ class CloseForYouAccessibilityService : AccessibilityService() {
                     try {
                         when (val evidence = pipeline.analyze(result.snapshot, trace) { verifyScreen(it, trace) }) {
                             is EvidenceOutcome.Ready -> if (isCurrent(result.snapshot.token)) {
+                                autoTrace?.record(DelayedTracePoint.EVIDENCE_READY)
                                 trace.evidence(evidence.issue)
                                 AccessibilityRuntime.recordEvidenceIssue(evidence.issue)
                                 AccessibilityRuntime.publish(evidence.snapshot,
@@ -253,10 +286,11 @@ class CloseForYouAccessibilityService : AccessibilityService() {
                                     evidence.analysis)
                                 f9?.collected(result.snapshot,
                                     PopupDetection(result.snapshot.token, signals.toPersistentSet(), requiresUserReview = true),
-                                    evidence.snapshot, evidence.analysis, result.frame)
+                                    evidence.snapshot, evidence.analysis, result.frame, autoTrace)
                                 trace.stage(CaptureStage.PUBLISHED)
                             }
                             is EvidenceOutcome.Blocked -> if (isCurrent(result.snapshot.token)) {
+                                autoTrace?.record(DelayedTracePoint.EVIDENCE_BLOCKED, block = evidence.reason)
                                 f9?.reviewRejected(ManualPromptCause.EVIDENCE_BLOCKED)
                                 trace.evidence(evidence.issue)
                                 AccessibilityRuntime.recordEvidenceIssue(evidence.issue)
@@ -264,10 +298,12 @@ class CloseForYouAccessibilityService : AccessibilityService() {
                             }
                         }
                     } catch (cancelled: CancellationException) {
+                        autoTrace?.record(DelayedTracePoint.EVIDENCE_CANCELLED)
                         f9?.reviewRejected(ManualPromptCause.EVIDENCE_CANCELLED)
                         trace.stage(CaptureStage.CANCELLED)
                         throw cancelled
                     } catch (_: Exception) {
+                        autoTrace?.record(DelayedTracePoint.EVIDENCE_FAILED)
                         f9?.reviewRejected(ManualPromptCause.EVIDENCE_FAILED)
                         if (isCurrent(result.snapshot.token)) {
                             trace.detail(CaptureDetail.PIPELINE_FAILED)

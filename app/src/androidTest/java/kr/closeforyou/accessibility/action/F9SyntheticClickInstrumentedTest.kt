@@ -76,10 +76,19 @@ class F9SyntheticClickInstrumentedTest {
     }
 
     private suspend fun preparedP01(a: UiAutomation, keepPopup: Boolean = false,
-        scenario: String = "P01", beforePopup: (AndroidF9ScreenPort) -> Unit = {}): Pair<AndroidF9ScreenPort, F9Reference> {
+        scenario: String = "P01", beforePopup: (AndroidF9ScreenPort, PopupSnapshot) -> Unit = { _, _ -> }): Pair<AndroidF9ScreenPort, F9Reference> {
         launch(a, scenario, keepPopup = keepPopup, deferPopup = true)
         val p = port(a); val before = page(p)
-        withContext(Dispatchers.Main) { beforePopup(p) }
+        withContext(Dispatchers.Main) {
+            // This harness already constructs synthetic references from REAL Android reads.
+            // Bind the session page check to a separately read descriptor fixture too; this is
+            // not production AndroidSnapshotCollector/F0 evidence.
+            val pageScene = p.read {} ?: error("F9_SYNTHETIC_PAGE_UNREADABLE")
+            val pageToken = SnapshotToken(0, pageScene.windowId, pkg, "page", "page", "page", 0)
+            val pageSource = PopupSnapshot(pageToken, SystemClock.uptimeMillis(), pageScene.nodes.toPersistentList(),
+                pageScene.windows.toPersistentList(), pageScene.screen, PopupTrigger.WINDOW_CHANGED, SnapshotCompleteness.COMPLETE)
+            beforePopup(p, pageSource)
+        }
         check("Status: ok" in a.shell("am start -W -f 0x20000000 -n $pkg/.PopupScenarioActivity --ez f9_show_deferred_popup true")) {
             "F9_DEFERRED_POPUP_START_FAILED"
         }
@@ -252,13 +261,13 @@ class F9SyntheticClickInstrumentedTest {
         lateinit var session: F9ServiceSession
         var closeSession: (() -> Unit)? = null
         try {
-            val (_, reference) = preparedP01(a) { p ->
+            val (_, reference) = preparedP01(a) { p, pageSource ->
                 session = F9ServiceSession(source, p, F9Clock(SystemClock::uptimeMillis), {
                     F9SessionAccess(true, true, true, false, false,
                         AutoCloseConsent(true, persistentSetOf(PopupClassification.ADVERTISEMENT, PopupClassification.COUPON), null), true)
                 }, { true }, reports::add, executionEnabled = { true })
                 closeSession = { session.close(2) }
-                session.observePage()
+                check(session.observePage(pageSource) == F9PageObservation.VERIFIED) { "F9_PAGE_BINDING_REJECTED" }
                 scope.launch(start = CoroutineStart.UNDISPATCHED) {
                     session.wiring.source.events.collect { if (it is PopupEvent.Candidate) event.complete(it) }
                 }
@@ -286,13 +295,13 @@ class F9SyntheticClickInstrumentedTest {
         lateinit var session: F9ServiceSession
         var closeSession: (() -> Unit)? = null
         try {
-            val (_, reference) = preparedP01(a, keepPopup = true) { p ->
+            val (_, reference) = preparedP01(a, keepPopup = true) { p, pageSource ->
                 session = F9ServiceSession(source, p, F9Clock(SystemClock::uptimeMillis), {
                     F9SessionAccess(true, true, true, false, false,
                         AutoCloseConsent(true, persistentSetOf(PopupClassification.ADVERTISEMENT, PopupClassification.COUPON), null), true)
                 }, { true }, reports::add, executionEnabled = { true })
                 closeSession = { session.close(2) }
-                session.observePage()
+                check(session.observePage(pageSource) == F9PageObservation.VERIFIED) { "F9_PAGE_BINDING_REJECTED" }
                 scope.launch(start = CoroutineStart.UNDISPATCHED) {
                     session.wiring.source.events.collect { if (it is PopupEvent.Candidate) event.complete(it) }
                 }
@@ -316,12 +325,12 @@ class F9SyntheticClickInstrumentedTest {
         lateinit var session: F9ServiceSession
         var closeSession: (() -> Unit)? = null
         try {
-            val (p, first) = preparedP01(a, scenario = "P12") { port ->
+            val (p, first) = preparedP01(a, scenario = "P12") { port, pageSource ->
                 session = F9ServiceSession(source, port, F9Clock(SystemClock::uptimeMillis), {
                     F9SessionAccess(true, true, true, false, false, AutoCloseConsent(true,
                         persistentSetOf(PopupClassification.ADVERTISEMENT, PopupClassification.COUPON, PopupClassification.NOTICE), null), true)
                 }, { true }, reports::add, executionEnabled = { true })
-                closeSession = { session.close(3) }; session.observePage()
+                closeSession = { session.close(3) }; check(session.observePage(pageSource) == F9PageObservation.VERIFIED) { "F9_PAGE_BINDING_REJECTED" }
                 scope.launch(start = CoroutineStart.UNDISPATCHED) {
                     session.wiring.source.events.collect { if (it is PopupEvent.Candidate) events.trySend(it) }
                 }

@@ -33,7 +33,12 @@ internal class F9ServiceConnection(
     private val ui = UiVoicePreferences.get(service)
     private val clock = F9Clock(SystemClock::uptimeMillis)
     private val raw = F9CollectedSource(clock::nowMillis)
-    private val screen = AndroidF9ScreenPort(service) { app ->
+    private var pageTrace: DelayedAutoTrace? = null
+    private var activeTrace: DelayedAutoTrace? = null
+    private val screen = AndroidF9ScreenPort(service, onRejected = { stage ->
+        if (activeTrace != null) activeTrace?.record(DelayedTracePoint.SCREEN_READ_REJECTED, read = stage)
+        else pageTrace?.record(DelayedTracePoint.PAGE_READ_REJECTED, read = stage)
+    }) { app ->
         val a = core.currentSettings()
         connected() && a.consentGranted && !a.paused && app in a.allowedPackages && app !in ui.current().helpAppsExcluded
     }
@@ -59,7 +64,7 @@ internal class F9ServiceConnection(
     private var trialTicket: Any? = null
     private var activeTrial: Any? = null
     private class Offer(val snapshot: PopupSnapshot, val detection: PopupDetection, val display: PopupSnapshot,
-        val analysis: PopupAnalysis, val frame: DetectionFrame?, val trial: Any?) {
+        val analysis: PopupAnalysis, val frame: DetectionFrame?, val trial: Any?, val trace: DelayedAutoTrace?) {
         override fun toString() = "AutomaticOffer(redacted)"
     }
     private var latestOffer: Offer? = null
@@ -78,6 +83,7 @@ internal class F9ServiceConnection(
     private val session = F9ServiceSession(raw, screen, clock, access = ::access, cleanupReady = { observationReady }, onReport = { report ->
         val ticket = activeTrial
         if (report.result != null && ticket != null) {
+            activeTrace?.record(DelayedTracePoint.F9_RESULT, next = report.decision.next, reason = report.result.reason)
             DebugDelayedAutoClose.report(ticket, DelayedAutoPhase.F9_RESULT, report.decision.next,
                 report.result.reason, attempted = report.result.attempted, outcome = report.result.outcome)
             DebugDelayedAutoClose.finish(ticket)
@@ -93,6 +99,7 @@ internal class F9ServiceConnection(
         onPageVerified = { app -> if (DebugDelayedAutoClose.permits(app))
             DebugDelayedAutoClose.report(DebugDelayedAutoClose.ticket(), DelayedAutoPhase.PAGE_VERIFIED) },
         onDecision = { decision ->
+            activeTrace?.record(DelayedTracePoint.B_DECISION, next = decision.next, reason = decision.reasons.firstOrNull())
             if (activeTrial != null) {
                 DebugDelayedAutoClose.report(activeTrial, DelayedAutoPhase.B_DECISION, decision.next, decision.reasons.firstOrNull())
             }
@@ -100,6 +107,7 @@ internal class F9ServiceConnection(
             val offer = latestOffer?.takeIf { it.snapshot.token == snapshot.token && it.trial === activeTrial }
             if (activeTrial != null && DebugDelayedAutoClose.permits(snapshot.token.packageName, activeTrial) &&
                 waiting.arm(snapshot, detection, offer?.frame, fresh, analysis, page)) {
+                activeTrace?.record(DelayedTracePoint.WAITING_FOR_TARGET)
                 DebugDelayedAutoClose.report(activeTrial, DelayedAutoPhase.WAITING_FOR_TARGET)
                 waitTimer?.cancel()
                 val ticket = activeTrial
@@ -123,12 +131,16 @@ internal class F9ServiceConnection(
                 ManualPromptCause.PACKAGE_BLOCKED, ManualPromptCause.POLICY_BLOCKED, ManualPromptCause.EVIDENCE_FAILED))
             waiting.cancel(DelayedAutoPhase.CONTINUITY_REJECTED)
     }
-    fun reobserveWaiting(snapshot: PopupSnapshot, frame: DetectionFrame, detector: PopupCandidateDetector): Set<PopupSignal> {
+    fun reobserveWaiting(snapshot: PopupSnapshot, frame: DetectionFrame, detector: PopupCandidateDetector,
+        diagnostic: DelayedAutoTrace? = null): Set<PopupSignal> {
         if (!DebugDelayedAutoClose.permits(snapshot.token.packageName, trialTicket) || !waiting.waiting) return emptySet()
         if (!waiting.reobserved(snapshot, frame)) return emptySet()
         val evidence = detector.reobserveBoundedApplicationWindow(frame)
         if (evidence.isEmpty()) waiting.cancel(DelayedAutoPhase.CONTINUITY_REJECTED)
-        else DebugDelayedAutoClose.report(trialTicket, DelayedAutoPhase.REOBSERVED)
+        else {
+            diagnostic?.record(DelayedTracePoint.REOBSERVED)
+            DebugDelayedAutoClose.report(trialTicket, DelayedAutoPhase.REOBSERVED)
+        }
         return evidence
     }
     fun shouldIgnore(event: AccessibilityEvent) = manual.shouldIgnore(event)
@@ -148,11 +160,15 @@ internal class F9ServiceConnection(
         }
         worker = scope.launch {
             for (event in pending) {
-                if (!observationReady) continue
+                if (!observationReady) {
+                    latestOffer?.takeIf { it.snapshot.token == event.snapshot.token }?.trace?.record(DelayedTracePoint.CANDIDATE_REJECTED)
+                    continue
+                }
                 val offer = latestOffer?.takeIf { it.snapshot.token == event.snapshot.token } ?: continue
                 val ticket = offer.trial
                 if (ticket != null && !DebugDelayedAutoClose.permits(event.snapshot.token.packageName, ticket)) continue
                 activeTrial = ticket
+                activeTrace = offer.trace
                 try {
                     val handled = session.handle(event)
                     handled.decision?.let { AccessibilityRuntime.recordF9Decision(it.next, handled.result?.attempted == true, it.reasons.firstOrNull()) }
@@ -171,6 +187,7 @@ internal class F9ServiceConnection(
                     raw.invalidate(event.snapshot.token.screenVersion); cleanup.fail()
                 } finally {
                     activeTrial = null
+                    activeTrace = null
                     if (latestOffer === offer) latestOffer = null
                 }
             }
@@ -182,7 +199,7 @@ internal class F9ServiceConnection(
         } }
     }
     fun collected(snapshot: PopupSnapshot, detection: PopupDetection, display: PopupSnapshot, analysis: PopupAnalysis,
-        frame: DetectionFrame? = null) {
+        frame: DetectionFrame? = null, diagnostic: DelayedAutoTrace? = null) {
         if (!observationReady) return
         val key = Triple(snapshot.token.packageName, snapshot.token.windowId, snapshot.token.structureDigest)
         if (PopupSignal.NEW_WINDOW in detection.signals && popupIdentity != key) feedback.onNewPopup()
@@ -195,13 +212,31 @@ internal class F9ServiceConnection(
         if (automatic) {
             trialTicket = ticket
             if (!waiting.track(snapshot)) return
-            DebugDelayedAutoClose.report(ticket, DelayedAutoPhase.CANDIDATE)
         }
-        latestOffer = Offer(snapshot, detection, display, analysis, frame, ticket.takeIf { automatic })
-        raw.publish(snapshot, detection)
+        val offer = Offer(snapshot, detection, display, analysis, frame, ticket.takeIf { automatic }, diagnostic)
+        latestOffer = offer
+        if (raw.publish(snapshot, detection)) {
+            diagnostic?.record(DelayedTracePoint.CANDIDATE)
+            if (automatic) DebugDelayedAutoClose.report(ticket, DelayedAutoPhase.CANDIDATE)
+        } else {
+            diagnostic?.record(DelayedTracePoint.PUBLICATION_REJECTED)
+            if (latestOffer === offer) latestOffer = null
+        }
         if (!automatic) manual.offer(snapshot, detection, display, analysis)
     }
-    fun observePage() { if (observationReady) session.observePage() }
+    fun observePage(snapshot: PopupSnapshot, diagnostic: DelayedAutoTrace?, checkpoint: () -> Unit) {
+        if (!observationReady) {
+            diagnostic?.record(DelayedTracePoint.PAGE_READ_REJECTED, page = F9PageObservation.SESSION_UNAVAILABLE)
+            return
+        }
+        pageTrace = diagnostic
+        diagnostic?.record(DelayedTracePoint.PAGE_READ_STARTED)
+        try {
+            val result = session.observePage(snapshot, checkpoint)
+            diagnostic?.record(if (result == F9PageObservation.VERIFIED) DelayedTracePoint.PAGE_VERIFIED
+                else DelayedTracePoint.PAGE_READ_REJECTED, page = result)
+        } finally { pageTrace = null }
+    }
     fun invalidate(version: Long, permissionOrInteraction: Boolean, ttl: Boolean = false, ownedRetirement: Boolean = false, preserveManual: Boolean = false,
         cause: ManualPromptCause = if (ttl) ManualPromptCause.ORIGINAL_EVIDENCE_EXPIRED else
             if (preserveManual) ManualPromptCause.UNATTRIBUTED_TOUCH else ManualPromptCause.UNKNOWN,

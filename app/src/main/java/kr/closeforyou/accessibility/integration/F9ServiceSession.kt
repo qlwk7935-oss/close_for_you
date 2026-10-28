@@ -70,15 +70,19 @@ internal class F9ServiceSession(
     }
 
     /** A new F0 read of a normal fullscreen page, not a popup masquerading as its own baseline. */
-    fun observePage() {
-        if (closed || running || !cleanupReady()) return
-        val captured = clock.nowMillis()
-        val scene = screen.read {} ?: return
-        val window = scene.windows.singleOrNull { it.id == scene.windowId } ?: return
-        if (scene.complete && window.bounds == scene.screen && scene.pageWindowId == scene.windowId && scene.pageDigest != null) {
-            page = F9PageProof(scene.packageName, scene.windowId, scene.pageDigest, captured)
+    fun observePage(source: PopupSnapshot, checkpoint: () -> Unit = {}): F9PageObservation {
+        if (closed || running || !cleanupReady()) return F9PageObservation.SESSION_UNAVAILABLE
+        checkpoint()
+        val scene = screen.read(checkpoint)
+        checkpoint()
+        val result = F9PageAdmission.assess(source, scene, clock.nowMillis())
+        if (result == F9PageObservation.VERIFIED) {
+            scene!!
+            // Preserve the actual F0 capture age; never renew the old page through a new timestamp.
+            page = F9PageProof(scene.packageName, scene.windowId, requireNotNull(scene.pageDigest), source.capturedAtUptimeMillis)
             onPageVerified(scene.packageName)
         }
+        return result
     }
 
     suspend fun handle(event: PopupEvent.Candidate): F9Handled {

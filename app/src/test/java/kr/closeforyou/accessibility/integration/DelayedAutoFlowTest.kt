@@ -16,7 +16,7 @@ import org.junit.Test
  * are fake ports; synthetic success is not Samsung or LG instrumentation success. */
 @OptIn(ExperimentalCoroutinesApi::class)
 class DelayedAutoFlowTest {
-    private class Rig(scope: TestScope) {
+    private class Rig(scope: TestScope, val hiddenPage: Boolean = false) {
         val f = F9AutoCloserTest.Fixture()
         val pkg = "kr.closeforyou.popuptest"
         var enabled = true
@@ -28,9 +28,10 @@ class DelayedAutoFlowTest {
             clickable = false, bounds = f.bounds, actions = persistentSetOf())
         val body = root.copy(path = "0/0", viewId = "body", className = "android.widget.TextView",
             text = "적립금 쿠폰 도착", bounds = ScreenBounds(30, 30, 180, 100))
-        val old = f.snapshot.copy(token = f.token.copy(packageName = pkg), nodes = persistentListOf(root, body))
+        val old = f.snapshot.copy(token = f.token.copy(packageName = pkg), nodes = persistentListOf(root, body),
+            windows = if (hiddenPage) persistentListOf(f.windows[1]) else f.windows)
         var snapshot = old
-        val frame get() = DetectionFrame("same-app", 20, setOf(10, 20), snapshot.token.structureDigest,
+        val frame get() = DetectionFrame("same-app", 20, snapshot.windows.filter { it.type == WindowType.APPLICATION }.mapTo(mutableSetOf()) { it.id }, snapshot.token.structureDigest,
             snapshot.screenBounds, emptyList(), PopupTrigger.CONTENT_CHANGED, snapshot.windows.single { it.id == 20 }.bounds)
         var enabledAtCancel: DelayedAutoPhase? = null
         val watch = DelayedPopupWatch({ f.now }) { enabled = false; enabledAtCancel = it }
@@ -51,7 +52,15 @@ class DelayedAutoFlowTest {
             }
         }
         fun scene() = f.before.copy(packageName = pkg, nodes = snapshot.nodes, windows = snapshot.windows,
-            visiblePaths = snapshot.nodes.mapTo(mutableSetOf()) { it.path }, pageDigest = pageDigest)
+            visiblePaths = snapshot.nodes.mapTo(mutableSetOf()) { it.path }, pageDigest = if (hiddenPage) "popup-digest" else pageDigest,
+            pageWindowId = if (hiddenPage) 20 else 10)
+        fun observeNormalPage(): F9PageObservation {
+            val scene = requireNotNull(f.after).copy(packageName = pkg)
+            val token = old.token.copy(windowId = 10)
+            val source = old.copy(token = token, nodes = scene.nodes.toPersistentList(), windows = scene.windows.toPersistentList())
+            f.scene = scene
+            return session.observePage(source)
+        }
         suspend fun first(): F9Handled {
             f.scene = scene(); val signals = detector.detect(frame)
             raw.publish(snapshot, PopupDetection(snapshot.token, signals.toPersistentSet()))
@@ -61,7 +70,7 @@ class DelayedAutoFlowTest {
             f.now += 3_000
             val bounds = ScreenBounds(20, 20, 200, 240)
             snapshot = old.copy(token = old.token.copy(screenVersion = 2, captureEpoch = 2, structureDigest = "with-button", contentDigest = "new-text"),
-                capturedAtUptimeMillis = f.now, windows = old.windows.toPersistentList().set(1, old.windows[1].copy(bounds = bounds)),
+                capturedAtUptimeMillis = f.now, windows = old.windows.map { if (it.id == 20) it.copy(bounds = bounds) else it }.toPersistentList(),
                 nodes = if (add) persistentListOf(root.copy(bounds = bounds), body,
                     f.node.copy(path = "0/1", viewId = "close")) else old.nodes)
         }
@@ -77,6 +86,33 @@ class DelayedAutoFlowTest {
             raw.publish(snapshot, PopupDetection(snapshot.token, signals.toPersistentSet()))
             return session.handle(requireNotNull(event))
         }
+    }
+    @Test fun realPageAdmissionThenHiddenBackgroundWaitAndNewButtonReachOneConfirmedPress() = runTest {
+        val r = Rig(this, hiddenPage = true)
+        assertEquals(F9PageObservation.VERIFIED, r.observeNormalPage())
+        assertEquals(NextStep.WAIT, r.first().decision?.next); assertEquals(0, r.f.clicks)
+        r.invalidate(); r.changed()
+        assertTrue(requireNotNull(r.next().result).closedConfirmed); assertEquals(1, r.f.clicks)
+    }
+    @Test fun hiddenBackgroundWithNoIndependentPageCannotEstablishExecutableWait() = runTest {
+        val r = Rig(this, hiddenPage = true)
+        assertEquals(NextStep.WAIT, r.first().decision?.next)
+        assertFalse(r.watch.waiting); assertEquals(0, r.f.clicks)
+    }
+    @Test fun hiddenPageProofKeepsItsOriginalAgeEvenWhenPopupAndButtonAreFresh() = runTest {
+        val r = Rig(this, hiddenPage = true)
+        assertEquals(F9PageObservation.VERIFIED, r.observeNormalPage())
+        r.f.now += 2_000
+        assertEquals(NextStep.WAIT, r.first().decision?.next)
+        r.invalidate(); r.changed()
+        val result = r.next()
+        assertFalse(result.result?.attempted == true); assertEquals(0, r.f.clicks)
+        assertFalse(r.enabled)
+    }
+    @Test fun pageMismatchDoesNotBecomeAHiddenBackgroundProofOrAPress() = runTest {
+        val r = Rig(this, hiddenPage = true); r.f.after = r.f.after!!.copy(complete = false)
+        assertEquals(F9PageObservation.INCOMPLETE, r.observeNormalPage())
+        r.first(); assertFalse(r.watch.waiting); assertEquals(0, r.f.clicks)
     }
     @Test fun realWaitThenNewCollectionAndBApprovalReachExactlyOneF9ClickAndConfirmedClosure() = runTest {
         val r = Rig(this); val waiting = r.first()

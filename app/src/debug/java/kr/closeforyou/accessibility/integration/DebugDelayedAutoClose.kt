@@ -12,6 +12,7 @@ internal object DebugDelayedAutoClose {
     private class Ticket(val sequence: Long)
     @Volatile private var ticket: Ticket? = null
     private var serial = 0L
+    private var captureSerial = 0L
     private val revision = MutableStateFlow(0L)
     val userChanges = revision.asStateFlow()
     private val observed = MutableStateFlow(DebugAutoObservation())
@@ -21,6 +22,15 @@ internal object DebugDelayedAutoClose {
     fun arm() { serial++; ticket = Ticket(serial); observed.value = DebugAutoObservation(); report(ticket, DelayedAutoPhase.ARMED); revision.value++ }
     fun userOff() { report(ticket, DelayedAutoPhase.OFF); ticket = null; revision.value++ }
     fun finish(expected: Any?) { if (ticket === expected) ticket = null }
+    fun trace(): DelayedAutoTrace? {
+        val run = ticket ?: return null
+        val capture = ++captureSerial
+        return DelayedAutoTrace { point, event, read, page, block, next, reason ->
+            Log.i("A_DelayedAuto", "A_DELAYED_TRACE;RUN=${run.sequence};ATTEMPT=$capture;PHASE=${point.name}" +
+                ";EVENT=${event?.name ?: "NONE"};READ=${read?.name ?: "NONE"};PAGE=${page?.name ?: "NONE"}" +
+                ";BLOCK=${block?.name ?: "NONE"};NEXT=${next?.name ?: "NONE"};REASON=${reason?.name ?: "NONE"}")
+        }
+    }
     fun report(expected: Any?, phase: DelayedAutoPhase, next: NextStep? = null, reason: SafetyReason? = null,
         block: F9Block? = null, attempted: Boolean = false, outcome: ClickOutcome? = null) {
         val id = expected as? Ticket ?: return

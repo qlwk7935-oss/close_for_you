@@ -9,6 +9,7 @@ import kr.closeforyou.core.model.*
 internal object DebugDelayedAutoClose {
     val userChanges = MutableStateFlow(0L).asStateFlow()
     fun ticket(): Any? = null
+    fun trace(): DelayedAutoTrace? = null
     fun permits(pkg: String, expected: Any? = null): Boolean = false
     fun finish(expected: Any?) = Unit
     fun report(expected: Any?, phase: DelayedAutoPhase, next: NextStep? = null, reason: SafetyReason? = null,

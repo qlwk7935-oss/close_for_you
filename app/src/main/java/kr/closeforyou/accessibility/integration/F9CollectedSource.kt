@@ -25,21 +25,21 @@ internal class F9CollectedSource(private val now: () -> Long) : SnapshotSource, 
         }
         return token
     }
-    fun publish(snapshot: PopupSnapshot, detection: PopupDetection) {
+    fun publish(snapshot: PopupSnapshot, detection: PopupDetection): Boolean {
         if (detection.token != snapshot.token || snapshot.token.screenVersion < floor ||
             snapshot.completeness != SnapshotCompleteness.COMPLETE || now() < snapshot.capturedAtUptimeMillis ||
-            now() - snapshot.capturedAtUptimeMillis >= AutoEligibility.TTL_MILLIS) return
+            now() - snapshot.capturedAtUptimeMillis >= AutoEligibility.TTL_MILLIS) return false
         val tree = texts(snapshot)
         val completeText = tree.joinToString("\n") { it.text }
         // Preserve CaptureOcrPipeline's combined-text F0 check before retaining a new private
         // tree analysis. Per-node inspection alone misses a sensitive word split across nodes.
         if (F9ContentSafety.protectedPackage(snapshot.token.packageName) || PrivacyPolicy.hasSensitiveText(completeText) ||
             PrivacyPolicy.hasUncertainText(completeText)) {
-            invalidate(snapshot.token.screenVersion); return
+            invalidate(snapshot.token.screenVersion); return false
         }
         floor = snapshot.token.screenVersion; token = snapshot.token; captured = snapshot.capturedAtUptimeMillis
         analysis = PopupAnalysis(snapshot.token, texts = tree)
-        stream.tryEmit(PopupEvent.Candidate(snapshot, detection))
+        return stream.tryEmit(PopupEvent.Candidate(snapshot, detection))
     }
     override suspend fun extract(snapshot: PopupSnapshot): PopupAnalysis {
         check(currentToken() == snapshot.token) { "F9_EXPIRED_COLLECTION" }

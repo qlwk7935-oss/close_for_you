@@ -114,8 +114,11 @@ internal class DelayedPopupWatch(private val now: () -> Long,
     private fun pageKey(snapshot: PopupSnapshot, fresh: F9Scene, page: F9PageProof?): Pair<Int, String>? {
         if (fresh.pageWindowId != snapshot.token.windowId)
             return fresh.pageDigest?.takeIf { it.isNotBlank() }?.let { fresh.pageWindowId to it }
+        val at = now()
         return page?.takeIf { it.packageName == snapshot.token.packageName && it.windowId != snapshot.token.windowId &&
-            it.capturedAtUptimeMillis in 0..snapshot.capturedAtUptimeMillis && it.digest.isNotBlank() }?.let { it.windowId to it.digest }
+            it.capturedAtUptimeMillis in 0..snapshot.capturedAtUptimeMillis && it.digest.isNotBlank() &&
+            at >= it.capturedAtUptimeMillis && at - it.capturedAtUptimeMillis < AutoEligibility.TTL_MILLIS
+        }?.let { it.windowId to it.digest }
     }
     fun executing() { executing = true; seed = null; seedFrame = null; expectedEpoch = null }
     fun remaining(): Long {

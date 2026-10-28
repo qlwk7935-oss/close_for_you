@@ -18,7 +18,7 @@ import kr.closeforyou.accessibility.PrivacyPolicy
 import kr.closeforyou.core.model.*
 
 internal enum class F9ReadStage { MAIN, GEOMETRY, WINDOWS, ACTIVE_WINDOW, FOCUSED_WINDOW, OVERLAY_WINDOW,
-    APP_COUNT, BACKGROUND_WINDOW, WINDOW_BOUNDS, OCCLUSION, ROOT, TREE, ENDPOINT, TARGET, COMPLETE }
+    APP_COUNT, BACKGROUND_WINDOW, WINDOW_BOUNDS, OCCLUSION, ROOT, TREE, ENDPOINT, TARGET, TIME_LIMIT, CLEANUP, COMPLETE }
 
 /** A owns every acquired framework handle. Supports only an unambiguous separate application-window
  * popup over an unchanged page. Same-window/WebView/canvas/visual targets fail closed for now.
@@ -31,8 +31,8 @@ internal class AndroidF9ScreenPort(
     private val onRejected: (F9ReadStage) -> Unit = {},
     private val packageAllowed: (String) -> Boolean,
 ) : F9ScreenPort {
-    constructor(service: AccessibilityService, packageAllowed: (String) -> Boolean) :
-        this(service, { service.rootInActiveWindow }, { service.windows }, packageAllowed = packageAllowed)
+    constructor(service: AccessibilityService, onRejected: (F9ReadStage) -> Unit = {}, packageAllowed: (String) -> Boolean) :
+        this(service, { service.rootInActiveWindow }, { service.windows }, onRejected, packageAllowed)
     private val geometry = AndroidScreenGeometry(context)
     private val salt = ByteArray(32).also { SecureRandom().nextBytes(it) }
     private var healthy = true
@@ -69,7 +69,10 @@ internal class AndroidF9ScreenPort(
         val identities = IdentityHashMap<AccessibilityNodeInfo, Boolean>()
         fun tick() {
             checkpoint()
-            check(SystemClock.uptimeMillis() - started < 100L) { "F9_F0_TIME_LIMIT" }
+            if (SystemClock.uptimeMillis() - started >= 100L) {
+                stage = F9ReadStage.TIME_LIMIT
+                error("F9_F0_TIME_LIMIT")
+            }
         }
         fun own(node: AccessibilityNodeInfo): AccessibilityNodeInfo {
             check(identities.put(node, true) == null) { "F9_NODE_ALIAS" }
@@ -209,7 +212,7 @@ internal class AndroidF9ScreenPort(
             nodes.asReversed().forEach { try { it.recycle() } catch (_: Exception) { healthy = false } }
             val seen = IdentityHashMap<AccessibilityWindowInfo, Boolean>()
             ownedWindows.forEach { if (seen.put(it, true) == null) try { it.recycle() } catch (_: Exception) { healthy = false } }
-            if (!completed) try { onRejected(stage) } catch (_: Exception) { /* Diagnostic code only. */ }
+            if (!completed || !healthy) try { onRejected(if (!healthy) F9ReadStage.CLEANUP else stage) } catch (_: Exception) { /* Diagnostic code only. */ }
         }
     }
     private fun rect(node: AccessibilityNodeInfo) = Rect().also(node::getBoundsInScreen).let { ScreenBounds(it.left, it.top, it.right, it.bottom) }
