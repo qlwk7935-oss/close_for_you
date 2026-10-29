@@ -15,6 +15,11 @@ internal object ManualPromptLog {
             ";NATIVE_GENERATION=${c.nativeGeneration.name};TIME=${c.time.name};LEASE=${c.lease.name}" +
             ";DISPLAY=${c.display?.name ?: "NOT_CHECKED"};BEFORE=${c.before.name};LIVE=${c.live.name}" +
             ";NATIVE=${c.native.name};LOOKUP=${c.lookup.name}")
+    }, eventSink = { attempt, c ->
+        Log.i("A_ManualPrompt", "A_MANUAL_EVENT;ATTEMPT=$attempt;EVENT=${c.kind.name};RESULT=${c.result.name}" +
+            ";CHECK=${c.check.name};ID_RELATION=${c.relation.name};EVENT_PACKAGE=${c.pkg.name};MASK=${c.mask.name}")
+    }, speechSink = { attempt, c ->
+        Log.i("A_ManualPrompt", "A_MANUAL_SPEECH;ATTEMPT=$attempt;STATE=${c.name}")
     }, cleanupSink = { attempt, c ->
         Log.i("A_ManualPrompt", "A_MANUAL_CLEANUP;ATTEMPT=$attempt;PHASE=${c.phase.name}" +
             ";SITE=${c.current.site.name};ISSUE=${c.current.issue.name};BARRIER=${c.current.barrier?.name ?: "NONE"}" +

@@ -35,7 +35,8 @@ internal class F9ServiceConnection(
         connected() && a.consentGranted && !a.paused && app in a.allowedPackages && app !in ui.current().helpAppsExcluded
     }
     private val history = AnnouncementHistory()
-    private val tts = TtsPopupAnnouncer(AndroidTtsEngine(service), service.getString(R.string.ui_announce_nothing_to_repeat), history)
+    private val speechEngine = AndroidTtsEngine(service)
+    private val tts = TtsPopupAnnouncer(speechEngine, service.getString(R.string.ui_announce_nothing_to_repeat), history)
     private val format = UiFormat { res, args -> service.getString(res, *args) }
     val batcher = AnnouncementBatcher(scope, SpeechHandlingListener.batchFlush(tts, format))
     private val feedback = F9FeedbackRouter(tts, batcher, format)
@@ -65,7 +66,7 @@ internal class F9ServiceConnection(
     })
     private val manual = ManualPopupConnection(service, scope, session, cleanup, presentationHealth, tts, batcher,
         history::clear, userInteracting, epoch, verifyPresentation, requestObservation,
-        collectForChoice, awaitInteractionEnd, intentInteracting, trace)
+        collectForChoice, awaitInteractionEnd, intentInteracting, speechEngine.readiness, trace)
     val observationReady: Boolean get() = !closed && manual.canObserve()
     fun hasPrompt() = manual.hasPrompt()
     fun hasPendingPresentation() = manual.hasPendingPresentation()

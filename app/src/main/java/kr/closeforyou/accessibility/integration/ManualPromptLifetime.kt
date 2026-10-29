@@ -9,12 +9,24 @@ import kr.closeforyou.ui.voice.overlay.OverlayWindowStatus
 internal class ManualPromptLifetime(private val clock: () -> Long) {
     private var token: SnapshotToken? = null
     private var shownAt = -1L
+    private var nativeCreation = -1L
+    private var preparingGeneration = 0L
+    private var firstNativeEvent = -1L
     private var generation = 0L
+    /** Called ONLY by C's real created(generation) callback, before addView. This grants no
+     * display/token/choice permission. It bounds events generated during that very add call. */
+    fun nativeCreating(currentGeneration: Long) {
+        clear()
+        if (currentGeneration <= 0L) return
+        preparingGeneration = currentGeneration; nativeCreation = clock()
+    }
     fun shown(value: SnapshotToken, state: OverlayWindowState) {
+        val created = nativeCreation.takeIf { preparingGeneration == state.generation && preparingGeneration > 0 }
         clear()
         if (state.status != OverlayWindowStatus.SHOWING || state.generation <= 0) return
         shownAt = clock()
-        if (shownAt < 0) return
+        if (shownAt < 0 || (created != null && (created < 0 || created > shownAt))) { clear(); return }
+        firstNativeEvent = created ?: shownAt
         token = value; generation = state.generation
     }
     // HIDDEN is intentionally not checked here: C removes its window before delivering a choice.
@@ -28,7 +40,9 @@ internal class ManualPromptLifetime(private val clock: () -> Long) {
             else -> OwnershipLease.ACTIVE
         }
         diagnostic?.lease = lease
-        if (lease != OwnershipLease.ACTIVE) clear()
+        // A reentrant pre-show token query grants nothing, but must not erase the creation
+        // boundary belonging to the in-progress native add. SHOWN still has to confirm it.
+        if (lease != OwnershipLease.ACTIVE && !(lease == OwnershipLease.NOT_STARTED && preparingGeneration > 0)) clear()
         return token
     }
     fun eventBelongsToShow(state: OverlayWindowState, eventTime: Long, diagnostic: ManualOwnershipProbe? = null): Boolean {
@@ -39,7 +53,7 @@ internal class ManualPromptLifetime(private val clock: () -> Long) {
         val sameGeneration = state.generation == generation
         diagnostic?.generation = if (sameGeneration) OwnershipRelation.MATCH else OwnershipRelation.MISMATCH
         if (!sameGeneration) return diagnostic?.reject(OwnershipCheck.GENERATION, ManualOwnership.NOT_OWNED) ?: false
-        if (eventTime < shownAt) {
+        if (eventTime < firstNativeEvent) {
             diagnostic?.time = OwnershipTime.BEFORE_SHOW
             return diagnostic?.reject(OwnershipCheck.EVENT_TIME, ManualOwnership.NOT_OWNED) ?: false
         }
@@ -48,10 +62,10 @@ internal class ManualPromptLifetime(private val clock: () -> Long) {
             diagnostic?.time = OwnershipTime.FUTURE
             return diagnostic?.reject(OwnershipCheck.EVENT_TIME) ?: false
         }
-        diagnostic?.time = OwnershipTime.WITHIN_SHOW
+        diagnostic?.time = if (eventTime < shownAt) OwnershipTime.CURRENT_NATIVE_CREATION else OwnershipTime.WITHIN_SHOW
         return true
     }
-    fun clear() { token = null; shownAt = -1; generation = 0 }
+    fun clear() { token = null; shownAt = -1; generation = 0; nativeCreation = -1; preparingGeneration = 0; firstNativeEvent = -1 }
     override fun toString() = "ManualPromptLifetime(redacted)"
 }
 
@@ -88,8 +102,34 @@ internal fun manualControlEvent(type: Int): Boolean = type in setOf(Accessibilit
     AccessibilityEvent.TYPE_VIEW_ACCESSIBILITY_FOCUS_CLEARED, AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED)
 
 /** A failed native-control proof must not fall back to the older title-only focus policy. */
-internal inline fun inspectManualEvent(type: Int, nativeControl: () -> Boolean, otherEvent: () -> Boolean): Boolean =
-    if (manualControlEvent(type)) nativeControl() else otherEvent()
+internal fun manualWindowEvent(type: Int): Boolean = type == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED ||
+    type == AccessibilityEvent.TYPE_WINDOWS_CHANGED
+
+internal fun manualWindowMask(mask: Int): ManualWindowMask {
+    val allowed = AccessibilityEvent.WINDOWS_CHANGE_ADDED or AccessibilityEvent.WINDOWS_CHANGE_BOUNDS or
+        AccessibilityEvent.WINDOWS_CHANGE_LAYER or AccessibilityEvent.WINDOWS_CHANGE_TITLE or
+        AccessibilityEvent.WINDOWS_CHANGE_ACTIVE or AccessibilityEvent.WINDOWS_CHANGE_FOCUSED
+    return when {
+        mask == 0 -> ManualWindowMask.ZERO
+        mask == AccessibilityEvent.WINDOWS_CHANGE_REMOVED -> ManualWindowMask.REMOVED
+        mask and AccessibilityEvent.WINDOWS_CHANGE_REMOVED != 0 -> ManualWindowMask.MIXED_REMOVAL
+        mask and allowed.inv() != 0 -> ManualWindowMask.UNSUPPORTED
+        mask == AccessibilityEvent.WINDOWS_CHANGE_ADDED -> ManualWindowMask.ADDED
+        mask == AccessibilityEvent.WINDOWS_CHANGE_BOUNDS -> ManualWindowMask.BOUNDS
+        mask == AccessibilityEvent.WINDOWS_CHANGE_LAYER -> ManualWindowMask.LAYER
+        mask == AccessibilityEvent.WINDOWS_CHANGE_TITLE -> ManualWindowMask.TITLE
+        mask == AccessibilityEvent.WINDOWS_CHANGE_ACTIVE -> ManualWindowMask.ACTIVE
+        mask == AccessibilityEvent.WINDOWS_CHANGE_FOCUSED -> ManualWindowMask.FOCUSED
+        else -> ManualWindowMask.OWN_COMBINATION
+    }
+}
+
+internal inline fun inspectManualEvent(type: Int, nativeControl: () -> Boolean, otherEvent: () -> Boolean,
+    noinline nativeWindowEvent: (() -> Boolean)? = null): Boolean = when {
+        manualControlEvent(type) -> nativeControl()
+        manualWindowEvent(type) && nativeWindowEvent != null -> nativeWindowEvent()
+        else -> otherEvent()
+    }
 
 internal inline fun inspectManualOwnedInteraction(type: Int, state: OverlayWindowState,
     lifetime: ManualPromptLifetime, eventTime: () -> Long, eventPackage: () -> String?, ownPackage: String,
@@ -97,12 +137,41 @@ internal inline fun inspectManualOwnedInteraction(type: Int, state: OverlayWindo
     diagnostic: ManualOwnershipProbe? = null,
 ): Boolean {
     if (!manualControlEvent(type)) return false
+    return inspectManualNativeOwnership(state, lifetime, eventTime, eventPackage, ownPackage, eventWindow,
+        nativeWindow, before, live, diagnostic, allowMissingPackage = false)
+}
+
+/** Only THIS native C View's own window notifications. Application/system/removal events do not
+ * qualify. ACTIVE/FOCUSED are safe only after native lifetime + same event ID + owned live root.
+ * No old title/token fallback, grace period, event-time-only exemption or click permission. */
+internal inline fun inspectManualOwnedWindowEvent(type: Int, changes: () -> Int, state: OverlayWindowState,
+    lifetime: ManualPromptLifetime, eventTime: () -> Long, eventPackage: () -> String?, ownPackage: String,
+    eventWindow: () -> Int, nativeWindow: () -> Int?, before: Set<Int>?, live: () -> Set<Int>?,
+    diagnostic: ManualOwnershipProbe? = null,
+): Boolean {
+    if (!manualWindowEvent(type)) return false
+    val layout = type == AccessibilityEvent.TYPE_WINDOWS_CHANGED
+    if (layout) {
+        if (manualWindowMask(changes()) !in setOf(ManualWindowMask.ADDED, ManualWindowMask.BOUNDS,
+                ManualWindowMask.LAYER, ManualWindowMask.TITLE, ManualWindowMask.ACTIVE,
+                ManualWindowMask.FOCUSED, ManualWindowMask.OWN_COMBINATION))
+            return diagnostic?.reject(OwnershipCheck.EVENT_MASK) ?: false
+    }
+    return inspectManualNativeOwnership(state, lifetime, eventTime, eventPackage, ownPackage, eventWindow,
+        nativeWindow, before, live, diagnostic, allowMissingPackage = layout)
+}
+
+internal inline fun inspectManualNativeOwnership(state: OverlayWindowState,
+    lifetime: ManualPromptLifetime, eventTime: () -> Long, eventPackage: () -> String?, ownPackage: String,
+    eventWindow: () -> Int, nativeWindow: () -> Int?, before: Set<Int>?, live: () -> Set<Int>?,
+    diagnostic: ManualOwnershipProbe?, allowMissingPackage: Boolean,
+): Boolean {
     diagnostic?.check = OwnershipCheck.EVENT_TIME
     if (!lifetime.eventBelongsToShow(state, eventTime(), diagnostic)) return false
     diagnostic?.check = OwnershipCheck.PACKAGE
     val pkg = eventPackage()
     diagnostic?.pkg = when (pkg) { null -> OwnershipRelation.UNAVAILABLE; ownPackage -> OwnershipRelation.MATCH; else -> OwnershipRelation.MISMATCH }
-    if (pkg != ownPackage) return diagnostic?.reject(OwnershipCheck.PACKAGE,
+    if (pkg != ownPackage && !(allowMissingPackage && pkg == null)) return diagnostic?.reject(OwnershipCheck.PACKAGE,
         if (pkg == null) ManualOwnership.UNKNOWN else ManualOwnership.NOT_OWNED) ?: false
     diagnostic?.before = if (before == null) OwnershipBefore.UNAVAILABLE else OwnershipBefore.AVAILABLE
     if (before == null) return diagnostic?.reject(OwnershipCheck.BEFORE_SET) ?: false

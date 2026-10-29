@@ -30,6 +30,7 @@ internal class ManualPopupConnection(
     private val verify: (PopupSnapshot) -> Boolean, private val review: () -> Unit,
     private val collectForChoice: (PopupSnapshot, () -> Unit) -> PopupSnapshot?,
     private val awaitInteractionEnd: suspend () -> Unit, private val intentInteracting: () -> Boolean,
+    private val speechReadiness: StateFlow<SpeechReadiness>,
     private val trace: ManualPromptTrace? = null,
 ) {
     private val handler = Handler(Looper.getMainLooper())
@@ -52,6 +53,8 @@ internal class ManualPopupConnection(
     private var endCause = ManualPromptCause.UNKNOWN
     private var completedKey: Triple<String, Int, String>? = null
     private val reviews = ChoiceReviewBudget()
+    private val cleanupReviews = ManualCleanupReview()
+    private val speechRequests = ManualSpeechRequests()
     private val eventDiagnostic = OverlayEventDiagnostic { category, reason, detail, _, _, _, _, _, scan, relation, _ ->
         AccessibilityRuntime.ownedEventRejection("${category.name};${reason.name};${detail.name};${scan.name};${relation.name}")
     }
@@ -69,19 +72,26 @@ internal class ManualPopupConnection(
     private val announcer: PopupAnnouncer = object : PopupAnnouncer {
         override suspend fun announce(request: AnnouncementRequest): AnnouncementReceipt {
             if (closed) return AnnouncementReceipt(AnnouncementState.NOT_IMPLEMENTED)
+            val requestOwner = speechRequests.replace()
             if (request.kind == AnnouncementKind.ACTION_RESULT) return tts.announce(request.copy(token = null))
-            if (request.token != flowToken()) return AnnouncementReceipt(AnnouncementState.NOT_IMPLEMENTED)
-            return tts.announce(request)
+            val reportSpeech = trace?.speechReporter()
+            return announceManualPrompt(speechReadiness,
+                current = { speechRequests.permits(requestOwner) && !closed && request.token != null && request.token == flowToken() },
+                record = { reportSpeech?.invoke(it) }) { tts.announce(request) }
         }
         override suspend fun repeatLast() = if (flowToken() != null) tts.repeatLast()
             else AnnouncementReceipt(AnnouncementState.NOT_IMPLEMENTED)
         override fun stop() {
+            speechRequests.stop()
+            trace?.speech(ManualSpeechState.STOP_REQUESTED)
             manualCleanupCall(ManualCleanupSite.TTS_STOP, trace?.cleanup, cleanup) { tts.stop() }
         } // TTL no longer cancels this manual flow.
     }
     private val settings = UiVoicePreferences.get(service)
     private val promptListener = PromptAnnouncementListener(service, announcer, scope,
-        mode = { settings.current().promptAnnounceMode }, detail = { settings.current().detail })
+        mode = { settings.current().promptAnnounceMode.also {
+            trace?.speech(if (it == PromptAnnounceMode.PANE_TITLE_AND_TTS) ManualSpeechState.MODE_TTS else ManualSpeechState.MODE_PANE_ONLY)
+        } }, detail = { settings.current().detail })
     val overlay: AccessibilityChoiceOverlay = AccessibilityChoiceOverlay(service, object : OverlayListener {
         override fun onShown(prompt: ChoicePrompt, speakPressed: () -> Boolean) =
             manualCleanupCall(ManualCleanupSite.CALLBACK_SHOWN, trace?.cleanup, cleanup) {
@@ -99,7 +109,9 @@ internal class ManualPopupConnection(
         }
     }, PromptControlsSupport(tts, null) { kr.closeforyou.ui.voice.command.SpeakButtonState.TURNED_OFF }).also { view ->
         view.observeNativeWindows(object : OverlayNativeWindowObserver {
-            override fun created(generation: Long) = OverlayNativeWindowLifetime(generation, nativeOwner).also { native = it }
+            override fun created(generation: Long) = OverlayNativeWindowLifetime(generation, nativeOwner).also {
+                promptLifetime.nativeCreating(generation); native = it
+            }
             override fun changed(lifetime: OverlayNativeWindowLifetime) {
                 handler.post { manualCleanupCall(ManualCleanupSite.NATIVE_CALLBACK, trace?.cleanup, cleanup) { nativeProcessed(lifetime) } }
             }
@@ -213,9 +225,18 @@ internal class ManualPopupConnection(
         if (detection.signals.none { it == PopupSignal.NEW_WINDOW || it == PopupSignal.SAME_WINDOW_OVERLAY }) {
             AccessibilityRuntime.manualBoundary("NO_POPUP_SCOPE"); return
         }
-        if (!reviews.admit(snapshot.token)) { AccessibilityRuntime.manualBoundary("REVIEW_BUDGET_EXHAUSTED"); return }
+        if (!reviews.admit(snapshot.token)) {
+            trace?.record(ManualPromptPoint.OFFER_REJECTED, ManualPromptCause.REVIEW_BUDGET_EXHAUSTED)
+            AccessibilityRuntime.manualBoundary("REVIEW_BUDGET_EXHAUSTED"); return
+        }
         val permit = cleanup.permit() ?: return
         trace?.begin(); endCause = ManualPromptCause.UNKNOWN
+        trace?.record(ManualPromptPoint.REVIEW_ADMISSION, when (reviews.lastAdmission) {
+            ManualReviewAdmission.FIRST_OFFER -> ManualPromptCause.REVIEW_FIRST
+            ManualReviewAdmission.UNCHANGED_RECOVERY -> ManualPromptCause.REVIEW_UNCHANGED_RECOVERY
+            ManualReviewAdmission.IDENTITY_CHANGED -> ManualPromptCause.REVIEW_IDENTITY_CHANGED
+            ManualReviewAdmission.EXHAUSTED -> ManualPromptCause.REVIEW_BUDGET_EXHAUSTED
+        })
         original = snapshot; shownAnalysis = analysis; shownDetection = detection
         gate.prepare(snapshot, permit)
         AccessibilityRuntime.manualBoundary("OFFERED")
@@ -303,7 +324,7 @@ internal class ManualPopupConnection(
     fun hasPendingPresentation(): Boolean = !closed && !health.failed && !overlay.isShowing &&
         selected == null && gate.hasCurrentObservation()
     fun shouldIgnore(event: AccessibilityEvent): Boolean {
-        val probe = if (trace != null && event.eventType == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED)
+        val probe = if (trace != null && (manualControlEvent(event.eventType) || manualWindowEvent(event.eventType)))
             ManualOwnershipProbe() else null
         try {
             if (closed) return probe?.reject(OwnershipCheck.CLOSED) ?: false
@@ -318,11 +339,25 @@ internal class ManualPopupConnection(
                     { event.packageName?.toString() }, ::flowToken,
                     { token, diagnostic -> binding.matches(event.windowId, readOwned(), token, overlay.windowState.generation, diagnostic) },
                     { service.packageName }, eventDiagnostic)
+            }, nativeWindowEvent = {
+                inspectManualOwnedWindowEvent(event.eventType, { event.windowChanges }, state, promptLifetime,
+                    { event.eventTime }, { event.packageName?.toString() }, service.packageName, { event.windowId },
+                    { readManualNativeWindow(native, nativeOwner, state.generation, probe) }, before, ::readOwned, probe)
             })
             if (ignored && event.eventType == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED)
                 trace?.record(ManualPromptPoint.DISPLAY_RETAINED, ManualPromptCause.OWNED_CONTENT_CONFIRMED)
+            if (ignored && manualWindowEvent(event.eventType))
+                trace?.record(ManualPromptPoint.DISPLAY_RETAINED, ManualPromptCause.OWNED_WINDOW_CONFIRMED)
             return ignored
-        } finally { if (probe != null) trace?.ownership(probe.code()) }
+        } finally {
+            if (probe != null) kr.closeforyou.accessibility.diagnosticWrite {
+                trace?.ownership(probe.code())
+                trace?.windowEvent(manualEventCode(event.eventType, probe.check, probe.result, event.windowId,
+                    native?.liveWindow(nativeOwner, overlay.windowState.generation), original?.token?.windowId,
+                    event.packageName?.toString(), service.packageName, original?.token?.packageName,
+                    if (event.eventType == AccessibilityEvent.TYPE_WINDOWS_CHANGED) event.windowChanges else 0))
+            }
+        }
     }
     fun isOwnedRetirement(event: AccessibilityEvent): Boolean = selectedValid && event.windowId == retiredId &&
         (event.packageName == null || event.packageName?.toString() == service.packageName) &&
@@ -335,7 +370,7 @@ internal class ManualPopupConnection(
         cleanup.removalReturned(hidden)
         if (cleanup.nativeProcessed(n, hidden, presence = ::presence)) {
             trace?.record(ManualPromptPoint.OVERLAY_REMOVED, endCause)
-            native = null; target = null; if (selected == null) review()
+            native = null; target = null; reviewAfterCleanup()
         }
     }
     private fun dismissOverlay() = dismissManualOverlay({ overlay.dismiss() },
@@ -347,11 +382,21 @@ internal class ManualPopupConnection(
         { it.title?.toString() == service.getString(R.string.ui_choice_pane_title) }, { it.id }, { it.recycle() }, { it.recycle() }, health::fail, eventDiagnostic)
     fun processed(receipt: OverlayCleanupBarrier.Receipt?) {
         if (receipt == null || closed) return
-        cleanup.processed(receipt, overlay.windowState.status == OverlayWindowStatus.HIDDEN, presence = ::presence)
-        if (cleanup.ready) {
+        val wasPending = cleanup.pending
+        val hidden = overlay.windowState.status == OverlayWindowStatus.HIDDEN
+        cleanup.processed(receipt, hidden, presence = ::presence)
+        completeManualCleanupReview(wasPending, cleanup.ready, hidden) {
             trace?.record(ManualPromptPoint.OVERLAY_REMOVED, endCause)
-            native = null; target = null; if (selected == null) handler.post { if (!closed) review() }
+            native = null; target = null; reviewAfterCleanup()
         }
+    }
+    private fun reviewAfterCleanup() {
+        val permit = cleanup.permit()
+        if (!cleanupReviews.take(permit, closed || health.failed, selected != null)) return
+        trace?.record(ManualPromptPoint.REVIEW_REQUESTED, ManualPromptCause.CLEANUP_REVIEW)
+        // Preserve the native-completion path's synchronous invalidation of old observations;
+        // do not insert another turn in which a resumed old waiter could admit a prompt.
+        if (!closed && !health.failed && selected == null && cleanup.permits(requireNotNull(permit))) review()
     }
     fun close() {
         if (closed) return

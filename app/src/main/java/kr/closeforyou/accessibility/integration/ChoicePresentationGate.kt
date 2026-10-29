@@ -130,17 +130,41 @@ internal suspend fun awaitChoicePresentationTurn(post: (Runnable) -> Boolean, re
 
 /** A fresh read after cleanup must still discover the NEXT popup. Limit repeated presentation of
  * an unchanged interrupted popup instead of suppressing that read. No authorization or TTL grant. */
+internal enum class ManualReviewAdmission { FIRST_OFFER, UNCHANGED_RECOVERY, IDENTITY_CHANGED, EXHAUSTED }
 internal class ChoiceReviewBudget {
     private data class Identity(val app: String, val window: Int, val structure: String, val content: String) {
         override fun toString() = "ReviewIdentity(redacted)"
     }
     private var identity: Identity? = null
     private var offered = 0
+    var lastAdmission = ManualReviewAdmission.FIRST_OFFER
+        private set
     fun admit(token: SnapshotToken): Boolean {
         val key = Identity(token.packageName, token.windowId, token.structureDigest, token.contentDigest)
-        if (identity != key) { identity = key; offered = 0 }
-        if (offered >= 2) return false // first presentation and at most one fresh recovery
+        if (identity != key) {
+            lastAdmission = if (identity == null) ManualReviewAdmission.FIRST_OFFER else ManualReviewAdmission.IDENTITY_CHANGED
+            identity = key; offered = 0
+        } else lastAdmission = ManualReviewAdmission.UNCHANGED_RECOVERY
+        if (offered >= 2) { lastAdmission = ManualReviewAdmission.EXHAUSTED; return false } // first + one recovery
         offered++
         return true
     }
+}
+
+/** Native callback and event receipt may both finish the SAME cleanup. Schedule one new read
+ * per actual barrier permit; never replay a candidate or reset the presentation budget. */
+internal class ManualCleanupReview {
+    private var requested: Any? = null
+    fun take(permit: Any?, closedOrFailed: Boolean, selected: Boolean): Boolean {
+        if (permit == null || closedOrFailed || selected || requested === permit) return false
+        requested = permit
+        return true
+    }
+}
+
+/** A late receipt after native completion must not clear a NEW native View or schedule another
+ * recovery. Used around the real Android cleanup.processed call, never as a cleanup certificate. */
+internal inline fun completeManualCleanupReview(wasPending: Boolean, ready: Boolean, hidden: Boolean,
+    completed: () -> Unit) {
+    if (wasPending && ready && hidden) completed()
 }

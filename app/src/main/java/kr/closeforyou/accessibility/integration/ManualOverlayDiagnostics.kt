@@ -8,14 +8,53 @@ import kr.closeforyou.ui.voice.overlay.OverlayNativeWindowLifetime
 internal enum class ManualOwnership { OWNED, NOT_OWNED, UNKNOWN }
 internal enum class OwnershipCheck {
     NOT_CHECKED, CLOSED, HEALTH, DISPLAY_LEASE, DISPLAY_STATE, GENERATION, EVENT_TIME,
-    PACKAGE, BEFORE_SET, NATIVE_LOOKUP, NATIVE_ID, EVENT_WINDOW, LIVE_SET, COMPLETE,
+    EVENT_MASK, PACKAGE, BEFORE_SET, NATIVE_LOOKUP, NATIVE_ID, EVENT_WINDOW, LIVE_SET, COMPLETE,
 }
 internal enum class OwnershipRelation { NOT_CHECKED, MATCH, MISMATCH, UNAVAILABLE }
-internal enum class OwnershipTime { NOT_CHECKED, BEFORE_SHOW, WITHIN_SHOW, FUTURE }
+internal enum class OwnershipTime { NOT_CHECKED, BEFORE_SHOW, CURRENT_NATIVE_CREATION, WITHIN_SHOW, FUTURE }
 internal enum class OwnershipLease { NOT_CHECKED, ACTIVE, NOT_STARTED, EXPIRED, CLOCK_REVERSED }
 internal enum class OwnershipBefore { NOT_CHECKED, AVAILABLE, UNAVAILABLE, NATIVE_ABSENT, NATIVE_ALREADY_PRESENT }
 internal enum class OwnershipLive { NOT_CHECKED, UNAVAILABLE, EMPTY, MULTIPLE, SINGLE_MATCH, SINGLE_OTHER }
 internal enum class OwnershipNative { NOT_CHECKED, ABSENT, REGISTERED_OBJECT }
+
+internal enum class ManualEventKind { CONTENT, WINDOW_STATE, WINDOW_SET, FOCUS, CLICK, OTHER }
+internal enum class ManualEventRelation { NATIVE_ID_MATCH, ORIGINAL_TARGET_ID_MATCH, UNMATCHED_ID, UNAVAILABLE, AMBIGUOUS }
+internal enum class ManualEventPackage { OWN, ORIGINAL_TARGET, OTHER, UNAVAILABLE }
+internal enum class ManualWindowMask { NOT_APPLICABLE, ZERO, ADDED, BOUNDS, LAYER, TITLE, ACTIVE, FOCUSED,
+    OWN_COMBINATION, REMOVED, MIXED_REMOVAL, UNSUPPORTED }
+internal data class ManualEventCode(val kind: ManualEventKind, val check: OwnershipCheck,
+    val result: ManualOwnership, val relation: ManualEventRelation, val pkg: ManualEventPackage,
+    val mask: ManualWindowMask)
+
+/** Diagnostic comparisons only. ID_MATCH is NOT proof of origin (IDs may be reused).
+ * A package mismatch remains rejected, even when it carries the currently known native ID. */
+internal fun manualEventCode(type: Int, check: OwnershipCheck, result: ManualOwnership,
+    eventId: Int, nativeId: Int?, targetId: Int?, pkg: String?, ownPackage: String, targetPackage: String?, changes: Int = 0): ManualEventCode {
+    val kind = when (type) {
+        android.view.accessibility.AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED -> ManualEventKind.CONTENT
+        android.view.accessibility.AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED -> ManualEventKind.WINDOW_STATE
+        android.view.accessibility.AccessibilityEvent.TYPE_WINDOWS_CHANGED -> ManualEventKind.WINDOW_SET
+        android.view.accessibility.AccessibilityEvent.TYPE_VIEW_CLICKED -> ManualEventKind.CLICK
+        android.view.accessibility.AccessibilityEvent.TYPE_VIEW_FOCUSED,
+        android.view.accessibility.AccessibilityEvent.TYPE_VIEW_ACCESSIBILITY_FOCUSED,
+        android.view.accessibility.AccessibilityEvent.TYPE_VIEW_ACCESSIBILITY_FOCUS_CLEARED -> ManualEventKind.FOCUS
+        else -> ManualEventKind.OTHER
+    }
+    val relation = when {
+        eventId < 0 -> ManualEventRelation.UNAVAILABLE
+        nativeId != null && nativeId == targetId && eventId == nativeId -> ManualEventRelation.AMBIGUOUS
+        eventId == nativeId -> ManualEventRelation.NATIVE_ID_MATCH
+        eventId == targetId -> ManualEventRelation.ORIGINAL_TARGET_ID_MATCH
+        else -> ManualEventRelation.UNMATCHED_ID
+    }
+    return ManualEventCode(kind, check, result, relation, when (pkg) {
+        null -> ManualEventPackage.UNAVAILABLE
+        ownPackage -> ManualEventPackage.OWN
+        targetPackage -> ManualEventPackage.ORIGINAL_TARGET
+        else -> ManualEventPackage.OTHER
+    }, if (type == android.view.accessibility.AccessibilityEvent.TYPE_WINDOWS_CHANGED) manualWindowMask(changes)
+        else ManualWindowMask.NOT_APPLICABLE)
+}
 
 /** Enum-only observation of the actual short-circuit path. NOT_CHECKED never means a pass.
  * NOT_OWNED means an affirmative mismatch for this show, not proof of another app's origin. */
