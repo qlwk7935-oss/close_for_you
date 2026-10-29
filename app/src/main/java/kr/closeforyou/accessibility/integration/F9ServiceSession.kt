@@ -148,7 +148,7 @@ internal class F9ServiceSession(
             val key = snapshot.token.packageName + "\u0000" + snapshot.token.structureDigest + "\u0000" + snapshot.token.contentDigest
             if (key in issued || issued.size >= 256) return refused(SafetyReason.ALREADY_ATTEMPTED)
             val fresh = screen.read { check(current() && !closed) }
-            val prepared = F9EligibilityAdapter.prepare(snapshot, detection, analysis, fresh, clock.nowMillis())
+            val prepared = F9EligibilityAdapter.prepareUser(snapshot, detection, analysis, fresh, clock.nowMillis(), choice, trace)
             activeClassification = prepared.classification
             val a = access(snapshot.token.packageName)
             trace?.record(ManualActionStep.B_DECISION, ManualActionState.STARTED)

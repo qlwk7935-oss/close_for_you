@@ -8,7 +8,8 @@ internal object ManualPromptLog {
     }, actionSink = { attempt, code ->
         Log.i("A_ManualPrompt", "A_MANUAL_ACTION;ATTEMPT=$attempt;STEP=${code.step.name};STATE=${code.state.name}" +
             ";REASON=${code.reason.name};SAFETY=${code.safety?.name ?: "NONE"};F9=${code.block?.name ?: "NONE"}" +
-            ";MISMATCH=${code.mismatch?.name ?: "NONE"};OUTCOME=${code.outcome?.name ?: "NONE"};NEXT=${code.next?.name ?: "NONE"}")
+            ";MISMATCH=${code.mismatch?.name ?: "NONE"};OUTCOME=${code.outcome?.name ?: "NONE"};NEXT=${code.next?.name ?: "NONE"}" +
+            (code.eligibility?.let { ";MODE=${it.mode.name};CHECK=${it.check.name};DETAIL=${it.detail.name}" } ?: ""))
     }, ownershipSink = { attempt, c ->
         Log.i("A_ManualPrompt", "A_MANUAL_OWNERSHIP;ATTEMPT=$attempt;RESULT=${c.result.name};CHECK=${c.check.name}" +
             ";EVENT_WINDOW=${c.window.name};PACKAGE=${c.pkg.name};GENERATION=${c.generation.name}" +

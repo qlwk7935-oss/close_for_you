@@ -7,7 +7,7 @@ import kr.closeforyou.core.model.*
 
 internal enum class ManualActionStep {
     CHOICE_ACCEPTED, OVERLAY_REMOVAL, INTERACTION_END, MANUAL_REFRESH, SNAPSHOT_MATCH,
-    TARGET_MATCH, SESSION_ENTRY, B_DECISION, F9_VALIDATION, CLICK_ATTEMPT, CLICK_RESULT, MANUAL_END,
+    TARGET_MATCH, SESSION_ENTRY, ELIGIBILITY, B_DECISION, F9_VALIDATION, CLICK_ATTEMPT, CLICK_RESULT, MANUAL_END,
 }
 internal enum class ManualActionState {
     STARTED, WAITING, PASSED, APPROVED, REJECTED, ATTEMPTED, NOT_ATTEMPTED,
@@ -24,12 +24,17 @@ internal enum class ManualActionReason {
 internal data class ManualActionCode(val step: ManualActionStep, val state: ManualActionState,
     val reason: ManualActionReason = ManualActionReason.NONE, val safety: SafetyReason? = null,
     val block: F9Block? = null, val mismatch: EvidenceMismatch? = null,
-    val outcome: ClickOutcome? = null, val next: NextStep? = null)
+    val outcome: ClickOutcome? = null, val next: NextStep? = null,
+    val eligibility: F9EligibilityCode? = null)
 
 /** Immutable attempt binding: a later offer cannot relabel an earlier suspended action.
  * The bounded code set de-duplicates repeated boundaries; diagnostics never authorize actions. */
 internal class ManualActionTrace(private val sink: (ManualActionCode) -> Unit) {
     private val recorded = mutableSetOf<ManualActionCode>()
+    fun eligibility(code: F9EligibilityCode) {
+        val action = ManualActionCode(ManualActionStep.ELIGIBILITY, code.state, eligibility = code)
+        if (recorded.add(action)) diagnosticWrite { sink(action) }
+    }
     fun record(step: ManualActionStep, state: ManualActionState,
         reason: ManualActionReason = ManualActionReason.NONE, safety: SafetyReason? = null,
         block: F9Block? = null, mismatch: EvidenceMismatch? = null,

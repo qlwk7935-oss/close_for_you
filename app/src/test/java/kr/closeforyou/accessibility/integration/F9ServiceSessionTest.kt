@@ -68,10 +68,19 @@ class F9ServiceSessionTest {
         assertFalse(F9AutoCloser.supportedCloseWidget("android.widget.CheckBox", true))
         assertFalse(F9AutoCloser.supportedCloseWidget(null, true))
     }
-    @Test fun manualCannotInventNewWindowScopeForUncertainOrSameWindowEvidence() = runTest {
+    @Test fun manualCannotInventPopupScopeForActualSameWindowOrUncertainEvidence() = runTest {
         for (signals in listOf(persistentSetOf(PopupSignal.SAME_WINDOW_OVERLAY),
             persistentSetOf(PopupSignal.INSUFFICIENT_EVIDENCE), persistentSetOf<PopupSignal>())) {
-            val r = Rig(this, false); r.publish()
+            val r = Rig(this, false)
+            // A real same-window Activity has no separate bounded APPLICATION window. A
+            // historical SAME_WINDOW_OVERLAY signal alone does not change current geometry.
+            if (PopupSignal.SAME_WINDOW_OVERLAY in signals) {
+                r.snapshot = r.snapshot.copy(windows = r.snapshot.windows.map {
+                    if (it.id == r.snapshot.token.windowId) it.copy(bounds = r.snapshot.screenBounds) else it
+                }.toPersistentList())
+                r.f.scene = r.f.scene?.copy(windows = r.snapshot.windows)
+            }
+            r.publish()
             val analysis = r.session.wiring.extractor.extract(r.snapshot)
             val choice = UserChoice(r.snapshot.token, ChoiceKind.CLOSE_ONCE, analysis.closeCandidates.single().id, buttonMeaningConfirmed = true)
             val result = r.session.executeUser(r.snapshot, analysis, choice, PopupDetection(r.snapshot.token, signals)) { true }
