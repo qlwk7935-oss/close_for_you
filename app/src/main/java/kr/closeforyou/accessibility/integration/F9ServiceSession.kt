@@ -65,7 +65,7 @@ internal class F9ServiceSession(
     fun observePage() {
         if (closed || running || !cleanupReady()) return
         val captured = clock.nowMillis()
-        val scene = screen.read {} ?: return
+        val scene = screen.readFor(F9ReadPurpose.PAGE) {} ?: return
         val window = scene.windows.singleOrNull { it.id == scene.windowId } ?: return
         if (scene.complete && window.bounds == scene.screen && scene.pageWindowId == scene.windowId && scene.pageDigest != null) {
             page = F9PageProof(scene.packageName, scene.windowId, scene.pageDigest, captured)
@@ -83,7 +83,7 @@ internal class F9ServiceSession(
             currentCoroutineContext().ensureActive()
             if (raw.currentToken() != snapshot.token || closed) return F9Handled()
             val job = currentCoroutineContext()
-            val fresh = if (cleanupReady()) screen.read { job.ensureActive(); currentCoroutineContextCheck() } else null
+            val fresh = if (cleanupReady()) screen.readFor(F9ReadPurpose.AUTO_ELIGIBILITY) { job.ensureActive(); currentCoroutineContextCheck() } else null
             val analysis = F9EligibilityAdapter.prepare(snapshot, event.detection, wired, fresh, clock.nowMillis())
             activeClassification = analysis.classification
             val a = access(snapshot.token.packageName)
@@ -147,7 +147,7 @@ internal class F9ServiceSession(
         try {
             val key = snapshot.token.packageName + "\u0000" + snapshot.token.structureDigest + "\u0000" + snapshot.token.contentDigest
             if (key in issued || issued.size >= 256) return refused(SafetyReason.ALREADY_ATTEMPTED)
-            val fresh = screen.read { check(current() && !closed) }
+            val fresh = screen.readFor(F9ReadPurpose.MANUAL_ELIGIBILITY) { check(current() && !closed) }
             val prepared = F9EligibilityAdapter.prepareUser(snapshot, detection, analysis, fresh, clock.nowMillis(), choice, trace)
             activeClassification = prepared.classification
             val a = access(snapshot.token.packageName)

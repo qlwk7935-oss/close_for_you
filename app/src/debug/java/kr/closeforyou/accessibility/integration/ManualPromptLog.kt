@@ -29,7 +29,11 @@ internal object ManualPromptLog {
                 else -> "REJECTED"
             }}")
     }, displayReviewSink = { attempt, c ->
-        Log.i("A_ManualPrompt", "A_MANUAL_DISPLAY_REVIEW;ATTEMPT=$attempt;EVENT=${c.kind.name};MASK=${c.mask.name};RESULT=${c.verdict.name}")
+        Log.i("A_ManualPrompt", "A_MANUAL_DISPLAY_REVIEW;ATTEMPT=$attempt;EVENT=${c.kind.name};MASK=${c.mask.name};RESULT=${c.verdict.name}" +
+            ";POINT=${c.point.name};DETAIL=${c.detail.name}")
+    }, readSink = { attempt, c ->
+        Log.i("A_ManualPrompt", "A_F9_READ;ATTEMPT=$attempt;PURPOSE=${c.purpose.name};STAGE=${c.stage.name};DETAIL=${c.detail.name}" +
+            ";OUTCOME=${c.outcome.name};RELEASE=${c.release.name};CALLBACK_RETURNED=${if (c.consumed) "YES" else "NO"}")
     }, cleanupSink = { attempt, c ->
         Log.i("A_ManualPrompt", "A_MANUAL_CLEANUP;ATTEMPT=$attempt;PHASE=${c.phase.name}" +
             ";SITE=${c.current.site.name};ISSUE=${c.current.issue.name};BARRIER=${c.current.barrier?.name ?: "NONE"}" +

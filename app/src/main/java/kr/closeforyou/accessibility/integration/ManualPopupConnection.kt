@@ -31,7 +31,7 @@ internal class ManualPopupConnection(
     private val collectForChoice: (PopupSnapshot, () -> Unit) -> PopupSnapshot?,
     private val awaitInteractionEnd: suspend () -> Unit, private val intentInteracting: () -> Boolean,
     private val speechReadiness: StateFlow<SpeechReadiness>,
-    private val verifyDisplay: (PopupSnapshot, Int, () -> Unit) -> ManualDisplayVerdict,
+    private val verifyDisplay: (PopupSnapshot, Int, () -> Unit, ManualDisplayProbe) -> ManualDisplayVerdict,
     private val trace: ManualPromptTrace? = null,
 ) {
     private val handler = Handler(Looper.getMainLooper())
@@ -336,33 +336,31 @@ internal class ManualPopupConnection(
             shownDetection?.signals?.contains(PopupSignal.NEW_WINDOW) != true) return false
         val source = original ?: return false
         var version = epoch()
+        val probe = ManualDisplayProbe()
         trace?.record(ManualPromptPoint.DISPLAY_REVIEW_STARTED)
         val result = reviewManualDisplay(retire = { version = retire() }, verify = {
             val started = SystemClock.uptimeMillis()
             val generation = overlay.windowState.generation
             fun checkpoint() {
-                check(!closed && !health.failed && !interacting() && selected == null &&
+                manualDisplayCheckpoint(current = { !closed && !health.failed && !interacting() && selected == null &&
                     overlay.windowState.status == OverlayWindowStatus.SHOWING && overlay.windowState.generation == generation &&
-                    promptLifetime.current() == source.token && epoch() == version) { "MANUAL_DISPLAY_STALE" }
-                val at = SystemClock.uptimeMillis()
-                check(at >= started && at - started < 100L) { "MANUAL_DISPLAY_TIME_LIMIT" }
+                    promptLifetime.current() == source.token && epoch() == version }, SystemClock::uptimeMillis, started, probe)
             }
-            fun owned(): Int? {
-                val id = readManualNativeWindow(native, nativeOwner, generation, null) ?: return null
-                if (id < 0 || before?.contains(id) != false || readOwned()?.singleOrNull() != id) return null
-                return id
-            }
-            try {
+            fun owned(): Int? = manualDisplayOwnedId({ readManualNativeWindow(native, nativeOwner, generation, null) },
+                { before?.contains(it) }, ::readOwned, probe)
+            checkedManualDisplay(probe) {
                 checkpoint()
+                probe.point = ManualDisplayPoint.NATIVE_BEFORE
                 val id = owned() ?: return@reviewManualDisplay ManualDisplayVerdict.UNAVAILABLE
                 checkpoint()
-                val verdict = verifyDisplay(source, id, ::checkpoint)
+                probe.point = ManualDisplayPoint.SCREEN
+                val verdict = verifyDisplay(source, id, ::checkpoint, probe)
                 checkpoint()
-                if (owned() != id) return@reviewManualDisplay ManualDisplayVerdict.UNAVAILABLE
+                probe.point = ManualDisplayPoint.NATIVE_AFTER
+                if (owned() != id) { probe.reject(ManualDisplayDetail.NATIVE_ID_CHANGED); return@reviewManualDisplay ManualDisplayVerdict.UNAVAILABLE }
                 checkpoint()
                 verdict
-            } catch (cancelled: CancellationException) { throw cancelled }
-            catch (_: Exception) { ManualDisplayVerdict.UNAVAILABLE }
+            }
         }, remove = {
             invalidate(version, ttl = false, ownedRetirement = false, cause =
                 when (type) {
@@ -371,11 +369,13 @@ internal class ManualPopupConnection(
                     else -> ManualPromptCause.WINDOW_STATE_INVALIDATED
                 })
         }, onChecked = { verdict ->
+            if (verdict == ManualDisplayVerdict.UNAVAILABLE && probe.detail == ManualDisplayDetail.NONE) probe.reject(ManualDisplayDetail.UNKNOWN)
             trace?.displayReview(ManualDisplayReviewCode(when (type) {
                 AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED -> ManualEventKind.CONTENT
                 AccessibilityEvent.TYPE_WINDOWS_CHANGED -> ManualEventKind.WINDOW_SET
                 else -> ManualEventKind.WINDOW_STATE
-            }, if (type == AccessibilityEvent.TYPE_WINDOWS_CHANGED) manualWindowMask(changes) else ManualWindowMask.NOT_APPLICABLE, verdict))
+            }, if (type == AccessibilityEvent.TYPE_WINDOWS_CHANGED) manualWindowMask(changes) else ManualWindowMask.NOT_APPLICABLE,
+                verdict, probe.failurePoint, probe.detail))
         })
         val cause = when (result) {
             ManualDisplayVerdict.SAME -> ManualPromptCause.TARGET_RECONFIRMED

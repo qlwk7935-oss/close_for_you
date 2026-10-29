@@ -9,8 +9,58 @@ import kr.closeforyou.accessibility.action.F9Scene
 import kr.closeforyou.core.model.*
 
 internal enum class ManualDisplayVerdict { SAME, CHANGED, UNAVAILABLE }
+internal enum class ManualDisplayPoint { NOT_CHECKED, CHECKPOINT, NATIVE_BEFORE, SCREEN, NATIVE_AFTER, COMPARISON }
+internal enum class ManualDisplayDetail {
+    NONE, CURRENTNESS_FAILED, TIME_LIMIT, NATIVE_ID_UNAVAILABLE, NATIVE_ID_CHANGED, BEFORE_SET_UNCONFIRMED, LIVE_SET_UNCONFIRMED,
+    SCREEN_READ_UNAVAILABLE, SCREEN_RESOURCE_FAILURE, WINDOW_SCOPE, TARGET_EQUALS_NATIVE, WINDOW_LIST_UNCONFIRMED,
+    OVERLAY_WINDOW_UNAVAILABLE, TARGET_WINDOW_UNAVAILABLE, OVERLAY_LAYER, COMPETING_WINDOW, ACTIVE_OR_FOCUS_UNCONFIRMED,
+    INCOMPLETE, INVALID_GEOMETRY,
+    PACKAGE_CHANGED, WINDOW_CHANGED, FRAME_CHANGED, NODES_CHANGED, WINDOW_SET_CHANGED,
+    ORIGINAL_WINDOW_UNAVAILABLE, PROTECTED_CONTENT, CANCELLED, EXCEPTION, UNKNOWN,
+}
+/** Comparison/ownership diagnostics only. First failure survives later exceptions and cleanup. */
+internal class ManualDisplayProbe {
+    var point = ManualDisplayPoint.NOT_CHECKED
+    private var firstPoint: ManualDisplayPoint? = null
+    var detail = ManualDisplayDetail.NONE; private set
+    val failurePoint get() = firstPoint ?: point
+    fun reject(value: ManualDisplayDetail) {
+        if (detail == ManualDisplayDetail.NONE) { detail = value; firstPoint = point }
+    }
+    fun require(condition: Boolean, value: ManualDisplayDetail) {
+        if (!condition) { reject(value); check(false) { "MANUAL_DISPLAY_UNAVAILABLE" } }
+    }
+    fun screenUnavailable(resourceFailure: Boolean) {
+        point = ManualDisplayPoint.SCREEN
+        reject(if (resourceFailure) ManualDisplayDetail.SCREEN_RESOURCE_FAILURE else ManualDisplayDetail.SCREEN_READ_UNAVAILABLE)
+    }
+    override fun toString() = "ManualDisplayProbe(redacted)"
+}
+/** Shared real checkpoint: preserve original currentness-first order and single clock read. */
+internal fun manualDisplayCheckpoint(current: () -> Boolean, now: () -> Long, started: Long, probe: ManualDisplayProbe) {
+    val previous = probe.point
+    probe.point = ManualDisplayPoint.CHECKPOINT
+    probe.require(current(), ManualDisplayDetail.CURRENTNESS_FAILED)
+    val at = now()
+    probe.require(at >= started && at - started < 100L, ManualDisplayDetail.TIME_LIMIT)
+    probe.point = previous
+}
+/** Same native -> saved-before -> owned-live short circuit as the Android driver. No new reads. */
+internal fun manualDisplayOwnedId(native: () -> Int?, before: (Int) -> Boolean?, live: () -> Set<Int>?,
+    probe: ManualDisplayProbe): Int? {
+    val id = native()
+    if (id == null || id < 0) { probe.reject(ManualDisplayDetail.NATIVE_ID_UNAVAILABLE); return null }
+    if (before(id) != false) { probe.reject(ManualDisplayDetail.BEFORE_SET_UNCONFIRMED); return null }
+    if (live()?.singleOrNull() != id) { probe.reject(ManualDisplayDetail.LIVE_SET_UNCONFIRMED); return null }
+    return id
+}
+internal inline fun checkedManualDisplay(probe: ManualDisplayProbe, verify: () -> ManualDisplayVerdict): ManualDisplayVerdict =
+    try { verify() }
+    catch (cancelled: kotlinx.coroutines.CancellationException) { probe.reject(ManualDisplayDetail.CANCELLED); throw cancelled }
+    catch (_: Exception) { probe.reject(ManualDisplayDetail.EXCEPTION); ManualDisplayVerdict.UNAVAILABLE }
 internal data class ManualDisplayReviewCode(val kind: ManualEventKind, val mask: ManualWindowMask,
-    val verdict: ManualDisplayVerdict)
+    val verdict: ManualDisplayVerdict, val point: ManualDisplayPoint = ManualDisplayPoint.NOT_CHECKED,
+    val detail: ManualDisplayDetail = ManualDisplayDetail.NONE)
 
 /** A target BOUNDS notification is a request to re-read, not proof that C or the target caused it.
  * Mixed/structural/unknown masks and unrelated windows keep ordinary invalidation. */
@@ -42,34 +92,43 @@ internal fun reviewManualDisplay(retire: () -> Unit, verify: () -> ManualDisplay
 /** Presentation-only comparison. Used inside Android's read-only scan, never by read()/press(),
  * never returned as a Ready, token or eligibility certificate. Original age is not renewed. */
 internal object ManualDisplayContinuity {
-    fun target(windows: List<WindowSnapshot>, targetId: Int, nativeOverlayId: Int): WindowSnapshot? {
-        if (targetId == nativeOverlayId || windows.size !in 2..32 || windows.map { it.id }.toSet().size != windows.size) return null
-        val overlay = windows.singleOrNull { it.id == nativeOverlayId && it.type == WindowType.ACCESSIBILITY_OVERLAY } ?: return null
-        val target = windows.singleOrNull { it.id == targetId && it.type == WindowType.APPLICATION } ?: return null
-        if (overlay.layer <= target.layer || windows.any { it.type == WindowType.INPUT_METHOD ||
+    fun target(windows: List<WindowSnapshot>, targetId: Int, nativeOverlayId: Int, probe: ManualDisplayProbe? = null): WindowSnapshot? {
+        fun unavailable(detail: ManualDisplayDetail): WindowSnapshot? { probe?.reject(detail); return null }
+        if (targetId == nativeOverlayId) return unavailable(ManualDisplayDetail.TARGET_EQUALS_NATIVE)
+        if (windows.size !in 2..32 || windows.map { it.id }.toSet().size != windows.size) return unavailable(ManualDisplayDetail.WINDOW_LIST_UNCONFIRMED)
+        val overlay = windows.singleOrNull { it.id == nativeOverlayId && it.type == WindowType.ACCESSIBILITY_OVERLAY } ?: return unavailable(ManualDisplayDetail.OVERLAY_WINDOW_UNAVAILABLE)
+        val target = windows.singleOrNull { it.id == targetId && it.type == WindowType.APPLICATION } ?: return unavailable(ManualDisplayDetail.TARGET_WINDOW_UNAVAILABLE)
+        if (overlay.layer <= target.layer) return unavailable(ManualDisplayDetail.OVERLAY_LAYER)
+        if (windows.any { it.type == WindowType.INPUT_METHOD ||
                 (it.type == WindowType.ACCESSIBILITY_OVERLAY && it.id != nativeOverlayId) ||
-                ((it.active || it.focused) && it.id != targetId && it.id != nativeOverlayId) }) return null
-        if (!(target.active || overlay.active) || !(target.focused || overlay.focused)) return null
+                ((it.active || it.focused) && it.id != targetId && it.id != nativeOverlayId) }) return unavailable(ManualDisplayDetail.COMPETING_WINDOW)
+        if (!(target.active || overlay.active) || !(target.focused || overlay.focused)) return unavailable(ManualDisplayDetail.ACTIVE_OR_FOCUS_UNCONFIRMED)
         return target
     }
-    fun assess(original: PopupSnapshot, fresh: F9Scene, nativeOverlayId: Int): ManualDisplayVerdict {
-        if (original.completeness != SnapshotCompleteness.COMPLETE || !fresh.complete) return ManualDisplayVerdict.UNAVAILABLE
-        val current = target(fresh.windows, original.token.windowId, nativeOverlayId) ?: return ManualDisplayVerdict.UNAVAILABLE
+    fun assess(original: PopupSnapshot, fresh: F9Scene, nativeOverlayId: Int, probe: ManualDisplayProbe? = null): ManualDisplayVerdict {
+        probe?.point = ManualDisplayPoint.COMPARISON
+        fun reject(detail: ManualDisplayDetail, verdict: ManualDisplayVerdict = ManualDisplayVerdict.UNAVAILABLE): ManualDisplayVerdict {
+            probe?.reject(detail); return verdict
+        }
+        if (original.completeness != SnapshotCompleteness.COMPLETE || !fresh.complete) return reject(ManualDisplayDetail.INCOMPLETE)
+        val current = target(fresh.windows, original.token.windowId, nativeOverlayId, probe) ?: return ManualDisplayVerdict.UNAVAILABLE
         if (!F9AutoCloser.contains(fresh.screen, current.bounds) || current.bounds == fresh.screen ||
             fresh.nodes.isEmpty() || fresh.nodes.any { !F9AutoCloser.contains(fresh.screen, it.bounds) })
-            return ManualDisplayVerdict.UNAVAILABLE
-        if (original.windows.any { it.id == nativeOverlayId } || fresh.packageName != original.token.packageName ||
-            fresh.windowId != original.token.windowId || fresh.screen != original.screenBounds || fresh.nodes != original.nodes)
-            return ManualDisplayVerdict.CHANGED
-        val expected = original.windows.singleOrNull { it.id == original.token.windowId } ?: return ManualDisplayVerdict.UNAVAILABLE
+            return reject(ManualDisplayDetail.INVALID_GEOMETRY)
+        if (original.windows.any { it.id == nativeOverlayId }) return reject(ManualDisplayDetail.WINDOW_SET_CHANGED, ManualDisplayVerdict.CHANGED)
+        if (fresh.packageName != original.token.packageName) return reject(ManualDisplayDetail.PACKAGE_CHANGED, ManualDisplayVerdict.CHANGED)
+        if (fresh.windowId != original.token.windowId) return reject(ManualDisplayDetail.WINDOW_CHANGED, ManualDisplayVerdict.CHANGED)
+        if (fresh.screen != original.screenBounds) return reject(ManualDisplayDetail.FRAME_CHANGED, ManualDisplayVerdict.CHANGED)
+        if (fresh.nodes != original.nodes) return reject(ManualDisplayDetail.NODES_CHANGED, ManualDisplayVerdict.CHANGED)
+        val expected = original.windows.singleOrNull { it.id == original.token.windowId } ?: return reject(ManualDisplayDetail.ORIGINAL_WINDOW_UNAVAILABLE)
         // C alone may own active/input focus. Only those flags on the SAME application window
         // may differ; bounds/type/layer/other windows and the entire target tree must agree.
         val withoutC = fresh.windows.filter { it.id != nativeOverlayId }.map {
             if (it.id == current.id) it.copy(active = expected.active, focused = expected.focused) else it
         }
-        if (withoutC.toSet() != original.windows.toSet()) return ManualDisplayVerdict.CHANGED
+        if (withoutC.toSet() != original.windows.toSet()) return reject(ManualDisplayDetail.WINDOW_SET_CHANGED, ManualDisplayVerdict.CHANGED)
         val content = fresh.nodes.flatMap { listOfNotNull(it.text, it.contentDescription) }.joinToString("\n")
-        if (F9ContentSafety.protectedPackage(fresh.packageName) || F9ContentSafety.blocked(content)) return ManualDisplayVerdict.UNAVAILABLE
+        if (F9ContentSafety.protectedPackage(fresh.packageName) || F9ContentSafety.blocked(content)) return reject(ManualDisplayDetail.PROTECTED_CONTENT)
         return ManualDisplayVerdict.SAME
     }
 }

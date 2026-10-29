@@ -30,7 +30,7 @@ internal class F9ServiceConnection(
     private val ui = UiVoicePreferences.get(service)
     private val clock = F9Clock(SystemClock::uptimeMillis)
     private val raw = F9CollectedSource(clock::nowMillis)
-    private val screen = AndroidF9ScreenPort(service) { app ->
+    private val screen = AndroidF9ScreenPort(service, onScanReport = { trace?.f9Read(it) }) { app ->
         val a = core.currentSettings()
         connected() && a.consentGranted && !a.paused && app in a.allowedPackages && app !in ui.current().helpAppsExcluded
     }

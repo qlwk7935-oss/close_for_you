@@ -15,6 +15,21 @@ import org.junit.Test
 /** Same A source → real B wiring/policy → per-request F9 bridge as production. Fake screen only. */
 @OptIn(ExperimentalCoroutinesApi::class)
 class F9ServiceSessionTest {
+    @Test fun manualReadsArePurposeBoundWithoutChangingBApprovalOrOneClick() = runTest {
+        val r = Rig(this, false); r.publish()
+        val analysis = r.session.wiring.extractor.extract(r.snapshot)
+        val result = r.session.executeUser(r.snapshot, analysis, UserChoice(r.snapshot.token, ChoiceKind.CLOSE_ONCE,
+            analysis.closeCandidates.single().id, true), r.detection()) { true }
+        assertTrue(result.attempted); assertEquals(1, r.f.clicks)
+        assertEquals(listOf(F9ReadPurpose.MANUAL_ELIGIBILITY, F9ReadPurpose.PRE_CLICK, F9ReadPurpose.POST_CLICK), r.readPurposes)
+    }
+    @Test fun automaticAndPageReadsCannotBeRelabeledAsManualOrDisplay() = runTest {
+        val r = Rig(this)
+        r.session.observePage(); assertEquals(listOf(F9ReadPurpose.PAGE), r.readPurposes); r.readPurposes.clear()
+        val result = r.session.handle(r.publish())
+        assertTrue(result.result!!.closedConfirmed); assertEquals(1, r.f.clicks)
+        assertEquals(listOf(F9ReadPurpose.AUTO_ELIGIBILITY, F9ReadPurpose.PRE_CLICK, F9ReadPurpose.POST_CLICK), r.readPurposes)
+    }
     @Test fun pr59LabeledImageButtonAndClickableTextViewRequireRealBManualApprovalAndPressOnce() = runTest {
         for (widget in listOf("android.widget.ImageButton", "android.widget.TextView")) {
             val r = Rig(this, false)
@@ -192,8 +207,16 @@ class F9ServiceSessionTest {
         var factories = 0
         var decisions = 0
         var afterDecision: () -> Unit = {}
+        val readPurposes = mutableListOf<F9ReadPurpose>()
+        private val diagnosticPort = object : F9ScreenPort {
+            override fun read(checkpoint: () -> Unit) = f.port.read(checkpoint)
+            override fun readFor(purpose: F9ReadPurpose, checkpoint: () -> Unit): F9Scene? {
+                readPurposes += purpose; return f.port.read(checkpoint)
+            }
+            override fun press(reference: F9Reference, accept: (F9Scene) -> Boolean) = f.port.press(reference, accept)
+        }
         val policy = DecisionActionPolicy(allowAutoSkip = false, nowUptimeMillis = { f.now })
-        val session = F9ServiceSession(raw, f.port, F9Clock { f.now }, { currentAccess }, { cleanup.ready }, reports::add,
+        val session = F9ServiceSession(raw, diagnosticPort, F9Clock { f.now }, { currentAccess }, { cleanup.ready }, reports::add,
             { enabled }, policyFactory = { clock ->
                 factories++; assertEquals(f.now, clock())
                 object : ActionPolicy by policy {

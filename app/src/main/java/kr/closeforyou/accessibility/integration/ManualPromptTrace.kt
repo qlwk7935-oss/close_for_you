@@ -1,6 +1,7 @@
 package kr.closeforyou.accessibility.integration
 
 import kr.closeforyou.accessibility.diagnosticWrite
+import kr.closeforyou.accessibility.action.F9ReadCode
 
 internal enum class ManualPromptPoint {
     OFFERED, OFFER_REJECTED, FOCUS_REVIEW, REVIEW_REJECTED, REVIEW_REQUESTED, REVIEW_ADMISSION, ADMISSION_REQUESTED, ADMISSION_ACCEPTED, ADMISSION_REJECTED,
@@ -31,6 +32,7 @@ internal class ManualPromptTrace(private val actionSink: (Long, ManualActionCode
     private val speechSink: (Long, ManualSpeechState) -> Unit = { _, _ -> },
     private val retirementSink: (Long, ManualRetirementCode) -> Unit = { _, _ -> },
     private val displayReviewSink: (Long, ManualDisplayReviewCode) -> Unit = { _, _ -> },
+    private val readSink: (Long, F9ReadCode) -> Unit = { _, _ -> },
     cleanupSink: (Long, ManualCleanupCode) -> Unit = { _, _ -> },
     private val sink: (Long, ManualPromptPoint, ManualPromptCause) -> Unit) {
     private var attempt = 0L
@@ -40,8 +42,9 @@ internal class ManualPromptTrace(private val actionSink: (Long, ManualActionCode
     private var speechCodes = mutableSetOf<ManualSpeechState>()
     private val retirementCodes = mutableSetOf<ManualRetirementCode>()
     private val displayReviewCodes = mutableSetOf<ManualDisplayReviewCode>()
+    private val readCodes = mutableSetOf<F9ReadCode>()
     val cleanup = ManualCleanupTrace { code -> cleanupSink(attempt, code) }
-    fun begin() { attempt = if (attempt == Long.MAX_VALUE) 1 else attempt + 1; recorded.clear(); ownership.clear(); eventCodes.clear(); retirementCodes.clear(); displayReviewCodes.clear(); speechCodes = mutableSetOf(); record(ManualPromptPoint.OFFERED) }
+    fun begin() { attempt = if (attempt == Long.MAX_VALUE) 1 else attempt + 1; recorded.clear(); ownership.clear(); eventCodes.clear(); retirementCodes.clear(); displayReviewCodes.clear(); readCodes.clear(); speechCodes = mutableSetOf(); record(ManualPromptPoint.OFFERED) }
     fun record(point: ManualPromptPoint, cause: ManualPromptCause = ManualPromptCause.NONE) {
         if (recorded.add(point to cause)) diagnosticWrite { sink(attempt, point, cause) }
     }
@@ -63,6 +66,9 @@ internal class ManualPromptTrace(private val actionSink: (Long, ManualActionCode
     }
     fun displayReview(code: ManualDisplayReviewCode) {
         if (displayReviewCodes.size < 16 && displayReviewCodes.add(code)) diagnosticWrite { displayReviewSink(attempt, code) }
+    }
+    fun f9Read(code: F9ReadCode) {
+        if (readCodes.size < 24 && readCodes.add(code)) diagnosticWrite { readSink(attempt, code) }
     }
     fun speechReporter(): (ManualSpeechState) -> Unit {
         val acceptedAttempt = attempt; val codes = speechCodes

@@ -67,6 +67,8 @@ internal data class F9Scene(val packageName: String, val windowId: Int, val page
 }
 internal interface F9ScreenPort {
     fun read(checkpoint: () -> Unit): F9Scene?
+    /** Same single read, with an A-local diagnostic purpose. Existing/fake ports keep their behavior. */
+    fun readFor(purpose: F9ReadPurpose, checkpoint: () -> Unit): F9Scene? = read(checkpoint)
     /** Reacquire the whole screen and target, call accept immediately before exactly one ACTION_CLICK.
      * No suspension, parent fallback, gestures or retries. Exceptions AFTER invocation are attempted.
      */
@@ -194,7 +196,7 @@ internal class F9AutoCloser(
         }
         return try {
             checkpoint()
-            val initial = screen.read(::checkpoint) ?: return blocked(F9Block.SCREEN_UNVERIFIED)
+            val initial = screen.readFor(F9ReadPurpose.PRE_CLICK, ::checkpoint) ?: return blocked(F9Block.SCREEN_UNVERIFIED)
             if (!matches(reference, initial)) return blocked(F9Block.SCREEN_UNVERIFIED)
             val approval = authorize(initial) ?: return blocked(F9Block.POLICY_DENIED)
             checkpoint()
@@ -220,7 +222,7 @@ internal class F9AutoCloser(
                     state.paused || !state.collectionConsent || !state.appAllowed ||
                     (reference.userChoice == null && !state.autoCloseConsent) ||
                     !state.cleanupReady || state.policyRevision != reference.policyRevision) break
-                val observed = screen.read(::checkpoint)
+                val observed = screen.readFor(F9ReadPurpose.POST_CLICK, ::checkpoint)
                 outcome = observedOutcome(initial, observed, reference.pageBeforePopup)
                 if (outcome == ClickOutcome.CLOSED_CONFIRMED || outcome == ClickOutcome.LEFT_APP) break
             }

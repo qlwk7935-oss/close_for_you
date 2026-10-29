@@ -17,10 +17,8 @@ import kr.closeforyou.accessibility.AndroidScreenGeometry
 import kr.closeforyou.accessibility.PrivacyPolicy
 import kr.closeforyou.accessibility.integration.ManualDisplayContinuity
 import kr.closeforyou.accessibility.integration.ManualDisplayVerdict
+import kr.closeforyou.accessibility.integration.ManualDisplayProbe
 import kr.closeforyou.core.model.*
-
-internal enum class F9ReadStage { MAIN, GEOMETRY, WINDOWS, ACTIVE_WINDOW, FOCUSED_WINDOW, OVERLAY_WINDOW,
-    APP_COUNT, BACKGROUND_WINDOW, WINDOW_BOUNDS, OCCLUSION, ROOT, TREE, ENDPOINT, TARGET, COMPLETE }
 
 /** A owns every acquired framework handle. Supports only an unambiguous separate application-window
  * popup over an unchanged page. Same-window/WebView/canvas/visual targets fail closed for now.
@@ -31,32 +29,43 @@ internal class AndroidF9ScreenPort(
     private val activeRoot: () -> AccessibilityNodeInfo?,
     private val windowSource: () -> List<AccessibilityWindowInfo>,
     private val onRejected: (F9ReadStage) -> Unit = {},
+    private val onScanReport: (F9ReadCode) -> Unit = {},
     private val packageAllowed: (String) -> Boolean,
 ) : F9ScreenPort {
-    constructor(service: AccessibilityService, packageAllowed: (String) -> Boolean) :
-        this(service, { service.rootInActiveWindow }, { service.windows }, packageAllowed = packageAllowed)
+    constructor(service: AccessibilityService, onScanReport: (F9ReadCode) -> Unit = {}, packageAllowed: (String) -> Boolean) :
+        this(service, { service.rootInActiveWindow }, { service.windows }, onScanReport = onScanReport, packageAllowed = packageAllowed)
     private val geometry = AndroidScreenGeometry(context)
     private val salt = ByteArray(32).also { SecureRandom().nextBytes(it) }
     private var healthy = true
 
     override fun read(checkpoint: () -> Unit): F9Scene? = scan(checkpoint, null) { scene, _ -> scene }.takeIf { healthy }
 
-    private class DisplayRead(val source: PopupSnapshot, val overlayId: Int)
+    override fun readFor(purpose: F9ReadPurpose, checkpoint: () -> Unit): F9Scene? =
+        scan(checkpoint, null, purpose = purpose) { scene, _ -> scene }.takeIf { healthy }
+
+    private class DisplayRead(val source: PopupSnapshot, val overlayId: Int, val probe: ManualDisplayProbe?)
 
     /** Read-only presentation continuity. This NEVER exposes a F9Scene or token, invokes consume
      * for an action, or changes the strict overlay rejection in read()/press(). Caller confirms
      * THIS native C generation/ownership before and after the entire bounded operation. */
-    fun verifyDisplayedPopup(source: PopupSnapshot, nativeOverlayId: Int, checkpoint: () -> Unit): ManualDisplayVerdict =
-        scan(checkpoint, null, DisplayRead(source, nativeOverlayId)) { scene, _ ->
-            ManualDisplayContinuity.assess(source, scene, nativeOverlayId)
-        }.takeIf { healthy } ?: ManualDisplayVerdict.UNAVAILABLE
+    fun verifyDisplayedPopup(source: PopupSnapshot, nativeOverlayId: Int, checkpoint: () -> Unit,
+        probe: ManualDisplayProbe? = null): ManualDisplayVerdict {
+        val verdict = scan(checkpoint, null, DisplayRead(source, nativeOverlayId, probe), F9ReadPurpose.DISPLAY_REVIEW) { scene, _ ->
+            ManualDisplayContinuity.assess(source, scene, nativeOverlayId, probe)
+        }
+        if (!healthy || verdict == null) {
+            probe?.screenUnavailable(resourceFailure = !healthy)
+            return ManualDisplayVerdict.UNAVAILABLE
+        }
+        return verdict
+    }
 
     override fun press(reference: F9Reference, accept: (F9Scene) -> Boolean): F9Press {
         var attempted = false
         var returned: Boolean? = null
         val once = AtomicBoolean()
         try {
-            scan({}, reference.candidate.nodePath) { scene, target ->
+            scan({}, reference.candidate.nodePath, purpose = F9ReadPurpose.PRESS) { scene, target ->
                 if (target != null && accept(scene) && once.compareAndSet(false, true)) {
                     // accept's cancellation/currentness/TTL checks are synchronous on this main thread.
                     attempted = true // Set BEFORE the framework call: even a throwing call may act.
@@ -70,70 +79,88 @@ internal class AndroidF9ScreenPort(
     }
 
     @Suppress("DEPRECATION")
-    private fun <T> scan(checkpoint: () -> Unit, targetPath: String?, display: DisplayRead? = null, consume: (F9Scene, AccessibilityNodeInfo?) -> T): T? {
-        check(Looper.myLooper() == Looper.getMainLooper()) { "F9_MAIN_REQUIRED" }
-        if (!healthy) return null
+    private fun <T> scan(checkpoint: () -> Unit, targetPath: String?, display: DisplayRead? = null,
+        purpose: F9ReadPurpose = F9ReadPurpose.UNSCOPED, consume: (F9Scene, AccessibilityNodeInfo?) -> T): T? {
+        val readTrace = F9ReadObservation(purpose, onScanReport)
+        if (Looper.myLooper() != Looper.getMainLooper()) {
+            readTrace.reject(F9ReadDetail.MAIN_THREAD_REQUIRED); readTrace.report()
+            check(false) { "F9_MAIN_REQUIRED" }
+        }
+        if (!healthy) { readTrace.reject(F9ReadDetail.READER_UNHEALTHY); readTrace.report(); return null }
         val started = SystemClock.uptimeMillis()
-        var stage = F9ReadStage.MAIN
+        fun reject(detail: F9ReadDetail): T? { readTrace.reject(detail); return null }
         var completed = false
         val nodes = mutableListOf<AccessibilityNodeInfo>()
         val ownedWindows = mutableListOf<AccessibilityWindowInfo>()
         val identities = IdentityHashMap<AccessibilityNodeInfo, Boolean>()
         fun tick() {
-            checkpoint()
-            check(SystemClock.uptimeMillis() - started < 100L) { "F9_F0_TIME_LIMIT" }
+            readTrace.checkpoint(checkpoint)
+            readTrace.require(SystemClock.uptimeMillis() - started < 100L, F9ReadDetail.TIME_LIMIT)
         }
         fun own(node: AccessibilityNodeInfo): AccessibilityNodeInfo {
-            check(identities.put(node, true) == null) { "F9_NODE_ALIAS" }
+            readTrace.require(identities.put(node, true) == null, F9ReadDetail.NODE_ALIAS)
             nodes += node
             return node
         }
-        try {
+        return readTrace.run(body = {
             tick()
-            stage = F9ReadStage.GEOMETRY
-            val frame = geometry.read().frame ?: return null
-            stage = F9ReadStage.WINDOWS
+            readTrace.stage = F9ReadStage.GEOMETRY
+            val frame = geometry.read().frame ?: return reject(F9ReadDetail.GEOMETRY_UNAVAILABLE)
+            readTrace.stage = F9ReadStage.WINDOWS
             val windows = windowSource(); ownedWindows += windows
-            check(windows.size in 1..32 && windows.all { it.displayId == 0 }) { "F9_WINDOW_SCOPE" }
-            stage = F9ReadStage.ACTIVE_WINDOW
+            readTrace.require(windows.size in 1..32, F9ReadDetail.WINDOW_COUNT)
+            readTrace.require(windows.all { it.displayId == 0 }, F9ReadDetail.NONDEFAULT_DISPLAY)
+            readTrace.stage = F9ReadStage.ACTIVE_WINDOW
             val active = if (display == null) {
-                windows.singleOrNull { it.isActive && it.type == AccessibilityWindowInfo.TYPE_APPLICATION } ?: return null
+                windows.singleOrNull { it.isActive && it.type == AccessibilityWindowInfo.TYPE_APPLICATION }
+                    ?: return reject(F9ReadDetail.ACTIVE_APPLICATION_UNCONFIRMED)
             } else {
-                val selected = ManualDisplayContinuity.target(windows.map(::window), display.source.token.windowId, display.overlayId)
-                    ?: return null
-                windows.singleOrNull { it.id == selected.id } ?: return null
+                val selected = ManualDisplayContinuity.target(windows.map { window(it, readTrace) }, display.source.token.windowId, display.overlayId, display.probe)
+                    ?: return reject(F9ReadDetail.DISPLAY_TARGET_UNCONFIRMED)
+                windows.singleOrNull { it.id == selected.id } ?: return reject(F9ReadDetail.DISPLAY_TARGET_UNCONFIRMED)
             }
-            stage = F9ReadStage.FOCUSED_WINDOW
-            if (display == null && !active.isFocused) return null
-            stage = F9ReadStage.OVERLAY_WINDOW
-            if (display == null && windows.any { it.type == AccessibilityWindowInfo.TYPE_ACCESSIBILITY_OVERLAY ||
-                    it.type == AccessibilityWindowInfo.TYPE_INPUT_METHOD || (it.id != active.id && (it.isActive || it.isFocused)) }) return null
-            stage = F9ReadStage.APP_COUNT
+            readTrace.stage = F9ReadStage.FOCUSED_WINDOW
+            if (display == null && !active.isFocused) return reject(F9ReadDetail.ACTIVE_NOT_FOCUSED)
+            readTrace.stage = F9ReadStage.OVERLAY_WINDOW
+            var conflict = F9ReadDetail.NONE
+            if (display == null && windows.any {
+                    when {
+                        it.type == AccessibilityWindowInfo.TYPE_ACCESSIBILITY_OVERLAY -> { conflict = F9ReadDetail.ACCESSIBILITY_OVERLAY_PRESENT; true }
+                        it.type == AccessibilityWindowInfo.TYPE_INPUT_METHOD -> { conflict = F9ReadDetail.INPUT_METHOD_PRESENT; true }
+                        it.id != active.id && (it.isActive || it.isFocused) -> { conflict = F9ReadDetail.OTHER_ACTIVE_OR_FOCUSED; true }
+                        else -> false
+                    }
+                }) return reject(conflict)
+            readTrace.stage = F9ReadStage.APP_COUNT
             val apps = windows.filter { it.type == AccessibilityWindowInfo.TYPE_APPLICATION }
-            if (apps.size !in 1..2) return null
-            stage = F9ReadStage.BACKGROUND_WINDOW
+            if (apps.size !in 1..2) return reject(F9ReadDetail.APPLICATION_COUNT)
+            readTrace.stage = F9ReadStage.BACKGROUND_WINDOW
             val base = if (apps.size == 2) apps.single { it.id != active.id } else active
-            if (base !== active && (base.layer >= active.layer || !F9AutoCloser.contains(rect(base), rect(active)))) return null
-            val activeBounds = rect(active)
-            stage = F9ReadStage.WINDOW_BOUNDS
-            if (!F9AutoCloser.contains(frame, activeBounds)) return null
-            stage = F9ReadStage.OCCLUSION
+            if (base !== active && base.layer >= active.layer) return reject(F9ReadDetail.BACKGROUND_LAYER)
+            if (base !== active && !F9AutoCloser.contains(rect(base, readTrace), rect(active, readTrace))) return reject(F9ReadDetail.BACKGROUND_BOUNDS)
+            val activeBounds = rect(active, readTrace)
+            readTrace.stage = F9ReadStage.WINDOW_BOUNDS
+            if (!F9AutoCloser.contains(frame, activeBounds)) return reject(F9ReadDetail.WINDOW_OUTSIDE_FRAME)
+            readTrace.stage = F9ReadStage.OCCLUSION
             if (windows.any { other ->
                     other.id != active.id && other.id != display?.overlayId && other.type != AccessibilityWindowInfo.TYPE_APPLICATION &&
-                        other.layer >= active.layer && overlaps(rect(other), activeBounds) &&
-                        !(targetPath == null && activeBounds == frame && passiveSystemBar(other, frame, ::own))
-                }) return null
-            stage = F9ReadStage.ROOT
-            val root = own((if (display == null) activeRoot() else active.root) ?: return null)
-            val packageName = root.packageName?.toString() ?: return null
-            if (root.windowId != active.id || (display != null && packageName != display.source.token.packageName)) return null
-            if (F9ContentSafety.protectedPackage(packageName) || !packageAllowed(packageName)) {
+                        other.layer >= active.layer && overlaps(rect(other, readTrace), activeBounds) &&
+                        !(targetPath == null && activeBounds == frame && passiveSystemBar(other, frame, ::own, readTrace))
+                }) return reject(F9ReadDetail.OCCLUDING_WINDOW)
+            readTrace.stage = F9ReadStage.ROOT
+            val root = own((if (display == null) activeRoot() else active.root) ?: return reject(F9ReadDetail.ROOT_UNAVAILABLE))
+            val packageName = root.packageName?.toString() ?: return reject(F9ReadDetail.ROOT_PACKAGE_UNAVAILABLE)
+            if (root.windowId != active.id) return reject(F9ReadDetail.ROOT_WINDOW_MISMATCH)
+            if (display != null && packageName != display.source.token.packageName) return reject(F9ReadDetail.ROOT_PACKAGE_MISMATCH)
+            var packageRejection = F9ReadDetail.NONE
+            if (F9ContentSafety.protectedPackage(packageName).also { if (it) packageRejection = F9ReadDetail.PACKAGE_PROTECTED } ||
+                (!packageAllowed(packageName)).also { if (it) packageRejection = F9ReadDetail.APP_NOT_ALLOWED }) {
                 // Identity-only departure evidence. Never read protected/unconsented app text.
                 tick()
-                return consume(F9Scene(packageName, active.id, base.id, frame, windows.map(::window),
-                    emptyList(), emptySet(), complete = false), null).also { completed = true }
+                return consume(F9Scene(packageName, active.id, base.id, frame, windows.map { window(it, readTrace) },
+                    emptyList(), emptySet(), complete = false), null).also { completed = true; readTrace.reject(packageRejection); readTrace.complete(identityOnly = true) }
             }
-            val dtos = windows.map(::window)
+            val dtos = windows.map { window(it, readTrace) }
             var target: AccessibilityNodeInfo? = null
             var textCount = 0
             var nodeCount = 0
@@ -142,26 +169,29 @@ internal class AndroidF9ScreenPort(
                 val visible = mutableSetOf<String>()
                 fun visit(node: AccessibilityNodeInfo, path: String, depth: Int) {
                     tick()
-                    check(++nodeCount <= 1_200 && depth <= 60 && node.packageName?.toString() == packageName &&
-                        node.windowId == start.windowId) { "F9_TREE_SCOPE" }
-                    check(PrivacyPolicy.fieldBlock(node.isPassword, node.isEditable, node.inputType) == null) { "F9_PROTECTED_FIELD" }
+                    readTrace.require(++nodeCount <= 1_200, F9ReadDetail.NODE_LIMIT)
+                    readTrace.require(depth <= 60, F9ReadDetail.DEPTH_LIMIT)
+                    readTrace.require(node.packageName?.toString() == packageName, F9ReadDetail.NODE_PACKAGE_MISMATCH)
+                    readTrace.require(node.windowId == start.windowId, F9ReadDetail.NODE_WINDOW_MISMATCH)
+                    readTrace.require(PrivacyPolicy.fieldBlock(node.isPassword, node.isEditable, node.inputType) == null, F9ReadDetail.PROTECTED_FIELD)
                     fun freeze(value: CharSequence?): String? {
                         tick()
                         if (value == null) return null
                         val size = value.length
-                        check(size <= 4_096) { "F9_TEXT_LIMIT" }
-                        textCount += size; check(textCount <= 32_768) { "F9_TEXT_LIMIT" }
+                        readTrace.require(size <= 4_096, F9ReadDetail.TEXT_FIELD_LIMIT)
+                        textCount += size; readTrace.require(textCount <= 32_768, F9ReadDetail.TEXT_TOTAL_LIMIT)
                         val frozen = value.toString()
-                        check(frozen.length == size && !F9ContentSafety.blocked(frozen)) { "F9_PROTECTED_TEXT" }
+                        readTrace.require(frozen.length == size, F9ReadDetail.TEXT_CHANGED)
+                        readTrace.require(!F9ContentSafety.blocked(frozen), F9ReadDetail.PROTECTED_TEXT)
                         return frozen
                     }
                     val text = freeze(node.text); val description = freeze(node.contentDescription)
                     val viewId = freeze(node.viewIdResourceName); val className = freeze(node.className)
                     listOf(node.error, node.hintText, node.paneTitle, node.tooltipText, node.stateDescription).forEach(::freeze)
                     val actions = node.actionList
-                    check(actions.size <= 64) { "F9_ACTION_LIMIT" }
+                    readTrace.require(actions.size <= 64, F9ReadDetail.ACTION_LIMIT)
                     val descriptor = NodeSnapshot(path, viewId, className, text, description, node.isClickable,
-                        node.isEnabled, rect(node), buildSet {
+                        node.isEnabled, rect(node, readTrace), buildSet {
                             if (actions.any { it.id == AccessibilityNodeInfo.ACTION_CLICK }) add(NodeAction.CLICK)
                             if (actions.any { it.id == AccessibilityNodeInfo.ACTION_DISMISS }) add(NodeAction.DISMISS)
                         }.toPersistentSet())
@@ -169,19 +199,23 @@ internal class AndroidF9ScreenPort(
                     if (node.isVisibleToUser) visible += path
                     if (captureTarget && path == targetPath) target = node
                     val count = node.childCount
-                    check(count in 0..1_200) { "F9_CHILD_LIMIT" }
-                    for (i in 0 until count) visit(own(node.getChild(i) ?: error("F9_MISSING_CHILD")), "$path/$i", depth + 1)
-                    check(count == node.childCount) { "F9_CHANGED_CHILDREN" }
+                    readTrace.require(count in 0..1_200, F9ReadDetail.CHILD_LIMIT)
+                    for (i in 0 until count) {
+                        val child = node.getChild(i)
+                        readTrace.require(child != null, F9ReadDetail.CHILD_UNAVAILABLE)
+                        visit(own(requireNotNull(child)), "$path/$i", depth + 1)
+                    }
+                    readTrace.require(count == node.childCount, F9ReadDetail.CHILDREN_CHANGED)
                     tick()
                 }
                 visit(start, "0", 0)
                 return result to visible
             }
-            stage = F9ReadStage.TREE
+            readTrace.stage = F9ReadStage.TREE
             val (descriptors, visible) = tree(root, true)
             val baseNodes = if (base === active) descriptors else {
-                val baseRoot = own(base.root ?: return null)
-                if (baseRoot.windowId != base.id) return null
+                val baseRoot = own(base.root ?: return reject(F9ReadDetail.BACKGROUND_ROOT_UNAVAILABLE))
+                if (baseRoot.windowId != base.id) return reject(F9ReadDetail.BACKGROUND_ROOT_WINDOW_MISMATCH)
                 tree(baseRoot, false).first
             }
             val digest = MessageDigest.getInstance("SHA-256").apply { update(salt) }
@@ -194,56 +228,74 @@ internal class AndroidF9ScreenPort(
                 }
             }
             val pageDigest = digest.digest().joinToString("") { "%02x".format(it) }
-            stage = F9ReadStage.ENDPOINT
+            readTrace.stage = F9ReadStage.ENDPOINT
             val currentWindows = windowSource(); ownedWindows += currentWindows
-            if (currentWindows.map(::window) != dtos || geometry.read().frame != frame) return null
-            val endRoot = (if (display == null) activeRoot() else active.root) ?: return null
+            if (currentWindows.map { window(it, readTrace) } != dtos) return reject(F9ReadDetail.END_WINDOWS_CHANGED)
+            val endFrame = geometry.read().frame
+            if (endFrame != frame) return reject(if (endFrame == null) F9ReadDetail.END_FRAME_UNAVAILABLE else F9ReadDetail.END_FRAME_CHANGED)
+            val endRoot = (if (display == null) activeRoot() else active.root) ?: return reject(F9ReadDetail.END_ROOT_UNAVAILABLE)
             if (identities[endRoot] == null) own(endRoot)
-            if (endRoot.windowId != active.id || endRoot.packageName?.toString() != packageName) return null
+            if (endRoot.windowId != active.id) return reject(F9ReadDetail.END_ROOT_WINDOW_MISMATCH)
+            if (endRoot.packageName?.toString() != packageName) return reject(F9ReadDetail.END_ROOT_PACKAGE_MISMATCH)
             // refresh is supplementary, never the whole-screen safety proof.
-            stage = F9ReadStage.TARGET
+            readTrace.stage = F9ReadStage.TARGET
             target?.let { n ->
                 val expected = descriptors.single { it.path == targetPath }
-                if (!n.refresh() || n.packageName?.toString() != packageName || n.windowId != active.id ||
-                    n.text?.toString() != expected.text || n.contentDescription?.toString() != expected.contentDescription ||
-                    n.viewIdResourceName != expected.viewId || n.className?.toString() != expected.className ||
-                    rect(n) != expected.bounds || !n.isVisibleToUser || !n.isEnabled || !n.isClickable ||
-                    n.isPassword || n.isEditable || n.inputType != 0 ||
-                    n.actionList.none { it.id == AccessibilityNodeInfo.ACTION_CLICK }) return null
+                val mismatch = when {
+                    !n.refresh() -> F9ReadDetail.TARGET_REFRESH_FAILED
+                    n.packageName?.toString() != packageName -> F9ReadDetail.TARGET_PACKAGE_MISMATCH
+                    n.windowId != active.id -> F9ReadDetail.TARGET_WINDOW_MISMATCH
+                    n.text?.toString() != expected.text -> F9ReadDetail.TARGET_TEXT_CHANGED
+                    n.contentDescription?.toString() != expected.contentDescription -> F9ReadDetail.TARGET_DESCRIPTION_CHANGED
+                    n.viewIdResourceName != expected.viewId -> F9ReadDetail.TARGET_VIEW_ID_CHANGED
+                    n.className?.toString() != expected.className -> F9ReadDetail.TARGET_CLASS_CHANGED
+                    rect(n, readTrace) != expected.bounds -> F9ReadDetail.TARGET_BOUNDS_CHANGED
+                    !n.isVisibleToUser -> F9ReadDetail.TARGET_NOT_VISIBLE
+                    !n.isEnabled -> F9ReadDetail.TARGET_DISABLED
+                    !n.isClickable -> F9ReadDetail.TARGET_NOT_CLICKABLE
+                    n.isPassword || n.isEditable || n.inputType != 0 -> F9ReadDetail.TARGET_PROTECTED_FIELD
+                    n.actionList.none { it.id == AccessibilityNodeInfo.ACTION_CLICK } -> F9ReadDetail.TARGET_CLICK_UNAVAILABLE
+                    else -> null
+                }
+                if (mismatch != null) return reject(mismatch)
                 val refreshedActions = n.actionList
-                if (refreshedActions.size > 64 || buildSet {
+                if (refreshedActions.size > 64) return reject(F9ReadDetail.ACTION_LIMIT)
+                if (buildSet {
                         if (refreshedActions.any { it.id == AccessibilityNodeInfo.ACTION_CLICK }) add(NodeAction.CLICK)
                         if (refreshedActions.any { it.id == AccessibilityNodeInfo.ACTION_DISMISS }) add(NodeAction.DISMISS)
-                    } != expected.actions || listOf(n.error, n.hintText, n.paneTitle, n.tooltipText, n.stateDescription)
-                        .filterNotNull().any { it.length > 4_096 || F9ContentSafety.blocked(it) }) return null
+                    } != expected.actions) return reject(F9ReadDetail.TARGET_ACTIONS_CHANGED)
+                if (listOf(n.error, n.hintText, n.paneTitle, n.tooltipText, n.stateDescription)
+                        .filterNotNull().any { it.length > 4_096 || F9ContentSafety.blocked(it) }) return reject(F9ReadDetail.TARGET_METADATA_UNSAFE)
             }
             tick()
-            stage = F9ReadStage.COMPLETE
+            readTrace.stage = F9ReadStage.COMPLETE
             return consume(F9Scene(packageName, active.id, base.id, frame, dtos, descriptors, visible, true, pageDigest), target)
-                .also { completed = true }
-        } catch (cancelled: CancellationException) { throw cancelled }
-        catch (_: Exception) { return null }
-        finally {
-            nodes.asReversed().forEach { try { it.recycle() } catch (_: Exception) { healthy = false } }
+                .also { completed = true; readTrace.complete() }
+        }, cleanup = {
+            nodes.asReversed().forEach { if (!readTrace.release(node = true) { it.recycle() }) healthy = false }
             val seen = IdentityHashMap<AccessibilityWindowInfo, Boolean>()
-            ownedWindows.forEach { if (seen.put(it, true) == null) try { it.recycle() } catch (_: Exception) { healthy = false } }
-            if (!completed) try { onRejected(stage) } catch (_: Exception) { /* Diagnostic code only. */ }
-        }
+            ownedWindows.forEach { if (seen.put(it, true) == null && !readTrace.release(node = false) { it.recycle() }) healthy = false }
+            if (!completed) try { onRejected(readTrace.stage) } catch (_: Exception) { /* Diagnostic code only. */ }
+        })
     }
-    private fun rect(node: AccessibilityNodeInfo) = Rect().also(node::getBoundsInScreen).let { ScreenBounds(it.left, it.top, it.right, it.bottom) }
-    private fun rect(window: AccessibilityWindowInfo) = Rect().also(window::getBoundsInScreen).let { ScreenBounds(it.left, it.top, it.right, it.bottom) }
-    private fun window(w: AccessibilityWindowInfo) = WindowSnapshot(w.id, when (w.type) {
+    private fun bounds(r: Rect, trace: F9ReadObservation): ScreenBounds {
+        trace.require(r.right >= r.left && r.bottom >= r.top, F9ReadDetail.REVERSED_BOUNDS)
+        return ScreenBounds(r.left, r.top, r.right, r.bottom)
+    }
+    private fun rect(node: AccessibilityNodeInfo, trace: F9ReadObservation) = bounds(Rect().also(node::getBoundsInScreen), trace)
+    private fun rect(window: AccessibilityWindowInfo, trace: F9ReadObservation) = bounds(Rect().also(window::getBoundsInScreen), trace)
+    private fun window(w: AccessibilityWindowInfo, trace: F9ReadObservation) = WindowSnapshot(w.id, when (w.type) {
         AccessibilityWindowInfo.TYPE_APPLICATION -> WindowType.APPLICATION
         AccessibilityWindowInfo.TYPE_ACCESSIBILITY_OVERLAY -> WindowType.ACCESSIBILITY_OVERLAY
         AccessibilityWindowInfo.TYPE_INPUT_METHOD -> WindowType.INPUT_METHOD
         AccessibilityWindowInfo.TYPE_SYSTEM -> WindowType.SYSTEM
         else -> WindowType.OTHER
-    }, rect(w), w.isActive, w.isFocused, w.layer)
+    }, rect(w, trace), w.isActive, w.isFocused, w.layer)
     private fun overlaps(a: ScreenBounds, b: ScreenBounds) = a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom
     private fun passiveSystemBar(window: AccessibilityWindowInfo, frame: ScreenBounds,
-        own: (AccessibilityNodeInfo) -> AccessibilityNodeInfo): Boolean {
+        own: (AccessibilityNodeInfo) -> AccessibilityNodeInfo, trace: F9ReadObservation): Boolean {
         if (window.type != AccessibilityWindowInfo.TYPE_SYSTEM || window.isActive || window.isFocused) return false
-        val bar = rect(window)
+        val bar = rect(window, trace)
         if (bar.left != frame.left || bar.right != frame.right || bar.height !in 1..(frame.height / 8) ||
             (bar.top != frame.top && bar.bottom != frame.bottom)) return false
         // API 37 exposes null titles for SystemUI bars. Verify owner metadata and narrow edge
