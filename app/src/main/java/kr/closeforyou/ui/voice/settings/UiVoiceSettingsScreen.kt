@@ -179,7 +179,7 @@ fun UiVoiceSettingsRoute(
         onChangeHelpApps = { editingHelpApps = true },
         serviceOn = serviceOn,
         serviceOpenFailed = serviceOpenFailed,
-        onOpenServiceSettings = { serviceOpenFailed = !AndroidCoreSetupStatus.openServiceSettings(context) },
+        onOpenServiceSettings = rememberServiceTurnOn(serviceOn) { serviceOpenFailed = true },
         onOpenCoreSettings = onOpenCoreSettings,
         onRestartSetup = preferences::restartOnboarding,
     )
@@ -247,9 +247,10 @@ fun UiVoiceSettingsScreen(
             // Polite: back from system settings, TalkBack reads the new state once; focus stays.
             Box(Modifier.semantics(mergeDescendants = true) { liveRegion = LiveRegionMode.Polite }) { ServiceStateBox(serviceOn) }
             if (!serviceOn) {
-                HelpText(stringResource(R.string.ui_setup_service_how))
+                val appName = stringResource(R.string.app_name)
+                HelpText(stringResource(R.string.ui_setup_service_how, appName))
                 BrandButton(stringResource(R.string.ui_setup_service_turn_on), onOpenServiceSettings)
-                if (serviceOpenFailed) BodyText(stringResource(R.string.ui_setup_service_open_failed))
+                if (serviceOpenFailed) BodyText(stringResource(R.string.ui_setup_service_open_failed, appName))
             }
             HorizontalDivider()
         }

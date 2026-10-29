@@ -134,8 +134,6 @@ fun UiVoiceOnboardingScreen(
     modifier: Modifier = Modifier,
     /** Null = load the launcher apps; previews pass a fixed catalog. */
     catalogOverride: AppCatalog? = null,
-    /** Opens system accessibility settings; false = could not open. */
-    openServiceSettings: () -> Boolean = defaultOpenServiceSettings(),
 ) {
     var step by rememberSaveable { mutableStateOf(initialDraft.step) }
     var preset by rememberSaveable { mutableStateOf(initialDraft.preset) }
@@ -208,7 +206,7 @@ fun UiVoiceOnboardingScreen(
             if (step != OnboardingStep.WELCOME) StepHeader(step)
             when (step) {
                 OnboardingStep.WELCOME -> WelcomeStep()
-                OnboardingStep.SERVICE -> ServiceStep(serviceOn, openServiceSettings)
+                OnboardingStep.SERVICE -> ServiceStep(serviceOn)
                 OnboardingStep.HANDLING -> HandlingStep(
                     preset = preset,
                     autoCloseConsent = autoCloseConsent,
@@ -250,12 +248,6 @@ fun UiVoiceOnboardingScreen(
             }
         }
     }
-}
-
-@Composable
-private fun defaultOpenServiceSettings(): () -> Boolean {
-    val context = LocalContext.current
-    return { AndroidCoreSetupStatus.openServiceSettings(context) }
 }
 
 @Composable
@@ -309,8 +301,11 @@ private fun ColumnScope.WelcomeStep() {
 }
 
 @Composable
-private fun ServiceStep(serviceOn: Boolean, openServiceSettings: () -> Boolean) {
+private fun ServiceStep(serviceOn: Boolean) {
     var openFailed by rememberSaveable { mutableStateOf(false) }
+    // [서비스 켜기] first explains where to go (dialog + speech), then opens settings at our service.
+    val turnOn = rememberServiceTurnOn(serviceOn) { openFailed = true }
+    val appName = stringResource(R.string.app_name)
     StepTitle(stringResource(R.string.ui_setup_service_title))
     BodyText(stringResource(R.string.ui_setup_service_intro))
     InfoCard(
@@ -324,11 +319,11 @@ private fun ServiceStep(serviceOn: Boolean, openServiceSettings: () -> Boolean) 
     // Polite: when the person comes back from settings, TalkBack reads "켜짐" once; focus stays.
     Box(Modifier.semantics(mergeDescendants = true) { liveRegion = LiveRegionMode.Polite }) { ServiceStateBox(serviceOn) }
     if (!serviceOn) {
-        HelpText(stringResource(R.string.ui_setup_service_how))
-        BrandButton(stringResource(R.string.ui_setup_service_turn_on), { openFailed = !openServiceSettings() })
+        HelpText(stringResource(R.string.ui_setup_service_how, appName))
+        BrandButton(stringResource(R.string.ui_setup_service_turn_on), turnOn)
         if (openFailed) {
             Text(
-                stringResource(R.string.ui_setup_service_open_failed),
+                stringResource(R.string.ui_setup_service_open_failed, appName),
                 fontSize = UiType.body,
                 modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
             )
@@ -421,7 +416,6 @@ private fun OnboardingWelcomePreview() {
             status = CoreSetupStatus.NONE,
             onFinish = {},
             catalogOverride = previewCatalog,
-            openServiceSettings = { true },
         )
     }
 }
@@ -440,7 +434,6 @@ private fun OnboardingDonePreview() {
             status = CoreSetupStatus.NONE,
             onFinish = {},
             catalogOverride = previewCatalog,
-            openServiceSettings = { true },
         )
     }
 }

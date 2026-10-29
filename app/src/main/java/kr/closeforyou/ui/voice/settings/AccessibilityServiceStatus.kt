@@ -4,6 +4,7 @@ import android.accessibilityservice.AccessibilityServiceInfo
 import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.Intent
+import android.os.Bundle
 import android.provider.Settings
 import android.view.accessibility.AccessibilityManager
 import kr.closeforyou.app.CorePreferences
@@ -58,16 +59,41 @@ class AndroidCoreSetupStatus(context: Context) : CoreSetupStatus {
         const val A_SERVICE_CLASS = "kr.closeforyou.accessibility.CloseForYouAccessibilityService"
 
         /**
-         * The system's accessibility settings, where the person turns the service on. False when no
-         * screen handles it (some devices); the caller then says where to find it by hand.
+         * The system's accessibility settings, asking the Settings app to scroll to and highlight
+         * our service ([ServiceSettingsHighlight]). False when no screen handles it (some devices);
+         * the caller then says where to find it by hand.
          */
         fun openServiceSettings(context: Context): Boolean = try {
-            context.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+            val intent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
+            val key = ServiceSettingsHighlight.key(ServiceComponent(context.packageName, A_SERVICE_CLASS))
+            intent.putExtra(ServiceSettingsHighlight.EXTRA_FRAGMENT_ARG_KEY, key)
+            intent.putExtra(ServiceSettingsHighlight.EXTRA_SHOW_FRAGMENT_ARGS, Bundle().apply {
+                putString(ServiceSettingsHighlight.EXTRA_FRAGMENT_ARG_KEY, key)
+            })
+            context.startActivity(intent)
             true
         } catch (_: ActivityNotFoundException) {
             false
         }
     }
+}
+
+/**
+ * Asks the Settings app to scroll to our service in the accessibility list. Not a public API:
+ * AOSP Settings reads `:settings:fragment_args_key` (and the same key inside
+ * `:settings:show_fragment_args`) and highlights the preference with that key, which on the
+ * accessibility page is the service's flattened component name ("pkg/full.Class"). Other Settings
+ * apps ignore unknown extras and just show the list, so the worst case is today's behavior.
+ * `Settings.ACTION_ACCESSIBILITY_DETAILS_SETTINGS` (straight to the service page) is `@SystemApi
+ * @hide` in SDK 36 and needs a system permission, so a normal app does not use it.
+ * Which devices honor the highlight (LG Android 12, Samsung One UI) is unverified.
+ */
+object ServiceSettingsHighlight {
+    const val EXTRA_FRAGMENT_ARG_KEY = ":settings:fragment_args_key"
+    const val EXTRA_SHOW_FRAGMENT_ARGS = ":settings:show_fragment_args"
+
+    /** ComponentName.flattenToString form (never the short ".Class" form). */
+    fun key(service: ServiceComponent): String = "${service.packageName}/${service.className}"
 }
 
 /** A service's package and class, without android.content.ComponentName so it is JVM-testable. */

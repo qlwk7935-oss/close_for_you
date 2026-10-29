@@ -239,3 +239,48 @@ class OnboardingTextTest {
             }
     }
 }
+
+class ServiceTurnOnGuideTest {
+    @Test fun highlightKeyIsTheFullFlattenedComponent() {
+        val key = ServiceSettingsHighlight.key(ServiceComponent("kr.closeforyou", AndroidCoreSetupStatus.A_SERVICE_CLASS))
+        assertEquals("kr.closeforyou/kr.closeforyou.accessibility.CloseForYouAccessibilityService", key)
+        assertEquals(":settings:fragment_args_key", ServiceSettingsHighlight.EXTRA_FRAGMENT_ARG_KEY)
+        assertEquals(":settings:show_fragment_args", ServiceSettingsHighlight.EXTRA_SHOW_FRAGMENT_ARGS)
+    }
+
+    @Test fun guideIsSpokenAtOnceWithoutTalkBack() {
+        assertEquals(GuideSpeech.NOW, ServiceGuidePolicy.guide(touchExplorationOn = false, takeoverOn = false))
+        assertEquals(GuideSpeech.NOW, ServiceGuidePolicy.guide(touchExplorationOn = false, takeoverOn = true))
+    }
+
+    @Test fun withTalkBackOurSpeechFollowsTheTakeoverSetting() {
+        assertEquals(GuideSpeech.AFTER_TALKBACK, ServiceGuidePolicy.guide(touchExplorationOn = true, takeoverOn = true))
+        assertEquals(GuideSpeech.NONE, ServiceGuidePolicy.guide(touchExplorationOn = true, takeoverOn = false))
+        assertTrue(ServiceGuidePolicy.AFTER_TALKBACK_MILLIS > 0)
+    }
+
+    @Test fun turnedOnIsSpokenOnlyWithoutTalkBack() {
+        assertEquals(GuideSpeech.NOW, ServiceGuidePolicy.turnedOn(touchExplorationOn = false))
+        // TalkBack reads the live state box itself; a second voice would overlap it.
+        assertEquals(GuideSpeech.NONE, ServiceGuidePolicy.turnedOn(touchExplorationOn = true))
+    }
+}
+
+class ServiceGuideTextTest {
+    private val strings = java.io.File("src/main/res/values/ui_voice_strings.xml").readText()
+    private fun text(name: String) = Regex("""<string name="$name">([^<]*)</string>""").find(strings)!!.groupValues[1]
+
+    /** The service's name in system settings is A's app_name, so the guide takes it as an argument. */
+    @Test fun guideNamesTheAppThroughAnArgument() {
+        listOf("ui_setup_guide_find", "ui_setup_service_how", "ui_setup_service_open_failed").forEach {
+            assertTrue(it, text(it).contains("%1\$s"))
+            assertFalse(it, text(it).contains("팝업처리도우미"))
+        }
+    }
+
+    @Test fun guideSaysDoubleTapAllowAndComeBack() {
+        assertTrue(text("ui_setup_guide_find").contains("두 번 탭"))
+        assertTrue(text("ui_setup_guide_turn_on").contains("허용"))
+        assertTrue(text("ui_setup_guide_come_back").contains("뒤로 가기"))
+    }
+}

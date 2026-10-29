@@ -30,6 +30,18 @@
 
 - 화면이 다시 보일 때마다(`LifecycleResumeEffect`) 다시 읽는다 → 설정에서 켜고 돌아오면 "켜짐 ✓". 상태 상자는 polite live region이라 TalkBack이 한 번 읽는다.
 - 시스템 설정 열기: `Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)`. 못 열면 "휴대폰 설정 앱에서 접근성을 찾아…" 안내.
+
+### 2-1. [서비스 켜기] 길 안내 (10/30, 총괄 요청 ①②, `ServiceTurnOnGuide.kt`)
+
+TalkBack 사용자가 접근성 목록에서 우리 앱을 찾기 힘들어서, 처음 설정 2단계와 설정 화면의 [서비스 켜기]가 같은 순서로 동작한다.
+
+1. **바로 넘어가지 않고 안내 대화상자**: "설정에서 이렇게 켜 주세요" — ① 목록에서 *앱 이름* 항목을 찾아 두 번 탭 ② 사용 스위치를 켜고 확인 창에서 허용 ③ 다 되면 뒤로 가기 + "목록 위치는 휴대폰마다 달라요". [설정 열기] / [취소].
+   *앱 이름*은 A의 `R.string.app_name`을 그대로 읽는다(시스템 설정의 서비스 이름과 같은 문자열). 지금은 "닫아줄게", A가 4-2를 바꾸면 자동으로 "팝업처리도우미".
+2. **음성으로도 읽기** (`ServiceGuidePolicy`): TalkBack 꺼짐 → 우리 TTS가 바로 읽음. TalkBack 켜짐 → TalkBack이 대화상자 제목을 스스로 읽고, "안내 맡기기"가 켜져 있으면 1초 뒤 우리 TTS가 단계를 읽음(꺼져 있으면 TalkBack만). [설정 열기]·[취소]·닫기 때 TTS 멈춤.
+3. **우리 서비스 항목으로 바로**: [설정 열기]는 접근성 설정을 열면서 `:settings:fragment_args_key`(+ `:settings:show_fragment_args` 안 같은 키)에 `kr.closeforyou/kr.closeforyou.accessibility.CloseForYouAccessibilityService`를 넣는다. AOSP 설정 앱은 이 키의 항목으로 스크롤·강조한다. **공개 API가 아니라** 제조사 설정 앱이 무시하면 지금처럼 목록만 열린다(안전한 대체).
+   `Settings.ACTION_ACCESSIBILITY_DETAILS_SETTINGS`(서비스 상세로 바로)는 SDK 36 소스에서 `@SystemApi @hide`라 일반 앱은 쓰지 않는다.
+4. **돌아오면**: 켜졌으면 TalkBack 꺼짐 → TTS "접근성 서비스가 켜졌어요. 다음을 눌러 계속해 주세요.", TalkBack 켜짐 → 상태 상자 live region을 TalkBack이 읽음(두 목소리 겹침 방지).
+- 시연 전용 한 번에 켜기(WRITE_SECURE_SETTINGS)는 하지 않음.
 - 수집 동의: `CoreSetupStatus.collectionConsentGranted()` = `CorePreferences.currentSettings().consentGranted` 읽기만. C는 동의를 주지 않는다.
 - 인터페이스 `CoreSetupStatus`의 기본값 `NONE`은 안전한 쪽(꺼짐·동의 없음). A가 자기 판정(예: 서비스 연결 상태)을 쓰고 싶으면 `UiVoiceOnboardingGate(status = …)`, `UiVoiceSettingsRoute(status = …)`로 넘긴다.
 - 패키지·클래스 이름은 로그에 남기지 않는다.
@@ -101,7 +113,9 @@ adb shell am start -n kr.closeforyou/.ui.voice.debug.ChoicePreviewActivity --ez 
 
 ## 6. 실기기 미검증 항목 (LG 벨벳 Android 12, 갤럭시)
 
-- [서비스 켜기] → 시스템 접근성 설정 열림 → 켜고 돌아오면 "켜짐 ✓"로 바뀌고 TalkBack이 한 번 읽는지
+- ~~[서비스 켜기] → 시스템 접근성 설정 열림 → 켜고 돌아오면 "켜짐 ✓"~~ (10/30 LG 확인됨, TalkBack 없이)
+- 2-1: LG·갤럭시에서 강조 키가 먹어 우리 항목으로 스크롤·강조되는지, 안내 TTS가 들리는지, TalkBack 켜짐에서 대화상자 낭독과 우리 TTS가 겹치지 않는지, 돌아온 뒤 "켜졌어요"
+- 켜고 돌아오면 TalkBack이 "켜짐"을 한 번 읽는지
 - 단계가 바뀔 때 TalkBack이 `paneTitle`(단계 제목)을 알리는지, 포커스가 이상한 곳에 남지 않는지
 - 라디오 카드·스위치 카드 낭독 순서("팝업 처리 방식…, 선택됨, 라디오 버튼")
 - 큰 글꼴(시스템 글꼴 최대)·다크 모드에서 잘림·겹침 없는지
