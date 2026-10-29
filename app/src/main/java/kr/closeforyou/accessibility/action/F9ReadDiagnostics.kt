@@ -28,11 +28,13 @@ internal enum class F9ReadOutcome { COMPLETE, IDENTITY_ONLY, REJECTED, CANCELLED
 internal enum class F9ReadRelease { NONE, NODE, WINDOW, BOTH }
 /** One actual scan's immutable report. No raw input, timestamp, identifier or exception. */
 internal data class F9ReadCode(val purpose: F9ReadPurpose, val stage: F9ReadStage,
-    val detail: F9ReadDetail, val outcome: F9ReadOutcome, val release: F9ReadRelease, val consumed: Boolean)
+    val detail: F9ReadDetail, val outcome: F9ReadOutcome, val release: F9ReadRelease, val consumed: Boolean, val occlusion: F9OcclusionCode? = null)
 
 /** The real scan uses these guards/exception/release/report boundaries; JVM supplies callbacks.
  * Recording grants nothing and never replaces the original exception/cancellation. */
 internal class F9ReadObservation(private val purpose: F9ReadPurpose, private val sink: (F9ReadCode) -> Unit) {
+    private var occlusion: F9OcclusionCode? = null
+    fun occluding(code: F9OcclusionCode) { if (occlusion == null) occlusion = code }
     var stage = F9ReadStage.MAIN
     private var firstStage: F9ReadStage? = null
     private var detail = F9ReadDetail.NONE
@@ -80,8 +82,70 @@ internal class F9ReadObservation(private val purpose: F9ReadPurpose, private val
             windowRelease -> F9ReadRelease.WINDOW; else -> F9ReadRelease.NONE }
         val finalOutcome = if (release != F9ReadRelease.NONE && outcome != F9ReadOutcome.CANCELLED)
             F9ReadOutcome.CLEANUP_FAILED else outcome
-        val code = F9ReadCode(purpose, firstStage ?: stage, detail, finalOutcome, release, consumed)
+        val code = F9ReadCode(purpose, firstStage ?: stage, detail, finalOutcome, release, consumed, occlusion)
         diagnosticWrite { sink(code) }
     }
     override fun toString() = "F9ReadObservation(redacted)"
+}
+
+/** Scalar results from the first actual rejecting window. No raw bounds/IDs or handles retained. */
+internal enum class F9OcclusionLayer { EQUAL, ABOVE }
+internal enum class F9OcclusionOverlap { EQUAL, COVERS_TARGET, WITHIN_TARGET, PARTIAL }
+internal enum class F9PassiveBarResult {
+    NOT_CHECKED, NOT_CHECKED_TARGET_PATH, NOT_CHECKED_BOUNDED_TARGET, NOT_SYSTEM, ACTIVE, FOCUSED,
+    WIDTH, HEIGHT, EDGE, ROOT_UNAVAILABLE, OWNER_UNCONFIRMED, ROOT_WINDOW_MISMATCH, PASSED,
+}
+internal data class F9OcclusionCode(val type: kr.closeforyou.core.model.WindowType,
+    val layer: F9OcclusionLayer, val overlap: F9OcclusionOverlap, val passive: F9PassiveBarResult)
+internal class F9PassiveBarProbe {
+    var result = F9PassiveBarResult.NOT_CHECKED
+    fun rejected(value: F9PassiveBarResult): Boolean { result = value; return false }
+}
+
+/** EXACT original short-circuit/getter order. Callbacks are the existing Android reads only. */
+internal fun f9OccludingWindow(isTarget: () -> Boolean, isOwnedOverlay: () -> Boolean,
+    type: () -> kr.closeforyou.core.model.WindowType, layers: () -> Pair<Int, Int>,
+    bounds: () -> kr.closeforyou.core.model.ScreenBounds, target: kr.closeforyou.core.model.ScreenBounds,
+    frame: kr.closeforyou.core.model.ScreenBounds, noTargetPath: Boolean,
+    passive: (F9PassiveBarProbe) -> Boolean, record: (F9OcclusionCode) -> Unit): Boolean {
+    if (isTarget() || isOwnedOverlay()) return false
+    val kind = type()
+    if (kind == kr.closeforyou.core.model.WindowType.APPLICATION) return false
+    val (otherLayer, targetLayer) = layers()
+    if (otherLayer < targetLayer) return false
+    val other = bounds()
+    if (!(other.left < target.right && target.left < other.right && other.top < target.bottom && target.top < other.bottom)) return false
+    val probe = F9PassiveBarProbe()
+    val allowed = noTargetPath && target == frame && passive(probe)
+    if (allowed) return false
+    val passiveCode = when {
+        !noTargetPath -> F9PassiveBarResult.NOT_CHECKED_TARGET_PATH
+        target != frame -> F9PassiveBarResult.NOT_CHECKED_BOUNDED_TARGET
+        else -> probe.result
+    }
+    val overlap = when {
+        other == target -> F9OcclusionOverlap.EQUAL
+        other.left <= target.left && other.top <= target.top && other.right >= target.right && other.bottom >= target.bottom -> F9OcclusionOverlap.COVERS_TARGET
+        target.left <= other.left && target.top <= other.top && target.right >= other.right && target.bottom >= other.bottom -> F9OcclusionOverlap.WITHIN_TARGET
+        else -> F9OcclusionOverlap.PARTIAL
+    }
+    diagnosticWrite { record(F9OcclusionCode(kind, if (otherLayer == targetLayer) F9OcclusionLayer.EQUAL else F9OcclusionLayer.ABOVE, overlap, passiveCode)) }
+    return true
+}
+
+/** Original passive-bar exception, still restricted by the caller to full-frame read (not press).
+ * No retries or extra root traversal. The metadata callback reads ONLY the original owner/ID. */
+internal fun f9PassiveSystemBar(isSystem: () -> Boolean, active: () -> Boolean, focused: () -> Boolean,
+    bounds: () -> kr.closeforyou.core.model.ScreenBounds, frame: kr.closeforyou.core.model.ScreenBounds,
+    owner: (F9PassiveBarProbe) -> Boolean, probe: F9PassiveBarProbe): Boolean {
+    if (!isSystem()) return probe.rejected(F9PassiveBarResult.NOT_SYSTEM)
+    if (active()) return probe.rejected(F9PassiveBarResult.ACTIVE)
+    if (focused()) return probe.rejected(F9PassiveBarResult.FOCUSED)
+    val bar = bounds()
+    if (bar.left != frame.left || bar.right != frame.right) return probe.rejected(F9PassiveBarResult.WIDTH)
+    if (bar.height !in 1..(frame.height / 8)) return probe.rejected(F9PassiveBarResult.HEIGHT)
+    if (bar.top != frame.top && bar.bottom != frame.bottom) return probe.rejected(F9PassiveBarResult.EDGE)
+    if (!owner(probe)) return false
+    probe.result = F9PassiveBarResult.PASSED
+    return true
 }

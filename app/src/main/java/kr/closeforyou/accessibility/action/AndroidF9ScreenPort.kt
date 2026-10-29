@@ -143,9 +143,10 @@ internal class AndroidF9ScreenPort(
             if (!F9AutoCloser.contains(frame, activeBounds)) return reject(F9ReadDetail.WINDOW_OUTSIDE_FRAME)
             readTrace.stage = F9ReadStage.OCCLUSION
             if (windows.any { other ->
-                    other.id != active.id && other.id != display?.overlayId && other.type != AccessibilityWindowInfo.TYPE_APPLICATION &&
-                        other.layer >= active.layer && overlaps(rect(other, readTrace), activeBounds) &&
-                        !(targetPath == null && activeBounds == frame && passiveSystemBar(other, frame, ::own, readTrace))
+                    f9OccludingWindow({ other.id == active.id }, { other.id == display?.overlayId },
+                        { windowType(other.type) }, { other.layer to active.layer }, { rect(other, readTrace) },
+                        activeBounds, frame, targetPath == null,
+                        { probe -> passiveSystemBar(other, frame, ::own, readTrace, probe) }, readTrace::occluding)
                 }) return reject(F9ReadDetail.OCCLUDING_WINDOW)
             readTrace.stage = F9ReadStage.ROOT
             val root = own((if (display == null) activeRoot() else active.root) ?: return reject(F9ReadDetail.ROOT_UNAVAILABLE))
@@ -284,24 +285,24 @@ internal class AndroidF9ScreenPort(
     }
     private fun rect(node: AccessibilityNodeInfo, trace: F9ReadObservation) = bounds(Rect().also(node::getBoundsInScreen), trace)
     private fun rect(window: AccessibilityWindowInfo, trace: F9ReadObservation) = bounds(Rect().also(window::getBoundsInScreen), trace)
-    private fun window(w: AccessibilityWindowInfo, trace: F9ReadObservation) = WindowSnapshot(w.id, when (w.type) {
+    private fun windowType(type: Int) = when (type) {
         AccessibilityWindowInfo.TYPE_APPLICATION -> WindowType.APPLICATION
         AccessibilityWindowInfo.TYPE_ACCESSIBILITY_OVERLAY -> WindowType.ACCESSIBILITY_OVERLAY
         AccessibilityWindowInfo.TYPE_INPUT_METHOD -> WindowType.INPUT_METHOD
         AccessibilityWindowInfo.TYPE_SYSTEM -> WindowType.SYSTEM
         else -> WindowType.OTHER
-    }, rect(w, trace), w.isActive, w.isFocused, w.layer)
-    private fun overlaps(a: ScreenBounds, b: ScreenBounds) = a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom
-    private fun passiveSystemBar(window: AccessibilityWindowInfo, frame: ScreenBounds,
-        own: (AccessibilityNodeInfo) -> AccessibilityNodeInfo, trace: F9ReadObservation): Boolean {
-        if (window.type != AccessibilityWindowInfo.TYPE_SYSTEM || window.isActive || window.isFocused) return false
-        val bar = rect(window, trace)
-        if (bar.left != frame.left || bar.right != frame.right || bar.height !in 1..(frame.height / 8) ||
-            (bar.top != frame.top && bar.bottom != frame.bottom)) return false
-        // API 37 exposes null titles for SystemUI bars. Verify owner metadata and narrow edge
-        // geometry instead of trusting a label. Never traverse or read SystemUI notification text.
-        val root = own(window.root ?: return false)
-        return root.packageName?.toString() == "com.android.systemui" && root.windowId == window.id
     }
+    private fun window(w: AccessibilityWindowInfo, trace: F9ReadObservation) =
+        WindowSnapshot(w.id, windowType(w.type), rect(w, trace), w.isActive, w.isFocused, w.layer)
+    private fun passiveSystemBar(window: AccessibilityWindowInfo, frame: ScreenBounds,
+        own: (AccessibilityNodeInfo) -> AccessibilityNodeInfo, trace: F9ReadObservation, probe: F9PassiveBarProbe): Boolean =
+        f9PassiveSystemBar({ window.type == AccessibilityWindowInfo.TYPE_SYSTEM }, { window.isActive }, { window.isFocused },
+            { rect(window, trace) }, frame, owner = { p ->
+                // Original owner-only metadata checks: never traverse or read system window text.
+                val root = own(window.root ?: return@f9PassiveSystemBar p.rejected(F9PassiveBarResult.ROOT_UNAVAILABLE))
+                if (root.packageName?.toString() != "com.android.systemui") return@f9PassiveSystemBar p.rejected(F9PassiveBarResult.OWNER_UNCONFIRMED)
+                if (root.windowId != window.id) return@f9PassiveSystemBar p.rejected(F9PassiveBarResult.ROOT_WINDOW_MISMATCH)
+                true
+            }, probe = probe)
     override fun toString() = "AndroidF9ScreenPort(redacted)"
 }

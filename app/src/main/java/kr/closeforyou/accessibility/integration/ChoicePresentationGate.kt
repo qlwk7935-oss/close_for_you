@@ -131,6 +131,7 @@ internal suspend fun awaitChoicePresentationTurn(post: (Runnable) -> Boolean, re
 /** A fresh read after cleanup must still discover the NEXT popup. Limit repeated presentation of
  * an unchanged interrupted popup instead of suppressing that read. No authorization or TTL grant. */
 internal enum class ManualReviewAdmission { FIRST_OFFER, UNCHANGED_RECOVERY, IDENTITY_CHANGED, EXHAUSTED }
+internal enum class ManualReviewChange { UNKNOWN, INITIAL, UNCHANGED, APP_CHANGED, WINDOW_CHANGED, STRUCTURE_CHANGED, CONTENT_CHANGED, STRUCTURE_AND_CONTENT_CHANGED }
 internal class ChoiceReviewBudget {
     private data class Identity(val app: String, val window: Int, val structure: String, val content: String) {
         override fun toString() = "ReviewIdentity(redacted)"
@@ -139,8 +140,20 @@ internal class ChoiceReviewBudget {
     private var offered = 0
     var lastAdmission = ManualReviewAdmission.FIRST_OFFER
         private set
+    var lastChange = ManualReviewChange.INITIAL
+        private set
     fun admit(token: SnapshotToken): Boolean {
         val key = Identity(token.packageName, token.windowId, token.structureDigest, token.contentDigest)
+        val previous = identity
+        lastChange = when {
+            previous == null -> ManualReviewChange.INITIAL
+            previous.app != key.app -> ManualReviewChange.APP_CHANGED
+            previous.window != key.window -> ManualReviewChange.WINDOW_CHANGED
+            previous.structure != key.structure && previous.content != key.content -> ManualReviewChange.STRUCTURE_AND_CONTENT_CHANGED
+            previous.structure != key.structure -> ManualReviewChange.STRUCTURE_CHANGED
+            previous.content != key.content -> ManualReviewChange.CONTENT_CHANGED
+            else -> ManualReviewChange.UNCHANGED
+        }
         if (identity != key) {
             lastAdmission = if (identity == null) ManualReviewAdmission.FIRST_OFFER else ManualReviewAdmission.IDENTITY_CHANGED
             identity = key; offered = 0

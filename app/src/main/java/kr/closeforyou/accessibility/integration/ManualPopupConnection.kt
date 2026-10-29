@@ -129,11 +129,16 @@ internal class ManualPopupConnection(
             trace?.record(ManualPromptPoint.ADMISSION_REJECTED, ManualPromptCause.PRESENTATION_GATE_REJECTED)
             AccessibilityRuntime.manualBoundary("ADMISSION_REJECTED"); review()
         })
+    private fun recordPresentation(point: ManualReviewPoint, prompt: ChoicePrompt) {
+        val t = trace ?: return
+        t.review(manualReviewPresentationCode(point, original?.token, prompt, reviews))
+    }
     private val delegate = object : ChoicePromptPresenter {
         override val isShowing get() = overlay.isShowing
         override val windowState get() = overlay.windowState
         override fun present(prompt: ChoicePrompt, onAnswer: (PromptAnswer) -> Unit): PromptShowResult {
             trace?.record(ManualPromptPoint.PRESENT_REQUESTED)
+            recordPresentation(ManualReviewPoint.PRESENT_REQUESTED, prompt)
             if (!cleanup.ready || overlay.windowState.status != OverlayWindowStatus.HIDDEN || health.failed) {
                 trace?.record(ManualPromptPoint.PRESENT_REJECTED, if (health.failed) ManualPromptCause.HEALTH_FAILED else ManualPromptCause.CLEANUP_FAILED)
                 return PromptShowResult.BLOCKED
@@ -147,6 +152,7 @@ internal class ManualPopupConnection(
                 binding.expect(before, prompt.token, overlay.windowState.generation)
                 promptLifetime.shown(prompt.token, overlay.windowState)
                 trace?.record(ManualPromptPoint.SHOWN)
+                recordPresentation(ManualReviewPoint.SHOWN, prompt)
                 displayTimer?.cancel()
                 displayTimer = scope.launch {
                     delay(ChoiceDisplayLease.MAX_DISPLAY_MILLIS)
@@ -240,6 +246,7 @@ internal class ManualPopupConnection(
             ManualReviewAdmission.IDENTITY_CHANGED -> ManualPromptCause.REVIEW_IDENTITY_CHANGED
             ManualReviewAdmission.EXHAUSTED -> ManualPromptCause.REVIEW_BUDGET_EXHAUSTED
         })
+        trace?.review(ManualReviewCode(ManualReviewPoint.ADMITTED, reviews.lastAdmission, reviews.lastChange))
         original = snapshot; shownAnalysis = analysis; shownDetection = detection
         gate.prepare(snapshot, permit)
         AccessibilityRuntime.manualBoundary("OFFERED")

@@ -39,9 +39,14 @@ internal object ManualPromptLog {
             ";OTHER_BITS=${if (c.other) "YES" else "NO"};RETIRED_RELATION=${c.relation.name}" +
             ";WAIT_CONFIRMED=${if (c.transient) "YES" else "NO"};REMOVE_RETURNED=${if (c.returned) "YES" else "NO"}" +
             ";REMOVAL_OBSERVED=${if (c.observed) "YES" else "NO"};NATIVE=${c.native.name};RESULT=${c.result.name}")
+    }, reviewSink = { attempt, c ->
+        Log.i("A_ManualPrompt", "A_MANUAL_REVIEW;ATTEMPT=$attempt;POINT=${c.point.name};ADMISSION=${c.admission?.name ?: "NOT_CHECKED"}" +
+            ";IDENTITY_CHANGE=${c.change.name};SUMMARY=${c.summary?.name ?: "NOT_CHECKED"}" +
+            ";PRESS_OFFERED=${when (c.pressOffered) { true -> "YES"; false -> "NO"; null -> "NOT_CHECKED" }}")
     }, readSink = { attempt, c ->
         Log.i("A_ManualPrompt", "A_F9_READ;ATTEMPT=$attempt;PURPOSE=${c.purpose.name};STAGE=${c.stage.name};DETAIL=${c.detail.name}" +
-            ";OUTCOME=${c.outcome.name};RELEASE=${c.release.name};CALLBACK_RETURNED=${if (c.consumed) "YES" else "NO"}")
+            ";OUTCOME=${c.outcome.name};RELEASE=${c.release.name};CALLBACK_RETURNED=${if (c.consumed) "YES" else "NO"}" +
+            (c.occlusion?.let { ";OCCLUDER_TYPE=${it.type.name};LAYER=${it.layer.name};OVERLAP=${it.overlap.name};PASSIVE_BAR=${it.passive.name}" } ?: ""))
     }, cleanupSink = { attempt, c ->
         Log.i("A_ManualPrompt", "A_MANUAL_CLEANUP;ATTEMPT=$attempt;PHASE=${c.phase.name}" +
             ";SITE=${c.current.site.name};ISSUE=${c.current.issue.name};BARRIER=${c.current.barrier?.name ?: "NONE"}" +

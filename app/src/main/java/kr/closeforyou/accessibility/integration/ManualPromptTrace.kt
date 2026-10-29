@@ -3,6 +3,19 @@ package kr.closeforyou.accessibility.integration
 import kr.closeforyou.accessibility.diagnosticWrite
 import kr.closeforyou.accessibility.action.F9ReadCode
 
+internal enum class ManualReviewPoint { ADMITTED, PRESENT_REQUESTED, SHOWN }
+internal data class ManualReviewCode(val point: ManualReviewPoint, val admission: ManualReviewAdmission?,
+    val change: ManualReviewChange, val summary: kr.closeforyou.ui.voice.choice.PromptSummary? = null, val pressOffered: Boolean? = null)
+
+/** Uses THIS existing immutable prompt only; no classifier rerun, token logging or authority. */
+internal fun manualReviewPresentationCode(point: ManualReviewPoint, original: kr.closeforyou.core.model.SnapshotToken?,
+    prompt: kr.closeforyou.ui.voice.choice.ChoicePrompt, budget: ChoiceReviewBudget): ManualReviewCode {
+    val sameOffer = original == prompt.token
+    return ManualReviewCode(point, if (sameOffer) budget.lastAdmission else null,
+        if (sameOffer) budget.lastChange else ManualReviewChange.UNKNOWN, prompt.summary,
+        prompt.options.any { it.kind == kr.closeforyou.ui.voice.choice.PromptOptionKind.PRESS_CANDIDATE })
+}
+
 internal enum class ManualPromptPoint {
     OFFERED, OFFER_REJECTED, FOCUS_REVIEW, REVIEW_REJECTED, REVIEW_REQUESTED, REVIEW_ADMISSION, ADMISSION_REQUESTED, ADMISSION_ACCEPTED, ADMISSION_REJECTED,
     PRESENT_REQUESTED, SHOWN, PRESENT_REJECTED, INVALIDATED, DISPLAY_RETAINED, DISPLAY_REVIEW_STARTED, DISPLAY_REVIEW_FINISHED,
@@ -33,6 +46,7 @@ internal class ManualPromptTrace(private val actionSink: (Long, ManualActionCode
     private val retirementSink: (Long, ManualRetirementCode) -> Unit = { _, _ -> },
     private val displayReviewSink: (Long, ManualDisplayReviewCode) -> Unit = { _, _ -> },
     private val cleanupEventSink: (Long, ManualCleanupEventCode) -> Unit = { _, _ -> },
+    private val reviewSink: (Long, ManualReviewCode) -> Unit = { _, _ -> },
     private val readSink: (Long, F9ReadCode) -> Unit = { _, _ -> },
     cleanupSink: (Long, ManualCleanupCode) -> Unit = { _, _ -> },
     private val sink: (Long, ManualPromptPoint, ManualPromptCause) -> Unit) {
@@ -45,9 +59,10 @@ internal class ManualPromptTrace(private val actionSink: (Long, ManualActionCode
     private val displayReviewCodes = mutableSetOf<ManualDisplayReviewCode>()
     private var cleanupEventFailureReported = false
     private val cleanupEventCodes = mutableSetOf<ManualCleanupEventCode>()
+    private val reviewCodes = mutableSetOf<ManualReviewCode>()
     private val readCodes = mutableSetOf<F9ReadCode>()
     val cleanup = ManualCleanupTrace { code -> cleanupSink(attempt, code) }
-    fun begin() { attempt = if (attempt == Long.MAX_VALUE) 1 else attempt + 1; recorded.clear(); ownership.clear(); eventCodes.clear(); retirementCodes.clear(); displayReviewCodes.clear(); cleanupEventCodes.clear(); cleanupEventFailureReported = false; readCodes.clear(); speechCodes = mutableSetOf(); record(ManualPromptPoint.OFFERED) }
+    fun begin() { attempt = if (attempt == Long.MAX_VALUE) 1 else attempt + 1; recorded.clear(); ownership.clear(); eventCodes.clear(); retirementCodes.clear(); displayReviewCodes.clear(); cleanupEventCodes.clear(); cleanupEventFailureReported = false; reviewCodes.clear(); readCodes.clear(); speechCodes = mutableSetOf(); record(ManualPromptPoint.OFFERED) }
     fun record(point: ManualPromptPoint, cause: ManualPromptCause = ManualPromptCause.NONE) {
         if (recorded.add(point to cause)) diagnosticWrite { sink(attempt, point, cause) }
     }
@@ -78,6 +93,9 @@ internal class ManualPromptTrace(private val actionSink: (Long, ManualActionCode
             cleanupEventFailureReported = true
             diagnosticWrite { cleanupEventSink(attempt, code) }
         } else if (cleanupEventCodes.size < 16 && cleanupEventCodes.add(code)) diagnosticWrite { cleanupEventSink(attempt, code) }
+    }
+    fun review(code: ManualReviewCode) {
+        if (reviewCodes.size < 16 && reviewCodes.add(code)) diagnosticWrite { reviewSink(attempt, code) }
     }
     fun f9Read(code: F9ReadCode) {
         if (readCodes.size < 24 && readCodes.add(code)) diagnosticWrite { readSink(attempt, code) }
