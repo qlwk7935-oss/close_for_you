@@ -11,13 +11,20 @@
 
 ## 2. 언제 보이나 (`RememberChoiceRules.offers`)
 
+표시 = "이 팝업 종류가 현재 프리셋에서 묻는 종류" + 알아볼 수 있음 + 결정·사기 아님 (재호 확인 10/30).
+
+| 프리셋 | 묻지 않고 닫음 (숨김) | 선택 창 + "앞으로 항상 닫기" 보임 |
+|---|---|---|
+| 전부 자동 닫기 | 광고·쿠폰·공지 | 판단 불가만 |
+| 광고·쿠폰 닫기 | 광고·쿠폰 | 공지 + 판단 불가 |
+| 광고만 닫기 | 광고 | 쿠폰·공지 + 판단 불가 |
+
+자동 처리 종류인데 안전 조건 때문에 선택 창이 뜬 경우에도 숨긴다. 어느 프리셋이든 아래는 숨김:
+
 | 경우 | 표시 |
 |---|---|
-| "광고만 닫기"·"광고·쿠폰 닫기"에서 묻게 된 광고·쿠폰·공지 | 보임 |
-| 판단 불가(UNKNOWN), 어떤 프리셋이든 | 보임 |
 | 중요한 결정(USER_DECISION) | 숨김 |
 | 사기 의심(B의 `DecisionKinds.of(analysis) == SUSPICIOUS`, 화면에는 UNKNOWN) | 숨김 |
-| "전부 자동 닫기"에서 그 프리셋이 닫는 종류(광고·쿠폰·공지) — 보통 창이 안 뜨지만 뜨는 경로가 있어도 | 숨김 |
 | 알아볼 정보 없음: 팝업 글(추출된 글자)이 하나도 없음 | 숨김 |
 | 버튼별: D 지문이 만들 수 없는 버튼(노드 경로 `nodePath` 없음) | 그 버튼만 숨김 |
 
@@ -35,7 +42,7 @@
 ## 4. 통합 때 C가 연결할 것 (A·B·D 코드 수정 없음)
 
 1. `PopupChoiceFlow(..., handlingPreset = { UiVoicePreferences.get(context).current().handlingPreset })`.
-   연결하지 않으면 프리셋을 모르는 것으로 보고(null) "전부 자동 닫기" 숨김만 빠진다.
+   연결하지 않으면 프리셋을 모르는 것으로 보고(null) 프리셋 숨김이 빠진다(광고·쿠폰·공지에도 보임). **시연 전 꼭 연결.**
 2. `PopupChoiceFlow(..., rememberStore = RepositoryRememberedPopupStore(...))`.
    이미 있는 C 어댑터(`RememberedPopupStore.kt`)에 D의 `RuleStorage.fingerprintProvider`·`RuleStorage.repository`를 넘긴다.
 3. 다음에 같은 팝업이 오면 묻지 않고 닫기: D의 `findExact` → B 정책(`REMEMBER_EXACT_POPUP` 규칙) → A 관문. 앱별 자동 닫기 설정이 켜져 있어야 한다(기존 규칙 그대로).

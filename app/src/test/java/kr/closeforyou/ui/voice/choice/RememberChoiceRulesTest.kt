@@ -26,9 +26,39 @@ class RememberChoiceRulesTest {
     private fun offers(classification: PopupClassification, preset: HandlingPreset?, text: String? = "이벤트 안내", suspicious: Boolean = false) =
         RememberChoiceRules.offers(classification, text, preset, suspicious)
 
-    @Test fun askedAdsCouponsNoticesUnderTheTwoNarrowerPresets() {
-        for (preset in listOf(HandlingPreset.CLOSE_ADS_ONLY, HandlingPreset.CLOSE_ADS_AND_COUPONS)) {
-            asked.forEach { assertTrue("$preset $it", offers(it, preset)) }
+    /** The team's table (재호 10/30): preset × kind → shown. Fixed; change only with the team. */
+    private val table = mapOf(
+        HandlingPreset.CLOSE_ALL to mapOf(
+            PopupClassification.ADVERTISEMENT to false, PopupClassification.COUPON to false, PopupClassification.NOTICE to false,
+        ),
+        HandlingPreset.CLOSE_ADS_AND_COUPONS to mapOf(
+            PopupClassification.ADVERTISEMENT to false, PopupClassification.COUPON to false, PopupClassification.NOTICE to true,
+        ),
+        HandlingPreset.CLOSE_ADS_ONLY to mapOf(
+            PopupClassification.ADVERTISEMENT to false, PopupClassification.COUPON to true, PopupClassification.NOTICE to true,
+        ),
+    )
+
+    @Test fun nineCellsOfThePresetTable() {
+        assertEquals(9, table.values.sumOf { it.size })
+        table.forEach { (preset, row) ->
+            row.forEach { (kind, shown) -> assertEquals("$preset $kind", shown, offers(kind, preset)) }
+        }
+    }
+
+    @Test fun nineCellsThroughThePlanner() {
+        table.forEach { (preset, row) ->
+            row.forEach { (kind, shown) -> assertEquals("$preset $kind", if (shown) 1 else 0, plan(kind, preset).rememberCount()) }
+        }
+    }
+
+    @Test fun unknownWithInformationShownUnderEveryPreset() {
+        HandlingPreset.entries.forEach { assertEquals("$it", 1, plan(PopupClassification.UNKNOWN, it).rememberCount()) }
+    }
+
+    @Test fun unknownWithoutInformationHiddenUnderEveryPreset() {
+        HandlingPreset.entries.forEach {
+            assertEquals("$it", 0, plan(PopupClassification.UNKNOWN, it, texts = emptyList()).rememberCount())
         }
     }
 
@@ -38,8 +68,8 @@ class RememberChoiceRulesTest {
         }
     }
 
-    @Test fun closeAllHidesTheKindsItCloses() {
-        asked.forEach { assertFalse("$it", offers(it, HandlingPreset.CLOSE_ALL)) }
+    @Test fun unknownPresetHidesNoKind() {
+        asked.forEach { assertTrue("$it", offers(it, null)) }
     }
 
     @Test fun importantDecisionNeverUnderAnyPreset() {
@@ -50,7 +80,7 @@ class RememberChoiceRulesTest {
 
     @Test fun scamLikeNeverEvenWhenUnknown() {
         assertFalse(offers(PopupClassification.UNKNOWN, HandlingPreset.CLOSE_ADS_ONLY, suspicious = true))
-        assertFalse(offers(PopupClassification.ADVERTISEMENT, HandlingPreset.CLOSE_ADS_ONLY, suspicious = true))
+        assertFalse(offers(PopupClassification.NOTICE, HandlingPreset.CLOSE_ADS_ONLY, suspicious = true))
     }
 
     @Test fun nothingToRecogniseItByHides() {
@@ -107,7 +137,7 @@ class RememberChoiceRulesTest {
 
     @Test fun onlyButtonsDCouldKeyGetIt() {
         val prompt = plan(
-            PopupClassification.ADVERTISEMENT, HandlingPreset.CLOSE_ADS_ONLY, listOf("이벤트 안내"),
+            PopupClassification.NOTICE, HandlingPreset.CLOSE_ADS_ONLY, listOf("이벤트 안내"),
             candidate("with", "1"), candidate("without", null),
         )
         val remember = prompt.options.filter { it.kind == PromptOptionKind.REMEMBER_ALWAYS }

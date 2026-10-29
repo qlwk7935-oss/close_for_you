@@ -13,9 +13,10 @@ import kr.closeforyou.ui.voice.settings.HandlingPreset
  * first and the rule is saved only after a confirmed close (PopupChoiceFlow), and every later auto close
  * re-checks B's policy, A's gate and the exact popup.
  *
- * Shown: asked ads, coupons and notices under "광고만 닫기"·"광고·쿠폰 닫기", and UNKNOWN popups under any
- * preset. Hidden: important decisions, scam-like popups, kinds "전부 자동 닫기" already closes, and popups
- * with nothing to recognise them by again (docs/c-notes/remember-choice-rules.md).
+ * Shown = the kind is one the current preset asks about (not in its auto-close kinds), the popup can be
+ * recognised again, and it is neither an important decision nor scam-like:
+ * 전부 자동 닫기 → UNKNOWN only; 광고·쿠폰 닫기 → NOTICE + UNKNOWN; 광고만 닫기 → COUPON, NOTICE + UNKNOWN
+ * (docs/c-notes/remember-choice-rules.md).
  */
 object RememberChoiceRules {
     fun offers(
@@ -26,7 +27,8 @@ object RememberChoiceRules {
     ): Boolean = when {
         classification == PopupClassification.USER_DECISION -> false
         suspicious -> false
-        preset == HandlingPreset.CLOSE_ALL && classification in preset.autoCloseKinds() -> false
+        // Kinds the preset closes without asking: a prompt for them is a fallback, not a place to remember.
+        preset != null && classification in preset.autoCloseKinds() -> false
         // Image only, no words: "the same popup" could not be told apart next time.
         popupText.isNullOrBlank() -> false
         else -> true
