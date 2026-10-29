@@ -20,6 +20,9 @@ internal object ManualPromptLog {
             ";CHECK=${c.check.name};ID_RELATION=${c.relation.name};EVENT_PACKAGE=${c.pkg.name};MASK=${c.mask.name}")
     }, speechSink = { attempt, c ->
         Log.i("A_ManualPrompt", "A_MANUAL_SPEECH;ATTEMPT=$attempt;STATE=${c.name}")
+    }, retirementSink = { attempt, c ->
+        Log.i("A_ManualPrompt", "A_MANUAL_RETIREMENT;ATTEMPT=$attempt;EVENT=${c.kind.name};CHECK=${c.check.name}" +
+            ";RESULT=${if (c.check == ManualRetirementCheck.COMPATIBLE) "INTENT_ONLY" else "REJECTED"}")
     }, cleanupSink = { attempt, c ->
         Log.i("A_ManualPrompt", "A_MANUAL_CLEANUP;ATTEMPT=$attempt;PHASE=${c.phase.name}" +
             ";SITE=${c.current.site.name};ISSUE=${c.current.issue.name};BARRIER=${c.current.barrier?.name ?: "NONE"}" +

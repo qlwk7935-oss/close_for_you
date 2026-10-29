@@ -109,13 +109,16 @@ class CloseForYouAccessibilityService : AccessibilityService() {
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         if (!connected || event == null || event.eventType !in OBSERVED_EVENTS) return
         val owner = f9
-        val receipt = owner?.observeEvent(event)
+        var receipt: kr.closeforyou.accessibility.integration.OverlayCleanupBarrier.Receipt? = null
         var processed = false
-        try { handleAccessibilityEvent(event); processed = true }
-        finally { if (processed) owner?.processed(receipt) else owner?.cleanupFailed() }
+        try {
+            val nativeRetirement = owner?.compatibleRetirementEvent(event) == true
+            receipt = owner?.observeEvent(event, nativeRetirement)
+            handleAccessibilityEvent(event, nativeRetirement && f9 === owner); processed = true
+        } finally { if (processed) owner?.processed(receipt) else owner?.cleanupFailed() }
     }
 
-    private fun handleAccessibilityEvent(event: AccessibilityEvent) {
+    private fun handleAccessibilityEvent(event: AccessibilityEvent, nativeRetirement: Boolean = false) {
         if (f9?.shouldIgnore(event) == true) return
         // Retaining presentation is NOT ignoring an event: old Runtime/F9 evidence is retired
         // before an independent, read-only comparison of the entire original popup.
@@ -123,7 +126,7 @@ class CloseForYouAccessibilityService : AccessibilityService() {
                 invalidate(clearBaseline = false, permissionOrInteraction = true,
                     cause = ManualPromptCause.DISPLAY_REVIEW_PENDING)
             } == true) return
-        val ownedRetirement = f9?.isOwnedRetirement(event) == true
+        val ownedRetirement = nativeRetirement || f9?.isOwnedRetirement(event) == true
         if (f9?.hasPrompt() == true) AccessibilityRuntime.manualInvalidation(event.eventType, event.windowChanges)
         // Copy only primitive enums/IDs, never keep the event or request event.source.
         val eventType = event.eventType

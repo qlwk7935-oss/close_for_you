@@ -143,16 +143,17 @@ internal class OverlayCleanupBarrier(private val timeoutMillis: Long = 5_000L, p
     }
 
     /** Called before ordinary event handling. This NEVER decides whether to ignore an event. */
-    fun observeWindowEvent(window: Int, eventType: Int, changes: Int): Receipt? {
+    fun observeWindowEvent(window: Int, eventType: Int, changes: Int, nativeTransientConfirmed: Boolean = false): Receipt? {
         val windowsChanged = eventType == AccessibilityEvent.TYPE_WINDOWS_CHANGED
         return observe(window, windowsChanged,
             windowsChanged && changes == AccessibilityEvent.WINDOWS_CHANGE_REMOVED,
             windowsChanged && changes == AccessibilityEvent.WINDOWS_CHANGE_LAYER,
-            detachedContent = eventType == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED)
+            detachedContent = eventType == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED,
+            nativeTransient = nativeTransientConfirmed && nativeRetirementTransientEvent(eventType, changes))
     }
 
     fun observe(window: Int, windowsChanged: Boolean, pureRemoval: Boolean, pureLayerChange: Boolean = false,
-        detachedContent: Boolean = false): Receipt? {
+        detachedContent: Boolean = false, nativeTransient: Boolean = false): Receipt? {
         val previous = retiring ?: return null
         if (failed || window != previous.window) return null
         // Content does not resurrect an exact View whose removal-return AND detach are already
@@ -160,6 +161,15 @@ internal class OverlayCleanupBarrier(private val timeoutMillis: Long = 5_000L, p
         // full window absence is verified. No mask/focus exception and no deadline renewal.
         val owner = previous.nativeSession
         val retiredId = previous.window
+        // An authenticated, selected C View can emit its click/focus/content notification after
+        // removeView returned but before detach/system-window completion. Quarantine it, NEVER
+        // acknowledge removal or release a permit. Legacy/unknown lifetimes remain fail-closed.
+        if (nativeTransient && !pureRemoval && owner != null && retiredId != null && previous.returned &&
+            previous.native?.registrationConfirmed(owner, previous.generation) == true &&
+            !previous.native.identityUnavailable && previous.native.retirementWindow(owner, previous.generation) == retiredId) {
+            if (remaining(previous) <= 0) fail(CleanupFailure.DEADLINE)
+            return null
+        }
         if (detachedContent && !windowsChanged && !previous.observed && previous.returned && owner != null && retiredId != null &&
             previous.native?.removalComplete(owner, previous.generation, retiredId) == true) {
             if (remaining(previous) <= 0) fail(CleanupFailure.DEADLINE)

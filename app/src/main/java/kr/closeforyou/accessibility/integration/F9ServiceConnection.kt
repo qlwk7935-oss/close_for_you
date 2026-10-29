@@ -74,6 +74,7 @@ internal class F9ServiceConnection(
         if (requested) ManualPromptCause.FOCUS_INVALIDATED_REVIEW_REQUESTED else ManualPromptCause.FOCUS_INVALIDATED_NO_REVIEW)
     fun reviewRejected(cause: ManualPromptCause) = trace?.record(ManualPromptPoint.REVIEW_REJECTED, cause)
     fun shouldIgnore(event: AccessibilityEvent) = manual.shouldIgnore(event)
+    fun compatibleRetirementEvent(event: AccessibilityEvent) = manual.compatibleRetirementEvent(event)
     fun reviewDisplayedEvent(type: Int, retire: () -> Long) = manual.reviewDisplayedEvent(type, retire)
     fun isOwnedRetirement(event: AccessibilityEvent) = manual.isOwnedRetirement(event)
     suspend fun awaitObservationPermit(): Any {
@@ -119,12 +120,12 @@ internal class F9ServiceConnection(
         manual.invalidate(version, ttl, ownedRetirement, preserveManual, cause)
         session.invalidate(version, permissionOrInteraction && !ownedRetirement)
     }
-    fun observeEvent(event: AccessibilityEvent): OverlayCleanupBarrier.Receipt? {
+    fun observeEvent(event: AccessibilityEvent, nativeTransientConfirmed: Boolean = false): OverlayCleanupBarrier.Receipt? {
         if (closed) return null
         if (event.eventType == AccessibilityEvent.TYPE_WINDOWS_CHANGED && event.windowChanges == AccessibilityEvent.WINDOWS_CHANGE_REMOVED &&
             popupIdentity?.second == event.windowId) { feedback.onPopupRemoved(); popupIdentity = null }
         return cleanup.observeWindowEvent(event.windowId, event.eventType,
-            if (event.eventType == AccessibilityEvent.TYPE_WINDOWS_CHANGED) event.windowChanges else 0)
+            if (event.eventType == AccessibilityEvent.TYPE_WINDOWS_CHANGED) event.windowChanges else 0, nativeTransientConfirmed)
     }
     fun processed(receipt: OverlayCleanupBarrier.Receipt?) = manual.processed(receipt)
     fun cleanupFailed() {

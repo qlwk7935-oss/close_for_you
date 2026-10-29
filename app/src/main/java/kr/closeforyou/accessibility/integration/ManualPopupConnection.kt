@@ -40,6 +40,7 @@ internal class ManualPopupConnection(
     private val nativeOwner = Any()
     private var native: OverlayNativeWindowLifetime? = null
     private var retiredId: Int? = null
+    private var retiredNative: OverlayNativeWindowLifetime? = null
     private var target: Int? = null
     private var before: Set<Int>? = null
     private var closed = false
@@ -103,6 +104,7 @@ internal class ManualPopupConnection(
             trace?.record(ManualPromptPoint.OVERLAY_DISMISS_STARTED, endCause)
             manualCleanupCall(ManualCleanupSite.CALLBACK_DISMISSED, trace?.cleanup, cleanup) {
                 val n = native
+                retiredNative = n
                 retiredId = n?.retirementWindow(nativeOwner, n.generation)
                 cleanup.retiring(binding.boundWindowFor(n?.generation ?: 0), n?.generation ?: 0, target, n, nativeOwner)
                 binding.clear(); promptListener.onDismissed()
@@ -294,6 +296,7 @@ internal class ManualPopupConnection(
         } finally {
             if (selectedAction === action) selectedAction = null
             selectedValid = false; selected = null; original = null; shownAnalysis = null; shownDetection = null; gate.clear(); promptLifetime.clear()
+            retiredNative = null; retiredId = null
             // A next popup may have arrived while this result was being observed. Never replay
             // it: explicitly ask F0/F1 for a new read after the accepted choice finishes.
             handler.post { if (!closed && !health.failed && cleanup.ready) review() }
@@ -412,6 +415,35 @@ internal class ManualPopupConnection(
     fun isOwnedRetirement(event: AccessibilityEvent): Boolean = selectedValid && event.windowId == retiredId &&
         (event.packageName == null || event.packageName?.toString() == service.packageName) &&
         event.eventType == AccessibilityEvent.TYPE_WINDOWS_CHANGED && event.windowChanges == AccessibilityEvent.WINDOWS_CHANGE_REMOVED
+    /** The primitive verdict is captured once BEFORE barrier observation/ordinary invalidation.
+     * It can keep a pending C choice alive, never complete cleanup or reuse execution evidence. */
+    fun compatibleRetirementEvent(event: AccessibilityEvent): Boolean {
+        val n = retiredNative ?: return false
+        val id = retiredId ?: return false
+        if (event.windowId != id) return false
+        val code = inspectManualRetirementEvent(event.eventType,
+            if (event.eventType == AccessibilityEvent.TYPE_WINDOWS_CHANGED) event.windowChanges else 0,
+            choice = { !closed && !health.failed && selectedValid && selected != null && selected == original?.token },
+            hidden = { overlay.windowState.status == OverlayWindowStatus.HIDDEN },
+            packageMatches = {
+                val pkg = event.packageName?.toString()
+                retirementPackageConfirmed(event.eventType, pkg == service.packageName, pkg == null) {
+                    n.removalComplete(nativeOwner, n.generation, id) && presence(id) == CleanupWindowPresence.ABSENT
+                }
+            },
+            timeMatches = { promptLifetime.retirementEventWithinLease(n.generation, event.eventTime) },
+            nativeRegistered = {
+                !n.identityUnavailable && n.registrationConfirmed(nativeOwner, n.generation) &&
+                    n.retirementWindow(nativeOwner, n.generation) == id && before?.contains(id) == false &&
+                    original?.token?.windowId != id
+            }, absenceIfReleased = {
+                if (cleanup.pending) true // blocked until nativeProcessed proves completion + absence
+                else cleanup.ready && n.removalComplete(nativeOwner, n.generation, id) &&
+                    presence(id) == CleanupWindowPresence.ABSENT
+            })
+        trace?.retirement(code)
+        return code.check == ManualRetirementCheck.COMPATIBLE
+    }
     fun hasPrompt() = overlay.isShowing
     fun canObserve() = !closed && !health.failed && cleanup.ready && !overlay.isShowing
     private fun nativeProcessed(n: OverlayNativeWindowLifetime) {
@@ -454,6 +486,7 @@ internal class ManualPopupConnection(
         endCause = ManualPromptCause.SERVICE_STOPPED
         closed = true; selectedValid = false; gate.clear(); promptLifetime.clear(); guarded.revoke(); displayTimer?.cancel()
         job?.cancel(); original = null; shownAnalysis = null; shownDetection = null; clearHistory(); eventDiagnostic.disarm()
+        retiredNative = null; retiredId = null
         val batch = kr.closeforyou.accessibility.CollectionReleaseBatch()
         batch.attempt { dismissOverlay() }
         batch.attempt { manualCleanupCall(ManualCleanupSite.CALLBACK_DISMISSED, trace?.cleanup, cleanup) { promptListener.onDismissed() } }

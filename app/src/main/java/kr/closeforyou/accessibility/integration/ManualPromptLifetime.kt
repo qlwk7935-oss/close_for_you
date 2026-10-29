@@ -65,6 +65,10 @@ internal class ManualPromptLifetime(private val clock: () -> Long) {
         diagnostic?.time = if (eventTime < shownAt) OwnershipTime.CURRENT_NATIVE_CREATION else OwnershipTime.WITHIN_SHOW
         return true
     }
+    /** Only for a known native retirement, after C is HIDDEN. Event time alone grants nothing;
+     * callers also require the selected callback, exact native generation, package and ID. */
+    fun retirementEventWithinLease(expectedGeneration: Long, eventTime: Long): Boolean =
+        current() != null && expectedGeneration == generation && eventTime >= firstNativeEvent && eventTime <= clock()
     fun clear() { token = null; shownAt = -1; generation = 0; nativeCreation = -1; preparingGeneration = 0; firstNativeEvent = -1 }
     override fun toString() = "ManualPromptLifetime(redacted)"
 }
