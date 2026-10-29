@@ -98,7 +98,7 @@
     <string name="ui_voice_permission_hint">음성 명령을 쓰려면 설정에서 마이크를 허용해 주세요.</string>
 
     <!-- 설정 화면 (C). 자동 닫기는 앱별·기본 꺼짐. 처음 보는 팝업은 항상 묻는다. -->
-    <string name="ui_settings_title">안내·음성 설정</string>
+    <string name="ui_settings_title">팝업처리도우미 설정</string>
     <string name="ui_settings_section_status">지금 상태</string>
     <string name="ui_settings_status_running">팝업 살펴보기가 켜져 있어요.</string>
     <string name="ui_settings_status_paused">팝업 살펴보기가 일시정지되어 있어요.</string>
@@ -191,9 +191,8 @@
     <string name="ui_preset_consent_widen">넓히기</string>
 
     <!-- 첫 실행 설정 (C). -->
-    <string name="ui_onboarding_title">닫아줄게 처음 설정</string>
     <string name="ui_onboarding_intro">다른 앱에 뜨는 팝업을 대신 처리해 드려요. 광고·공지·쿠폰을 닫을지 알려 줄지 여기서 고른 범위에서만, 안전 확인을 통과한 팝업만 닫아요.</string>
-    <string name="ui_onboarding_later">고른 방식은 나중에 안내·음성 설정에서 바꿀 수 있어요.</string>
+    <string name="ui_onboarding_later">고른 방식은 나중에 팝업처리도우미 설정에서 바꿀 수 있어요.</string>
     <string name="ui_onboarding_start">시작하기</string>
 
     <!-- 계약 v2 자동 처리 결과 안내 (AutoDecisionSpeech, 아직 연결 안 함). 프리셋·기억한 규칙으로 처리한 팝업.
@@ -222,19 +221,15 @@
     <!-- DENY + SUSPICIOUS_CONTENT: 누르기·이동 선택지를 주지 않는다. -->
     <string name="ui_auto_suspicious">사기일 수 있는 팝업이에요. 아무것도 누르지 마세요.</string>
 
-    <string name="ui_onboarding_step_preset">2단계 중 1단계: 팝업 처리 방식</string>
-    <string name="ui_onboarding_step_help_apps">2단계 중 2단계: 도와줄 앱</string>
     <string name="ui_onboarding_next">다음</string>
     <!-- 첫 실행 1단계: 프리셋을 고르기 전 [다음] 비활성 이유 (A #34 10/25, 도와줄 앱 단계와 같은 방식). -->
     <string name="ui_onboarding_choose_preset_first">팝업 처리 방식 중 하나를 고르면 누를 수 있어요.</string>
     <string name="ui_onboarding_back">이전 단계</string>
-    <string name="ui_onboarding_skip">건너뛰기</string>
-    <string name="ui_onboarding_skip_help">건너뛰면 아직 아무 앱도 돕지 않아요. 나중에 안내·음성 설정의 \'도와줄 앱\'에서 고를 수 있어요.</string>
-    <string name="ui_onboarding_help_apps_consent">고른 앱은 다음 화면에서 화면 정보 수집에 동의하면 적용돼요.</string>
+    <string name="ui_onboarding_skip_help">나중에 고르면 아직 아무 앱도 돕지 않아요. 언제든 설정의 \'도와줄 앱\'에서 고를 수 있어요.</string>
 
     <!-- 도와줄 앱 (첫 실행 2단계 + 설정). 앱 이름·패키지 이름은 로그에 남기지 않는다. -->
     <string name="ui_help_apps_section">도와줄 앱</string>
-    <string name="ui_help_apps_intro">닫아줄게가 팝업을 살펴볼 앱을 정해요.</string>
+    <string name="ui_help_apps_intro">팝업처리도우미가 팝업을 살펴볼 앱을 정해요.</string>
     <string name="ui_help_apps_all">모든 앱에서 돕기 (추천)</string>
     <string name="ui_help_apps_all_help">설치된 앱 전체를 도와요. 직접 더 뺄 수도 있어요.</string>
     <string name="ui_help_apps_chosen">직접 고르기</string>
@@ -277,11 +272,51 @@
     <string name="ui_help_apps_result_removed">앱 %1$d개를 뺐어요.</string>
     <string name="ui_help_apps_result_waiting">화면 정보 수집에 동의하면 앱 %1$d개를 넣어요.</string>
     <string name="ui_help_apps_result_nothing">바뀐 앱이 없어요.</string>
-    <string name="ui_help_apps_scope">닫아줄게는 접근성 정보로 고른 앱의 팝업을 살펴봐요. 은행·증권·결제·비밀번호 관리 앱과 보호된 화면은 [모든 앱]을 골라도 항상 빼고, 원하면 더 뺄 수 있어요. 화면 내용은 휴대폰 밖으로 나가지 않아요.</string>
+    <string name="ui_help_apps_scope">팝업처리도우미는 접근성 정보로 고른 앱의 팝업을 살펴봐요. 은행·증권·결제·비밀번호 관리 앱과 보호된 화면은 [모든 앱]을 골라도 항상 빼고, 원하면 더 뺄 수 있어요. 화면 내용은 휴대폰 밖으로 나가지 않아요.</string>
     <string name="ui_help_apps_separate">도와줄 앱을 골라도 화면 사진(스크린샷)·글자 읽기(OCR)와 자동 닫기는 따로 정해요.</string>
     <string name="ui_help_apps_exclude_more">더 뺄 앱 고르기</string>
     <string name="ui_help_apps_exclude_more_title">더 뺄 앱 고르기</string>
     <string name="ui_help_apps_exclude_more_help">체크를 끈 앱은 돕지 않아요.</string>
     <string name="ui_help_apps_user_excluded">직접 뺀 앱은 %1$d개예요.</string>
     <string name="ui_help_apps_choose_first">모든 앱에서 돕기나 직접 고르기 중 하나를 고르면 누를 수 있어요.</string>
+
+    <!-- C 처음 설정 5단계·설정 화면 (c/onboarding-release, 10/29). 디자인은 demo-musical 장면 2. -->
+    <string name="ui_app_display_name">팝업처리도우미</string>
+    <string name="ui_setup_step">%1$d단계 중 %2$d단계</string>
+    <string name="ui_setup_tagline">팝업, 이제 듣고 고르세요.</string>
+    <string name="ui_setup_selected">선택됨</string>
+    <string name="ui_setup_not_selected">선택 안 됨</string>
+    <string name="ui_setup_service_title">접근성 서비스 켜기</string>
+    <string name="ui_setup_service_intro">팝업을 찾아 읽어 주려면 접근성 서비스가 필요해요.</string>
+    <string name="ui_setup_service_reads">팝업이 뜨면 화면의 글자와 버튼 이름을 읽어요.</string>
+    <string name="ui_setup_service_local">화면 내용은 휴대폰 밖으로 보내지 않아요.</string>
+    <string name="ui_setup_service_never_press">결제, 구매, 동의, 구독, 삭제 같은 중요한 버튼은 절대 대신 누르지 않아요.</string>
+    <string name="ui_setup_service_excluded">은행·결제 앱과 보호된 화면은 살펴보지 않아요.</string>
+    <string name="ui_setup_service_how">서비스 켜기를 누르면 휴대폰 접근성 설정이 열려요. 설치된 앱(또는 설치된 서비스)에서 팝업처리도우미를 골라 켠 뒤, 뒤로 가기로 이 화면에 돌아와 주세요.</string>
+    <string name="ui_setup_service_turn_on">서비스 켜기</string>
+    <string name="ui_setup_service_state_off">접근성 서비스: 꺼짐</string>
+    <string name="ui_setup_service_state_on">접근성 서비스: 켜짐</string>
+    <string name="ui_setup_service_open_failed">이 휴대폰에서는 접근성 설정을 바로 열 수 없어요. 휴대폰 설정 앱에서 접근성을 찾아 팝업처리도우미를 켜 주세요.</string>
+    <string name="ui_setup_service_off_note">서비스를 켜기 전에는 팝업을 살펴보지 않아요. 나중에 켜도 돼요.</string>
+    <string name="ui_setup_service_later">나중에 켜기</string>
+    <string name="ui_setup_takeover_heading">TalkBack 안내</string>
+    <string name="ui_setup_takeover_question">TalkBack을 쓰고 있다면, 선택 창이 뜰 때 안내를 팝업처리도우미에 맡길지 정해 주세요. 맡겨도 버튼은 직접 두 번 눌러야 눌려요.</string>
+    <string name="ui_setup_pick_one_app">도와줄 앱을 하나 이상 고르면 누를 수 있어요.</string>
+    <string name="ui_setup_help_apps_later">나중에 고르기</string>
+    <string name="ui_setup_done_title">준비됐어요</string>
+    <string name="ui_setup_done_intro">이제 팝업이 뜨면 고른 방식대로 도와 드릴게요. 고른 내용을 확인해 주세요.</string>
+    <string name="ui_setup_sum_service">접근성 서비스</string>
+    <string name="ui_setup_on">켜짐</string>
+    <string name="ui_setup_off">꺼짐</string>
+    <string name="ui_setup_sum_help_all">모든 앱 (%1$d개)</string>
+    <string name="ui_setup_sum_help_more">%1$s 외 %2$d개</string>
+    <string name="ui_setup_done_service_off">접근성 서비스가 아직 꺼져 있어요. 켜야 팝업을 살펴볼 수 있어요. 설정 화면 맨 위에서 켤 수 있어요.</string>
+    <string name="ui_setup_done_consent">고른 앱은 기본 설정에서 화면 정보 수집에 동의하면 적용돼요.</string>
+    <string name="ui_setup_begin">사용 시작</string>
+    <string name="ui_settings_section_service">접근성 서비스</string>
+    <string name="ui_settings_open_core">기본 설정 열기</string>
+    <string name="ui_settings_open_core_help">화면 정보 수집 동의, 팝업 살펴보기 시작·일시정지, 이미지 글자 읽기는 기본 설정에서 정해요.</string>
+    <string name="ui_settings_section_setup">처음 설정</string>
+    <string name="ui_settings_restart_setup">처음 설정 다시 하기</string>
+    <string name="ui_settings_restart_setup_help">처음 설정 화면을 다시 보여 줘요. 사용 시작을 누를 때까지 자동 닫기는 쉬어요.</string>
 </resources>

@@ -2,14 +2,7 @@ package kr.closeforyou.ui.voice.settings
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.selection.toggleable
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -17,10 +10,10 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import kr.closeforyou.R
 
@@ -60,7 +53,7 @@ fun HandlingPresetWithConsent(
             enabled = AutoCloseConsentPolicy.switchEnabled(selected),
             onCheckedChange = { on -> if (on) confirmTurnOn = true else onConsentChange(false) },
         )
-        if (!PresetAutoCloseFeature.live) Text(stringResource(R.string.ui_preset_not_live))
+        if (!PresetAutoCloseFeature.live) HelpText(stringResource(R.string.ui_preset_not_live))
     }
 
     if (confirmTurnOn && selected != null) {
@@ -89,32 +82,23 @@ fun HandlingPresetWithConsent(
     }
 }
 
-/** One toggleable node: TalkBack reads label, help line, "스위치", 켜짐/꺼짐 (disabled: "사용 중지됨"). 48dp. */
+/** One toggleable card ([SwitchCard]): label, help line, "스위치", 켜짐/꺼짐 (disabled: "사용 중지됨"). */
 @Composable
 private fun ConsentSwitchRow(checked: Boolean, enabled: Boolean, onCheckedChange: (Boolean) -> Unit) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .heightIn(min = 48.dp)
-            .toggleable(value = checked, enabled = enabled, role = Role.Switch, onValueChange = onCheckedChange),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Column(Modifier.weight(1f).padding(end = 8.dp).padding(vertical = 4.dp)) {
-            Text(stringResource(R.string.ui_preset_consent_switch))
-            Text(
-                stringResource(ConsentText.switchHelpRes(checked, enabled)),
-                style = MaterialTheme.typography.bodySmall,
-            )
-        }
-        Switch(checked = checked, onCheckedChange = null, enabled = enabled)
-    }
+    SwitchCard(
+        label = stringResource(R.string.ui_preset_consent_switch),
+        help = stringResource(ConsentText.switchHelpRes(checked, enabled)),
+        checked = checked,
+        onCheckedChange = onCheckedChange,
+        enabled = enabled,
+    )
 }
 
 @Composable
 private fun ConsentDialog(titleRes: Int, preset: HandlingPreset, confirmRes: Int, onConfirm: () -> Unit, onDismiss: () -> Unit) {
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text(stringResource(titleRes)) },
+        title = { Text(stringResource(titleRes), modifier = Modifier.semantics { heading() }) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 ConsentText.bodyRes(preset, PresetAutoCloseFeature.live).forEach { Text(stringResource(it)) }

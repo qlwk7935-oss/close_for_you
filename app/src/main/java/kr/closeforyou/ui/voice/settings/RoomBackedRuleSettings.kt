@@ -54,19 +54,20 @@ object RoomBackedRuleSettings {
 
 /** Settings screen on [storage]; e.g. `UiVoiceSettingsRoute(RoomBackedRuleSettings.create(this))`. */
 @Composable
-fun UiVoiceSettingsRoute(storage: RuleSettingsStorage, modifier: Modifier = Modifier) {
+fun UiVoiceSettingsRoute(storage: RuleSettingsStorage, modifier: Modifier = Modifier, onOpenCoreSettings: (() -> Unit)? = null) {
     UiVoiceSettingsRoute(
         repository = storage.repository,
         modifier = modifier,
         deleteAll = storage.deleteAll,
         onOpenCleanUp = storage.onOpenCleanUp,
+        onOpenCoreSettings = onOpenCoreSettings,
     )
 }
 
 /** Same as above, creating the Room bundle once for this screen. */
 @Composable
-fun RoomBackedUiVoiceSettingsRoute(modifier: Modifier = Modifier) {
+fun RoomBackedUiVoiceSettingsRoute(modifier: Modifier = Modifier, onOpenCoreSettings: (() -> Unit)? = null) {
     val context = LocalContext.current
     val storage = remember { RoomBackedRuleSettings.create(context) }
-    UiVoiceSettingsRoute(storage, modifier)
+    UiVoiceSettingsRoute(storage, modifier, onOpenCoreSettings)
 }

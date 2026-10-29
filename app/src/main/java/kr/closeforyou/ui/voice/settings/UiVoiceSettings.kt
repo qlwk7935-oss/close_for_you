@@ -95,11 +95,18 @@ class UiVoicePreferences private constructor(context: Context) {
     val autoCloseConsentSource = AutoCloseConsentSource { current().autoCloseConsentNow() }
 
     /**
-     * [시작하기] on the first-run screen: saves the chosen preset and does not show the screen again.
-     * [autoCloseConsent] is the step-1 switch (already confirmed in its dialog for [preset]).
+     * [사용 시작] on the first-run screen: saves the chosen preset and does not show the screen again.
+     * [autoCloseConsent] is the preset step's switch (already confirmed in its dialog for [preset]).
+     * [talkBackTakeover] null = leave the saved value (the question was not shown).
      */
-    fun completeOnboarding(preset: HandlingPreset, autoCloseConsent: Boolean = false) =
-        write(current().completedOnboarding(preset, autoCloseConsent, System.currentTimeMillis()))
+    fun completeOnboarding(preset: HandlingPreset, autoCloseConsent: Boolean = false, talkBackTakeover: Boolean? = null) =
+        write(
+            current().completedOnboarding(preset, autoCloseConsent, System.currentTimeMillis())
+                .let { if (talkBackTakeover == null) it else it.copy(talkBackTakeover = talkBackTakeover) },
+        )
+
+    /** Settings' [처음 설정 다시 하기]: shows the first run again; every saved choice stays until [사용 시작]. */
+    fun restartOnboarding() = write(current().copy(onboardingDone = false))
 
     /** "도와줄 앱" saved: the way, the person's exclusions, and the additions still waiting for A's consent. */
     fun setHelpApps(mode: HelpAppsMode, excluded: Set<String>, pending: Set<String>) =

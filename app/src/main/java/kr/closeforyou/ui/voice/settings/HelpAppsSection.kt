@@ -19,7 +19,6 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.verticalScroll
@@ -29,7 +28,6 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -179,26 +177,17 @@ private fun HelpAppsModeSection(
     onDraftChange: (HelpAppsDraft) -> Unit,
     onPageChange: (HelpAppsPage) -> Unit,
 ) {
-    Text(stringResource(R.string.ui_help_apps_intro))
-    Text(stringResource(R.string.ui_help_apps_scope))
-    Text(stringResource(R.string.ui_help_apps_separate), style = MaterialTheme.typography.bodySmall)
+    BodyText(stringResource(R.string.ui_help_apps_intro))
+    BodyText(stringResource(R.string.ui_help_apps_scope))
+    HelpText(stringResource(R.string.ui_help_apps_separate))
     Column(Modifier.selectableGroup()) {
         HelpAppsMode.entries.forEach { mode ->
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .heightIn(min = 48.dp)
-                    .selectable(selected = draft.mode == mode, role = Role.RadioButton) {
-                        onDraftChange(draft.copy(mode = mode))
-                    },
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                RadioButton(selected = draft.mode == mode, onClick = null)
-                Column(Modifier.padding(start = 8.dp).padding(vertical = 4.dp)) {
-                    Text(stringResource(HelpAppsText.modeLabelRes(mode)))
-                    Text(stringResource(HelpAppsText.modeHelpRes(mode)), style = MaterialTheme.typography.bodySmall)
-                }
-            }
+            ChoiceCard(
+                title = stringResource(HelpAppsText.modeLabelRes(mode)),
+                body = stringResource(HelpAppsText.modeHelpRes(mode)),
+                selected = draft.mode == mode,
+                onClick = { onDraftChange(draft.copy(mode = mode)) },
+            )
         }
     }
     when {

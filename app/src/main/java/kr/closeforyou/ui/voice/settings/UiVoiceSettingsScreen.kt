@@ -6,6 +6,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -46,6 +47,8 @@ import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import kotlinx.collections.immutable.ImmutableList
@@ -84,8 +87,14 @@ fun UiVoiceSettingsRoute(
     deleteAll: suspend () -> Unit = repository::deleteAll,
     clock: Clock = Clock.systemDefaultZone(),
     onOpenCleanUp: suspend () -> Unit = {},
+    /** A's "기본 설정" (consent, start/pause, OCR); null hides [기본 설정 열기]. See [UiVoiceAppRoot]. */
+    onOpenCoreSettings: (() -> Unit)? = null,
+    status: CoreSetupStatus? = null,
 ) {
     val context = LocalContext.current
+    val setupStatus = status ?: remember { AndroidCoreSetupStatus(context) }
+    var serviceOn by remember { mutableStateOf(setupStatus.serviceEnabled()) }
+    var serviceOpenFailed by rememberSaveable { mutableStateOf(false) }
     val preferences = remember { UiVoicePreferences.get(context) }
     val core = remember { CorePreferences.get(context) }
     val settings by preferences.state.collectAsState()
@@ -129,6 +138,7 @@ fun UiVoiceSettingsRoute(
     LifecycleResumeEffect(Unit) {
         microphoneState = micState()
         now = clock.millis()
+        serviceOn = setupStatus.serviceEnabled()
         onPauseOrDispose {}
     }
 
@@ -167,6 +177,11 @@ fun UiVoiceSettingsRoute(
         deleteAllFailed = deleteFailed,
         helpOutcome = helpOutcome,
         onChangeHelpApps = { editingHelpApps = true },
+        serviceOn = serviceOn,
+        serviceOpenFailed = serviceOpenFailed,
+        onOpenServiceSettings = { serviceOpenFailed = !AndroidCoreSetupStatus.openServiceSettings(context) },
+        onOpenCoreSettings = onOpenCoreSettings,
+        onRestartSetup = preferences::restartOnboarding,
     )
 }
 
@@ -209,18 +224,38 @@ fun UiVoiceSettingsScreen(
     takeoverFeatureEnabled: Boolean = false,
     onTalkBackTakeoverChange: (Boolean) -> Unit = {},
     onSpeechRateChange: (SpeechRateChoice) -> Unit = {},
+    /** A's accessibility service; null hides the block (previews). */
+    serviceOn: Boolean? = null,
+    serviceOpenFailed: Boolean = false,
+    onOpenServiceSettings: () -> Unit = {},
+    /** A's "기본 설정"; null hides [기본 설정 열기]. */
+    onOpenCoreSettings: (() -> Unit)? = null,
+    /** [처음 설정 다시 하기]; null hides it. */
+    onRestartSetup: (() -> Unit)? = null,
 ) {
     var confirmDeleteAll by rememberSaveable { mutableStateOf(false) }
     Column(
         modifier = modifier
             .verticalScroll(rememberScrollState())
-            .padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
+            .padding(horizontal = 20.dp, vertical = 16.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
-        Heading(R.string.ui_settings_title, MaterialTheme.typography.titleLarge)
+        StepTitle(stringResource(R.string.ui_settings_title))
+
+        if (serviceOn != null) {
+            Heading(R.string.ui_settings_section_service)
+            // Polite: back from system settings, TalkBack reads the new state once; focus stays.
+            Box(Modifier.semantics(mergeDescendants = true) { liveRegion = LiveRegionMode.Polite }) { ServiceStateBox(serviceOn) }
+            if (!serviceOn) {
+                HelpText(stringResource(R.string.ui_setup_service_how))
+                BrandButton(stringResource(R.string.ui_setup_service_turn_on), onOpenServiceSettings)
+                if (serviceOpenFailed) BodyText(stringResource(R.string.ui_setup_service_open_failed))
+            }
+            HorizontalDivider()
+        }
 
         Heading(R.string.ui_preset_section)
-        Text(stringResource(R.string.ui_preset_section_help))
+        BodyText(stringResource(R.string.ui_preset_section_help))
         HandlingPresetWithConsent(
             selected = settings.handlingPreset,
             consentOn = settings.autoCloseConsent,
@@ -247,11 +282,18 @@ fun UiVoiceSettingsScreen(
                 if (collectionEnabled) R.string.ui_settings_status_running else R.string.ui_settings_status_paused,
             ),
         )
-        Text(stringResource(R.string.ui_settings_status_where), style = MaterialTheme.typography.bodySmall)
+        if (onOpenCoreSettings != null) {
+            HelpText(stringResource(R.string.ui_settings_open_core_help))
+            OutlinedButton(onClick = onOpenCoreSettings, modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp)) {
+                Text(stringResource(R.string.ui_settings_open_core), fontSize = UiType.body)
+            }
+        } else {
+            HelpText(stringResource(R.string.ui_settings_status_where))
+        }
 
         HorizontalDivider()
         Heading(R.string.ui_settings_section_auto_close)
-        Text(stringResource(R.string.ui_settings_auto_close_help))
+        BodyText(stringResource(R.string.ui_settings_auto_close_help))
         if (coreAllowedPackages.isEmpty()) {
             Text(stringResource(R.string.ui_settings_auto_close_no_apps))
         } else {
@@ -266,7 +308,7 @@ fun UiVoiceSettingsScreen(
 
         HorizontalDivider()
         Heading(R.string.ui_settings_section_announce)
-        Text(stringResource(R.string.ui_settings_detail_label))
+        BodyText(stringResource(R.string.ui_settings_detail_label))
         Column(Modifier.selectableGroup()) {
             AnnouncementDetail.entries.forEach { detail ->
                 RadioRow(
@@ -293,7 +335,7 @@ fun UiVoiceSettingsScreen(
                 onCheckedChange = onTalkBackTakeoverChange,
             )
         }
-        Text(stringResource(R.string.ui_settings_speech_rate_label))
+        BodyText(stringResource(R.string.ui_settings_speech_rate_label))
         Column(Modifier.selectableGroup()) {
             SpeechRateChoice.entries.forEach { rate ->
                 RadioRow(
@@ -333,6 +375,15 @@ fun UiVoiceSettingsScreen(
                 stringResource(R.string.ui_settings_rules_delete_all_failed),
                 modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
             )
+        }
+
+        if (onRestartSetup != null) {
+            HorizontalDivider()
+            Heading(R.string.ui_settings_section_setup)
+            HelpText(stringResource(R.string.ui_settings_restart_setup_help))
+            OutlinedButton(onClick = onRestartSetup, modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp)) {
+                Text(stringResource(R.string.ui_settings_restart_setup), fontSize = UiType.body)
+            }
         }
     }
 
@@ -416,8 +467,13 @@ private fun RuleRow(rule: PopupRule, appName: String, nowEpochMillis: Long, zone
 }
 
 @Composable
-private fun Heading(textRes: Int, style: androidx.compose.ui.text.TextStyle = MaterialTheme.typography.titleMedium) {
-    Text(stringResource(textRes), style = style, modifier = Modifier.semantics { heading() })
+private fun Heading(textRes: Int) {
+    Text(
+        stringResource(textRes),
+        fontSize = UiType.subtitle,
+        fontWeight = FontWeight.Bold,
+        modifier = Modifier.padding(top = 4.dp).semantics { heading() },
+    )
 }
 
 /** [description] sits inside the toggleable row, so TalkBack reads it with the label and state. */
@@ -431,7 +487,7 @@ private fun SwitchRow(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .heightIn(min = 48.dp)
+            .heightIn(min = 56.dp)
             .toggleable(value = checked, role = Role.Switch, onValueChange = onCheckedChange),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -440,13 +496,16 @@ private fun SwitchRow(
     }
 }
 
+/** One node: label, description, "선택됨"/"선택 안 됨" (explicit, same words as the first run), 라디오 버튼. */
 @Composable
 private fun RadioRow(label: String, description: String?, selected: Boolean, onClick: () -> Unit) {
+    val state = stringResource(if (selected) R.string.ui_setup_selected else R.string.ui_setup_not_selected)
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .heightIn(min = 48.dp)
-            .selectable(selected = selected, onClick = onClick, role = Role.RadioButton),
+            .heightIn(min = 56.dp)
+            .selectable(selected = selected, onClick = onClick, role = Role.RadioButton)
+            .semantics { stateDescription = state },
         verticalAlignment = Alignment.CenterVertically,
     ) {
         RadioButton(selected = selected, onClick = null)
@@ -457,8 +516,8 @@ private fun RadioRow(label: String, description: String?, selected: Boolean, onC
 @Composable
 private fun LabelWithDescription(label: String, description: String?, modifier: Modifier = Modifier) {
     Column(modifier.padding(vertical = 4.dp)) {
-        Text(label)
-        if (description != null) Text(description, style = MaterialTheme.typography.bodySmall)
+        Text(label, fontSize = UiType.body)
+        if (description != null) HelpText(description)
     }
 }
 
