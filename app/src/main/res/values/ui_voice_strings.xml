@@ -299,10 +299,11 @@
     <string name="ui_setup_service_open_failed">이 휴대폰에서는 접근성 설정을 바로 열 수 없어요. 휴대폰 설정 앱에서 접근성을 찾아 %1$s 항목을 켜 주세요.</string>
     <string name="ui_setup_service_off_note">서비스를 켜기 전에는 팝업을 살펴보지 않아요. 나중에 켜도 돼요.</string>
     <string name="ui_setup_guide_title">설정에서 이렇게 켜 주세요</string>
-    <string name="ui_setup_guide_find">1. 설정 화면이 열리면 서비스 목록에서 %1$s 항목을 찾아 두 번 탭하세요.</string>
-    <string name="ui_setup_guide_turn_on">2. 사용 스위치를 켜고, 확인 창이 뜨면 허용을 누르세요.</string>
-    <string name="ui_setup_guide_come_back">3. 다 되면 뒤로 가기로 이 화면에 돌아오세요.</string>
-    <string name="ui_setup_guide_where">목록 위치는 휴대폰마다 달라요. 설치된 앱이나 설치된 서비스 아래에 있을 수 있어요.</string>
+    <string name="ui_setup_guide_find">1. 설정 화면이 열리면 화면을 아래로 내려 서비스 아래의 %1$s 항목을 누르세요.</string>
+    <string name="ui_setup_guide_find_talkback">1. 설정 화면이 열리면 오른쪽으로 계속 쓸어 서비스 아래의 %1$s 항목까지 가서 두 번 탭하세요.</string>
+    <string name="ui_setup_guide_turn_on">2. 사용을 켠 뒤, 확인 창이 뜨면 허용을 누르세요.</string>
+    <string name="ui_setup_guide_come_back">3. 끝나면 뒤로 가기로 이 화면에 돌아오세요.</string>
+    <string name="ui_setup_guide_where">휴대폰에 따라 서비스 대신 설치된 앱이나 설치된 서비스 아래에 있을 수도 있어요.</string>
     <string name="ui_setup_guide_open">설정 열기</string>
     <string name="ui_setup_service_turned_on">접근성 서비스가 켜졌어요. 다음을 눌러 계속해 주세요.</string>
     <string name="ui_setup_service_later">나중에 켜기</string>

@@ -1,5 +1,6 @@
 package kr.closeforyou.ui.voice.settings
 
+import android.view.accessibility.AccessibilityEvent
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.luminance
 import org.junit.Assert.assertEquals
@@ -259,6 +260,24 @@ class ServiceTurnOnGuideTest {
         assertTrue(ServiceGuidePolicy.AFTER_TALKBACK_MILLIS > 0)
     }
 
+    @Test fun focusMovesToOpenOnlyAfterFullSpeechWithTalkBackAndTakeover() {
+        assertTrue(ServiceGuidePolicy.moveFocusToOpen(GuideSpeech.AFTER_TALKBACK, completed = true, personInteracted = false))
+        assertFalse(ServiceGuidePolicy.moveFocusToOpen(GuideSpeech.AFTER_TALKBACK, completed = false, personInteracted = false))
+        assertFalse(ServiceGuidePolicy.moveFocusToOpen(GuideSpeech.AFTER_TALKBACK, completed = true, personInteracted = true))
+        // Without TalkBack there is no TalkBack focus to move.
+        assertFalse(ServiceGuidePolicy.moveFocusToOpen(GuideSpeech.NOW, completed = true, personInteracted = false))
+        assertFalse(ServiceGuidePolicy.moveFocusToOpen(GuideSpeech.NONE, completed = true, personInteracted = false))
+    }
+
+    @Test fun touchOrSwipeAwayFromTheTitleMeansThePersonTookOver() {
+        val title = "설정에서 이렇게 켜 주세요"
+        assertTrue(ServiceGuidePolicy.isPersonEvent(AccessibilityEvent.TYPE_VIEW_HOVER_ENTER, "", title))
+        assertTrue(ServiceGuidePolicy.isPersonEvent(AccessibilityEvent.TYPE_VIEW_ACCESSIBILITY_FOCUSED, "취소", title))
+        // TalkBack focusing the title by itself when the dialog opens is not the person.
+        assertFalse(ServiceGuidePolicy.isPersonEvent(AccessibilityEvent.TYPE_VIEW_ACCESSIBILITY_FOCUSED, title, title))
+        assertFalse(ServiceGuidePolicy.isPersonEvent(AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED, "", title))
+    }
+
     @Test fun turnedOnIsSpokenOnlyWithoutTalkBack() {
         assertEquals(GuideSpeech.NOW, ServiceGuidePolicy.turnedOn(touchExplorationOn = false))
         // TalkBack reads the live state box itself; a second voice would overlap it.
@@ -272,14 +291,16 @@ class ServiceGuideTextTest {
 
     /** The service's name in system settings is A's app_name, so the guide takes it as an argument. */
     @Test fun guideNamesTheAppThroughAnArgument() {
-        listOf("ui_setup_guide_find", "ui_setup_service_how", "ui_setup_service_open_failed").forEach {
+        listOf("ui_setup_guide_find", "ui_setup_guide_find_talkback", "ui_setup_service_how", "ui_setup_service_open_failed").forEach {
             assertTrue(it, text(it).contains("%1\$s"))
             assertFalse(it, text(it).contains("팝업처리도우미"))
         }
     }
 
     @Test fun guideSaysDoubleTapAllowAndComeBack() {
-        assertTrue(text("ui_setup_guide_find").contains("두 번 탭"))
+        val talkBack = text("ui_setup_guide_find_talkback")
+        assertTrue(talkBack.contains("두 번 탭") && talkBack.contains("오른쪽으로") && talkBack.contains("서비스 아래"))
+        assertTrue(text("ui_setup_guide_find").contains("서비스 아래"))
         assertTrue(text("ui_setup_guide_turn_on").contains("허용"))
         assertTrue(text("ui_setup_guide_come_back").contains("뒤로 가기"))
     }

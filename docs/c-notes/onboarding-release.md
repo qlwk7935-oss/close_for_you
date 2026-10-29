@@ -35,10 +35,14 @@
 
 TalkBack 사용자가 접근성 목록에서 우리 앱을 찾기 힘들어서, 처음 설정 2단계와 설정 화면의 [서비스 켜기]가 같은 순서로 동작한다.
 
-1. **바로 넘어가지 않고 안내 대화상자**: "설정에서 이렇게 켜 주세요" — ① 목록에서 *앱 이름* 항목을 찾아 두 번 탭 ② 사용 스위치를 켜고 확인 창에서 허용 ③ 다 되면 뒤로 가기 + "목록 위치는 휴대폰마다 달라요". [설정 열기] / [취소].
+1. **바로 넘어가지 않고 안내 대화상자**: "설정에서 이렇게 켜 주세요" — 위치 기준 안내(10/30 LG 피드백):
+   ① TalkBack 켜짐 "오른쪽으로 계속 쓸어 서비스 아래의 *앱 이름* 항목까지 가서 두 번 탭" / 꺼짐 "화면을 아래로 내려 서비스 아래의 *앱 이름* 항목을 누르세요"
+   ② 사용을 켠 뒤 확인 창에서 허용 ③ 끝나면 뒤로 가기 + "휴대폰에 따라 설치된 앱·설치된 서비스 아래일 수도". [설정 열기] / [취소]. 화면 문구와 TTS가 같은 문장.
    *앱 이름*은 A의 `R.string.app_name`을 그대로 읽는다(시스템 설정의 서비스 이름과 같은 문자열). 지금은 "닫아줄게", A가 4-2를 바꾸면 자동으로 "팝업처리도우미".
 2. **음성으로도 읽기** (`ServiceGuidePolicy`): TalkBack 꺼짐 → 우리 TTS가 바로 읽음. TalkBack 켜짐 → TalkBack이 대화상자 제목을 스스로 읽고, "안내 맡기기"가 켜져 있으면 1초 뒤 우리 TTS가 단계를 읽음(꺼져 있으면 TalkBack만). [설정 열기]·[취소]·닫기 때 TTS 멈춤.
-3. **우리 서비스 항목으로 바로**: [설정 열기]는 접근성 설정을 열면서 `:settings:fragment_args_key`(+ `:settings:show_fragment_args` 안 같은 키)에 `kr.closeforyou/kr.closeforyou.accessibility.CloseForYouAccessibilityService`를 넣는다. AOSP 설정 앱은 이 키의 항목으로 스크롤·강조한다. **공개 API가 아니라** 제조사 설정 앱이 무시하면 지금처럼 목록만 열린다(안전한 대체).
+   **다 읽으면 [설정 열기]로 포커스 이동** (TalkBack·안내 맡기기 켜짐, TTS `onDone`일 때만, 시연 모드 6-0). 대화상자는 우리 앱 창이라 서비스 없이 Compose의 `AccessibilityNodeProvider`에 `ACTION_ACCESSIBILITY_FOCUS`(노드는 testTag `ui_guide_open`).
+   읽는 중 사람이 손가락으로 만지거나(TYPE_VIEW_HOVER_ENTER) 쓸어서 제목이 아닌 곳으로 포커스가 가면(TYPE_VIEW_ACCESSIBILITY_FOCUSED) TTS를 멈추고 이동하지 않음. 이벤트 글자는 제목과 비교만 하고 로그에 남기지 않음.
+3. **우리 서비스 항목으로 바로**: [설정 열기]는 접근성 설정을 열면서 `:settings:fragment_args_key`(+ `:settings:show_fragment_args` 안 같은 키)에 `kr.closeforyou/kr.closeforyou.accessibility.CloseForYouAccessibilityService`를 넣는다. AOSP 설정 앱은 이 키의 항목으로 스크롤·강조한다. **공개 API가 아니라** 제조사 설정 앱이 무시하면 지금처럼 목록만 열린다(안전한 대체). **LG 벨벳(Android 12)은 무시함(10/30 확인)** — 맨 위 [돌아가기]에 포커스, 스크롤·강조 없음. 다른 기기용으로 코드는 둔다.
    `Settings.ACTION_ACCESSIBILITY_DETAILS_SETTINGS`(서비스 상세로 바로)는 SDK 36 소스에서 `@SystemApi @hide`라 일반 앱은 쓰지 않는다.
 4. **돌아오면**: 켜졌으면 TalkBack 꺼짐 → TTS "접근성 서비스가 켜졌어요. 다음을 눌러 계속해 주세요.", TalkBack 켜짐 → 상태 상자 live region을 TalkBack이 읽음(두 목소리 겹침 방지).
 - 시연 전용 한 번에 켜기(WRITE_SECURE_SETTINGS)는 하지 않음.
@@ -105,6 +109,8 @@ A가 원하면 다음 단계로 2단계(접근성 서비스)에 A 동의 문구�
 
 ## 5. debug에서 보기
 
+> **시연 폰에는 release 빌드를 설치한다.** debug에는 C 시험용 접근성 서비스("… C 선택 창 시험")가 목록에 같이 보여 2단계 안내와 헷갈린다.
+
 ```
 adb shell am start -n kr.closeforyou/.ui.voice.debug.ChoicePreviewActivity --ez ui_debug_open_onboarding true
 ```
@@ -114,7 +120,7 @@ adb shell am start -n kr.closeforyou/.ui.voice.debug.ChoicePreviewActivity --ez 
 ## 6. 실기기 미검증 항목 (LG 벨벳 Android 12, 갤럭시)
 
 - ~~[서비스 켜기] → 시스템 접근성 설정 열림 → 켜고 돌아오면 "켜짐 ✓"~~ (10/30 LG 확인됨, TalkBack 없이)
-- 2-1: LG·갤럭시에서 강조 키가 먹어 우리 항목으로 스크롤·강조되는지, 안내 TTS가 들리는지, TalkBack 켜짐에서 대화상자 낭독과 우리 TTS가 겹치지 않는지, 돌아온 뒤 "켜졌어요"
+- 2-1: 갤럭시에서 강조 키가 먹는지(LG는 안 먹음), 안내 TTS ✅(LG TalkBack 켜짐, 끼어들기 없음), **다 읽은 뒤 [설정 열기]로 포커스가 옮겨지는지**, 읽는 중 만지면 멈추고 안 옮기는지, 돌아온 뒤 "켜졌어요"
 - 켜고 돌아오면 TalkBack이 "켜짐"을 한 번 읽는지
 - 단계가 바뀔 때 TalkBack이 `paneTitle`(단계 제목)을 알리는지, 포커스가 이상한 곳에 남지 않는지
 - 라디오 카드·스위치 카드 낭독 순서("팝업 처리 방식…, 선택됨, 라디오 버튼")
