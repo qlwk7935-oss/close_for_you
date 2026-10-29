@@ -21,6 +21,8 @@ import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.paneTitle
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
+import androidx.compose.ui.semantics.testTagsAsResourceId
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import kr.closeforyou.R
@@ -29,11 +31,14 @@ import kr.closeforyou.testing.mock.MockPopupFixtures
 import kr.closeforyou.ui.voice.PressResultSpeech
 import kr.closeforyou.ui.voice.command.SpeakButtonState
 import kr.closeforyou.ui.voice.overlay.PromptControlsState
+import kr.closeforyou.ui.voice.overlay.TakeoverFocusTarget
+import kr.closeforyou.ui.voice.overlay.TalkBackTakeoverPlan
 
 /**
  * "닫을까요?" prompt body, reusable inside the future accessibility overlay.
  * Reading order = layout order: summary, choices, then [말하기] → [다시 듣기] → [그만 말하기] and the
- * status line. It never requests focus. With the default [controls] only the choices are shown.
+ * status line. It never requests focus itself ([takeover] only marks where A's service may put it).
+ * With the default [controls] only the choices are shown.
  */
 @Composable
 fun ChoicePromptContent(
@@ -50,12 +55,21 @@ fun ChoicePromptContent(
      * so a TalkBack focus on one of them is not dropped (device unverified). paneTitle is unchanged.
      */
     revalidating: Boolean = false,
+    /**
+     * TalkBack takeover ([TalkBackTakeoverFeature]): no paneTitle (TalkBack would announce the window
+     * over our reading), and the summary and the landing button carry ids so A's service can put
+     * TalkBack's focus on them. Fixed for the window's life: nothing here changes while we speak.
+     */
+    takeover: Boolean = false,
 ) {
     val paneTitle = stringResource(R.string.ui_choice_pane_title)
+    val buttonIndex = if (takeover) TalkBackTakeoverPlan.buttonIndex(prompt) else null
     Surface(
         modifier = modifier
             .fillMaxWidth()
-            .semantics { this.paneTitle = paneTitle },
+            .semantics {
+                if (takeover) testTagsAsResourceId = true else this.paneTitle = paneTitle
+            },
         shape = RoundedCornerShape(20.dp),
         tonalElevation = 6.dp,
         shadowElevation = 12.dp,
@@ -71,7 +85,11 @@ fun ChoicePromptContent(
                     modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
                 )
             } else {
-                Text(text = stringResource(prompt.summary.textRes()), style = MaterialTheme.typography.titleMedium)
+                Text(
+                    text = stringResource(prompt.summary.textRes()),
+                    style = MaterialTheme.typography.titleMedium,
+                    modifier = if (takeover) Modifier.testTag(TakeoverFocusTarget.FIRST_ITEM.tag) else Modifier,
+                )
                 val countdown = prompt.countdownSeconds
                 if (countdown != null) {
                     Text(text = stringResource(R.string.ui_choice_video_ad_wait, countdown))
@@ -83,9 +101,11 @@ fun ChoicePromptContent(
                 }
             }
             val enabled = !revalidating
-            prompt.options.forEach { option ->
+            prompt.options.forEachIndexed { index, option ->
                 val label = option.label()
-                val buttonModifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)
+                val buttonModifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).then(
+                    if (index == buttonIndex) Modifier.testTag(TakeoverFocusTarget.CHOICE_BUTTON.tag) else Modifier,
+                )
                 if (option.kind == PromptOptionKind.PRESS_CANDIDATE) {
                     Button(onClick = { onOption(option) }, modifier = buttonModifier, enabled = enabled) { Text(label) }
                 } else {

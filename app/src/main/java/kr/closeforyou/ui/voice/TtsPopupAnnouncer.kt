@@ -6,6 +6,7 @@ import kr.closeforyou.core.contract.AnnouncementReceipt
 import kr.closeforyou.core.contract.AnnouncementRequest
 import kr.closeforyou.core.contract.AnnouncementState
 import kr.closeforyou.core.contract.PopupAnnouncer
+import kr.closeforyou.ui.voice.settings.SpeechRates
 
 /**
  * C/F10 announcer: speaks the caller's sentence with on-device TTS and keeps it for "다시 듣기".
@@ -59,7 +60,7 @@ class TtsPopupAnnouncer(
 
     companion object {
         fun create(context: Context): TtsPopupAnnouncer = TtsPopupAnnouncer(
-            engine = AndroidTtsEngine(context),
+            engine = AndroidTtsEngine(context, SpeechRates.provider(context)),
             nothingToRepeatText = context.getString(R.string.ui_announce_nothing_to_repeat),
         )
     }

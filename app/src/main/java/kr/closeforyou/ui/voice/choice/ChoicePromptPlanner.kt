@@ -13,6 +13,7 @@ import kr.closeforyou.core.model.SnapshotToken
 import kr.closeforyou.core.model.UserChoice
 import kr.closeforyou.ui.voice.PressFailure
 import kr.closeforyou.ui.voice.PressResultSpeech
+import kr.closeforyou.ui.voice.overlay.PromptSpeech
 
 /** Hedged summary: a display classification can be wrong, so the sentence never asserts it. */
 enum class PromptSummary { LIKELY_AD, LIKELY_VIDEO_AD, LIKELY_NOTICE, LIKELY_COUPON, NEEDS_REVIEW, UNKNOWN }
@@ -55,6 +56,11 @@ data class ChoicePrompt(
     val pressFailure: PressFailure? = null,
     /** Set only while [VideoAdAnnouncementFeature] is on and B says video ad. */
     val videoAd: VideoAdNotice? = null,
+    /**
+     * The popup's extracted text in reading order, for the TalkBack takeover's verbatim reading.
+     * Spoken only, never shown, logged or stored; null when there is none.
+     */
+    val popupText: String? = null,
 ) {
     override fun toString(): String =
         "ChoicePrompt(summary=$summary, options=${options.size}, failure=$pressFailure, videoAd=$videoAd, redacted)"
@@ -133,6 +139,7 @@ object ChoicePromptPlanner {
             cannotPressForUser = pressable.isEmpty() && classification != PopupClassification.USER_DECISION,
             options = all.toImmutableList(),
             videoAd = notice,
+            popupText = PromptSpeech.contentOrNull(analysis),
         )
     }
 

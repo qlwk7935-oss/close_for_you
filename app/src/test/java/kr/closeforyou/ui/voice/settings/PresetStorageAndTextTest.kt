@@ -13,6 +13,19 @@ class PresetStorageAndTextTest {
         assertEquals(HandlingPreset.DEFAULT, read.handlingPreset)
     }
 
+    @Test fun takeoverAndSpeechRateAreSavedAndRestored() = SpeechRateChoice.entries.forEach { rate ->
+        val store = MapPreferences()
+        val saved = UiVoiceSettings(talkBackTakeover = !kr.closeforyou.ui.voice.overlay.TalkBackTakeoverFeature.DEFAULT_ON, speechRate = rate)
+        store.edit().also { UiVoicePreferences.writeTo(it, saved) }.apply()
+        assertEquals(saved, UiVoicePreferences.readFrom(store))
+    }
+
+    @Test fun nothingStoredMeansTakeoverDefaultAndSystemRate() {
+        val read = UiVoicePreferences.readFrom(MapPreferences())
+        assertEquals(kr.closeforyou.ui.voice.overlay.TalkBackTakeoverFeature.DEFAULT_ON, read.talkBackTakeover)
+        assertEquals(SpeechRateChoice.FOLLOW_SYSTEM, read.speechRate)
+    }
+
     @Test fun presetAndFirstRunAreSavedAndRestored() = HandlingPreset.entries.forEach { preset ->
         val store = MapPreferences()
         val saved = UiVoiceSettings(handlingPreset = preset, onboardingDone = true, autoClosePackages = setOf("kr.a"))

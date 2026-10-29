@@ -1,6 +1,7 @@
 package kr.closeforyou.ui.voice.debug
 
 import android.accessibilityservice.AccessibilityService
+import android.accessibilityservice.AccessibilityServiceInfo
 import android.content.Intent
 import android.os.Handler
 import android.os.Looper
@@ -53,6 +54,13 @@ class ChoiceOverlayTestService : AccessibilityService() {
         lastSession += 1
         session = lastSession
         announcer = TtsPopupAnnouncer.create(this)
+        // The TalkBack takeover finds C's window and its tagged nodes the way A's service does
+        // (A's config has both flags); this debug service's XML has neither.
+        serviceInfo?.let { info ->
+            info.flags = info.flags or AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS or
+                AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS
+            serviceInfo = info
+        }
         current = WeakReference(this)
         mutableConnected.value = true
     }

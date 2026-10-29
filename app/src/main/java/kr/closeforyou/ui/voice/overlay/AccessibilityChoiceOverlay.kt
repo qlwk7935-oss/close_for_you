@@ -8,6 +8,7 @@ import android.os.Looper
 import android.view.Gravity
 import android.view.View
 import android.view.WindowManager
+import android.view.accessibility.AccessibilityNodeInfo
 import androidx.annotation.StringRes
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
@@ -36,7 +37,8 @@ import kr.closeforyou.ui.voice.choice.PromptSelection
  *
  * That window type needs a connected AccessibilityService context and no "draw over apps"
  * permission. FLAG_NOT_FOCUSABLE keeps the keyboard and input focus in the app the person was
- * using; TalkBack focus is never moved by code. Mock-based: not yet wired to A's real service.
+ * using. TalkBack focus is moved by code only by the takeover ([TalkBackTakeoverFeature], AGENTS.md
+ * 6-0 demo mode), and only inside this window. Mock-based: not yet wired to A's real service.
  *
  * Window bookkeeping (generations, failed add/remove, exactly-once cleanup, REVALIDATING) is in
  * [OverlayWindowKeeper]; this class only supplies the Android steps. One window holds one prompt
@@ -49,6 +51,8 @@ class AccessibilityChoiceOverlay(
     private val controlsSupport: PromptControlsSupport = PromptControlsSupport.NONE,
     /** [RevalidatingFeature]; false = [beginRevalidation] only dismisses, as before. */
     private val revalidatingEnabled: Boolean = RevalidatingFeature.enabled,
+    /** [TalkBackTakeoverFeature]; read once per new window (setting and TalkBack may change). */
+    private val takeoverActive: () -> Boolean = { TalkBackTakeoverFeature.isActive(service) },
 ) : ChoicePromptPresenter {
     /** One prompt's voice controller and coroutine scope; [onTap] carries its generation. */
     private class PromptSession(
@@ -64,6 +68,9 @@ class AccessibilityChoiceOverlay(
         val view: ComposeView,
         val owner: OverlayLifecycleOwner,
         val content: MutableStateFlow<WindowContent>,
+        /** The generation this window was added with; the takeover's focus moves only while it is current. */
+        val generation: Long,
+        val takeover: Boolean,
     ) {
         val session: PromptSession get() = content.value.session
     }
@@ -163,6 +170,8 @@ class AccessibilityChoiceOverlay(
         val session = newSession(prompt, generation, onAnswer)
         var owner: OverlayLifecycleOwner? = null
         try {
+            // Fixed for the window's life, so speaking never changes the window's semantics.
+            val takeover = takeoverActive()
             val content = MutableStateFlow(WindowContent(session))
             val composeView = ComposeView(service).apply {
                 setContent {
@@ -178,6 +187,7 @@ class AccessibilityChoiceOverlay(
                             onRepeat = shown.controller::onRepeat,
                             onStopSpeaking = shown.controller::onStopSpeaking,
                             revalidating = current.revalidating,
+                            takeover = takeover,
                             // Scrolls when large fonts make the prompt taller than the screen
                             // (the window is WRAP_CONTENT, so its height is capped by the display).
                             // statusBarsPadding: a full-height prompt stays below the status bar
@@ -193,7 +203,7 @@ class AccessibilityChoiceOverlay(
             }
             val lifecycleOwner = OverlayLifecycleOwner().also { owner = it }
             lifecycleOwner.attachTo(composeView)
-            return OverlayWindow(composeView, lifecycleOwner, content)
+            return OverlayWindow(composeView, lifecycleOwner, content, generation, takeover)
         } catch (e: RuntimeException) {
             // Nothing was added yet: release what exists, then let the keeper report FAILED.
             session.scope.cancel()
@@ -219,6 +229,11 @@ class AccessibilityChoiceOverlay(
         title = service.getString(R.string.ui_choice_pane_title)
     }
 
+    private companion object {
+        /** C's prompt has a few dozen nodes; the cap only guards against a runaway walk. */
+        const val MAX_NODES = 300
+    }
+
     private inline fun safely(block: () -> Unit) {
         try {
             block()
@@ -230,8 +245,11 @@ class AccessibilityChoiceOverlay(
     private inner class WindowOps : OverlayWindowOps<OverlayWindow> {
         override fun add(window: OverlayWindow) = windowManager.addView(window.view, layoutParams())
 
-        override fun announceShown(window: OverlayWindow) =
-            listener.onShown(window.session.prompt, window.session.controller::speakPressed)
+        override fun announceShown(window: OverlayWindow) = listener.onShown(
+            window.session.prompt,
+            window.session.controller::speakPressed,
+            if (window.takeover) WindowFocus(window.generation) else PromptFocus.NONE,
+        )
 
         override fun announceDismissed(window: OverlayWindow) = listener.onDismissed()
 
@@ -273,6 +291,48 @@ class AccessibilityChoiceOverlay(
         }
     }
 
+    /**
+     * Moves TalkBack's accessibility focus to a tagged node of C's own prompt window, through the
+     * service (it needs flagRetrieveInteractiveWindows and flagReportViewIds, as A's config has).
+     * Looked up fresh each time; no node is kept. Nothing is logged. Device unverified.
+     */
+    private inner class WindowFocus(private val generation: Long) : PromptFocus {
+        override val enabled = true
+
+        override fun moveTo(target: TakeoverFocusTarget): Boolean {
+            if (keeper.status != OverlayWindowStatus.SHOWING || keeper.windowGeneration != generation) return false
+            return try {
+                val node = ownWindowRoot()?.let { findByViewId(it, target.tag) } ?: return false
+                node.refresh() && node.isVisibleToUser && node.performAction(AccessibilityNodeInfo.ACTION_ACCESSIBILITY_FOCUS)
+            } catch (e: RuntimeException) {
+                // The window went away while looking (a binder or stale-node failure): just not moved.
+                false
+            }
+        }
+
+        private fun ownWindowRoot(): AccessibilityNodeInfo? {
+            val title = service.getString(R.string.ui_choice_pane_title)
+            val state = windowState
+            val matches = service.windows.orEmpty().mapNotNull { window ->
+                val root = window.root ?: return@mapNotNull null
+                val facts = WindowFacts(window.id, window.type, window.title, root.packageName)
+                root.takeIf { ChoiceOverlayIdentity.isOwnOverlayWindow(facts, service.packageName, title, state) }
+            }
+            return matches.singleOrNull()
+        }
+
+        private fun findByViewId(root: AccessibilityNodeInfo, id: String): AccessibilityNodeInfo? {
+            val queue = ArrayDeque(listOf(root))
+            var visited = 0
+            while (queue.isNotEmpty() && visited++ < MAX_NODES) {
+                val node = queue.removeFirst()
+                if (node.viewIdResourceName == id) return node
+                for (i in 0 until node.childCount) node.getChild(i)?.let(queue::addLast)
+            }
+            return null
+        }
+    }
+
     /** Main-looper timer for the REVALIDATING timeout; cancelled by every way out of that state. */
     private class MainThreadTimer(private val handler: Handler) : RevalidationTimer {
         override fun schedule(delayMillis: Long, action: () -> Unit): () -> Unit {
@@ -285,8 +345,11 @@ class AccessibilityChoiceOverlay(
 
 /** Hooks for announcing the prompt (step 2). Receives no screen text beyond the prompt itself. */
 interface OverlayListener {
-    /** [speakPressed]: true once [말하기] started listening on this prompt (checked when speaking). */
-    fun onShown(prompt: ChoicePrompt, speakPressed: () -> Boolean = { false }) = Unit
+    /**
+     * [speakPressed]: true once [말하기] started listening on this prompt (checked when speaking).
+     * [focus]: TalkBack takeover for this window; [PromptFocus.NONE] when it is off.
+     */
+    fun onShown(prompt: ChoicePrompt, speakPressed: () -> Boolean = { false }, focus: PromptFocus = PromptFocus.NONE) = Unit
     fun onDismissed() = Unit
 
     /** REVALIDATING began: stop speaking now (default: same as [onDismissed]). */

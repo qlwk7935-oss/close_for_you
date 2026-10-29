@@ -63,6 +63,7 @@ import kr.closeforyou.ui.voice.command.SpeakButtonState
 import kr.closeforyou.ui.voice.command.VoiceButtonFeature
 import kr.closeforyou.ui.voice.integration.RememberRetention
 import kr.closeforyou.ui.voice.overlay.PromptAnnounceMode
+import kr.closeforyou.ui.voice.overlay.TalkBackTakeoverFeature
 import java.time.Clock
 import kotlin.coroutines.cancellation.CancellationException
 import java.time.ZoneId
@@ -145,6 +146,9 @@ fun UiVoiceSettingsRoute(
         onAutoCloseChange = preferences::setAutoClose,
         onDetailChange = preferences::setDetail,
         onPromptModeChange = preferences::setPromptAnnounceMode,
+        takeoverFeatureEnabled = TalkBackTakeoverFeature.enabled,
+        onTalkBackTakeoverChange = preferences::setTalkBackTakeover,
+        onSpeechRateChange = preferences::setSpeechRate,
         voiceFeatureEnabled = VoiceButtonFeature.enabled,
         microphoneState = microphoneState,
         microphoneDenied = microphoneDenied,
@@ -201,6 +205,10 @@ fun UiVoiceSettingsScreen(
     helpOutcome: HelpAppsOutcome? = null,
     /** Opens [HelpAppsEditScreen]; null hides the "도와줄 앱" block. */
     onChangeHelpApps: (() -> Unit)? = null,
+    /** [TalkBackTakeoverFeature]; false hides its switch. */
+    takeoverFeatureEnabled: Boolean = false,
+    onTalkBackTakeoverChange: (Boolean) -> Unit = {},
+    onSpeechRateChange: (SpeechRateChoice) -> Unit = {},
 ) {
     var confirmDeleteAll by rememberSaveable { mutableStateOf(false) }
     Column(
@@ -277,6 +285,29 @@ fun UiVoiceSettingsScreen(
                 onPromptModeChange(if (it) PromptAnnounceMode.PANE_TITLE_AND_TTS else PromptAnnounceMode.PANE_TITLE_ONLY)
             },
         )
+        if (takeoverFeatureEnabled) {
+            SwitchRow(
+                label = stringResource(R.string.ui_settings_takeover),
+                description = stringResource(R.string.ui_settings_takeover_help),
+                checked = settings.talkBackTakeover,
+                onCheckedChange = onTalkBackTakeoverChange,
+            )
+        }
+        Text(stringResource(R.string.ui_settings_speech_rate_label))
+        Column(Modifier.selectableGroup()) {
+            SpeechRateChoice.entries.forEach { rate ->
+                RadioRow(
+                    label = stringResource(rate.labelRes()),
+                    description = if (rate == SpeechRateChoice.FOLLOW_SYSTEM) {
+                        stringResource(R.string.ui_settings_speech_rate_system_help)
+                    } else {
+                        null
+                    },
+                    selected = settings.speechRate == rate,
+                    onClick = { onSpeechRateChange(rate) },
+                )
+            }
+        }
 
         if (voiceFeatureEnabled) {
             HorizontalDivider()
@@ -434,6 +465,14 @@ private fun LabelWithDescription(label: String, description: String?, modifier: 
 private fun AnnouncementDetail.descriptionRes() = when (this) {
     AnnouncementDetail.SHORT -> R.string.ui_settings_detail_short_help
     AnnouncementDetail.DETAILED -> R.string.ui_settings_detail_detailed_help
+}
+
+private fun SpeechRateChoice.labelRes() = when (this) {
+    SpeechRateChoice.FOLLOW_SYSTEM -> R.string.ui_settings_speech_rate_system
+    SpeechRateChoice.SLOW -> R.string.ui_settings_speech_rate_slow
+    SpeechRateChoice.NORMAL -> R.string.ui_settings_speech_rate_normal
+    SpeechRateChoice.FAST -> R.string.ui_settings_speech_rate_fast
+    SpeechRateChoice.VERY_FAST -> R.string.ui_settings_speech_rate_very_fast
 }
 
 private fun AnnouncementDetail.labelRes() = when (this) {
