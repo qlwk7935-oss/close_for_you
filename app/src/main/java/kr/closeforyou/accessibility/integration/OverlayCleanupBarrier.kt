@@ -27,7 +27,8 @@ internal class OverlayCleanupBarrier(private val timeoutMillis: Long = 5_000L, p
     private val clock: () -> Long = { System.nanoTime() / 1_000_000L },
     private val diagnostic: OverlayEventOriginDiagnostic? = null,
     private val failureDiagnostic: ((CleanupFailure) -> Unit)? = null,
-    private val failureAttemptDiagnostic: ((CleanupFailure, CleanupNativeProgress) -> Unit)? = null) {
+    private val failureAttemptDiagnostic: ((CleanupFailure, CleanupNativeProgress) -> Unit)? = null,
+    private val eventDiagnostic: ((ManualCleanupEventCode) -> Unit)? = null) {
     internal class Receipt internal constructor(internal val identity: Any) {
         override fun toString() = "CleanupReceipt(redacted)"
     }
@@ -145,11 +146,46 @@ internal class OverlayCleanupBarrier(private val timeoutMillis: Long = 5_000L, p
     /** Called before ordinary event handling. This NEVER decides whether to ignore an event. */
     fun observeWindowEvent(window: Int, eventType: Int, changes: Int, nativeTransientConfirmed: Boolean = false): Receipt? {
         val windowsChanged = eventType == AccessibilityEvent.TYPE_WINDOWS_CHANGED
-        return observe(window, windowsChanged,
-            windowsChanged && changes == AccessibilityEvent.WINDOWS_CHANGE_REMOVED,
-            windowsChanged && changes == AccessibilityEvent.WINDOWS_CHANGE_LAYER,
-            detachedContent = eventType == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED,
-            nativeTransient = nativeTransientConfirmed && nativeRetirementTransientEvent(eventType, changes))
+        // Freeze the existing barrier state before observe() can fail/clear it. No new Android
+        // reads or ownership authority: the service still handles this event normally.
+        val code = if (eventDiagnostic != null) retiring?.let { previous ->
+            val known = AccessibilityEvent.WINDOWS_CHANGE_BOUNDS or AccessibilityEvent.WINDOWS_CHANGE_ADDED or AccessibilityEvent.WINDOWS_CHANGE_REMOVED
+            ManualCleanupEventCode(when (eventType) {
+                AccessibilityEvent.TYPE_WINDOWS_CHANGED -> ManualEventKind.WINDOW_SET
+                AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED -> ManualEventKind.WINDOW_STATE
+                AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED -> ManualEventKind.CONTENT
+                AccessibilityEvent.TYPE_VIEW_CLICKED -> ManualEventKind.CLICK
+                AccessibilityEvent.TYPE_VIEW_FOCUSED, AccessibilityEvent.TYPE_VIEW_ACCESSIBILITY_FOCUSED,
+                AccessibilityEvent.TYPE_VIEW_ACCESSIBILITY_FOCUS_CLEARED -> ManualEventKind.FOCUS
+                else -> ManualEventKind.OTHER
+            }, if (windowsChanged) manualWindowMask(changes) else ManualWindowMask.NOT_APPLICABLE,
+                windowsChanged && changes and AccessibilityEvent.WINDOWS_CHANGE_BOUNDS != 0,
+                windowsChanged && changes and AccessibilityEvent.WINDOWS_CHANGE_ADDED != 0,
+                windowsChanged && changes and AccessibilityEvent.WINDOWS_CHANGE_REMOVED != 0,
+                windowsChanged && changes and known.inv() != 0,
+                if (previous.window == null || window < 0) OwnershipRelation.UNAVAILABLE else
+                    if (window == previous.window) OwnershipRelation.MATCH else OwnershipRelation.MISMATCH,
+                nativeTransientConfirmed, previous.returned, previous.observed, previous.nativeProgress)
+        } else null
+        val wasFailed = failed
+        var receipt: Receipt? = null
+        try {
+            return observe(window, windowsChanged,
+                windowsChanged && changes == AccessibilityEvent.WINDOWS_CHANGE_REMOVED,
+                windowsChanged && changes == AccessibilityEvent.WINDOWS_CHANGE_LAYER,
+                detachedContent = eventType == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED,
+                nativeTransient = nativeTransientConfirmed && nativeRetirementTransientEvent(eventType, changes)).also { receipt = it }
+        } finally {
+            // Report AFTER the original observe, including if its failure callback throws. The
+            // fixed outcome labels this event; it never grants removal/ownership authority.
+            if (code != null) kr.closeforyou.accessibility.diagnosticWrite {
+                eventDiagnostic?.invoke(code.copy(result = when {
+                    !wasFailed && failed -> ManualCleanupEventResult.REJECTED
+                    receipt != null -> ManualCleanupEventResult.REMOVAL_RECEIPT
+                    else -> ManualCleanupEventResult.NO_RECEIPT
+                }))
+            }
+        }
     }
 
     fun observe(window: Int, windowsChanged: Boolean, pureRemoval: Boolean, pureLayerChange: Boolean = false,

@@ -32,6 +32,7 @@ internal class ManualPromptTrace(private val actionSink: (Long, ManualActionCode
     private val speechSink: (Long, ManualSpeechState) -> Unit = { _, _ -> },
     private val retirementSink: (Long, ManualRetirementCode) -> Unit = { _, _ -> },
     private val displayReviewSink: (Long, ManualDisplayReviewCode) -> Unit = { _, _ -> },
+    private val cleanupEventSink: (Long, ManualCleanupEventCode) -> Unit = { _, _ -> },
     private val readSink: (Long, F9ReadCode) -> Unit = { _, _ -> },
     cleanupSink: (Long, ManualCleanupCode) -> Unit = { _, _ -> },
     private val sink: (Long, ManualPromptPoint, ManualPromptCause) -> Unit) {
@@ -42,9 +43,11 @@ internal class ManualPromptTrace(private val actionSink: (Long, ManualActionCode
     private var speechCodes = mutableSetOf<ManualSpeechState>()
     private val retirementCodes = mutableSetOf<ManualRetirementCode>()
     private val displayReviewCodes = mutableSetOf<ManualDisplayReviewCode>()
+    private var cleanupEventFailureReported = false
+    private val cleanupEventCodes = mutableSetOf<ManualCleanupEventCode>()
     private val readCodes = mutableSetOf<F9ReadCode>()
     val cleanup = ManualCleanupTrace { code -> cleanupSink(attempt, code) }
-    fun begin() { attempt = if (attempt == Long.MAX_VALUE) 1 else attempt + 1; recorded.clear(); ownership.clear(); eventCodes.clear(); retirementCodes.clear(); displayReviewCodes.clear(); readCodes.clear(); speechCodes = mutableSetOf(); record(ManualPromptPoint.OFFERED) }
+    fun begin() { attempt = if (attempt == Long.MAX_VALUE) 1 else attempt + 1; recorded.clear(); ownership.clear(); eventCodes.clear(); retirementCodes.clear(); displayReviewCodes.clear(); cleanupEventCodes.clear(); cleanupEventFailureReported = false; readCodes.clear(); speechCodes = mutableSetOf(); record(ManualPromptPoint.OFFERED) }
     fun record(point: ManualPromptPoint, cause: ManualPromptCause = ManualPromptCause.NONE) {
         if (recorded.add(point to cause)) diagnosticWrite { sink(attempt, point, cause) }
     }
@@ -66,6 +69,15 @@ internal class ManualPromptTrace(private val actionSink: (Long, ManualActionCode
     }
     fun displayReview(code: ManualDisplayReviewCode) {
         if (displayReviewCodes.size < 16 && displayReviewCodes.add(code)) diagnosticWrite { displayReviewSink(attempt, code) }
+    }
+    fun cleanupEvent(code: ManualCleanupEventCode) {
+        // Reserve one report for the first actually rejected barrier event even after routine
+        // diagnostics reached their cap. Mark before writing: sink failure is never retried.
+        if (code.result == ManualCleanupEventResult.REJECTED) {
+            if (cleanupEventFailureReported) return
+            cleanupEventFailureReported = true
+            diagnosticWrite { cleanupEventSink(attempt, code) }
+        } else if (cleanupEventCodes.size < 16 && cleanupEventCodes.add(code)) diagnosticWrite { cleanupEventSink(attempt, code) }
     }
     fun f9Read(code: F9ReadCode) {
         if (readCodes.size < 24 && readCodes.add(code)) diagnosticWrite { readSink(attempt, code) }

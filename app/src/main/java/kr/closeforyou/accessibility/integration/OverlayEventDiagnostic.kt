@@ -70,43 +70,57 @@ internal fun <W : Any, N : Any> readOwnedOverlayIds(
     releaseWindow: (W) -> Unit,
     onUnhealthy: () -> Unit,
     diagnostic: OverlayEventDiagnostic?,
+    probe: ManualOwnedReadProbe? = null,
 ): Set<Int>? {
     val roots = mutableListOf<N>()
     val windows = mutableListOf<W>()
-    return try {
+    val result = try {
         CollectionResourceSafety.run(body = {
-            diagnostic?.ownedScanStarted()
-            windows += readWindows()
-            if (windows.isEmpty() || windows.size > 32) {
-                diagnostic?.ownedQueryUncertain(OverlayOwnedWindowDetail.UNCERTAIN)
-                return@run null
-            }
-            val found = mutableSetOf<Int>()
-            for (window in windows) {
-                if (!isOverlayOnDefaultDisplay(window)) continue
-                val root = readRoot(window)
-                if (root == null) {
-                    diagnostic?.ownedScanObserved(OverlayOwnedScanDetail.ROOT_UNAVAILABLE)
-                    continue
+            try {
+                diagnostic?.ownedScanStarted()
+                windows += readWindows()
+                if (windows.isEmpty() || windows.size > 32) {
+                    probe?.unavailable(if (windows.isEmpty()) ManualOwnedQuery.EMPTY_WINDOW_LIST else ManualOwnedQuery.WINDOW_LIMIT)
+                    diagnostic?.ownedQueryUncertain(OverlayOwnedWindowDetail.UNCERTAIN)
+                    return@run null
                 }
-                if (roots.none { it === root }) roots += root
-                if (!isOwnedRoot(root, window)) {
-                    diagnostic?.ownedScanObserved(OverlayOwnedScanDetail.ROOT_RELATION_UNCONFIRMED)
-                    continue
+                val found = mutableSetOf<Int>()
+                for (window in windows) {
+                    if (!isOverlayOnDefaultDisplay(window)) continue
+                    val root = readRoot(window)
+                    if (root == null) {
+                        probe?.observed(OverlayOwnedScanDetail.ROOT_UNAVAILABLE)
+                        diagnostic?.ownedScanObserved(OverlayOwnedScanDetail.ROOT_UNAVAILABLE)
+                        continue
+                    }
+                    if (roots.none { it === root }) roots += root
+                    if (!isOwnedRoot(root, window)) {
+                        probe?.observed(OverlayOwnedScanDetail.ROOT_RELATION_UNCONFIRMED)
+                        diagnostic?.ownedScanObserved(OverlayOwnedScanDetail.ROOT_RELATION_UNCONFIRMED)
+                        continue
+                    }
+                    if (hasOwnedTitle(window)) {
+                        val id = windowId(window)
+                        val duplicate = !found.add(id)
+                        diagnostic?.ownedIdObserved(id, duplicate)
+                        probe?.observed(OverlayOwnedScanDetail.OWNED_CANDIDATE)
+                        diagnostic?.ownedScanObserved(OverlayOwnedScanDetail.OWNED_CANDIDATE)
+                    } else {
+                        probe?.observed(OverlayOwnedScanDetail.TITLE_UNCONFIRMED)
+                        diagnostic?.ownedScanObserved(OverlayOwnedScanDetail.TITLE_UNCONFIRMED)
+                    }
                 }
-                if (hasOwnedTitle(window)) {
-                    val id = windowId(window)
-                    val duplicate = !found.add(id)
-                    diagnostic?.ownedIdObserved(id, duplicate)
-                    diagnostic?.ownedScanObserved(OverlayOwnedScanDetail.OWNED_CANDIDATE)
-                } else diagnostic?.ownedScanObserved(OverlayOwnedScanDetail.TITLE_UNCONFIRMED)
-            }
-            found
+                found
+            } catch (failure: Exception) { probe?.readFailed(); throw failure }
         }, cleanup = {
             val batch = CollectionReleaseBatch()
-            roots.forEach { root -> batch.attempt { releaseRoot(root) } }
+            roots.forEach { root -> batch.attempt {
+                try { releaseRoot(root) } catch (failure: Exception) { probe?.releaseFailed(); throw failure }
+            } }
             val seen = java.util.IdentityHashMap<W, Boolean>()
-            windows.forEach { window -> if (seen.put(window, true) == null) batch.attempt { releaseWindow(window) } }
+            windows.forEach { window -> if (seen.put(window, true) == null) batch.attempt {
+                try { releaseWindow(window) } catch (failure: Exception) { probe?.releaseFailed(); throw failure }
+            } }
             batch.finish()
         }, cleanupFailure = {
             onUnhealthy(); diagnostic?.ownedQueryUncertain(OverlayOwnedWindowDetail.QUERY_FAILED); null
@@ -114,6 +128,8 @@ internal fun <W : Any, N : Any> readOwnedOverlayIds(
     } catch (_: Exception) {
         onUnhealthy(); diagnostic?.ownedQueryUncertain(OverlayOwnedWindowDetail.QUERY_FAILED); null
     } finally { roots.clear(); windows.clear() }
+    probe?.completed(result)
+    return result
 }
 
 /** Synchronous, diagnostic-only lease. Only the result enum leaves this call; no text/title reads.

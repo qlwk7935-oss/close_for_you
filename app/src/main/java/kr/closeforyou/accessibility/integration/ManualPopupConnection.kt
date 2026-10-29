@@ -347,7 +347,10 @@ internal class ManualPopupConnection(
                     promptLifetime.current() == source.token && epoch() == version }, SystemClock::uptimeMillis, started, probe)
             }
             fun owned(): Int? = manualDisplayOwnedId({ readManualNativeWindow(native, nativeOwner, generation, null) },
-                { before?.contains(it) }, ::readOwned, probe)
+                { before?.contains(it) }, {
+                    val read = if (trace != null) ManualOwnedReadProbe() else null
+                    readOwned(read).also { if (read != null) probe.ownedRead = read.code() }
+                }, probe)
             checkedManualDisplay(probe) {
                 checkpoint()
                 probe.point = ManualDisplayPoint.NATIVE_BEFORE
@@ -375,7 +378,7 @@ internal class ManualPopupConnection(
                 AccessibilityEvent.TYPE_WINDOWS_CHANGED -> ManualEventKind.WINDOW_SET
                 else -> ManualEventKind.WINDOW_STATE
             }, if (type == AccessibilityEvent.TYPE_WINDOWS_CHANGED) manualWindowMask(changes) else ManualWindowMask.NOT_APPLICABLE,
-                verdict, probe.failurePoint, probe.detail))
+                verdict, probe.failurePoint, probe.detail, probe.failureOwned))
         })
         val cause = when (result) {
             ManualDisplayVerdict.SAME -> ManualPromptCause.TARGET_RECONFIRMED
@@ -396,7 +399,7 @@ internal class ManualPopupConnection(
             val ignored = inspectManualEvent(event.eventType, nativeControl = {
                 inspectManualOwnedInteraction(event.eventType, state, promptLifetime, { event.eventTime },
                     { event.packageName?.toString() }, service.packageName, { event.windowId },
-                    { readManualNativeWindow(native, nativeOwner, state.generation, probe) }, before, ::readOwned, probe)
+                    { readManualNativeWindow(native, nativeOwner, state.generation, probe) }, before, { readOwned() }, probe)
             }, otherEvent = {
                 inspectOwnedOverlayEvent(overlay.windowState, { event.eventType }, { event.windowChanges },
                     { event.packageName?.toString() }, ::flowToken,
@@ -405,7 +408,7 @@ internal class ManualPopupConnection(
             }, nativeWindowEvent = {
                 inspectManualOwnedWindowEvent(event.eventType, { event.windowChanges }, state, promptLifetime,
                     { event.eventTime }, { event.packageName?.toString() }, service.packageName, { event.windowId },
-                    { readManualNativeWindow(native, nativeOwner, state.generation, probe) }, before, ::readOwned, probe)
+                    { readManualNativeWindow(native, nativeOwner, state.generation, probe) }, before, { readOwned() }, probe)
             })
             if (ignored && event.eventType == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED)
                 trace?.record(ManualPromptPoint.DISPLAY_RETAINED, ManualPromptCause.OWNED_CONTENT_CONFIRMED)
@@ -492,11 +495,11 @@ internal class ManualPopupConnection(
     private fun dismissOverlay() = dismissManualOverlay({ overlay.dismiss() },
         { overlay.windowState.status }, cleanup, trace?.cleanup)
     @Suppress("DEPRECATION") private fun presence(id: Int) = cleanupWindowPresence(id, { service.windows }, { it.id }, { it.recycle() })
-    @Suppress("DEPRECATION") private fun readOwned(): Set<Int>? = readOwnedOverlayIds({ service.windows },
+    @Suppress("DEPRECATION") private fun readOwned(probe: ManualOwnedReadProbe? = null): Set<Int>? = readOwnedOverlayIds({ service.windows },
         { it.type == AccessibilityWindowInfo.TYPE_ACCESSIBILITY_OVERLAY && it.displayId == 0 }, { it.root },
         { root, w -> root.packageName?.toString() == service.packageName && root.windowId == w.id },
         { it.title?.toString() == service.getString(R.string.ui_choice_pane_title) }, { it.id }, { it.recycle() }, { it.recycle() },
-        { manualOwnedReadFailed(health, trace?.cleanup) }, eventDiagnostic)
+        { manualOwnedReadFailed(health, trace?.cleanup) }, eventDiagnostic, probe)
     fun processed(receipt: OverlayCleanupBarrier.Receipt?) {
         if (receipt == null || closed) return
         val wasPending = cleanup.pending

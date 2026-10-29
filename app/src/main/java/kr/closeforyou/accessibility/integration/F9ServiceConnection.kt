@@ -41,6 +41,7 @@ internal class F9ServiceConnection(
     val batcher = AnnouncementBatcher(scope, SpeechHandlingListener.batchFlush(tts, format))
     private val feedback = F9FeedbackRouter(tts, batcher, format)
     private val cleanup = OverlayCleanupBarrier(clock = SystemClock::uptimeMillis, onUncertain = presentationHealth::fail,
+        eventDiagnostic = trace?.let { t -> { code -> t.cleanupEvent(code) } },
         failureDiagnostic = {
             trace?.record(ManualPromptPoint.CLEANUP_FAILED, ManualPromptCause.CLEANUP_FAILED)
             AccessibilityRuntime.cleanupFailure(it.name)

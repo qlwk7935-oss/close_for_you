@@ -20,12 +20,15 @@ internal enum class ManualDisplayDetail {
 }
 /** Comparison/ownership diagnostics only. First failure survives later exceptions and cleanup. */
 internal class ManualDisplayProbe {
+    var ownedRead = ManualOwnedReadCode()
     var point = ManualDisplayPoint.NOT_CHECKED
     private var firstPoint: ManualDisplayPoint? = null
+    private var firstOwned: ManualOwnedReadCode? = null
+    val failureOwned get() = firstOwned ?: ownedRead
     var detail = ManualDisplayDetail.NONE; private set
     val failurePoint get() = firstPoint ?: point
     fun reject(value: ManualDisplayDetail) {
-        if (detail == ManualDisplayDetail.NONE) { detail = value; firstPoint = point }
+        if (detail == ManualDisplayDetail.NONE) { detail = value; firstPoint = point; firstOwned = ownedRead }
     }
     fun require(condition: Boolean, value: ManualDisplayDetail) {
         if (!condition) { reject(value); check(false) { "MANUAL_DISPLAY_UNAVAILABLE" } }
@@ -51,7 +54,15 @@ internal fun manualDisplayOwnedId(native: () -> Int?, before: (Int) -> Boolean?,
     val id = native()
     if (id == null || id < 0) { probe.reject(ManualDisplayDetail.NATIVE_ID_UNAVAILABLE); return null }
     if (before(id) != false) { probe.reject(ManualDisplayDetail.BEFORE_SET_UNCONFIRMED); return null }
-    if (live()?.singleOrNull() != id) { probe.reject(ManualDisplayDetail.LIVE_SET_UNCONFIRMED); return null }
+    val ids = live()
+    val only = ids?.singleOrNull()
+    val relation = if (ids?.size == 1) {
+        if (only == id) OwnershipRelation.MATCH else OwnershipRelation.MISMATCH
+    } else OwnershipRelation.UNAVAILABLE
+    probe.ownedRead = probe.ownedRead.copy(count = when (ids?.size) {
+        null -> ManualOwnedCount.UNAVAILABLE; 0 -> ManualOwnedCount.NONE; 1 -> ManualOwnedCount.ONE; else -> ManualOwnedCount.MULTIPLE
+    }, native = relation)
+    if (only != id) { probe.reject(ManualDisplayDetail.LIVE_SET_UNCONFIRMED); return null }
     return id
 }
 internal inline fun checkedManualDisplay(probe: ManualDisplayProbe, verify: () -> ManualDisplayVerdict): ManualDisplayVerdict =
@@ -60,7 +71,7 @@ internal inline fun checkedManualDisplay(probe: ManualDisplayProbe, verify: () -
     catch (_: Exception) { probe.reject(ManualDisplayDetail.EXCEPTION); ManualDisplayVerdict.UNAVAILABLE }
 internal data class ManualDisplayReviewCode(val kind: ManualEventKind, val mask: ManualWindowMask,
     val verdict: ManualDisplayVerdict, val point: ManualDisplayPoint = ManualDisplayPoint.NOT_CHECKED,
-    val detail: ManualDisplayDetail = ManualDisplayDetail.NONE)
+    val detail: ManualDisplayDetail = ManualDisplayDetail.NONE, val owned: ManualOwnedReadCode = ManualOwnedReadCode())
 
 /** A target BOUNDS notification is a request to re-read, not proof that C or the target caused it.
  * Mixed/structural/unknown masks and unrelated windows keep ordinary invalidation. */

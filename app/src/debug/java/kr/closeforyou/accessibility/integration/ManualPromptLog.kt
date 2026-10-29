@@ -22,7 +22,8 @@ internal object ManualPromptLog {
     }, speechSink = { attempt, c ->
         Log.i("A_ManualPrompt", "A_MANUAL_SPEECH;ATTEMPT=$attempt;STATE=${c.name}")
     }, retirementSink = { attempt, c ->
-        Log.i("A_ManualPrompt", "A_MANUAL_RETIREMENT;ATTEMPT=$attempt;EVENT=${c.kind.name};CHECK=${c.check.name}" +
+        Log.i("A_ManualPrompt", "A_MANUAL_RETIREMENT;ATTEMPT=$attempt;EVENT=${c.kind.name};CHECK=${c.check.name};MASK=${c.mask.name}" +
+            ";DISPLAY=${c.display.name};PACKAGE_CHECK=${c.pkg.name};NATIVE_CHECK=${c.native.name}" +
             ";RESULT=${when (c.check) {
                 ManualRetirementCheck.COMPATIBLE -> "INTENT_ONLY"
                 ManualRetirementCheck.CLEANUP_WAIT -> "WAIT_ONLY"
@@ -30,7 +31,14 @@ internal object ManualPromptLog {
             }}")
     }, displayReviewSink = { attempt, c ->
         Log.i("A_ManualPrompt", "A_MANUAL_DISPLAY_REVIEW;ATTEMPT=$attempt;EVENT=${c.kind.name};MASK=${c.mask.name};RESULT=${c.verdict.name}" +
-            ";POINT=${c.point.name};DETAIL=${c.detail.name}")
+            ";POINT=${c.point.name};DETAIL=${c.detail.name}" +
+            ";LIVE_COUNT=${c.owned.count.name};LIVE_QUERY=${c.owned.query.name};LIVE_SCAN=${c.owned.scan.name};NATIVE_RELATION=${c.owned.native.name}")
+    }, cleanupEventSink = { attempt, c ->
+        Log.i("A_ManualPrompt", "A_MANUAL_CLEANUP_EVENT;ATTEMPT=$attempt;EVENT=${c.kind.name};MASK=${c.mask.name}" +
+            ";BOUNDS=${if (c.bounds) "YES" else "NO"};ADDED=${if (c.added) "YES" else "NO"};REMOVED=${if (c.removed) "YES" else "NO"}" +
+            ";OTHER_BITS=${if (c.other) "YES" else "NO"};RETIRED_RELATION=${c.relation.name}" +
+            ";WAIT_CONFIRMED=${if (c.transient) "YES" else "NO"};REMOVE_RETURNED=${if (c.returned) "YES" else "NO"}" +
+            ";REMOVAL_OBSERVED=${if (c.observed) "YES" else "NO"};NATIVE=${c.native.name};RESULT=${c.result.name}")
     }, readSink = { attempt, c ->
         Log.i("A_ManualPrompt", "A_F9_READ;ATTEMPT=$attempt;PURPOSE=${c.purpose.name};STAGE=${c.stage.name};DETAIL=${c.detail.name}" +
             ";OUTCOME=${c.outcome.name};RELEASE=${c.release.name};CALLBACK_RETURNED=${if (c.consumed) "YES" else "NO"}")

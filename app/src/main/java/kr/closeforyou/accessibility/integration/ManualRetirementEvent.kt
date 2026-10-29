@@ -4,7 +4,11 @@ import android.view.accessibility.AccessibilityEvent as E
 import kotlinx.coroutines.CancellationException
 
 internal enum class ManualRetirementCheck { EVENT_TYPE, CHOICE, DISPLAY, PACKAGE, TIME, NATIVE, ABSENCE, READ_FAILED, COMPATIBLE, CLEANUP_WAIT }
-internal data class ManualRetirementCode(val kind: ManualEventKind, val check: ManualRetirementCheck)
+internal data class ManualRetirementCode(val kind: ManualEventKind, val check: ManualRetirementCheck,
+    val mask: ManualWindowMask = ManualWindowMask.NOT_APPLICABLE,
+    val display: OwnershipRelation = OwnershipRelation.NOT_CHECKED,
+    val pkg: OwnershipRelation = OwnershipRelation.NOT_CHECKED,
+    val native: OwnershipRelation = OwnershipRelation.NOT_CHECKED)
 
 /** Framework window-change notifications may omit package metadata. This exception requires
  * THIS View's completed native removal AND independently queried full-list absence; it never
@@ -40,16 +44,21 @@ internal fun inspectManualRetirementEvent(type: Int, changes: Int, choice: () ->
         E.TYPE_WINDOWS_CHANGED -> ManualEventKind.WINDOW_SET
         else -> ManualEventKind.OTHER
     }
-    fun rejected(check: ManualRetirementCheck) = ManualRetirementCode(kind, check)
+    var display = OwnershipRelation.NOT_CHECKED
+    var pkg = OwnershipRelation.NOT_CHECKED
+    var native = OwnershipRelation.NOT_CHECKED
+    fun rejected(check: ManualRetirementCheck) = ManualRetirementCode(kind, check,
+        if (type == E.TYPE_WINDOWS_CHANGED) manualWindowMask(changes) else ManualWindowMask.NOT_APPLICABLE,
+        display, pkg, native)
     return try {
         if (!nativeRetirementTransientEvent(type, changes)) return rejected(ManualRetirementCheck.EVENT_TYPE)
         if (!choice()) return rejected(ManualRetirementCheck.CHOICE)
-        if (!hidden()) return rejected(ManualRetirementCheck.DISPLAY)
-        if (!packageMatches()) return rejected(ManualRetirementCheck.PACKAGE)
+        if (!hidden().also { display = if (it) OwnershipRelation.MATCH else OwnershipRelation.MISMATCH }) return rejected(ManualRetirementCheck.DISPLAY)
+        if (!packageMatches().also { pkg = if (it) OwnershipRelation.MATCH else OwnershipRelation.MISMATCH }) return rejected(ManualRetirementCheck.PACKAGE)
         if (!timeMatches()) return rejected(ManualRetirementCheck.TIME)
-        if (!nativeRegistered()) return rejected(ManualRetirementCheck.NATIVE)
+        if (!nativeRegistered().also { native = if (it) OwnershipRelation.MATCH else OwnershipRelation.MISMATCH }) return rejected(ManualRetirementCheck.NATIVE)
         if (!absenceIfReleased()) return rejected(ManualRetirementCheck.ABSENCE)
-        ManualRetirementCode(kind, ManualRetirementCheck.COMPATIBLE)
+        rejected(ManualRetirementCheck.COMPATIBLE)
     } catch (cancelled: CancellationException) { throw cancelled }
     catch (_: Exception) { rejected(ManualRetirementCheck.READ_FAILED) }
 }
@@ -67,13 +76,18 @@ internal fun inspectNativeCleanupRetirement(type: Int, changes: Int, hidden: () 
         E.TYPE_WINDOWS_CHANGED -> ManualEventKind.WINDOW_SET
         else -> ManualEventKind.OTHER
     }
-    fun code(check: ManualRetirementCheck) = ManualRetirementCode(kind, check)
+    var display = OwnershipRelation.NOT_CHECKED
+    var pkg = OwnershipRelation.NOT_CHECKED
+    var native = OwnershipRelation.NOT_CHECKED
+    fun code(check: ManualRetirementCheck) = ManualRetirementCode(kind, check,
+        if (type == E.TYPE_WINDOWS_CHANGED) manualWindowMask(changes) else ManualWindowMask.NOT_APPLICABLE,
+        display, pkg, native)
     return try {
         when {
             !nativeRetirementTransientEvent(type, changes) -> code(ManualRetirementCheck.EVENT_TYPE)
-            !hidden() -> code(ManualRetirementCheck.DISPLAY)
-            !packageMatches() -> code(ManualRetirementCheck.PACKAGE)
-            !nativeRegistered() -> code(ManualRetirementCheck.NATIVE)
+            !hidden().also { display = if (it) OwnershipRelation.MATCH else OwnershipRelation.MISMATCH } -> code(ManualRetirementCheck.DISPLAY)
+            !packageMatches().also { pkg = if (it) OwnershipRelation.MATCH else OwnershipRelation.MISMATCH } -> code(ManualRetirementCheck.PACKAGE)
+            !nativeRegistered().also { native = if (it) OwnershipRelation.MATCH else OwnershipRelation.MISMATCH } -> code(ManualRetirementCheck.NATIVE)
             else -> code(ManualRetirementCheck.CLEANUP_WAIT)
         }
     } catch (cancelled: CancellationException) { throw cancelled }
