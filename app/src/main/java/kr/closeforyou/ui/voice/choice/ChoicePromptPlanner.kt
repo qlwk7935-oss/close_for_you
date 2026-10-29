@@ -14,6 +14,7 @@ import kr.closeforyou.core.model.UserChoice
 import kr.closeforyou.ui.voice.PressFailure
 import kr.closeforyou.ui.voice.PressResultSpeech
 import kr.closeforyou.ui.voice.overlay.PromptSpeech
+import kr.closeforyou.ui.voice.settings.HandlingPreset
 
 /** Hedged summary: a display classification can be wrong, so the sentence never asserts it. */
 enum class PromptSummary { LIKELY_AD, LIKELY_VIDEO_AD, LIKELY_NOTICE, LIKELY_COUPON, NEEDS_REVIEW, UNKNOWN }
@@ -32,7 +33,17 @@ enum class PromptOptionKind { PRESS_CANDIDATE, REMEMBER_ALWAYS, MOVE_TO_BUTTON, 
  * the exact popup (AGENTS 6-4), and only in apps whose auto close setting is on.
  */
 object RememberChoiceFeature {
-    val enabled: Boolean get() = false
+    /**
+     * AGENTS.md 6-0 demo mode: on until the final presentation (C 재호 decision 10/30). Until D's store
+     * is connected the person hears that nothing was saved. The one constant to flip back for release.
+     */
+    const val DEMO_MODE_ON = true
+
+    /** [앞으로 항상 닫기]; where it shows is [RememberChoiceRules]. */
+    val enabled: Boolean get() = DEMO_MODE_ON
+
+    /** [다시 묻지 않기] stays off: not part of the 10/30 decision. */
+    val stopAskingEnabled: Boolean get() = false
 }
 
 data class PromptOption(
@@ -73,7 +84,8 @@ data class ChoicePrompt(
  * C: decides what the "닫을까요?" prompt offers and turns a tap into the contract's [UserChoice].
  *
  * Offering a button is not an authorization. B's ActionPolicy and A's gate re-check everything.
- * REMEMBER_EXACT_POPUP / STOP_ASKING are prepared behind [RememberChoiceFeature] (off).
+ * REMEMBER_EXACT_POPUP is behind [RememberChoiceFeature] (demo mode on) and [RememberChoiceRules];
+ * STOP_ASKING stays off.
  * [버튼으로 이동] is prepared behind [MoveToButtonFeature] (off: no contract value yet).
  */
 object ChoicePromptPlanner {
@@ -95,7 +107,13 @@ object ChoicePromptPlanner {
         rememberChoicesEnabled: Boolean = RememberChoiceFeature.enabled,
         videoAd: VideoAdInfo? = null,
         videoAdEnabled: Boolean = VideoAdAnnouncementFeature.enabled,
+        /** The person's preset; null = unknown (then only the other rules hide [앞으로 항상 닫기]). */
+        preset: HandlingPreset? = null,
+        /** B's scam check; by default B's own rule on this analysis. */
+        suspicious: Boolean = RememberChoiceRules.suspiciousByB(analysis),
+        stopAskingEnabled: Boolean = RememberChoiceFeature.stopAskingEnabled,
     ): ChoicePrompt {
+        val popupText = PromptSpeech.contentOrNull(analysis)
         val pressable = if (classification == PopupClassification.USER_DECISION) {
             emptyList()
         } else {
@@ -116,12 +134,13 @@ object ChoicePromptPlanner {
             emptyList()
         }
         // "Always" only for the exact buttons offered for a one-time press, and it names the button.
-        val remember = if (rememberChoicesEnabled) {
-            options.map { it.copy(kind = PromptOptionKind.REMEMBER_ALWAYS) }
+        val remember = if (rememberChoicesEnabled && RememberChoiceRules.offers(classification, popupText, preset, suspicious)) {
+            pressable.zip(options).filter { (candidate, _) -> RememberChoiceRules.keyable(candidate) }
+                .map { (_, option) -> option.copy(kind = PromptOptionKind.REMEMBER_ALWAYS) }
         } else {
             emptyList()
         }
-        val stopAsking = if (rememberChoicesEnabled && classification != PopupClassification.USER_DECISION) {
+        val stopAsking = if (rememberChoicesEnabled && stopAskingEnabled && classification != PopupClassification.USER_DECISION) {
             listOf(PromptOption(PromptOptionKind.STOP_ASKING))
         } else {
             emptyList()
@@ -139,7 +158,7 @@ object ChoicePromptPlanner {
             cannotPressForUser = pressable.isEmpty() && classification != PopupClassification.USER_DECISION,
             options = all.toImmutableList(),
             videoAd = notice,
-            popupText = PromptSpeech.contentOrNull(analysis),
+            popupText = popupText,
         )
     }
 

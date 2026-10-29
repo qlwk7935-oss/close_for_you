@@ -49,6 +49,7 @@ class MoveToButtonTest {
             analysis(candidate("c", "닫기", ButtonRole.CLOSE)),
             PopupClassification.ADVERTISEMENT,
             moveToButtonEnabled = true,
+            rememberChoicesEnabled = false,
         )
         assertEquals(1, prompt.options.count { it.candidateId == "c" })
         assertEquals(PromptOptionKind.PRESS_CANDIDATE, prompt.options.first().kind)
