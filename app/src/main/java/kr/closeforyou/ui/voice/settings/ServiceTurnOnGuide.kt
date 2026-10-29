@@ -63,17 +63,28 @@ object ServiceGuidePolicy {
         mode == GuideSpeech.AFTER_TALKBACK && completed && !personInteracted
 
     /**
-     * An accessibility event from the dialog that means the person took over: a finger touch, or
-     * TalkBack focus landing on something other than the title (TalkBack focuses the title by itself).
+     * An accessibility event that means the person took over: a finger touch, or TalkBack focus
+     * landing on something other than [selfFocusText] (what TalkBack focuses by itself, e.g. the
+     * dialog title). [selfFocusText] null = every focus move counts (watching starts after TalkBack
+     * settled, [AFTER_TALKBACK_MILLIS]).
      */
-    fun isPersonEvent(eventType: Int, eventText: String, title: String): Boolean = when (eventType) {
+    fun isPersonEvent(eventType: Int, eventText: String, selfFocusText: String?): Boolean = when (eventType) {
         AccessibilityEvent.TYPE_VIEW_HOVER_ENTER -> true
-        AccessibilityEvent.TYPE_VIEW_ACCESSIBILITY_FOCUSED -> !eventText.contains(title)
+        AccessibilityEvent.TYPE_VIEW_ACCESSIBILITY_FOCUSED -> selfFocusText == null || !eventText.contains(selfFocusText)
         else -> false
     }
 
-    /** Back from settings with the service on: TalkBack reads the state box (live region) itself. */
-    fun turnedOn(touchExplorationOn: Boolean): GuideSpeech = if (touchExplorationOn) GuideSpeech.NONE else GuideSpeech.NOW
+    /**
+     * Back from settings with the service on. TalkBack off → our TTS at once. TalkBack on: its live
+     * region announcement is drowned by the screen's own pane title (LG 10/30: only "5단계 중 2단계" was
+     * read), so with "안내 맡기기" on our TTS says it after TalkBack ([GuideSpeech.AFTER_TALKBACK]);
+     * off, TalkBack alone (the state box still says 켜짐).
+     */
+    fun turnedOn(touchExplorationOn: Boolean, takeoverOn: Boolean): GuideSpeech = guide(touchExplorationOn, takeoverOn)
+
+    /** After "켜졌어요": focus to [다음] only after the whole line with TalkBack, and nobody took over. */
+    fun moveFocusAfterTurnedOn(mode: GuideSpeech, completed: Boolean, personInteracted: Boolean, hasTarget: Boolean): Boolean =
+        hasTarget && moveFocusToOpen(mode, completed, personInteracted)
 
     /** Waits this long for TTS to get ready, and lets TalkBack read the dialog title first. */
     const val READY_TIMEOUT_MILLIS = 3_000L
@@ -89,11 +100,18 @@ object ServiceGuidePolicy {
  *    touched or swiped in the dialog. Focus moves only inside this dialog and nothing is pressed;
  * 3. [설정 열기] opens system accessibility settings asking it to scroll to our service
  *    ([AndroidCoreSetupStatus.openServiceSettings]); devices that ignore that (LG, 10/30) show the list;
- * 4. back with the service on: "켜졌어요" (TTS when TalkBack is off; TalkBack reads the live state box).
+ * 4. back with the service on: "켜졌어요" ([ServiceGuidePolicy.turnedOn]); with TalkBack and
+ *    "안내 맡기기" on, after that line TalkBack's focus goes to the node tagged [focusAfterTurnedOnTag]
+ *    on this screen (the first run's [다음]); the same "person took over" rule applies.
  * Returns what the [서비스 켜기] button calls.
  */
 @Composable
-fun rememberServiceTurnOn(serviceOn: Boolean, onOpenFailed: () -> Unit): () -> Unit {
+fun rememberServiceTurnOn(
+    serviceOn: Boolean,
+    onOpenFailed: () -> Unit,
+    /** Testtag of the button to land on after "켜졌어요" (null = do not move, e.g. settings). */
+    focusAfterTurnedOnTag: String? = null,
+): () -> Unit {
     val context = LocalContext.current
     var showGuide by rememberSaveable { mutableStateOf(false) }
     var awaitingReturn by rememberSaveable { mutableStateOf(false) }
@@ -106,7 +124,14 @@ fun rememberServiceTurnOn(serviceOn: Boolean, onOpenFailed: () -> Unit): () -> U
         context.getSystemService(AccessibilityManager::class.java)?.isTouchExplorationEnabled == true
     }
     val currentOpenFailed by rememberUpdatedState(onOpenFailed)
-    val focus = remember { GuideDialogFocus { engineHolder[0]?.stop() } }
+    val focus = remember { OwnWindowFocus { engineHolder[0]?.stop() } }
+    // The screen's own window, for "켜졌어요" → [다음].
+    val screenFocus = remember { OwnWindowFocus { engineHolder[0]?.stop() } }
+    val screenView = LocalView.current
+    DisposableEffect(screenView) {
+        screenFocus.attach(screenView, selfFocusText = null)
+        onDispose { screenFocus.detach() }
+    }
 
     val appName = stringResource(R.string.app_name)
     val title = stringResource(R.string.ui_setup_guide_title)
@@ -126,7 +151,7 @@ fun rememberServiceTurnOn(serviceOn: Boolean, onOpenFailed: () -> Unit): () -> U
             focus.startWatching()
             val completed = speakWhenReady(engine(), lines.joinToString("\n"))
             val touched = focus.stopWatching()
-            if (ServiceGuidePolicy.moveFocusToOpen(mode, completed, touched)) focus.moveToOpenButton()
+            if (ServiceGuidePolicy.moveFocusToOpen(mode, completed, touched)) focus.moveTo(OwnWindowFocus.OPEN_TAG)
         }
         AlertDialog(
             onDismissRequest = {
@@ -138,7 +163,7 @@ fun rememberServiceTurnOn(serviceOn: Boolean, onOpenFailed: () -> Unit): () -> U
                 // The dialog's own window: watch the person touching it, find [설정 열기] in it.
                 val dialogView = LocalView.current
                 DisposableEffect(dialogView) {
-                    focus.attach(dialogView, title)
+                    focus.attach(dialogView, selfFocusText = title)
                     onDispose { focus.detach() }
                 }
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -152,7 +177,7 @@ fun rememberServiceTurnOn(serviceOn: Boolean, onOpenFailed: () -> Unit): () -> U
                         showGuide = false
                         if (AndroidCoreSetupStatus.openServiceSettings(context)) awaitingReturn = true else currentOpenFailed()
                     },
-                    modifier = Modifier.testTag(GuideDialogFocus.OPEN_TAG),
+                    modifier = Modifier.testTag(OwnWindowFocus.OPEN_TAG),
                 ) { Text(stringResource(R.string.ui_setup_guide_open), fontSize = UiType.body) }
             },
             dismissButton = {
@@ -167,7 +192,15 @@ fun rememberServiceTurnOn(serviceOn: Boolean, onOpenFailed: () -> Unit): () -> U
     LaunchedEffect(serviceOn, awaitingReturn) {
         if (!awaitingReturn || !serviceOn) return@LaunchedEffect
         awaitingReturn = false
-        if (ServiceGuidePolicy.turnedOn(talkBackOn()) == GuideSpeech.NOW) speakWhenReady(engine(), turnedOnLine)
+        val mode = ServiceGuidePolicy.turnedOn(talkBackOn(), UiVoicePreferences.get(context).current().talkBackTakeover)
+        if (mode == GuideSpeech.NONE) return@LaunchedEffect
+        // Lets TalkBack finish what it reads when the screen comes back (its pane title).
+        if (mode == GuideSpeech.AFTER_TALKBACK) delay(ServiceGuidePolicy.AFTER_TALKBACK_MILLIS)
+        screenFocus.startWatching()
+        val completed = speakWhenReady(engine(), turnedOnLine)
+        val touched = screenFocus.stopWatching()
+        val tag = focusAfterTurnedOnTag
+        if (ServiceGuidePolicy.moveFocusAfterTurnedOn(mode, completed, touched, tag != null) && tag != null) screenFocus.moveTo(tag)
     }
 
     return { showGuide = true }
@@ -182,28 +215,29 @@ private suspend fun speakWhenReady(engine: SpeechEngine, text: String): Boolean 
 }
 
 /**
- * TalkBack focus inside the guide dialog (our own window, so no accessibility service is needed).
- * - Watching: the dialog's container sees every accessibility event its Compose view sends
- *   (`onRequestSendAccessibilityEvent`). A finger touch (TYPE_VIEW_HOVER_ENTER) or TalkBack focus
- *   moving to anything but the title (a swipe) means the person took over: our speech stops and
- *   focus is not moved. Event texts are only compared, never logged.
- * - Moving: finds the [OPEN_TAG] node's semantics id and performs ACTION_ACCESSIBILITY_FOCUS on the
+ * TalkBack focus inside one of our own windows (the guide dialog, or the screen itself), so no
+ * accessibility service is needed.
+ * - Watching: the Compose view's container sees every accessibility event it sends
+ *   (`onRequestSendAccessibilityEvent`). [ServiceGuidePolicy.isPersonEvent] (touch, or a swipe away
+ *   from [selfFocusText]) means the person took over: our speech stops and focus is not moved.
+ *   Event texts are only compared, never logged. Otherwise the delegate only passes events on.
+ * - Moving: finds the tagged node's semantics id and performs ACTION_ACCESSIBILITY_FOCUS on the
  *   Compose view's own AccessibilityNodeProvider (its virtual view id is the semantics id).
  * Main thread only. Device unverified.
  */
-private class GuideDialogFocus(private val onPersonInteracted: () -> Unit) {
+private class OwnWindowFocus(private val onPersonInteracted: () -> Unit) {
     private var view: View? = null
     private var container: View? = null
     private var previousDelegate: View.AccessibilityDelegate? = null
-    private var title: String = ""
+    private var title: String? = null
     private var watching = false
     private var touched = false
     private var ownMove = false
 
-    fun attach(dialogView: View, titleText: String) {
+    fun attach(dialogView: View, selfFocusText: String?) {
         detach()
         view = dialogView
-        title = titleText
+        title = selfFocusText
         val parent = dialogView.parent as? View ?: return
         val previous = parent.accessibilityDelegate
         container = parent
@@ -240,10 +274,10 @@ private class GuideDialogFocus(private val onPersonInteracted: () -> Unit) {
         return touched
     }
 
-    fun moveToOpenButton(): Boolean {
+    fun moveTo(tag: String): Boolean {
         val dialogView = view ?: return false
         val root = (dialogView as? RootForTest)?.semanticsOwner?.unmergedRootSemanticsNode ?: return false
-        val id = findTagged(root) ?: return false
+        val id = findTagged(root, tag) ?: return false
         ownMove = true
         return try {
             dialogView.accessibilityNodeProvider?.performAction(id, AccessibilityNodeInfo.ACTION_ACCESSIBILITY_FOCUS, null) == true
@@ -252,9 +286,9 @@ private class GuideDialogFocus(private val onPersonInteracted: () -> Unit) {
         }
     }
 
-    private fun findTagged(node: SemanticsNode): Int? {
-        if (node.config.getOrNull(SemanticsProperties.TestTag) == OPEN_TAG) return node.id
-        return node.children.firstNotNullOfOrNull { findTagged(it) }
+    private fun findTagged(node: SemanticsNode, tag: String): Int? {
+        if (node.config.getOrNull(SemanticsProperties.TestTag) == tag) return node.id
+        return node.children.firstNotNullOfOrNull { findTagged(it, tag) }
     }
 
     companion object {

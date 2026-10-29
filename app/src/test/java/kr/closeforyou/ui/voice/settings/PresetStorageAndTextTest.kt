@@ -7,6 +7,26 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class PresetStorageAndTextTest {
+    /** LG 10/30: a phone with old saved values showed a preset chosen. A real first run has none. */
+    @Test fun nothingStoredOpensSetupWithNothingChosen() {
+        val draft = OnboardingGatePolicy.initialDraft(UiVoicePreferences.readFrom(MapPreferences()))
+        assertEquals(OnboardingStep.WELCOME, draft.step)
+        assertEquals(null, draft.preset)
+        assertFalse(draft.autoCloseConsent)
+        assertEquals(null, draft.helpApps.mode)
+    }
+
+    /** [처음 설정 다시 하기] and the debug entry also start with nothing chosen, even with values saved. */
+    @Test fun restartedSetupOpensWithNothingChosen() {
+        val store = MapPreferences()
+        val saved = UiVoiceSettings(handlingPreset = HandlingPreset.CLOSE_ALL, onboardingDone = true).withAutoCloseConsent(true, 1L)
+        store.edit().also { UiVoicePreferences.writeTo(it, saved) }.apply()
+        val restarted = UiVoicePreferences.readFrom(store).copy(onboardingDone = false)
+        assertEquals(null, OnboardingGatePolicy.initialDraft(restarted).preset)
+        assertFalse(OnboardingGatePolicy.initialDraft(restarted).autoCloseConsent)
+        assertEquals(null, OnboardingGatePolicy.firstRunDraft(UiVoicePreferences.readFrom(store)).preset)
+    }
+
     @Test fun nothingStoredMeansFirstRunAndDefaultPreset() {
         val read = UiVoicePreferences.readFrom(MapPreferences())
         assertFalse(read.onboardingDone)

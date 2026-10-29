@@ -29,6 +29,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.heading
@@ -61,7 +62,17 @@ object OnboardingGatePolicy {
     /** [다음] on the preset step waits for a preset. */
     fun canContinue(chosen: HandlingPreset?): Boolean = chosen != null
 
-    /** The draft the first run opens with: nothing chosen for the person, takeover as saved. */
+    /**
+     * Opening the setup again on purpose (debug entry): like a real first run, nothing chosen, even
+     * when values are saved. [처음 설정 다시 하기] gets the same through onboardingDone = false. The
+     * saved values stay until [사용 시작] replaces them.
+     */
+    fun firstRunDraft(settings: UiVoiceSettings): OnboardingDraft = initialDraft(settings.copy(onboardingDone = false))
+
+    /**
+     * The draft the first run opens with: nothing chosen for the person (preset only after setup was
+     * finished, which the gate never shows), takeover as saved.
+     */
     fun initialDraft(settings: UiVoiceSettings): OnboardingDraft {
         val preset = initialPreset(settings)
         return OnboardingDraft(
@@ -226,7 +237,8 @@ fun UiVoiceOnboardingScreen(
                 OnboardingStep.WELCOME -> BrandButton(stringResource(R.string.ui_onboarding_start), next)
                 OnboardingStep.SERVICE -> {
                     if (serviceOn) {
-                        BrandButton(stringResource(R.string.ui_onboarding_next), next)
+                        // Where "켜졌어요" leaves TalkBack's focus ([rememberServiceTurnOn]).
+                        BrandButton(stringResource(R.string.ui_onboarding_next), next, modifier = Modifier.testTag(SERVICE_NEXT_TAG))
                     } else {
                         SecondaryButton(stringResource(R.string.ui_setup_service_later), next)
                     }
@@ -267,6 +279,8 @@ private fun OnboardingStep.titleRes() = when (this) {
     OnboardingStep.DONE -> R.string.ui_setup_done_title
 }
 
+private const val SERVICE_NEXT_TAG = "ui_setup_service_next"
+
 internal fun OnboardingBlock.reasonRes() = when (this) {
     OnboardingBlock.CHOOSE_PRESET -> R.string.ui_onboarding_choose_preset_first
     OnboardingBlock.CHOOSE_HELP_WAY -> R.string.ui_help_apps_choose_first
@@ -304,7 +318,7 @@ private fun ColumnScope.WelcomeStep() {
 private fun ServiceStep(serviceOn: Boolean) {
     var openFailed by rememberSaveable { mutableStateOf(false) }
     // [서비스 켜기] first explains where to go (dialog + speech), then opens settings at our service.
-    val turnOn = rememberServiceTurnOn(serviceOn) { openFailed = true }
+    val turnOn = rememberServiceTurnOn(serviceOn, onOpenFailed = { openFailed = true }, focusAfterTurnedOnTag = SERVICE_NEXT_TAG)
     val appName = stringResource(R.string.app_name)
     StepTitle(stringResource(R.string.ui_setup_service_title))
     BodyText(stringResource(R.string.ui_setup_service_intro))

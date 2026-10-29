@@ -44,11 +44,19 @@ TalkBack 사용자가 접근성 목록에서 우리 앱을 찾기 힘들어서, 
    읽는 중 사람이 손가락으로 만지거나(TYPE_VIEW_HOVER_ENTER) 쓸어서 제목이 아닌 곳으로 포커스가 가면(TYPE_VIEW_ACCESSIBILITY_FOCUSED) TTS를 멈추고 이동하지 않음. 이벤트 글자는 제목과 비교만 하고 로그에 남기지 않음.
 3. **우리 서비스 항목으로 바로**: [설정 열기]는 접근성 설정을 열면서 `:settings:fragment_args_key`(+ `:settings:show_fragment_args` 안 같은 키)에 `kr.closeforyou/kr.closeforyou.accessibility.CloseForYouAccessibilityService`를 넣는다. AOSP 설정 앱은 이 키의 항목으로 스크롤·강조한다. **공개 API가 아니라** 제조사 설정 앱이 무시하면 지금처럼 목록만 열린다(안전한 대체). **LG 벨벳(Android 12)은 무시함(10/30 확인)** — 맨 위 [돌아가기]에 포커스, 스크롤·강조 없음. 다른 기기용으로 코드는 둔다.
    `Settings.ACTION_ACCESSIBILITY_DETAILS_SETTINGS`(서비스 상세로 바로)는 SDK 36 소스에서 `@SystemApi @hide`라 일반 앱은 쓰지 않는다.
-4. **돌아오면**: 켜졌으면 TalkBack 꺼짐 → TTS "접근성 서비스가 켜졌어요. 다음을 눌러 계속해 주세요.", TalkBack 켜짐 → 상태 상자 live region을 TalkBack이 읽음(두 목소리 겹침 방지).
+4. **돌아오면** (켜졌을 때): TalkBack 꺼짐 → 우리 TTS "접근성 서비스가 켜졌어요. 다음을 눌러 계속해 주세요."
+   TalkBack 켜짐 + 안내 맡기기 켜짐 → 1초 뒤(TalkBack이 화면 제목 "5단계 중 2단계"를 읽을 시간) 같은 문장을 TTS로, 끝까지 읽으면 포커스를 처음 설정의 **[다음]**(testTag `ui_setup_service_next`)으로. 설정 화면에는 [다음]이 없어 말만 함.
+   live region만으로는 LG에서 화면 제목 알림에 묻혀 안 들렸다(10/30). 안내 맡기기 꺼짐이면 TalkBack만(상태 상자 "켜짐").
 - 시연 전용 한 번에 켜기(WRITE_SECURE_SETTINGS)는 하지 않음.
 - 수집 동의: `CoreSetupStatus.collectionConsentGranted()` = `CorePreferences.currentSettings().consentGranted` 읽기만. C는 동의를 주지 않는다.
 - 인터페이스 `CoreSetupStatus`의 기본값 `NONE`은 안전한 쪽(꺼짐·동의 없음). A가 자기 판정(예: 서비스 연결 상태)을 쓰고 싶으면 `UiVoiceOnboardingGate(status = …)`, `UiVoiceSettingsRoute(status = …)`로 넘긴다.
 - 패키지·클래스 이름은 로그에 남기지 않는다.
+
+### 2-2. 처음 설정이 열릴 때 미리 골라 둔 값 (10/30 정리)
+
+- **진짜 첫 실행**(저장값 없음): 프리셋·자동 닫기·도와줄 앱 모두 **미선택**. 안내 맡기기만 기본값(시연 `DEFAULT_ON`). 시험 `nothingStoredOpensSetupWithNothingChosen`.
+- **[처음 설정 다시 하기]**: `onboardingDone=false` → 첫 실행과 같이 미선택. 저장값은 [사용 시작] 때 바뀔 때까지 그대로이고, 그동안 자동 닫기 범위는 비어 있음.
+- **debug 미리보기 [처음 설정 열기]**: 예전에는 저장값을 보여 줬다(LG에서 "전부 자동 닫기"가 골라져 보인 이유). 이제 `OnboardingGatePolicy.firstRunDraft`로 첫 실행과 같이 미선택.
 
 ## 3. 설정 화면 (`UiVoiceSettingsScreen`, 제목 "팝업처리도우미 설정")
 

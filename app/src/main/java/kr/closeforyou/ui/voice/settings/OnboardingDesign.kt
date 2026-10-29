@@ -101,13 +101,19 @@ internal fun HelpText(text: String, modifier: Modifier = Modifier) {
  * TalkBack says label, reason, "사용 중지됨" (same rule as [HelpAppsSaveButton]).
  */
 @Composable
-internal fun BrandButton(label: String, onClick: () -> Unit, enabled: Boolean = true, disabledReason: String? = null) {
+internal fun BrandButton(
+    label: String,
+    onClick: () -> Unit,
+    enabled: Boolean = true,
+    disabledReason: String? = null,
+    modifier: Modifier = Modifier,
+) {
     val brand = brandColors()
     if (!enabled && disabledReason != null) HelpText(disabledReason)
     Button(
         onClick = onClick,
         enabled = enabled,
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
             .heightIn(min = 60.dp)
             .semantics { if (!enabled && disabledReason != null) stateDescription = disabledReason },

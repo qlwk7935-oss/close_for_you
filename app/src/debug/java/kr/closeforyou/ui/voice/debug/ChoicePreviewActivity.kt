@@ -515,7 +515,8 @@ private fun SettingsPage(onBack: () -> Unit) {
 }
 
 /**
- * First-run setup (five steps), shown even when it was already finished. [사용 시작] saves the
+ * First-run setup (five steps), shown even when it was already finished, starting like a real first
+ * run (nothing chosen, [OnboardingGatePolicy.firstRunDraft]). [사용 시작] saves the
  * preset, the switches and the "done" flag in C's real preferences, then comes back.
  * "도와줄 앱" is saved through A's real CorePreferences (pending until A's collection consent).
  * The service step reads A's real service state; [서비스 켜기] opens system settings.
@@ -530,7 +531,7 @@ private fun OnboardingPage(onBack: () -> Unit) {
     BackHandler(onBack = onBack)
     Scaffold { innerPadding ->
         UiVoiceOnboardingScreen(
-            initialDraft = OnboardingGatePolicy.initialDraft(preferences.current()),
+            initialDraft = OnboardingGatePolicy.firstRunDraft(preferences.current()),
             status = status,
             onFinish = { result ->
                 result.helpApps?.let { HelpAppsSync.save(it.draft, it.catalog, preferences, CoreAllowedApps(core)) }

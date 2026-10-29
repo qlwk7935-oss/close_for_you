@@ -278,10 +278,25 @@ class ServiceTurnOnGuideTest {
         assertFalse(ServiceGuidePolicy.isPersonEvent(AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED, "", title))
     }
 
-    @Test fun turnedOnIsSpokenOnlyWithoutTalkBack() {
-        assertEquals(GuideSpeech.NOW, ServiceGuidePolicy.turnedOn(touchExplorationOn = false))
-        // TalkBack reads the live state box itself; a second voice would overlap it.
-        assertEquals(GuideSpeech.NONE, ServiceGuidePolicy.turnedOn(touchExplorationOn = true))
+    @Test fun turnedOnIsSpokenWithoutTalkBackOrAfterItWithTakeover() {
+        assertEquals(GuideSpeech.NOW, ServiceGuidePolicy.turnedOn(touchExplorationOn = false, takeoverOn = false))
+        // LG 10/30: TalkBack read only the pane title, so with takeover our TTS says it after TalkBack.
+        assertEquals(GuideSpeech.AFTER_TALKBACK, ServiceGuidePolicy.turnedOn(touchExplorationOn = true, takeoverOn = true))
+        assertEquals(GuideSpeech.NONE, ServiceGuidePolicy.turnedOn(touchExplorationOn = true, takeoverOn = false))
+    }
+
+    @Test fun afterTurnedOnFocusGoesToNextOnlyWithATarget() {
+        assertTrue(ServiceGuidePolicy.moveFocusAfterTurnedOn(GuideSpeech.AFTER_TALKBACK, completed = true, personInteracted = false, hasTarget = true))
+        // Settings has no [다음].
+        assertFalse(ServiceGuidePolicy.moveFocusAfterTurnedOn(GuideSpeech.AFTER_TALKBACK, completed = true, personInteracted = false, hasTarget = false))
+        assertFalse(ServiceGuidePolicy.moveFocusAfterTurnedOn(GuideSpeech.AFTER_TALKBACK, completed = false, personInteracted = false, hasTarget = true))
+        assertFalse(ServiceGuidePolicy.moveFocusAfterTurnedOn(GuideSpeech.AFTER_TALKBACK, completed = true, personInteracted = true, hasTarget = true))
+        assertFalse(ServiceGuidePolicy.moveFocusAfterTurnedOn(GuideSpeech.NOW, completed = true, personInteracted = false, hasTarget = true))
+    }
+
+    @Test fun onTheScreenEveryFocusMoveAfterTalkBackSettledIsThePerson() {
+        assertTrue(ServiceGuidePolicy.isPersonEvent(AccessibilityEvent.TYPE_VIEW_ACCESSIBILITY_FOCUSED, "5단계 중 2단계", null))
+        assertTrue(ServiceGuidePolicy.isPersonEvent(AccessibilityEvent.TYPE_VIEW_HOVER_ENTER, "", null))
     }
 }
 

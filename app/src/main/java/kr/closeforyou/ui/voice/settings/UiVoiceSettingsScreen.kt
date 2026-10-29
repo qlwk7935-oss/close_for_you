@@ -179,7 +179,7 @@ fun UiVoiceSettingsRoute(
         onChangeHelpApps = { editingHelpApps = true },
         serviceOn = serviceOn,
         serviceOpenFailed = serviceOpenFailed,
-        onOpenServiceSettings = rememberServiceTurnOn(serviceOn) { serviceOpenFailed = true },
+        onOpenServiceSettings = rememberServiceTurnOn(serviceOn, onOpenFailed = { serviceOpenFailed = true }),
         onOpenCoreSettings = onOpenCoreSettings,
         onRestartSetup = preferences::restartOnboarding,
     )
