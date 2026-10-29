@@ -294,9 +294,26 @@ class ServiceTurnOnGuideTest {
         assertFalse(ServiceGuidePolicy.moveFocusAfterTurnedOn(GuideSpeech.NOW, completed = true, personInteracted = false, hasTarget = true))
     }
 
+    @Test fun focusToNextIsCheckedAndRepeatedUntilItHoldsUnlessThePersonTookOver() {
+        assertTrue(ServiceGuidePolicy.FOCUS_ATTEMPTS >= 3)
+        assertTrue(ServiceGuidePolicy.FOCUS_RETRY_MILLIS in 300L..500L)
+        assertTrue(ServiceGuidePolicy.shouldMoveAgain(targetFocused = false, personInteracted = false))
+        assertFalse(ServiceGuidePolicy.shouldMoveAgain(targetFocused = true, personInteracted = false))
+        assertFalse(ServiceGuidePolicy.shouldMoveAgain(targetFocused = false, personInteracted = true))
+    }
+
+    /** LG 10/30: back from settings TalkBack refocuses the step line by itself; that is not the person. */
+    @Test fun talkBackRefocusingTheStepLineIsNotThePerson() {
+        val own = listOf("5단계 중 2단계", "다음")
+        assertFalse(ServiceGuidePolicy.isPersonEvent(AccessibilityEvent.TYPE_VIEW_ACCESSIBILITY_FOCUSED, "5단계 중 2단계", own))
+        assertFalse(ServiceGuidePolicy.isPersonEvent(AccessibilityEvent.TYPE_VIEW_ACCESSIBILITY_FOCUSED, "다음", own))
+        assertTrue(ServiceGuidePolicy.isPersonEvent(AccessibilityEvent.TYPE_VIEW_ACCESSIBILITY_FOCUSED, "이전 단계", own))
+        assertTrue(ServiceGuidePolicy.isPersonEvent(AccessibilityEvent.TYPE_VIEW_HOVER_ENTER, "5단계 중 2단계", own))
+    }
+
     @Test fun onTheScreenEveryFocusMoveAfterTalkBackSettledIsThePerson() {
-        assertTrue(ServiceGuidePolicy.isPersonEvent(AccessibilityEvent.TYPE_VIEW_ACCESSIBILITY_FOCUSED, "5단계 중 2단계", null))
-        assertTrue(ServiceGuidePolicy.isPersonEvent(AccessibilityEvent.TYPE_VIEW_HOVER_ENTER, "", null))
+        assertTrue(ServiceGuidePolicy.isPersonEvent(AccessibilityEvent.TYPE_VIEW_ACCESSIBILITY_FOCUSED, "5단계 중 2단계", null as String?))
+        assertTrue(ServiceGuidePolicy.isPersonEvent(AccessibilityEvent.TYPE_VIEW_HOVER_ENTER, "", null as String?))
     }
 }
 

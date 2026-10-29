@@ -68,11 +68,26 @@ object ServiceGuidePolicy {
      * dialog title). [selfFocusText] null = every focus move counts (watching starts after TalkBack
      * settled, [AFTER_TALKBACK_MILLIS]).
      */
-    fun isPersonEvent(eventType: Int, eventText: String, selfFocusText: String?): Boolean = when (eventType) {
+    fun isPersonEvent(eventType: Int, eventText: String, selfFocusText: String?): Boolean =
+        isPersonEvent(eventType, eventText, selfFocusText?.let(::listOf))
+
+    /** Same, with several texts TalkBack may focus by itself (null = every focus move counts). */
+    fun isPersonEvent(eventType: Int, eventText: String, selfFocusTexts: List<String>?): Boolean = when (eventType) {
         AccessibilityEvent.TYPE_VIEW_HOVER_ENTER -> true
-        AccessibilityEvent.TYPE_VIEW_ACCESSIBILITY_FOCUSED -> selfFocusText == null || !eventText.contains(selfFocusText)
+        AccessibilityEvent.TYPE_VIEW_ACCESSIBILITY_FOCUSED -> selfFocusTexts == null || selfFocusTexts.none { eventText.contains(it) }
         else -> false
     }
+
+    /**
+     * Back from system settings TalkBack puts its focus on the screen's first item again, after our
+     * line (LG 10/30: focus stayed on "5단계 중 2단계"). So after "켜졌어요" the move to [다음] is checked
+     * this many times, this far apart, and repeated while [다음] does not hold the focus.
+     */
+    const val FOCUS_ATTEMPTS = 5
+    const val FOCUS_RETRY_MILLIS = 400L
+
+    /** One check of that loop: move again only when [다음] lost the focus and the person did not take over. */
+    fun shouldMoveAgain(targetFocused: Boolean, personInteracted: Boolean): Boolean = !targetFocused && !personInteracted
 
     /**
      * Back from settings with the service on. TalkBack off → our TTS at once. TalkBack on: its live
@@ -111,6 +126,11 @@ fun rememberServiceTurnOn(
     onOpenFailed: () -> Unit,
     /** Testtag of the button to land on after "켜졌어요" (null = do not move, e.g. settings). */
     focusAfterTurnedOnTag: String? = null,
+    /**
+     * What TalkBack focuses by itself on this screen when it comes back (the step line, the target's
+     * label): focus landing there while we keep [focusAfterTurnedOnTag] focused is not the person.
+     */
+    returnSelfFocusTexts: List<String> = emptyList(),
 ): () -> Unit {
     val context = LocalContext.current
     var showGuide by rememberSaveable { mutableStateOf(false) }
@@ -200,7 +220,18 @@ fun rememberServiceTurnOn(
         val completed = speakWhenReady(engine(), turnedOnLine)
         val touched = screenFocus.stopWatching()
         val tag = focusAfterTurnedOnTag
-        if (ServiceGuidePolicy.moveFocusAfterTurnedOn(mode, completed, touched, tag != null) && tag != null) screenFocus.moveTo(tag)
+        if (!ServiceGuidePolicy.moveFocusAfterTurnedOn(mode, completed, touched, tag != null) || tag == null) return@LaunchedEffect
+        // TalkBack may take the focus back to the first item after our line: check and move again.
+        screenFocus.startWatching(selfFocusTexts = returnSelfFocusTexts)
+        try {
+            repeat(ServiceGuidePolicy.FOCUS_ATTEMPTS) {
+                if (ServiceGuidePolicy.shouldMoveAgain(screenFocus.isFocused(tag), screenFocus.personInteracted)) screenFocus.moveTo(tag)
+                delay(ServiceGuidePolicy.FOCUS_RETRY_MILLIS)
+                if (screenFocus.personInteracted) return@LaunchedEffect
+            }
+        } finally {
+            screenFocus.stopWatching()
+        }
     }
 
     return { showGuide = true }
@@ -230,6 +261,7 @@ private class OwnWindowFocus(private val onPersonInteracted: () -> Unit) {
     private var container: View? = null
     private var previousDelegate: View.AccessibilityDelegate? = null
     private var title: String? = null
+    private var watchTexts: List<String>? = null
     private var watching = false
     private var touched = false
     private var ownMove = false
@@ -244,7 +276,7 @@ private class OwnWindowFocus(private val onPersonInteracted: () -> Unit) {
         previousDelegate = previous
         parent.accessibilityDelegate = object : View.AccessibilityDelegate() {
             override fun onRequestSendAccessibilityEvent(host: ViewGroup, child: View, event: AccessibilityEvent): Boolean {
-                if (watching && !ownMove && ServiceGuidePolicy.isPersonEvent(event.eventType, event.text.joinToString(" "), title)) {
+                if (watching && !ownMove && ServiceGuidePolicy.isPersonEvent(event.eventType, event.text.joinToString(" "), watchTexts)) {
                     watching = false
                     touched = true
                     onPersonInteracted()
@@ -263,9 +295,22 @@ private class OwnWindowFocus(private val onPersonInteracted: () -> Unit) {
         watching = false
     }
 
-    fun startWatching() {
+    /** [selfFocusTexts] null = the text given to [attach] (or every focus move when that was null). */
+    fun startWatching(selfFocusTexts: List<String>? = null) {
+        watchTexts = selfFocusTexts ?: title?.let(::listOf)
         touched = false
         watching = true
+    }
+
+    /** The person touched or swiped since [startWatching]. */
+    val personInteracted: Boolean get() = touched
+
+    /** The tagged node holds the accessibility focus (Compose answers from what TalkBack last focused). */
+    fun isFocused(tag: String): Boolean {
+        val dialogView = view ?: return false
+        val root = (dialogView as? RootForTest)?.semanticsOwner?.unmergedRootSemanticsNode ?: return false
+        val id = findTagged(root, tag) ?: return false
+        return dialogView.accessibilityNodeProvider?.createAccessibilityNodeInfo(id)?.isAccessibilityFocused == true
     }
 
     /** Stops watching; true when the person touched or swiped meanwhile. */

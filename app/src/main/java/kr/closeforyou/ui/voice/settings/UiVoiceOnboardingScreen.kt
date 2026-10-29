@@ -318,7 +318,15 @@ private fun ColumnScope.WelcomeStep() {
 private fun ServiceStep(serviceOn: Boolean) {
     var openFailed by rememberSaveable { mutableStateOf(false) }
     // [서비스 켜기] first explains where to go (dialog + speech), then opens settings at our service.
-    val turnOn = rememberServiceTurnOn(serviceOn, onOpenFailed = { openFailed = true }, focusAfterTurnedOnTag = SERVICE_NEXT_TAG)
+    val turnOn = rememberServiceTurnOn(
+        serviceOn,
+        onOpenFailed = { openFailed = true },
+        focusAfterTurnedOnTag = SERVICE_NEXT_TAG,
+        returnSelfFocusTexts = listOf(
+            stringResource(R.string.ui_setup_step, OnboardingStep.COUNT, OnboardingStep.SERVICE.number),
+            stringResource(R.string.ui_onboarding_next),
+        ),
+    )
     val appName = stringResource(R.string.app_name)
     StepTitle(stringResource(R.string.ui_setup_service_title))
     BodyText(stringResource(R.string.ui_setup_service_intro))

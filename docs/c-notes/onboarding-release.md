@@ -46,6 +46,7 @@ TalkBack 사용자가 접근성 목록에서 우리 앱을 찾기 힘들어서, 
    `Settings.ACTION_ACCESSIBILITY_DETAILS_SETTINGS`(서비스 상세로 바로)는 SDK 36 소스에서 `@SystemApi @hide`라 일반 앱은 쓰지 않는다.
 4. **돌아오면** (켜졌을 때): TalkBack 꺼짐 → 우리 TTS "접근성 서비스가 켜졌어요. 다음을 눌러 계속해 주세요."
    TalkBack 켜짐 + 안내 맡기기 켜짐 → 1초 뒤(TalkBack이 화면 제목 "5단계 중 2단계"를 읽을 시간) 같은 문장을 TTS로, 끝까지 읽으면 포커스를 처음 설정의 **[다음]**(testTag `ui_setup_service_next`)으로. 설정 화면에는 [다음]이 없어 말만 함.
+   LG 10/30: TTS는 들렸지만 포커스가 "5단계 중 2단계"에 남음(설정에서 돌아온 뒤 TalkBack이 첫 항목을 다시 잡음). 그래서 이동 뒤 [다음]이 실제로 접근성 포커스를 가졌는지(`isAccessibilityFocused`) 400ms 간격으로 5번 확인하고, 잃었으면 다시 옮긴다. 이 동안 TalkBack이 단계 줄·[다음]에 스스로 포커스를 두는 것은 사람 조작으로 보지 않고, 손가락 터치나 다른 항목으로 쓸기는 사람 조작으로 보아 멈춘다.
    live region만으로는 LG에서 화면 제목 알림에 묻혀 안 들렸다(10/30). 안내 맡기기 꺼짐이면 TalkBack만(상태 상자 "켜짐").
 - 시연 전용 한 번에 켜기(WRITE_SECURE_SETTINGS)는 하지 않음.
 - 수집 동의: `CoreSetupStatus.collectionConsentGranted()` = `CorePreferences.currentSettings().consentGranted` 읽기만. C는 동의를 주지 않는다.
