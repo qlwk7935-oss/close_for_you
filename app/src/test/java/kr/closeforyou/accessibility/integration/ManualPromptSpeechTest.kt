@@ -20,7 +20,8 @@ class ManualPromptSpeechTest {
         val state = MutableStateFlow(SpeechReadiness.INITIALIZING)
         override val readiness: StateFlow<SpeechReadiness> = state
         var calls = 0; var stops = 0
-        override suspend fun speak(text: String): Boolean { calls++; return true }
+        var finish: CompletableDeferred<Unit>? = null
+        override suspend fun speak(text: String): Boolean { calls++; finish?.await(); return true }
         override fun stop() { stops++ }
         override fun shutdown() { stop(); state.value = SpeechReadiness.UNAVAILABLE }
     }
@@ -49,6 +50,35 @@ class ManualPromptSpeechTest {
         assertEquals(1, r.engine.calls); assertEquals(r.prompt.token, r.lease.current())
         assertTrue(ManualSpeechState.COMPLETED in r.codes)
         r.engine.state.value = SpeechReadiness.READY; runCurrent(); assertEquals(1, r.engine.calls)
+    }
+    @Test fun matchingDisplayReviewRetiresExecutionEvidenceWithoutStoppingActualCAnnouncementJob() = runTest {
+        val r = Rig(this); val listener = r.listener(); r.engine.state.value = SpeechReadiness.READY
+        r.engine.finish = CompletableDeferred()
+        listener.onShown(r.prompt) { false }; advanceTimeBy(700); runCurrent()
+        assertEquals(1, r.engine.calls)
+        advanceTimeBy(5_300); var executionEvidence = true
+        val result = reviewManualDisplay(retire = {
+            executionEvidence = false
+            applyManualInvalidation(ManualPromptCause.DISPLAY_REVIEW_PENDING, r.lease.current() != null,
+                true, false, false, { r.lease.clear() }, { listener.onDismissed() })
+        }, verify = { assertFalse(executionEvidence); ManualDisplayVerdict.SAME }, remove = { listener.onDismissed() })
+        runCurrent()
+        assertEquals(ManualDisplayVerdict.SAME, result); assertEquals(0, r.engine.stops)
+        assertFalse(ManualSpeechState.CANCELLED in r.codes); assertEquals(r.prompt.token, r.lease.current())
+        r.engine.finish!!.complete(Unit); runCurrent()
+        assertTrue(ManualSpeechState.COMPLETED in r.codes); assertEquals(1, r.engine.calls)
+    }
+    @Test fun changedTargetStillDismissesAndCancelsTheActualCAnnouncementJob() = runTest {
+        val r = Rig(this); val listener = r.listener(); r.engine.state.value = SpeechReadiness.READY
+        r.engine.finish = CompletableDeferred()
+        listener.onShown(r.prompt) { false }; advanceTimeBy(700); runCurrent()
+        reviewManualDisplay({}, { ManualDisplayVerdict.CHANGED }, {
+            r.lease.clear(); listener.onDismissed()
+        })
+        runCurrent()
+        assertTrue(r.engine.stops > 0); assertTrue(ManualSpeechState.CANCELLED in r.codes)
+        r.engine.finish!!.complete(Unit); runCurrent()
+        assertFalse(ManualSpeechState.COMPLETED in r.codes); assertEquals(1, r.engine.calls)
     }
     @Test fun dismissalBeforeTheExistingSevenHundredMillisecondDelayDoesNotIssueSpeech() = runTest {
         val r = Rig(this); val listener = r.listener(); r.engine.state.value = SpeechReadiness.READY

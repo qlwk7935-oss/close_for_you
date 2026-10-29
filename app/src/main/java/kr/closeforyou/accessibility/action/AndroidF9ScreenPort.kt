@@ -15,6 +15,8 @@ import kotlinx.collections.immutable.toPersistentSet
 import kotlinx.coroutines.CancellationException
 import kr.closeforyou.accessibility.AndroidScreenGeometry
 import kr.closeforyou.accessibility.PrivacyPolicy
+import kr.closeforyou.accessibility.integration.ManualDisplayContinuity
+import kr.closeforyou.accessibility.integration.ManualDisplayVerdict
 import kr.closeforyou.core.model.*
 
 internal enum class F9ReadStage { MAIN, GEOMETRY, WINDOWS, ACTIVE_WINDOW, FOCUSED_WINDOW, OVERLAY_WINDOW,
@@ -39,6 +41,16 @@ internal class AndroidF9ScreenPort(
 
     override fun read(checkpoint: () -> Unit): F9Scene? = scan(checkpoint, null) { scene, _ -> scene }.takeIf { healthy }
 
+    private class DisplayRead(val source: PopupSnapshot, val overlayId: Int)
+
+    /** Read-only presentation continuity. This NEVER exposes a F9Scene or token, invokes consume
+     * for an action, or changes the strict overlay rejection in read()/press(). Caller confirms
+     * THIS native C generation/ownership before and after the entire bounded operation. */
+    fun verifyDisplayedPopup(source: PopupSnapshot, nativeOverlayId: Int, checkpoint: () -> Unit): ManualDisplayVerdict =
+        scan(checkpoint, null, DisplayRead(source, nativeOverlayId)) { scene, _ ->
+            ManualDisplayContinuity.assess(source, scene, nativeOverlayId)
+        }.takeIf { healthy } ?: ManualDisplayVerdict.UNAVAILABLE
+
     override fun press(reference: F9Reference, accept: (F9Scene) -> Boolean): F9Press {
         var attempted = false
         var returned: Boolean? = null
@@ -58,7 +70,7 @@ internal class AndroidF9ScreenPort(
     }
 
     @Suppress("DEPRECATION")
-    private fun <T> scan(checkpoint: () -> Unit, targetPath: String?, consume: (F9Scene, AccessibilityNodeInfo?) -> T): T? {
+    private fun <T> scan(checkpoint: () -> Unit, targetPath: String?, display: DisplayRead? = null, consume: (F9Scene, AccessibilityNodeInfo?) -> T): T? {
         check(Looper.myLooper() == Looper.getMainLooper()) { "F9_MAIN_REQUIRED" }
         if (!healthy) return null
         val started = SystemClock.uptimeMillis()
@@ -84,11 +96,17 @@ internal class AndroidF9ScreenPort(
             val windows = windowSource(); ownedWindows += windows
             check(windows.size in 1..32 && windows.all { it.displayId == 0 }) { "F9_WINDOW_SCOPE" }
             stage = F9ReadStage.ACTIVE_WINDOW
-            val active = windows.singleOrNull { it.isActive && it.type == AccessibilityWindowInfo.TYPE_APPLICATION } ?: return null
+            val active = if (display == null) {
+                windows.singleOrNull { it.isActive && it.type == AccessibilityWindowInfo.TYPE_APPLICATION } ?: return null
+            } else {
+                val selected = ManualDisplayContinuity.target(windows.map(::window), display.source.token.windowId, display.overlayId)
+                    ?: return null
+                windows.singleOrNull { it.id == selected.id } ?: return null
+            }
             stage = F9ReadStage.FOCUSED_WINDOW
-            if (!active.isFocused) return null
+            if (display == null && !active.isFocused) return null
             stage = F9ReadStage.OVERLAY_WINDOW
-            if (windows.any { it.type == AccessibilityWindowInfo.TYPE_ACCESSIBILITY_OVERLAY ||
+            if (display == null && windows.any { it.type == AccessibilityWindowInfo.TYPE_ACCESSIBILITY_OVERLAY ||
                     it.type == AccessibilityWindowInfo.TYPE_INPUT_METHOD || (it.id != active.id && (it.isActive || it.isFocused)) }) return null
             stage = F9ReadStage.APP_COUNT
             val apps = windows.filter { it.type == AccessibilityWindowInfo.TYPE_APPLICATION }
@@ -101,14 +119,14 @@ internal class AndroidF9ScreenPort(
             if (!F9AutoCloser.contains(frame, activeBounds)) return null
             stage = F9ReadStage.OCCLUSION
             if (windows.any { other ->
-                    other.id != active.id && other.type != AccessibilityWindowInfo.TYPE_APPLICATION &&
+                    other.id != active.id && other.id != display?.overlayId && other.type != AccessibilityWindowInfo.TYPE_APPLICATION &&
                         other.layer >= active.layer && overlaps(rect(other), activeBounds) &&
                         !(targetPath == null && activeBounds == frame && passiveSystemBar(other, frame, ::own))
                 }) return null
             stage = F9ReadStage.ROOT
-            val root = own(activeRoot() ?: return null)
+            val root = own((if (display == null) activeRoot() else active.root) ?: return null)
             val packageName = root.packageName?.toString() ?: return null
-            if (root.windowId != active.id) return null
+            if (root.windowId != active.id || (display != null && packageName != display.source.token.packageName)) return null
             if (F9ContentSafety.protectedPackage(packageName) || !packageAllowed(packageName)) {
                 // Identity-only departure evidence. Never read protected/unconsented app text.
                 tick()
@@ -179,7 +197,7 @@ internal class AndroidF9ScreenPort(
             stage = F9ReadStage.ENDPOINT
             val currentWindows = windowSource(); ownedWindows += currentWindows
             if (currentWindows.map(::window) != dtos || geometry.read().frame != frame) return null
-            val endRoot = activeRoot() ?: return null
+            val endRoot = (if (display == null) activeRoot() else active.root) ?: return null
             if (identities[endRoot] == null) own(endRoot)
             if (endRoot.windowId != active.id || endRoot.packageName?.toString() != packageName) return null
             // refresh is supplementary, never the whole-screen safety proof.

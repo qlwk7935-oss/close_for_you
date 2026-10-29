@@ -66,7 +66,7 @@ internal class F9ServiceConnection(
     })
     private val manual = ManualPopupConnection(service, scope, session, cleanup, presentationHealth, tts, batcher,
         history::clear, userInteracting, epoch, verifyPresentation, requestObservation,
-        collectForChoice, awaitInteractionEnd, intentInteracting, speechEngine.readiness, trace)
+        collectForChoice, awaitInteractionEnd, intentInteracting, speechEngine.readiness, screen::verifyDisplayedPopup, trace)
     val observationReady: Boolean get() = !closed && manual.canObserve()
     fun hasPrompt() = manual.hasPrompt()
     fun hasPendingPresentation() = manual.hasPendingPresentation()
@@ -74,6 +74,7 @@ internal class F9ServiceConnection(
         if (requested) ManualPromptCause.FOCUS_INVALIDATED_REVIEW_REQUESTED else ManualPromptCause.FOCUS_INVALIDATED_NO_REVIEW)
     fun reviewRejected(cause: ManualPromptCause) = trace?.record(ManualPromptPoint.REVIEW_REJECTED, cause)
     fun shouldIgnore(event: AccessibilityEvent) = manual.shouldIgnore(event)
+    fun reviewDisplayedEvent(type: Int, retire: () -> Long) = manual.reviewDisplayedEvent(type, retire)
     fun isOwnedRetirement(event: AccessibilityEvent) = manual.isOwnedRetirement(event)
     suspend fun awaitObservationPermit(): Any {
         val permit = cleanup.awaitObservationPermit()
