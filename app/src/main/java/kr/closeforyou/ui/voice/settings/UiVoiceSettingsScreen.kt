@@ -299,24 +299,27 @@ fun UiVoiceSettingsScreen(
             HelpText(stringResource(R.string.ui_settings_status_where))
         }
 
-        HorizontalDivider()
-        Heading(R.string.ui_settings_section_auto_close)
-        BodyText(stringResource(R.string.ui_settings_auto_close_help))
-        val autoCloseApps = AutoCloseApps.candidates(
-            rememberedPackages = rules.filter { it.choice == ChoiceKind.REMEMBER_EXACT_POPUP }.map { it.key.packageName },
-            autoClosePackages = settings.autoClosePackages,
-            allowed = coreAllowedPackages,
-        )
-        if (autoCloseApps.isEmpty()) {
-            HelpText(stringResource(R.string.ui_settings_auto_close_no_apps))
-        } else {
-            autoCloseApps.sortedBy(appName).forEach { packageName ->
-                SwitchRow(
-                    label = stringResource(R.string.ui_settings_auto_close_app, appName(packageName)),
-                    checked = settings.autoCloseAllowed(packageName, coreAllowedPackages),
-                    onCheckedChange = { onAutoCloseChange(packageName, it) },
-                    iconPackage = packageName,
-                )
+        // Demo mode (10/30): no per-app switch; every helped app follows the preset and its remembered popups.
+        if (PerAppAutoCloseGateFeature.enabled) {
+            HorizontalDivider()
+            Heading(R.string.ui_settings_section_auto_close)
+            BodyText(stringResource(R.string.ui_settings_auto_close_help))
+            val autoCloseApps = AutoCloseApps.candidates(
+                rememberedPackages = rules.filter { it.choice == ChoiceKind.REMEMBER_EXACT_POPUP }.map { it.key.packageName },
+                autoClosePackages = settings.autoClosePackages,
+                allowed = coreAllowedPackages,
+            )
+            if (autoCloseApps.isEmpty()) {
+                HelpText(stringResource(R.string.ui_settings_auto_close_no_apps))
+            } else {
+                autoCloseApps.sortedBy(appName).forEach { packageName ->
+                    SwitchRow(
+                        label = stringResource(R.string.ui_settings_auto_close_app, appName(packageName)),
+                        checked = settings.autoCloseAllowed(packageName, coreAllowedPackages),
+                        onCheckedChange = { onAutoCloseChange(packageName, it) },
+                        iconPackage = packageName,
+                    )
+                }
             }
         }
 
@@ -372,6 +375,7 @@ fun UiVoiceSettingsScreen(
 
         HorizontalDivider()
         Heading(R.string.ui_settings_section_rules)
+        HelpText(stringResource(R.string.ui_settings_rules_help))
         if (rules.isEmpty()) {
             Text(stringResource(R.string.ui_settings_rules_empty))
             Text(stringResource(R.string.ui_settings_rules_empty_help), style = MaterialTheme.typography.bodySmall)

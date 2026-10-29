@@ -97,7 +97,7 @@
     <string name="ui_voice_unavailable">지금은 음성 명령을 쓸 수 없어요.</string>
     <string name="ui_voice_permission_hint">음성 명령을 쓰려면 설정에서 마이크를 허용해 주세요.</string>
 
-    <!-- 설정 화면 (C). 자동 닫기는 앱별·기본 꺼짐. 처음 보는 팝업은 항상 묻는다. -->
+    <!-- 설정 화면 (C). 도와줄 앱 + 프리셋 + 자동 닫기 스위치로 처리. 앞으로 항상 닫기는 팝업 단위(10/30). -->
     <string name="ui_settings_title">팝업처리도우미 설정</string>
     <string name="ui_settings_section_status">지금 상태</string>
     <string name="ui_settings_status_running">팝업 살펴보기가 켜져 있어요.</string>
@@ -325,6 +325,7 @@
     <string name="ui_help_apps_status_chosen">고른 앱 %1$d개를 돕고 있어요.</string>
     <string name="ui_help_apps_status_waiting">준비 중이에요. 기본 설정에서 화면 정보 수집에 동의하면 적용돼요.</string>
     <string name="ui_help_apps_exclude_button">제외할 앱 고르기</string>
+    <string name="ui_settings_rules_help">\'앞으로 항상 닫기\'로 기억한 팝업은 도와줄 앱이라면 어느 앱에서든 똑같은 팝업이 다시 뜰 때 묻지 않고 닫아요. 해제하면 다시 물어봐요.</string>
     <string name="ui_settings_section_service">접근성 서비스</string>
     <string name="ui_settings_open_core">기본 설정 열기</string>
     <string name="ui_settings_open_core_help">화면 정보 수집 동의, 팝업 살펴보기 시작·일시정지, 이미지 글자 읽기는 기본 설정에서 정해요.</string>

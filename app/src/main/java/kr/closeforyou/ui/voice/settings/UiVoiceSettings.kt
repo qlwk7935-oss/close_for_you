@@ -12,8 +12,9 @@ import kr.closeforyou.ui.voice.overlay.TalkBackTakeoverFeature
 enum class AnnouncementDetail { SHORT, DETAILED }
 
 /**
- * C settings. Auto close is per app and off by default: an app listed here only lets B consider
- * repeating an exact remembered choice (F12). First-seen popups are closed without asking only under
+ * C settings. [autoClosePackages] is the per-app repeat switch, hidden and ignored in demo mode
+ * ([PerAppAutoCloseGateFeature]); when on, an app listed here only lets B consider repeating an
+ * exact remembered choice (F12). First-seen popups are closed without asking only under
  * AGENTS.md 6-2 (preset + [autoCloseConsent] + B approval + A eligibility); otherwise they are asked.
  * [handlingPreset] is separate: the person's preference per popup kind, for B to read later
  * (docs/c-notes/preset-contract-proposal.md). The two are never mixed.
@@ -50,9 +51,29 @@ data class UiVoiceSettings(
         autoClosePackages = if (enabled) autoClosePackages + packageName else autoClosePackages - packageName,
     )
 
-    /** For B's future DecisionContext field: only apps A still allows can ever be on. */
-    fun autoCloseAllowed(packageName: String, coreAllowedPackages: Set<String>): Boolean =
-        packageName in coreAllowedPackages && packageName in autoClosePackages
+    /**
+     * Whether an exact remembered popup ("앞으로 항상 닫기") may be repeated in [packageName].
+     * Only apps A still allows ("도와줄 앱") can ever be on. With [perAppGate] off (demo mode 6-0,
+     * [PerAppAutoCloseGateFeature]) every helped app is allowed and [autoClosePackages] is ignored.
+     * Nobody in A or B reads this yet (DecisionContext has no such field; B repeats from matchingRule).
+     */
+    fun autoCloseAllowed(
+        packageName: String,
+        coreAllowedPackages: Set<String>,
+        perAppGate: Boolean = PerAppAutoCloseGateFeature.enabled,
+    ): Boolean = packageName in coreAllowedPackages && (!perAppGate || packageName in autoClosePackages)
+}
+
+/**
+ * Team 10/30 (재호): "앞으로 항상 닫기" is per popup, not per app. Once the person helps an app
+ * ("도와줄 앱") and picks a preset, that app is handled by the preset and its remembered popups,
+ * with no second per-app switch. false = demo mode (6-0): the settings section
+ * "앞으로 항상 닫기를 허용할 앱" is hidden and [UiVoiceSettings.autoCloseAllowed] allows every helped
+ * app. The stored per-app list (`auto_close_packages_v1`) and its code stay, so a release can
+ * bring the switch back by setting this to true.
+ */
+object PerAppAutoCloseGateFeature {
+    const val enabled: Boolean = false
 }
 
 /** Application singleton over C's own SharedPreferences file (no DataStore, no new library). */

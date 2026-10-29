@@ -102,7 +102,7 @@ class PresetStorageAndTextTest {
     @Test fun presetAndPerAppAutoCloseStaySeparate() {
         val settings = UiVoiceSettings().copy(handlingPreset = HandlingPreset.CLOSE_ALL)
         assertTrue(settings.autoClosePackages.isEmpty())
-        assertFalse(settings.autoCloseAllowed("kr.a", setOf("kr.a")))
+        assertFalse(settings.autoCloseAllowed("kr.a", setOf("kr.a"), perAppGate = true))
         assertEquals(HandlingPreset.CLOSE_ALL, settings.withAutoClose("kr.a", true).handlingPreset)
     }
 

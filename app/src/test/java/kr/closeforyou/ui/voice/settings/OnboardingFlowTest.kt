@@ -394,3 +394,26 @@ class HelpAppsStatusPlanTest {
         assertEquals("알 수 없는 앱", built.all.single().label)
     }
 }
+
+class PerAppAutoCloseGateTest {
+    /** 10/30: no per-app switch in demo mode; every helped app may repeat its remembered popups. */
+    @Test fun demoModeAllowsEveryHelpedAppWithoutAPerAppSwitch() {
+        assertFalse(PerAppAutoCloseGateFeature.enabled)
+        val settings = UiVoiceSettings()
+        assertTrue(settings.autoCloseAllowed("com.android.chrome", setOf("com.android.chrome")))
+        // Still never outside "도와줄 앱".
+        assertFalse(settings.autoCloseAllowed("com.android.chrome", emptySet()))
+    }
+
+    @Test fun theStoredPerAppListStillWorksWhenTheGateComesBack() {
+        val on = UiVoiceSettings().withAutoClose("com.android.chrome", true)
+        assertTrue(on.autoCloseAllowed("com.android.chrome", setOf("com.android.chrome"), perAppGate = true))
+        assertFalse(UiVoiceSettings().autoCloseAllowed("com.android.chrome", setOf("com.android.chrome"), perAppGate = true))
+    }
+
+    @Test fun rulesHelpSaysPerPopupInEveryHelpedApp() {
+        val strings = java.io.File("src/main/res/values/ui_voice_strings.xml").readText()
+        val line = Regex("""<string name="ui_settings_rules_help">([^<]*)</string>""").find(strings)!!.groupValues[1]
+        assertTrue(line.contains("도와줄 앱") && line.contains("어느 앱에서든") && line.contains("똑같은 팝업"))
+    }
+}
