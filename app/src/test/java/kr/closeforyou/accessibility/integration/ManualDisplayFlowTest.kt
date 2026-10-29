@@ -84,6 +84,32 @@ class ManualDisplayFlowTest {
                 })
             trace.record(if (retained) ManualPromptPoint.DISPLAY_RETAINED else ManualPromptPoint.INVALIDATED, cause)
         }
+        fun reviewBounds(changed: Boolean): ManualDisplayVerdict {
+            val s = input.snapshot
+            check(manualDisplayReviewEvent(E.TYPE_WINDOWS_CHANGED, E.WINDOWS_CHANGE_BOUNDS, s.token.windowId, s.token.windowId))
+            val windows = s.windows.map {
+                it.copy(active = false, focused = false, bounds = if (changed) it.bounds.copy(right = it.bounds.right + 1) else it.bounds)
+            } + WindowSnapshot(99, WindowType.ACCESSIBILITY_OVERLAY, s.screenBounds, true, true, 5)
+            val scene = kr.closeforyou.accessibility.action.F9Scene(s.token.packageName, s.token.windowId, s.token.windowId,
+                s.screenBounds, windows, s.nodes, s.nodes.mapTo(mutableSetOf()) { it.path }, true)
+            return reviewManualDisplay(retire = { invalidate(ManualPromptCause.DISPLAY_REVIEW_PENDING) },
+                verify = { ManualDisplayContinuity.assess(s, scene, 99) },
+                remove = { invalidate(ManualPromptCause.WINDOW_SET_INVALIDATED) },
+                onChecked = { trace.displayReview(ManualDisplayReviewCode(ManualEventKind.WINDOW_SET, ManualWindowMask.BOUNDS, it)) })
+        }
+    }
+    @Test fun targetBoundsNotificationWithUnchangedWholePopupKeepsRealCFlowAndSpeechBeyondEvidenceTtl() = runTest {
+        val r = Rig(this); r.show(); r.now += 6_001
+        assertEquals(ManualDisplayVerdict.SAME, r.reviewBounds(changed = false)); runCurrent()
+        assertTrue(r.guarded.isShowing); assertEquals(1, r.shows); assertEquals(0, r.dismisses); assertEquals(0, r.stops)
+        assertNull(r.raw); assertFalse(r.gate.hasCurrentObservation()); assertEquals(0, r.handled)
+    }
+    @Test fun targetBoundsActuallyChangedClosesRealCFlowAndRejectsItsOldAnswer() = runTest {
+        val r = Rig(this); r.show(); val prompt = requireNotNull(r.prompt); val answer = requireNotNull(r.callback)
+        assertEquals(ManualDisplayVerdict.CHANGED, r.reviewBounds(changed = true)); runCurrent()
+        assertFalse(r.guarded.isShowing); assertTrue(r.stops > 0); assertNull(r.lifetime.current())
+        val choice = ChoicePromptPlanner.toUserChoice(prompt, prompt.options.first { it.kind == PromptOptionKind.PRESS_CANDIDATE })
+        answer(PromptAnswer.Picked(choice, ChoiceOrigin.TAP, 1)); runCurrent(); assertEquals(0, r.handled)
     }
     @Test fun originalFiveSecondExpiryCannotCancelRealFlowOrSpeechOrNativeDisplay() = runTest {
         val r = Rig(this); r.show(); r.now += 5_000

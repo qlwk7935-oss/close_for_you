@@ -75,7 +75,9 @@ internal class F9ServiceConnection(
     fun reviewRejected(cause: ManualPromptCause) = trace?.record(ManualPromptPoint.REVIEW_REJECTED, cause)
     fun shouldIgnore(event: AccessibilityEvent) = manual.shouldIgnore(event)
     fun compatibleRetirementEvent(event: AccessibilityEvent) = manual.compatibleRetirementEvent(event)
-    fun reviewDisplayedEvent(type: Int, retire: () -> Long) = manual.reviewDisplayedEvent(type, retire)
+    fun nativeCleanupRetirementEvent(event: AccessibilityEvent) = manual.nativeCleanupRetirementEvent(event)
+    fun reviewDisplayedEvent(type: Int, changes: Int, eventWindow: Int, retire: () -> Long) =
+        manual.reviewDisplayedEvent(type, changes, eventWindow, retire)
     fun isOwnedRetirement(event: AccessibilityEvent) = manual.isOwnedRetirement(event)
     suspend fun awaitObservationPermit(): Any {
         val permit = cleanup.awaitObservationPermit()

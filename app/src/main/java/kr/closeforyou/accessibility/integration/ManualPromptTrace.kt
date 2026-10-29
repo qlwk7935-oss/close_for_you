@@ -30,6 +30,7 @@ internal class ManualPromptTrace(private val actionSink: (Long, ManualActionCode
     private val eventSink: (Long, ManualEventCode) -> Unit = { _, _ -> },
     private val speechSink: (Long, ManualSpeechState) -> Unit = { _, _ -> },
     private val retirementSink: (Long, ManualRetirementCode) -> Unit = { _, _ -> },
+    private val displayReviewSink: (Long, ManualDisplayReviewCode) -> Unit = { _, _ -> },
     cleanupSink: (Long, ManualCleanupCode) -> Unit = { _, _ -> },
     private val sink: (Long, ManualPromptPoint, ManualPromptCause) -> Unit) {
     private var attempt = 0L
@@ -38,8 +39,9 @@ internal class ManualPromptTrace(private val actionSink: (Long, ManualActionCode
     private val eventCodes = mutableSetOf<ManualEventCode>()
     private var speechCodes = mutableSetOf<ManualSpeechState>()
     private val retirementCodes = mutableSetOf<ManualRetirementCode>()
+    private val displayReviewCodes = mutableSetOf<ManualDisplayReviewCode>()
     val cleanup = ManualCleanupTrace { code -> cleanupSink(attempt, code) }
-    fun begin() { attempt = if (attempt == Long.MAX_VALUE) 1 else attempt + 1; recorded.clear(); ownership.clear(); eventCodes.clear(); retirementCodes.clear(); speechCodes = mutableSetOf(); record(ManualPromptPoint.OFFERED) }
+    fun begin() { attempt = if (attempt == Long.MAX_VALUE) 1 else attempt + 1; recorded.clear(); ownership.clear(); eventCodes.clear(); retirementCodes.clear(); displayReviewCodes.clear(); speechCodes = mutableSetOf(); record(ManualPromptPoint.OFFERED) }
     fun record(point: ManualPromptPoint, cause: ManualPromptCause = ManualPromptCause.NONE) {
         if (recorded.add(point to cause)) diagnosticWrite { sink(attempt, point, cause) }
     }
@@ -58,6 +60,9 @@ internal class ManualPromptTrace(private val actionSink: (Long, ManualActionCode
     }
     fun retirement(code: ManualRetirementCode) {
         if (retirementCodes.size < 16 && retirementCodes.add(code)) diagnosticWrite { retirementSink(attempt, code) }
+    }
+    fun displayReview(code: ManualDisplayReviewCode) {
+        if (displayReviewCodes.size < 16 && displayReviewCodes.add(code)) diagnosticWrite { displayReviewSink(attempt, code) }
     }
     fun speechReporter(): (ManualSpeechState) -> Unit {
         val acceptedAttempt = attempt; val codes = speechCodes

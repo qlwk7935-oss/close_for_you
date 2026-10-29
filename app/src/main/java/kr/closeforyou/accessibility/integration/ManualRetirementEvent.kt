@@ -3,7 +3,7 @@ package kr.closeforyou.accessibility.integration
 import android.view.accessibility.AccessibilityEvent as E
 import kotlinx.coroutines.CancellationException
 
-internal enum class ManualRetirementCheck { EVENT_TYPE, CHOICE, DISPLAY, PACKAGE, TIME, NATIVE, ABSENCE, READ_FAILED, COMPATIBLE }
+internal enum class ManualRetirementCheck { EVENT_TYPE, CHOICE, DISPLAY, PACKAGE, TIME, NATIVE, ABSENCE, READ_FAILED, COMPATIBLE, CLEANUP_WAIT }
 internal data class ManualRetirementCode(val kind: ManualEventKind, val check: ManualRetirementCheck)
 
 /** Framework window-change notifications may omit package metadata. This exception requires
@@ -52,4 +52,30 @@ internal fun inspectManualRetirementEvent(type: Int, changes: Int, choice: () ->
         ManualRetirementCode(kind, ManualRetirementCheck.COMPATIBLE)
     } catch (cancelled: CancellationException) { throw cancelled }
     catch (_: Exception) { rejected(ManualRetirementCheck.READ_FAILED) }
+}
+
+/** Only prevents a queued notification of THIS retiring C View from poisoning cleanup. Unlike
+ * COMPATIBLE this NEVER preserves user intent, event handling, evidence or an execution token.
+ * Callers must already be in pending cleanup with the exact event/native ID. No permit here. */
+internal fun inspectNativeCleanupRetirement(type: Int, changes: Int, hidden: () -> Boolean,
+    packageMatches: () -> Boolean, nativeRegistered: () -> Boolean): ManualRetirementCode {
+    val kind = when (type) {
+        E.TYPE_VIEW_CLICKED -> ManualEventKind.CLICK
+        E.TYPE_VIEW_FOCUSED, E.TYPE_VIEW_ACCESSIBILITY_FOCUSED, E.TYPE_VIEW_ACCESSIBILITY_FOCUS_CLEARED -> ManualEventKind.FOCUS
+        E.TYPE_WINDOW_CONTENT_CHANGED -> ManualEventKind.CONTENT
+        E.TYPE_WINDOW_STATE_CHANGED -> ManualEventKind.WINDOW_STATE
+        E.TYPE_WINDOWS_CHANGED -> ManualEventKind.WINDOW_SET
+        else -> ManualEventKind.OTHER
+    }
+    fun code(check: ManualRetirementCheck) = ManualRetirementCode(kind, check)
+    return try {
+        when {
+            !nativeRetirementTransientEvent(type, changes) -> code(ManualRetirementCheck.EVENT_TYPE)
+            !hidden() -> code(ManualRetirementCheck.DISPLAY)
+            !packageMatches() -> code(ManualRetirementCheck.PACKAGE)
+            !nativeRegistered() -> code(ManualRetirementCheck.NATIVE)
+            else -> code(ManualRetirementCheck.CLEANUP_WAIT)
+        }
+    } catch (cancelled: CancellationException) { throw cancelled }
+    catch (_: Exception) { code(ManualRetirementCheck.READ_FAILED) }
 }

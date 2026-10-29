@@ -9,19 +9,33 @@ import kr.closeforyou.accessibility.action.F9Scene
 import kr.closeforyou.core.model.*
 
 internal enum class ManualDisplayVerdict { SAME, CHANGED, UNAVAILABLE }
+internal data class ManualDisplayReviewCode(val kind: ManualEventKind, val mask: ManualWindowMask,
+    val verdict: ManualDisplayVerdict)
 
-internal fun manualDisplayReviewEvent(type: Int) = type == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED ||
-    type == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED
+/** A target BOUNDS notification is a request to re-read, not proof that C or the target caused it.
+ * Mixed/structural/unknown masks and unrelated windows keep ordinary invalidation. */
+internal fun manualDisplayReviewEvent(type: Int, changes: Int = 0, eventWindow: Int = -1,
+    targetWindow: Int? = null) = type == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED ||
+    type == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED ||
+    (type == AccessibilityEvent.TYPE_WINDOWS_CHANGED && changes == AccessibilityEvent.WINDOWS_CHANGE_BOUNDS &&
+        eventWindow >= 0 && eventWindow == targetWindow)
 
 /** The real service's synchronous retire -> read -> retain/remove boundary. A matching display
  * never restores Runtime/F9 evidence. Exceptions/cancellation remove the presentation too, while
  * resource safety preserves the primary failure. No retries, grace period or event-time exemption. */
 internal fun reviewManualDisplay(retire: () -> Unit, verify: () -> ManualDisplayVerdict,
-    remove: () -> Unit): ManualDisplayVerdict {
+    remove: () -> Unit, onChecked: (ManualDisplayVerdict) -> Unit = {}): ManualDisplayVerdict {
     var retain = false
     return CollectionResourceSafety.run(body = {
-        retire()
-        verify().also { retain = it == ManualDisplayVerdict.SAME }
+        val verdict = try { retire(); verify() }
+        catch (failure: Exception) {
+            kr.closeforyou.accessibility.diagnosticWrite { onChecked(ManualDisplayVerdict.UNAVAILABLE) }
+            throw failure
+        }
+        retain = verdict == ManualDisplayVerdict.SAME
+        // Record the verified result BEFORE remove can throw; the sink has no policy authority.
+        kr.closeforyou.accessibility.diagnosticWrite { onChecked(verdict) }
+        verdict
     }, cleanup = { if (!retain) remove() }, cleanupFailure = { throw CollectionCleanupFailure() })
 }
 

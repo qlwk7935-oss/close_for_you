@@ -113,7 +113,8 @@ class CloseForYouAccessibilityService : AccessibilityService() {
         var processed = false
         try {
             val nativeRetirement = owner?.compatibleRetirementEvent(event) == true
-            receipt = owner?.observeEvent(event, nativeRetirement)
+            val cleanupWaitOnly = !nativeRetirement && owner?.nativeCleanupRetirementEvent(event) == true
+            receipt = owner?.observeEvent(event, nativeRetirement || cleanupWaitOnly)
             handleAccessibilityEvent(event, nativeRetirement && f9 === owner); processed = true
         } finally { if (processed) owner?.processed(receipt) else owner?.cleanupFailed() }
     }
@@ -122,7 +123,8 @@ class CloseForYouAccessibilityService : AccessibilityService() {
         if (f9?.shouldIgnore(event) == true) return
         // Retaining presentation is NOT ignoring an event: old Runtime/F9 evidence is retired
         // before an independent, read-only comparison of the entire original popup.
-        if (f9?.reviewDisplayedEvent(event.eventType) {
+        if (f9?.reviewDisplayedEvent(event.eventType,
+                if (event.eventType == AccessibilityEvent.TYPE_WINDOWS_CHANGED) event.windowChanges else 0, event.windowId) {
                 invalidate(clearBaseline = false, permissionOrInteraction = true,
                     cause = ManualPromptCause.DISPLAY_REVIEW_PENDING)
             } == true) return

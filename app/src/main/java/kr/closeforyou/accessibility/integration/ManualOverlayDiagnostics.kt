@@ -100,11 +100,11 @@ internal fun readManualNativeWindow(native: OverlayNativeWindowLifetime?, owner:
 
 internal enum class ManualCleanupSite {
     BARRIER, OVERLAY_REMOVE, TTS_STOP, CALLBACK_SHOWN, CALLBACK_DISMISSED,
-    GUARDED_PRESENTER, NATIVE_CALLBACK, EVENT_HANDLER, WORKER, FLOW, SERVICE_CLOSE, TTS_CLOSE,
+    GUARDED_PRESENTER, NATIVE_CALLBACK, EVENT_HANDLER, WORKER, FLOW, SERVICE_CLOSE, TTS_CLOSE, OWNED_WINDOW_READ,
 }
 internal enum class ManualCleanupIssue {
     BARRIER_REJECTED, EXCEPTION, CANCELLED, REMOVE_FAILED_STATE, GUARD_REJECTED,
-    HANDLER_NOT_COMPLETED, FAILURE_CALLBACK_EXCEPTION,
+    HANDLER_NOT_COMPLETED, FAILURE_CALLBACK_EXCEPTION, READ_OR_RELEASE_FAILED,
 }
 internal enum class ManualCleanupPhase { FIRST, CHAIN }
 internal enum class CleanupNativeProgress {
@@ -129,6 +129,13 @@ internal class ManualCleanupTrace(private val sink: (ManualCleanupCode) -> Unit)
             else ManualCleanupPhase.CHAIN, initial, current)) }
     }
     override fun toString() = "ManualCleanupTrace(redacted)"
+}
+
+/** The existing owned-window reader reports either read or release failure through this one
+ * callback. Do not invent a finer cause; record the boundary before sticky health is set. */
+internal fun manualOwnedReadFailed(health: ChoicePresentationHealth, trace: ManualCleanupTrace?) {
+    trace?.record(ManualCleanupSite.OWNED_WINDOW_READ, ManualCleanupIssue.READ_OR_RELEASE_FAILED)
+    health.fail()
 }
 
 /** A's real cleanup callback boundary, also used by JVM throwing/cancellation regressions.

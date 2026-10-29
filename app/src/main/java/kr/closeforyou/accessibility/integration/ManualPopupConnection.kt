@@ -329,8 +329,9 @@ internal class ManualPopupConnection(
         selected == null && gate.hasCurrentObservation()
     /** Foreign/old event metadata is not a target-change proof. Retire ALL execution evidence
      * first; compare the original entire popup under THIS native C window synchronously. */
-    fun reviewDisplayedEvent(type: Int, retire: () -> Long): Boolean {
-        if (!manualDisplayReviewEvent(type) || closed || health.failed || interacting() || selected != null ||
+    fun reviewDisplayedEvent(type: Int, changes: Int = 0, eventWindow: Int = -1, retire: () -> Long): Boolean {
+        if (!manualDisplayReviewEvent(type, changes, eventWindow, original?.token?.windowId) ||
+            closed || health.failed || interacting() || selected != null ||
             !overlay.isShowing || promptLifetime.current() == null ||
             shownDetection?.signals?.contains(PopupSignal.NEW_WINDOW) != true) return false
         val source = original ?: return false
@@ -364,8 +365,17 @@ internal class ManualPopupConnection(
             catch (_: Exception) { ManualDisplayVerdict.UNAVAILABLE }
         }, remove = {
             invalidate(version, ttl = false, ownedRetirement = false, cause =
-                if (type == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED) ManualPromptCause.CONTENT_INVALIDATED
-                else ManualPromptCause.WINDOW_STATE_INVALIDATED)
+                when (type) {
+                    AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED -> ManualPromptCause.CONTENT_INVALIDATED
+                    AccessibilityEvent.TYPE_WINDOWS_CHANGED -> ManualPromptCause.WINDOW_SET_INVALIDATED
+                    else -> ManualPromptCause.WINDOW_STATE_INVALIDATED
+                })
+        }, onChecked = { verdict ->
+            trace?.displayReview(ManualDisplayReviewCode(when (type) {
+                AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED -> ManualEventKind.CONTENT
+                AccessibilityEvent.TYPE_WINDOWS_CHANGED -> ManualEventKind.WINDOW_SET
+                else -> ManualEventKind.WINDOW_STATE
+            }, if (type == AccessibilityEvent.TYPE_WINDOWS_CHANGED) manualWindowMask(changes) else ManualWindowMask.NOT_APPLICABLE, verdict))
         })
         val cause = when (result) {
             ManualDisplayVerdict.SAME -> ManualPromptCause.TARGET_RECONFIRMED
@@ -444,6 +454,30 @@ internal class ManualPopupConnection(
         trace?.retirement(code)
         return code.check == ManualRetirementCheck.COMPATIBLE
     }
+    /** Cleanup-only: also applies to removal caused by invalidation (no selected choice).
+     * It never preserves a callback or token. Only actual native completion + absence can
+     * release the barrier. The normal service handler still invalidates this event. */
+    fun nativeCleanupRetirementEvent(event: AccessibilityEvent): Boolean {
+        if (closed || !cleanup.pending) return false
+        val n = retiredNative ?: return false
+        val id = retiredId ?: return false
+        if (event.windowId != id) return false
+        val code = inspectNativeCleanupRetirement(event.eventType,
+            if (event.eventType == AccessibilityEvent.TYPE_WINDOWS_CHANGED) event.windowChanges else 0,
+            hidden = { overlay.windowState.status == OverlayWindowStatus.HIDDEN },
+            packageMatches = {
+                val pkg = event.packageName?.toString()
+                retirementPackageConfirmed(event.eventType, pkg == service.packageName, pkg == null) {
+                    n.removalComplete(nativeOwner, n.generation, id) && presence(id) == CleanupWindowPresence.ABSENT
+                }
+            }, nativeRegistered = {
+                !n.identityUnavailable && n.registrationConfirmed(nativeOwner, n.generation) &&
+                    n.retirementWindow(nativeOwner, n.generation) == id && before?.contains(id) == false &&
+                    target != null && target != id
+            })
+        trace?.retirement(code)
+        return code.check == ManualRetirementCheck.CLEANUP_WAIT
+    }
     fun hasPrompt() = overlay.isShowing
     fun canObserve() = !closed && !health.failed && cleanup.ready && !overlay.isShowing
     private fun nativeProcessed(n: OverlayNativeWindowLifetime) {
@@ -461,7 +495,8 @@ internal class ManualPopupConnection(
     @Suppress("DEPRECATION") private fun readOwned(): Set<Int>? = readOwnedOverlayIds({ service.windows },
         { it.type == AccessibilityWindowInfo.TYPE_ACCESSIBILITY_OVERLAY && it.displayId == 0 }, { it.root },
         { root, w -> root.packageName?.toString() == service.packageName && root.windowId == w.id },
-        { it.title?.toString() == service.getString(R.string.ui_choice_pane_title) }, { it.id }, { it.recycle() }, { it.recycle() }, health::fail, eventDiagnostic)
+        { it.title?.toString() == service.getString(R.string.ui_choice_pane_title) }, { it.id }, { it.recycle() }, { it.recycle() },
+        { manualOwnedReadFailed(health, trace?.cleanup) }, eventDiagnostic)
     fun processed(receipt: OverlayCleanupBarrier.Receipt?) {
         if (receipt == null || closed) return
         val wasPending = cleanup.pending

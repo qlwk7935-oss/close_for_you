@@ -161,9 +161,9 @@ internal class OverlayCleanupBarrier(private val timeoutMillis: Long = 5_000L, p
         // full window absence is verified. No mask/focus exception and no deadline renewal.
         val owner = previous.nativeSession
         val retiredId = previous.window
-        // An authenticated, selected C View can emit its click/focus/content notification after
-        // removeView returned but before detach/system-window completion. Quarantine it, NEVER
-        // acknowledge removal or release a permit. Legacy/unknown lifetimes remain fail-closed.
+        // THIS registered C View can emit a queued notification after removeView returned but
+        // before detach/system-window completion, also when dismissed without a user choice.
+        // Wait only: no acknowledgement/permit/choice permission. Legacy/unknown stays blocked.
         if (nativeTransient && !pureRemoval && owner != null && retiredId != null && previous.returned &&
             previous.native?.registrationConfirmed(owner, previous.generation) == true &&
             !previous.native.identityUnavailable && previous.native.retirementWindow(owner, previous.generation) == retiredId) {

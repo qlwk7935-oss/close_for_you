@@ -24,7 +24,7 @@ class ManualDisplayReviewTest {
         } + overlay)
         fun verdict() = ManualDisplayContinuity.assess(f.snapshot, scene, 30)
     }
-    @Test fun onlyContentAndWindowStateCanRequestTheNewReadOnlyReview() {
+    @Test fun contentAndWindowStateRequestReviewButBoundsNeedsExplicitTargetMetadata() {
         assertTrue(manualDisplayReviewEvent(E.TYPE_WINDOW_CONTENT_CHANGED)); assertTrue(manualDisplayReviewEvent(E.TYPE_WINDOW_STATE_CHANGED))
         for (t in listOf(E.TYPE_WINDOWS_CHANGED, E.TYPE_VIEW_TEXT_CHANGED, E.TYPE_VIEW_SCROLLED, E.TYPE_VIEW_CLICKED,
             E.TYPE_TOUCH_INTERACTION_START, E.TYPE_VIEW_ACCESSIBILITY_FOCUSED)) assertFalse(manualDisplayReviewEvent(t))
