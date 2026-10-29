@@ -119,12 +119,22 @@ fun UiVoiceSettingsRoute(
     }
     // "도와줄 앱" saved before A's consent is added once consent is there (also on opening).
     PendingHelpAppsEffect()
-    val helpOutcome by HelpAppsSync.lastOutcome.collectAsState()
-    var editingHelpApps by rememberSaveable { mutableStateOf(false) }
+    // Which "도와줄 앱" page is open over the settings (null = none).
+    var editingHelpApps by rememberSaveable { mutableStateOf<HelpAppsPage?>(null) }
     var now by remember { mutableLongStateOf(clock.millis()) }
     val labelSource = remember { PackageManagerAppLabelSource(context.packageManager) }
+    val unknownApp = stringResource(R.string.ui_app_unknown)
     val packages = coreSettings.allowedPackages + rules.map { it.key.packageName }
-    val appNames = remember(packages) { AppNames.displayNames(packages, labelSource) }
+    val appNames = remember(packages, unknownApp) { AppNames.displayNames(packages, labelSource, unknownApp) }
+    val catalog = rememberAppCatalog()
+    val helpLine = HelpAppsStatusPlan.line(
+        mode = settings.helpAppsMode,
+        allowed = coreSettings.allowedPackages,
+        pending = settings.pendingHelpPackages,
+        userExcluded = settings.helpAppsExcluded,
+        catalog = catalog,
+        consentGranted = coreSettings.consentGranted,
+    )
     // Microphone: asked only here inside the Activity, never from the service's overlay.
     val microphone = remember { AndroidMicrophoneAccess(context) }
     fun micState() = SpeakButtonPolicy.state(featureEnabled = true, settingEnabled = true, microphone = microphone)
@@ -142,8 +152,8 @@ fun UiVoiceSettingsRoute(
         onPauseOrDispose {}
     }
 
-    if (editingHelpApps) {
-        HelpAppsEditScreen(onClose = { editingHelpApps = false }, modifier = modifier)
+    editingHelpApps?.let { page ->
+        HelpAppsEditScreen(onClose = { editingHelpApps = null }, modifier = modifier, initialPage = page)
         return
     }
 
@@ -152,7 +162,7 @@ fun UiVoiceSettingsRoute(
         coreAllowedPackages = coreSettings.allowedPackages,
         collectionEnabled = coreSettings.collectionEnabled,
         rules = rules,
-        appName = { appNames[it] ?: it },
+        appName = { appNames[it] ?: unknownApp },
         onAutoCloseChange = preferences::setAutoClose,
         onDetailChange = preferences::setDetail,
         onPromptModeChange = preferences::setPromptAnnounceMode,
@@ -175,8 +185,9 @@ fun UiVoiceSettingsRoute(
         nowEpochMillis = now,
         zone = clock.zone,
         deleteAllFailed = deleteFailed,
-        helpOutcome = helpOutcome,
-        onChangeHelpApps = { editingHelpApps = true },
+        helpLine = helpLine,
+        onChangeHelpApps = { editingHelpApps = HelpAppsPage.MODE },
+        onExcludeHelpApps = { editingHelpApps = HelpAppsPage.EXCLUDE_MORE },
         serviceOn = serviceOn,
         serviceOpenFailed = serviceOpenFailed,
         onOpenServiceSettings = rememberServiceTurnOn(serviceOn, onOpenFailed = { serviceOpenFailed = true }),
@@ -192,7 +203,7 @@ fun UiVoiceSettingsScreen(
     coreAllowedPackages: Set<String>,
     collectionEnabled: Boolean,
     rules: ImmutableList<PopupRule>,
-    /** Package name → shown app name (falls back to the package name). */
+    /** Package name → shown app name ("알 수 없는 앱" when unreadable; never the package name). */
     appName: (String) -> String,
     onAutoCloseChange: (String, Boolean) -> Unit,
     onDetailChange: (AnnouncementDetail) -> Unit,
@@ -216,10 +227,12 @@ fun UiVoiceSettingsScreen(
     nowEpochMillis: Long = System.currentTimeMillis(),
     zone: ZoneId = ZoneId.systemDefault(),
     deleteAllFailed: Boolean = false,
-    /** Counts of the last "도와줄 앱" save or retry (in memory only). */
-    helpOutcome: HelpAppsOutcome? = null,
+    /** The "도와줄 앱" line ([HelpAppsStatusPlan]). */
+    helpLine: HelpAppsStatusLine = HelpAppsStatusLine(null, 0, null, waiting = false),
     /** Opens [HelpAppsEditScreen]; null hides the "도와줄 앱" block. */
     onChangeHelpApps: (() -> Unit)? = null,
+    /** [제외할 앱 고르기] ("모든 앱" only): opens the editor on the exclusion list. */
+    onExcludeHelpApps: () -> Unit = {},
     /** [TalkBackTakeoverFeature]; false hides its switch. */
     takeoverFeatureEnabled: Boolean = false,
     onTalkBackTakeoverChange: (Boolean) -> Unit = {},
@@ -267,13 +280,7 @@ fun UiVoiceSettingsScreen(
         if (onChangeHelpApps != null) {
             HorizontalDivider()
             Heading(R.string.ui_help_apps_section)
-            HelpAppsStatus(
-                mode = settings.helpAppsMode,
-                allowedCount = coreAllowedPackages.size,
-                pendingCount = (settings.pendingHelpPackages - coreAllowedPackages).size,
-                outcome = helpOutcome,
-                onChange = onChangeHelpApps,
-            )
+            HelpAppsStatus(line = helpLine, onChange = onChangeHelpApps, onExclude = onExcludeHelpApps)
         }
 
         HorizontalDivider()
@@ -295,14 +302,20 @@ fun UiVoiceSettingsScreen(
         HorizontalDivider()
         Heading(R.string.ui_settings_section_auto_close)
         BodyText(stringResource(R.string.ui_settings_auto_close_help))
-        if (coreAllowedPackages.isEmpty()) {
-            Text(stringResource(R.string.ui_settings_auto_close_no_apps))
+        val autoCloseApps = AutoCloseApps.candidates(
+            rememberedPackages = rules.filter { it.choice == ChoiceKind.REMEMBER_EXACT_POPUP }.map { it.key.packageName },
+            autoClosePackages = settings.autoClosePackages,
+            allowed = coreAllowedPackages,
+        )
+        if (autoCloseApps.isEmpty()) {
+            HelpText(stringResource(R.string.ui_settings_auto_close_no_apps))
         } else {
-            coreAllowedPackages.sorted().forEach { packageName ->
+            autoCloseApps.sortedBy(appName).forEach { packageName ->
                 SwitchRow(
                     label = stringResource(R.string.ui_settings_auto_close_app, appName(packageName)),
                     checked = settings.autoCloseAllowed(packageName, coreAllowedPackages),
                     onCheckedChange = { onAutoCloseChange(packageName, it) },
+                    iconPackage = packageName,
                 )
             }
         }
@@ -453,7 +466,10 @@ private fun RuleRow(rule: PopupRule, appName: String, nowEpochMillis: Long, zone
         text = { res, args -> resources.getString(res, *args) },
     )
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        Text(summary)
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            AppIcon(rule.key.packageName)
+            Text(summary, fontSize = UiType.body, modifier = Modifier.padding(start = 12.dp))
+        }
         if (RuleStatusPolicy.canRevoke(RuleStatusPolicy.statusOf(rule, nowEpochMillis))) {
             val revokeDescription = stringResource(R.string.ui_settings_rule_revoke_description, summary)
             OutlinedButton(
@@ -484,6 +500,8 @@ private fun SwitchRow(
     checked: Boolean,
     onCheckedChange: (Boolean) -> Unit,
     description: String? = null,
+    /** Shows that app's icon first (decorative). */
+    iconPackage: String? = null,
 ) {
     Row(
         modifier = Modifier
@@ -492,7 +510,8 @@ private fun SwitchRow(
             .toggleable(value = checked, role = Role.Switch, onValueChange = onCheckedChange),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        LabelWithDescription(label, description, Modifier.weight(1f).padding(end = 8.dp))
+        if (iconPackage != null) AppIcon(iconPackage)
+        LabelWithDescription(label, description, Modifier.weight(1f).padding(horizontal = 8.dp))
         Switch(checked = checked, onCheckedChange = null)
     }
 }
@@ -561,7 +580,7 @@ private fun SettingsPreview() {
                 previewRule("revoked", createdAt = PREVIEW_NOW - PREVIEW_DAY).copy(enabled = false),
             ),
             nowEpochMillis = PREVIEW_NOW,
-            appName = { if (it == "kr.example.shop") "예시 쇼핑" else it },
+            appName = { if (it == "kr.example.shop") "예시 쇼핑" else "알 수 없는 앱" },
             onAutoCloseChange = { _, _ -> }, onDetailChange = {}, onPromptModeChange = {},
             onRevoke = {}, onDeleteAll = {},
             voiceFeatureEnabled = true,

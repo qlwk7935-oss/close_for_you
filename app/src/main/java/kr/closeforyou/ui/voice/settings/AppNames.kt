@@ -5,8 +5,8 @@ import android.os.Build
 
 /**
  * Looks up the visible app name for one package. Null when the name cannot be read.
- * No QUERY_ALL_PACKAGES and no `<queries>` (A, 10/19): only packages this app can already see
- * resolve; others fall back to the package name. App names are never logged.
+ * No QUERY_ALL_PACKAGES (A, 10/19): only packages this app can see resolve; others are shown as
+ * "알 수 없는 앱" ([AppNames]). App names are never logged.
  */
 fun interface AppLabelSource {
     fun labelOf(packageName: String): String?
@@ -33,19 +33,30 @@ class PackageManagerAppLabelSource(private val packageManager: PackageManager) :
     }
 }
 
-/** Pure display rules, JVM-tested. */
+/**
+ * Pure display rules, JVM-tested. A package name is never shown or read out (10/30): an app whose
+ * name can not be read (not installed, hidden by Android 11+ package visibility, blank) is
+ * [unknown] ("알 수 없는 앱").
+ */
 object AppNames {
-    /** App name, or the package name when it is unknown or blank. */
-    fun displayName(packageName: String, source: AppLabelSource): String =
-        source.labelOf(packageName)?.trim()?.takeIf { it.isNotEmpty() } ?: packageName
+    fun displayName(packageName: String, source: AppLabelSource, unknown: String): String =
+        source.labelOf(packageName)?.trim()?.takeIf { it.isNotEmpty() } ?: unknown
 
     /**
-     * Names for several packages. Two packages with the same app name get the package name added,
-     * so the person can tell the switches apart by ear.
+     * Names for several packages. Two packages with the same shown name get a number ("메모 1",
+     * "메모 2", in package order so it stays the same), so the person can tell the rows apart by ear.
      */
-    fun displayNames(packageNames: Collection<String>, source: AppLabelSource): Map<String, String> {
-        val names = packageNames.distinct().associateWith { displayName(it, source) }
+    fun displayNames(
+        packageNames: Collection<String>,
+        source: AppLabelSource,
+        unknown: String,
+        numbered: (String, Int) -> String = { name, n -> "$name $n" },
+    ): Map<String, String> {
+        val names = packageNames.distinct().sorted().associateWith { displayName(it, source, unknown) }
+        val counters = HashMap<String, Int>()
         val duplicated = names.values.groupingBy { it }.eachCount().filterValues { it > 1 }.keys
-        return names.mapValues { (pkg, name) -> if (name in duplicated && name != pkg) "$name ($pkg)" else name }
+        return names.mapValues { (_, name) ->
+            if (name in duplicated) numbered(name, counters.merge(name, 1, Int::plus)!!) else name
+        }
     }
 }

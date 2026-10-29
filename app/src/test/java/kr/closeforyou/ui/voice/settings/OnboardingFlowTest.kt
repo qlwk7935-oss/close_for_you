@@ -320,3 +320,60 @@ class ServiceGuideTextTest {
         assertTrue(text("ui_setup_guide_come_back").contains("뒤로 가기"))
     }
 }
+
+class HelpAppsStatusPlanTest {
+    private val catalog = HelpAppsCatalog.build(
+        listOf(
+            InstalledApp("com.android.chrome", "Chrome"),
+            InstalledApp("com.google.android.youtube", "YouTube"),
+            InstalledApp("com.kbstar.kbbank", "KB스타뱅킹"),
+            InstalledApp("com.nhn.android.search", "네이버"),
+        ),
+        ownPackage = "kr.closeforyou",
+    )
+    private val all = setOf("com.android.chrome", "com.google.android.youtube", "com.nhn.android.search")
+
+    @Test fun allModeShowsOnlyHowManyAreLeftOut() {
+        val line = HelpAppsStatusPlan.line(HelpAppsMode.ALL, all, emptySet(), setOf("com.google.android.youtube"), catalog, consentGranted = true)
+        assertEquals(HelpAppsMode.ALL, line.mode)
+        // The bank app (always) + YouTube (taken out by the person).
+        assertEquals(2, line.excludedCount)
+        assertFalse(line.waiting)
+        // Still loading: no number.
+        assertNull(HelpAppsStatusPlan.line(HelpAppsMode.ALL, all, emptySet(), emptySet(), null, true).excludedCount)
+    }
+
+    @Test fun chosenModeCountsAllowedAndWaitingTogetherAsOneNumber() {
+        val line = HelpAppsStatusPlan.line(HelpAppsMode.CHOSEN, setOf("com.android.chrome"), setOf("com.nhn.android.search"), emptySet(), catalog, consentGranted = false)
+        assertEquals(2, line.helpedCount)
+        assertTrue(line.waiting)
+        assertNull(line.excludedCount)
+    }
+
+    @Test fun waitingOnlyBeforeConsentAndOnlyForAppsNotYetAllowed() {
+        assertFalse(HelpAppsStatusPlan.line(HelpAppsMode.ALL, all, setOf("com.android.chrome"), emptySet(), catalog, false).waiting)
+        assertFalse(HelpAppsStatusPlan.line(HelpAppsMode.ALL, emptySet(), all, emptySet(), catalog, true).waiting)
+        assertTrue(HelpAppsStatusPlan.line(HelpAppsMode.ALL, emptySet(), all, emptySet(), catalog, false).waiting)
+    }
+
+    @Test fun noWaySavedButAppsAllowedReadsAsChosen() {
+        assertEquals(HelpAppsMode.CHOSEN, HelpAppsStatusPlan.line(null, setOf("kr.example.typed"), emptySet(), emptySet(), catalog, true).mode)
+        assertNull(HelpAppsStatusPlan.line(null, emptySet(), emptySet(), emptySet(), catalog, true).mode)
+    }
+
+    @Test fun autoCloseListsOnlyRememberedOrSwitchedOnAppsThatAreAllowed() {
+        val candidates = AutoCloseApps.candidates(
+            rememberedPackages = listOf("com.android.chrome", "kr.example.gone"),
+            autoClosePackages = setOf("com.nhn.android.search"),
+            allowed = all,
+        )
+        assertEquals(setOf("com.android.chrome", "com.nhn.android.search"), candidates)
+        // Helping every app does not list every app with a switch.
+        assertTrue(AutoCloseApps.candidates(emptyList(), emptySet(), all).isEmpty())
+    }
+
+    @Test fun blankCatalogNameIsUnknownNotThePackage() {
+        val built = HelpAppsCatalog.build(listOf(InstalledApp("kr.example.blank", "  ")), "kr.closeforyou", unknownLabel = "알 수 없는 앱")
+        assertEquals("알 수 없는 앱", built.all.single().label)
+    }
+}
