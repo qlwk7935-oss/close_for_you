@@ -23,6 +23,10 @@ internal class NativeActionSummary private constructor(val presence: NativeActio
     private val ids: List<Int>?) {
     val hasExactKnownSet: Boolean get() = ids != null
     val displayRootSafe: Boolean get() = ids != null && ids.all { it in navigationIds }
+    /** Capability facet only, NOT a ROOT role/identity or execution certificate. Android View
+     * supplies SELECT/CLEAR_SELECTION even on ordinary containers. We never invoke these.
+     * Caller must separately prove both structural ROOTs, whole-popup continuity and geometry. */
+    val hasOnlyStructuralRootCapabilities: Boolean get() = ids != null && ids.all { it in structuralRootIds }
     fun matchesProjection(actions: Set<NodeAction>): Boolean = ids != null &&
         ((N.ACTION_CLICK in ids) == (NodeAction.CLICK in actions)) &&
         ((N.ACTION_DISMISS in ids) == (NodeAction.DISMISS in actions))
@@ -33,6 +37,7 @@ internal class NativeActionSummary private constructor(val presence: NativeActio
         private val navigationIds = setOf(N.ACTION_FOCUS, N.ACTION_CLEAR_FOCUS,
             N.ACTION_ACCESSIBILITY_FOCUS, N.ACTION_CLEAR_ACCESSIBILITY_FOCUS,
             android.R.id.accessibilityActionShowOnScreen)
+        private val structuralRootIds = navigationIds + setOf(N.ACTION_SELECT, N.ACTION_CLEAR_SELECTION)
         // Deliberately bounded supported platform subset. Unrecognized newer framework IDs
         // also fail closed; never infer a custom action's meaning from its integer alone.
         private val knownIds = navigationIds + setOf(N.ACTION_SELECT, N.ACTION_CLEAR_SELECTION,

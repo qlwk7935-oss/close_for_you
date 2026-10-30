@@ -57,6 +57,12 @@ internal fun manualDemoBoundsCandidates(enabled: Boolean, type: Int, changes: In
  * Reflow never moves an interactive/unknown widget or relaxes any execution comparison.
  * No coordinate conversion, rebase, retry, token/time mutation, or framework call exists here. */
 internal object ManualDemoBoundsPolicy {
+    /** Observable role only. Window binding, exact descriptors/actions, graph/containment and
+     * candidate identity are independent mandatory checks; this never authenticates native ABA. */
+    private fun structuralRootRole(node: NodeSnapshot): Boolean = node.path == "0" && !node.clickable &&
+        (node.className == "android.widget.FrameLayout" || node.className == "android.widget.LinearLayout") &&
+        node.text.isNullOrBlank() && node.contentDescription.isNullOrBlank()
+
     /** Also used by a selected Debug Demo read that ends in strict SAME. Missing action data
      * must not gain an approval by taking the equal-DTO fallback. No geometry permission here. */
     fun nativeActionFailure(original: PopupSnapshot, fresh: F9Scene, originalActions: NativeNodeActions?): ManualDemoBoundsReason? {
@@ -137,11 +143,12 @@ internal object ManualDemoBoundsPolicy {
             F9ContentSafety.blocked(fresh.nodes.flatMap { listOfNotNull(it.text, it.contentDescription) }.joinToString("\n"))) return reject(ManualDemoBoundsReason.POLICY_PROTECTED_CONTENT)
         nativeActionFailure(original, fresh, originalActions)?.let { return reject(it) }
         val oldActions = original.nodes.indices.map { requireNotNull(originalActions).state(original, original.nodes.size, it) }
-        // ROOT is a structural container, not a passive leaf. Stable, fully classified
-        // navigation-only capabilities do not grant execution or excuse other node changes.
-        // Presence-only, custom, click, long-click, dismiss, scroll, and unknown reads refuse.
-        val rootNavigationOnly = requireNotNull(originalActions).summary(original, original.nodes.size, 0).displayRootSafe
-        if (oldRoot.actions.isNotEmpty() || !rootNavigationOnly)
+        // A structural ROOT is NOT a passive descendant. Its role and exact stable capability
+        // set are separate from whole-popup identity and from execution, which stays retired.
+        if (!structuralRootRole(oldRoot) || !structuralRootRole(newRoot))
+            return reject(ManualDemoBoundsReason.POLICY_DESCENDANT_BOUNDS)
+        val rootCapabilities = requireNotNull(originalActions).summary(original, original.nodes.size, 0)
+        if (oldRoot.actions.isNotEmpty() || !rootCapabilities.hasOnlyStructuralRootCapabilities)
             return reject(ManualDemoBoundsReason.POLICY_ROOT_INTERACTIVE)
         val dx = current.bounds.left.toLong() - previous.bounds.left
         val dy = current.bounds.top.toLong() - previous.bounds.top
@@ -154,7 +161,7 @@ internal object ManualDemoBoundsPolicy {
             original.nodes.indices.drop(1).all { original.nodes[it].bounds == fresh.nodes[it].bounds }
         // A window translation with independently stationary/moving children is still ambiguous.
         if (!translation && shifted(previous.bounds, current.bounds)) return reject(ManualDemoBoundsReason.POLICY_NONCOHERENT_TRANSLATION)
-        val reflowFailure = checkedLayout(original.nodes, fresh.nodes, oldActions, rootNavigationOnly, !translation && !rootOnlyResize, ::contains)
+        val reflowFailure = checkedLayout(original.nodes, fresh.nodes, oldActions, !translation && !rootOnlyResize, ::contains)
         if (reflowFailure != null) return reject(reflowFailure)
         reportDemoBounds(report, when {
             translation -> ManualDemoBoundsReason.POLICY_RETAIN_TRANSLATION
@@ -168,13 +175,14 @@ internal object ManualDemoBoundsPolicy {
      * No missing metadata, raw native handle, repaired Rect, or render-order assumption is used.
      * Window-level occlusion remains checked by the Android reader before this function. */
     private fun checkedLayout(before: List<NodeSnapshot>, after: List<NodeSnapshot>,
-        nativeActions: List<NativeActionPresence>, rootNavigationOnly: Boolean, reflow: Boolean,
+        nativeActions: List<NativeActionPresence>, reflow: Boolean,
         contains: (ScreenBounds, ScreenBounds) -> Boolean): ManualDemoBoundsReason? {
-        fun container(i: Int): Boolean { val n = before[i]; return !n.clickable && n.actions.isEmpty() &&
-            (nativeActions[i] == NativeActionPresence.NONE || (i == 0 && rootNavigationOnly)) &&
+        fun passiveContainer(i: Int): Boolean { val n = before[i]; return !n.clickable && n.actions.isEmpty() &&
+            nativeActions[i] == NativeActionPresence.NONE &&
             (n.className == "android.widget.FrameLayout" || n.className == "android.widget.LinearLayout") &&
             n.text.isNullOrBlank() && n.contentDescription.isNullOrBlank() }
-        if (!container(0)) return ManualDemoBoundsReason.POLICY_DESCENDANT_BOUNDS
+        if (!structuralRootRole(before.first()) || !structuralRootRole(after.first()))
+            return ManualDemoBoundsReason.POLICY_DESCENDANT_BOUNDS
         val byPath = HashMap<String, Int>(before.size)
         val hasChildren = BooleanArray(before.size)
         byPath["0"] = 0
@@ -189,7 +197,9 @@ internal object ManualDemoBoundsPolicy {
                 (segment.length > 1 && segment[0] == '0') || segment.toInt() >= 1_200)
                 return ManualDemoBoundsReason.POLICY_REFLOW_PATH
             val parent = byPath[path.substring(0, split)] ?: return ManualDemoBoundsReason.POLICY_REFLOW_PATH
-            if ((reflow && !container(parent)) || !contains(before[parent].bounds, before[i].bounds) ||
+            // Only ROOT has the separately verified structural role. Every other reflow
+            // parent must still be genuinely passive; no descendant capability exemption.
+            if ((reflow && parent != 0 && !passiveContainer(parent)) || !contains(before[parent].bounds, before[i].bounds) ||
                 !contains(after[parent].bounds, after[i].bounds)) return ManualDemoBoundsReason.POLICY_REFLOW_PARENT
             hasChildren[parent] = true
             byPath[path] = i
@@ -201,7 +211,7 @@ internal object ManualDemoBoundsPolicy {
                 return ManualDemoBoundsReason.POLICY_INTERACTIVE_BOUNDS
             val body = n.className == "android.widget.TextView" && !hasChildren[i] &&
                 !n.text.isNullOrBlank() && listOfNotNull(n.text, n.contentDescription).all { F9AutoCloser.role(it) == null }
-            if (!container(i) && !body) return ManualDemoBoundsReason.POLICY_DESCENDANT_BOUNDS
+            if (!passiveContainer(i) && !body) return ManualDemoBoundsReason.POLICY_DESCENDANT_BOUNDS
         }
         val interactive = before.indices.filter { before[it].clickable || before[it].actions.isNotEmpty() || nativeActions[it] != NativeActionPresence.NONE }
         val prefixes = before.map { it.path + "/" }

@@ -15,7 +15,7 @@ import org.junit.Test
 /** Real event selector -> registered display boundary -> strict/demo comparison -> retain/remove.
  * Native, collected data and clock are synthetic; no Samsung/11st identity is fabricated. */
 class ManualDemoBoundsPolicyTest {
-    private class Rig {
+    private class Rig(val rootCapabilities: List<Int> = emptyList()) {
         val f = F9AutoCloserTest.Fixture()
         val root = f.node.copy(path = "0", text = null, viewId = "synthetic-root", className = "android.widget.FrameLayout",
             clickable = false, actions = persistentSetOf(), bounds = f.bounds)
@@ -50,7 +50,7 @@ class ManualDemoBoundsPolicyTest {
                 }, { native }) { id ->
                     reads++; readFailure?.invoke()
                     // Explicit synthetic full-native observations, not inference in production.
-                    fun states(nodes: List<NodeSnapshot>) = nodes.map { n -> NativeActionSummary.fromIds(n.actions.map { when (it) {
+                    fun states(nodes: List<NodeSnapshot>) = nodes.map { n -> NativeActionSummary.fromIds(if (n.path == "0") rootCapabilities else n.actions.map { when (it) {
                         NodeAction.CLICK -> android.view.accessibility.AccessibilityNodeInfo.ACTION_CLICK
                         NodeAction.DISMISS -> android.view.accessibility.AccessibilityNodeInfo.ACTION_DISMISS
                     } }) }
@@ -208,4 +208,11 @@ class ManualDemoBoundsPolicyTest {
         assertEquals(ManualPromptLog.create() != null, ManualDemoBoundsFeature.enabled)
         assertFalse(F9ServiceExecutionFeature.enabled)
     }
+    @Test fun structuralRootSelectionKeepsThePromptAndSpeechCallbacksWithoutExecutionEvidence() {
+        val r = Rig(listOf(android.view.accessibility.AccessibilityNodeInfo.ACTION_SELECT,
+            android.view.accessibility.AccessibilityNodeInfo.ACTION_CLEAR_SELECTION))
+        r.resize(); r.retained()
+        assertTrue(r.showing); assertEquals(0, r.stops); assertNull(r.raw); assertEquals(0, r.f.clicks)
+    }
+
 }
