@@ -84,7 +84,7 @@ class ManualDemoBoundsRejectionTest {
                 }
             }, { removed++; if (failCleanup) throw IllegalStateException("SYNTHETIC_CLEANUP") }, { v ->
                 row = ManualDisplayReviewCode(ManualEventKind.WINDOW_SET, ManualWindowMask.BOUNDS, v, probe.failurePoint,
-                    probe.detail, probe.failureOwned, probe.failureListing, probe.failureNodes, probe.failureBounds, probe.demoBounds)
+                    probe.detail, probe.failureOwned, probe.failureListing, probe.failureNodes, probe.failureBounds, probe.demoBounds, probe.interactiveBounds)
                 if (failSink) throw CancellationException("SYNTHETIC_REPORT")
             })
         }
@@ -194,7 +194,7 @@ class ManualDemoBoundsRejectionTest {
             r.source, r.analysis, r.detection) { throw CancellationException("SYNTHETIC_DIAGNOSTIC") }
         assertEquals(r.analysis!!.closeCandidates, list)
         assertTrue(ManualDemoBoundsPolicy.retains(r.source, r.withFreshProof(), 30, ManualDisplayListing.NOT_ENUMERATED,
-            requireNotNull(list), r.originalProof()) { throw CancellationException("SYNTHETIC_DIAGNOSTIC") })
+            requireNotNull(list), r.originalProof(), report = { throw CancellationException("SYNTHETIC_DIAGNOSTIC") }))
         assertEquals("ManualDisplayProbe(redacted)", r.probe.toString())
     }
     @Test fun remainingDefensivePolicyBranchesReportTheirActualFirstFailureOnly() {

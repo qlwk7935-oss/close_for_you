@@ -82,7 +82,8 @@ internal object ManualDemoBoundsPolicy {
 
     fun retains(original: PopupSnapshot, fresh: F9Scene, nativeId: Int, listing: ManualDisplayListing,
         candidates: List<CloseCandidate>, originalActions: NativeNodeActions? = null,
-        report: ((ManualDemoBoundsReason) -> Unit)? = null): Boolean {
+        report: ((ManualDemoBoundsReason) -> Unit)? = null,
+        interactiveRejection: ((Int, NativeActionPresence) -> Unit)? = null): Boolean {
         fun reject(reason: ManualDemoBoundsReason): Boolean { reportDemoBounds(report, reason); return false }
         if (original.completeness != SnapshotCompleteness.COMPLETE || !fresh.complete) return reject(ManualDemoBoundsReason.POLICY_INCOMPLETE)
         if (original.token.packageName != fresh.packageName || original.token.windowId != fresh.windowId ||
@@ -161,7 +162,7 @@ internal object ManualDemoBoundsPolicy {
             original.nodes.indices.drop(1).all { original.nodes[it].bounds == fresh.nodes[it].bounds }
         // A window translation with independently stationary/moving children is still ambiguous.
         if (!translation && shifted(previous.bounds, current.bounds)) return reject(ManualDemoBoundsReason.POLICY_NONCOHERENT_TRANSLATION)
-        val reflowFailure = checkedLayout(original.nodes, fresh.nodes, oldActions, !translation && !rootOnlyResize, ::contains)
+        val reflowFailure = checkedLayout(original.nodes, fresh.nodes, oldActions, !translation && !rootOnlyResize, ::contains, interactiveRejection)
         if (reflowFailure != null) return reject(reflowFailure)
         reportDemoBounds(report, when {
             translation -> ManualDemoBoundsReason.POLICY_RETAIN_TRANSLATION
@@ -176,7 +177,8 @@ internal object ManualDemoBoundsPolicy {
      * Window-level occlusion remains checked by the Android reader before this function. */
     private fun checkedLayout(before: List<NodeSnapshot>, after: List<NodeSnapshot>,
         nativeActions: List<NativeActionPresence>, reflow: Boolean,
-        contains: (ScreenBounds, ScreenBounds) -> Boolean): ManualDemoBoundsReason? {
+        contains: (ScreenBounds, ScreenBounds) -> Boolean,
+        interactiveRejection: ((Int, NativeActionPresence) -> Unit)?): ManualDemoBoundsReason? {
         fun passiveContainer(i: Int): Boolean { val n = before[i]; return !n.clickable && n.actions.isEmpty() &&
             nativeActions[i] == NativeActionPresence.NONE &&
             (n.className == "android.widget.FrameLayout" || n.className == "android.widget.LinearLayout") &&
@@ -207,8 +209,11 @@ internal object ManualDemoBoundsPolicy {
         for (i in 1 until before.size) {
             val n = before[i]
             if (!reflow || n.bounds == after[i].bounds) continue
-            if (n.clickable || n.actions.isNotEmpty() || nativeActions[i] != NativeActionPresence.NONE)
+            if (n.clickable || n.actions.isNotEmpty() || nativeActions[i] != NativeActionPresence.NONE) {
+                // Observe the actual FIRST rejecting row; index is synchronous and never stored.
+                if (interactiveRejection != null) kr.closeforyou.accessibility.diagnosticWrite { interactiveRejection(i, nativeActions[i]) }
                 return ManualDemoBoundsReason.POLICY_INTERACTIVE_BOUNDS
+            }
             val body = n.className == "android.widget.TextView" && !hasChildren[i] &&
                 !n.text.isNullOrBlank() && listOfNotNull(n.text, n.contentDescription).all { F9AutoCloser.role(it) == null }
             if (!passiveContainer(i) && !body) return ManualDemoBoundsReason.POLICY_DESCENDANT_BOUNDS

@@ -48,6 +48,15 @@ internal fun firstManualNodeMismatch(original: List<NodeSnapshot>, fresh: List<N
 
 /** Comparison/ownership diagnostics only. First failure survives later exceptions and cleanup. */
 internal class ManualDisplayProbe(private val nodeDiagnostics: Boolean = false) {
+    var interactiveBounds: ManualInteractiveBoundsCode? = null; private set
+    fun recordInteractiveBounds(original: PopupSnapshot, fresh: F9Scene,
+        candidates: List<CloseCandidate>, index: Int, native: kr.closeforyou.accessibility.NativeActionPresence) {
+        if (!nodeDiagnostics || interactiveBounds != null) return
+        interactiveBounds = ManualInteractiveBoundsDiagnostics.unknown()
+        kr.closeforyou.accessibility.diagnosticWrite {
+            interactiveBounds = ManualInteractiveBoundsDiagnostics.describe(original, fresh, candidates, index, native)
+        }
+    }
     var demoBounds = ManualDemoBoundsReason.NOT_CHECKED; private set
     fun recordDemoBounds(reason: ManualDemoBoundsReason) {
         if (nodeDiagnostics && (demoBounds == ManualDemoBoundsReason.NOT_CHECKED || demoBounds == ManualDemoBoundsReason.SELECTED)) demoBounds = reason
@@ -196,7 +205,8 @@ internal data class ManualDisplayReviewCode(val kind: ManualEventKind, val mask:
     val detail: ManualDisplayDetail = ManualDisplayDetail.NONE, val owned: ManualOwnedReadCode = ManualOwnedReadCode(),
     val listing: ManualDisplayListing = ManualDisplayListing.NOT_CHECKED,
     val nodes: ManualNodeMismatch = ManualNodeMismatch.NOT_CHECKED, val bounds: ManualBoundsCode? = null,
-    val demoBounds: ManualDemoBoundsReason = ManualDemoBoundsReason.NOT_CHECKED)
+    val demoBounds: ManualDemoBoundsReason = ManualDemoBoundsReason.NOT_CHECKED,
+    val interactiveBounds: ManualInteractiveBoundsCode? = null)
 
 /** A target BOUNDS notification is a request to re-read, not proof that C or the target caused it.
  * Mixed/structural/unknown masks and unrelated windows keep ordinary invalidation. */
@@ -270,7 +280,8 @@ internal object ManualDisplayContinuity {
         if (fresh.screen != original.screenBounds) return reject(ManualDisplayDetail.FRAME_CHANGED, ManualDisplayVerdict.CHANGED)
         if (fresh.nodes != original.nodes) {
             if (demoBoundsCandidates != null && ManualDemoBoundsPolicy.retains(original, fresh, nativeOverlayId, listing,
-                    demoBoundsCandidates, originalActions, probe?.let { it::recordDemoBounds }))
+                    demoBoundsCandidates, originalActions, probe?.let { it::recordDemoBounds },
+                    probe?.let { p -> { index, native -> p.recordInteractiveBounds(original, fresh, demoBoundsCandidates, index, native) } }))
                 return ManualDisplayVerdict.BOUNDS_RETAINED
             probe?.nodesChanged(original, fresh)
             return reject(ManualDisplayDetail.NODES_CHANGED, ManualDisplayVerdict.CHANGED)

@@ -57,12 +57,13 @@ internal class ManualPromptTrace(private val actionSink: (Long, ManualActionCode
     private var speechCodes = mutableSetOf<ManualSpeechState>()
     private val retirementCodes = mutableSetOf<ManualRetirementCode>()
     private val displayReviewCodes = mutableSetOf<ManualDisplayReviewCode>()
+    private var interactiveBoundsReported = false
     private var cleanupEventFailureReported = false
     private val cleanupEventCodes = mutableSetOf<ManualCleanupEventCode>()
     private val reviewCodes = mutableSetOf<ManualReviewCode>()
     private val readCodes = mutableSetOf<F9ReadCode>()
     val cleanup = ManualCleanupTrace { code -> cleanupSink(attempt, code) }
-    fun begin() { attempt = if (attempt == Long.MAX_VALUE) 1 else attempt + 1; recorded.clear(); ownership.clear(); eventCodes.clear(); retirementCodes.clear(); displayReviewCodes.clear(); cleanupEventCodes.clear(); cleanupEventFailureReported = false; reviewCodes.clear(); readCodes.clear(); speechCodes = mutableSetOf(); record(ManualPromptPoint.OFFERED) }
+    fun begin() { attempt = if (attempt == Long.MAX_VALUE) 1 else attempt + 1; recorded.clear(); ownership.clear(); eventCodes.clear(); retirementCodes.clear(); displayReviewCodes.clear(); interactiveBoundsReported = false; cleanupEventCodes.clear(); cleanupEventFailureReported = false; reviewCodes.clear(); readCodes.clear(); speechCodes = mutableSetOf(); record(ManualPromptPoint.OFFERED) }
     fun record(point: ManualPromptPoint, cause: ManualPromptCause = ManualPromptCause.NONE) {
         if (recorded.add(point to cause)) diagnosticWrite { sink(attempt, point, cause) }
     }
@@ -83,7 +84,14 @@ internal class ManualPromptTrace(private val actionSink: (Long, ManualActionCode
         if (retirementCodes.size < 16 && retirementCodes.add(code)) diagnosticWrite { retirementSink(attempt, code) }
     }
     fun displayReview(code: ManualDisplayReviewCode) {
-        if (displayReviewCodes.size < 16 && displayReviewCodes.add(code)) diagnosticWrite { displayReviewSink(attempt, code) }
+        // Reserve exactly one related rejection per attempt, even after routine rows hit their cap.
+        // Set the latch BEFORE writing: a failed/cancelled diagnostic is never retried.
+        if (code.interactiveBounds != null) {
+            if (interactiveBoundsReported) return
+            interactiveBoundsReported = true
+            if (displayReviewCodes.size < 16) displayReviewCodes.add(code)
+            diagnosticWrite { displayReviewSink(attempt, code) }
+        } else if (displayReviewCodes.size < 16 && displayReviewCodes.add(code)) diagnosticWrite { displayReviewSink(attempt, code) }
     }
     fun cleanupEvent(code: ManualCleanupEventCode) {
         // Reserve one report for the first actually rejected barrier event even after routine
