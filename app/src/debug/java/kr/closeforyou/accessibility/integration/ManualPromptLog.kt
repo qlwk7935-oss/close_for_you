@@ -33,7 +33,7 @@ internal object ManualPromptLog {
     }, displayReviewSink = { attempt, c ->
         Log.i("A_ManualPrompt", "A_MANUAL_DISPLAY_REVIEW;ATTEMPT=$attempt;EVENT=${c.kind.name};MASK=${c.mask.name};RESULT=${c.verdict.name}" +
             ";POINT=${c.point.name};DETAIL=${c.detail.name}" +
-            ";LIVE_COUNT=${c.owned.count.name};LIVE_QUERY=${c.owned.query.name};LIVE_SCAN=${c.owned.scan.name};NATIVE_RELATION=${c.owned.native.name};NATIVE_LISTING=${c.listing.name};NODE_MISMATCH=${c.nodes.name}" +
+            ";LIVE_COUNT=${c.owned.count.name};LIVE_QUERY=${c.owned.query.name};LIVE_SCAN=${c.owned.scan.name};NATIVE_RELATION=${c.owned.native.name};NATIVE_LISTING=${c.listing.name};NODE_MISMATCH=${c.nodes.name};DEMO_BOUNDS=${c.demoBounds.name}" +
             (c.bounds?.let { ";BOUNDS_NODE=${it.node.name};BOUNDS_CHANGE=${it.change.name};COMMON_SHIFT=${it.common.name};WINDOW_BOUNDS=${it.window.name}" +
                 ";TARGET_BINDING=${it.target.name};TARGET_FLAGS=${it.flags.name};TARGET_LAYER=${it.layer.name}" +
                 ";ROOT_WINDOW_BEFORE=${it.rootWindowBefore.name};ROOT_WINDOW_AFTER=${it.rootWindowAfter.name}" } ?: ""))

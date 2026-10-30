@@ -48,6 +48,10 @@ internal fun firstManualNodeMismatch(original: List<NodeSnapshot>, fresh: List<N
 
 /** Comparison/ownership diagnostics only. First failure survives later exceptions and cleanup. */
 internal class ManualDisplayProbe(private val nodeDiagnostics: Boolean = false) {
+    var demoBounds = ManualDemoBoundsReason.NOT_CHECKED; private set
+    fun recordDemoBounds(reason: ManualDemoBoundsReason) {
+        if (nodeDiagnostics && (demoBounds == ManualDemoBoundsReason.NOT_CHECKED || demoBounds == ManualDemoBoundsReason.SELECTED)) demoBounds = reason
+    }
     var listing = ManualDisplayListing.NOT_CHECKED
     var ownedRead = ManualOwnedReadCode()
     var point = ManualDisplayPoint.NOT_CHECKED
@@ -191,7 +195,8 @@ internal data class ManualDisplayReviewCode(val kind: ManualEventKind, val mask:
     val verdict: ManualDisplayVerdict, val point: ManualDisplayPoint = ManualDisplayPoint.NOT_CHECKED,
     val detail: ManualDisplayDetail = ManualDisplayDetail.NONE, val owned: ManualOwnedReadCode = ManualOwnedReadCode(),
     val listing: ManualDisplayListing = ManualDisplayListing.NOT_CHECKED,
-    val nodes: ManualNodeMismatch = ManualNodeMismatch.NOT_CHECKED, val bounds: ManualBoundsCode? = null)
+    val nodes: ManualNodeMismatch = ManualNodeMismatch.NOT_CHECKED, val bounds: ManualBoundsCode? = null,
+    val demoBounds: ManualDemoBoundsReason = ManualDemoBoundsReason.NOT_CHECKED)
 
 /** A target BOUNDS notification is a request to re-read, not proof that C or the target caused it.
  * Mixed/structural/unknown masks and unrelated windows keep ordinary invalidation. */
@@ -263,7 +268,8 @@ internal object ManualDisplayContinuity {
         if (fresh.windowId != original.token.windowId) return reject(ManualDisplayDetail.WINDOW_CHANGED, ManualDisplayVerdict.CHANGED)
         if (fresh.screen != original.screenBounds) return reject(ManualDisplayDetail.FRAME_CHANGED, ManualDisplayVerdict.CHANGED)
         if (fresh.nodes != original.nodes) {
-            if (demoBoundsCandidates != null && ManualDemoBoundsPolicy.retains(original, fresh, nativeOverlayId, listing, demoBoundsCandidates))
+            if (demoBoundsCandidates != null && ManualDemoBoundsPolicy.retains(original, fresh, nativeOverlayId, listing,
+                    demoBoundsCandidates, probe?.let { it::recordDemoBounds }))
                 return ManualDisplayVerdict.BOUNDS_RETAINED
             probe?.nodesChanged(original, fresh)
             return reject(ManualDisplayDetail.NODES_CHANGED, ManualDisplayVerdict.CHANGED)

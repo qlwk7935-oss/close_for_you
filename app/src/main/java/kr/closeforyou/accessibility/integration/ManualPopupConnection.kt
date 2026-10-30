@@ -346,10 +346,10 @@ internal class ManualPopupConnection(
             !overlay.isShowing || promptLifetime.current() == null ||
             shownDetection?.signals?.contains(PopupSignal.NEW_WINDOW) != true) return false
         val source = original ?: return false
-        val boundsCandidates = manualDemoBoundsCandidates(ManualDemoBoundsFeature.enabled && verifyBoundsDisplay != null,
-            type, changes, eventWindow, source, displayedCandidates, shownDetection)
-        var version = epoch()
         val probe = ManualDisplayProbe(nodeDiagnostics = trace != null)
+        val boundsCandidates = manualDemoBoundsCandidates(ManualDemoBoundsFeature.enabled && verifyBoundsDisplay != null,
+            type, changes, eventWindow, source, displayedCandidates, shownDetection, if (trace != null) probe::recordDemoBounds else null)
+        var version = epoch()
         trace?.record(ManualPromptPoint.DISPLAY_REVIEW_STARTED)
         val result = reviewManualDisplay(retire = { version = retire() }, verify = {
             val started = SystemClock.uptimeMillis()
@@ -382,7 +382,7 @@ internal class ManualPopupConnection(
                 AccessibilityEvent.TYPE_WINDOWS_CHANGED -> ManualEventKind.WINDOW_SET
                 else -> ManualEventKind.WINDOW_STATE
             }, if (type == AccessibilityEvent.TYPE_WINDOWS_CHANGED) manualWindowMask(changes) else ManualWindowMask.NOT_APPLICABLE,
-                verdict, probe.failurePoint, probe.detail, probe.failureOwned, probe.failureListing, probe.failureNodes, probe.failureBounds))
+                verdict, probe.failurePoint, probe.detail, probe.failureOwned, probe.failureListing, probe.failureNodes, probe.failureBounds, probe.demoBounds))
         })
         val cause = when (result) {
             ManualDisplayVerdict.SAME -> ManualPromptCause.TARGET_RECONFIRMED
