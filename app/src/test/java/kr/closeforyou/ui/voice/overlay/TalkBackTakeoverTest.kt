@@ -87,13 +87,22 @@ class TalkBackTakeoverTest {
         }
     }
 
-    @Test fun speechIsThePopupTextAsIs() {
-        assertEquals("오늘만 특가\n닫기", TalkBackTakeoverPlan.speech(adWithClose, format) { "FALLBACK" })
+    @Test fun speechIsThePopupTextWithAPauseBetweenLines() {
+        assertEquals("오늘만 특가.\n닫기", TalkBackTakeoverPlan.speech(adWithClose, format) { "FALLBACK" })
+    }
+
+    @Test fun speechReadsSymbolsAsWords() {
+        val notice = adWithClose.copy(popupText = "서버 점검 02:00~04:00")
+        assertEquals("서버 점검 오전 2시부터 오전 4시까지", TalkBackTakeoverPlan.speech(notice, format) { "FALLBACK" })
+    }
+
+    @Test fun onlyDecorationsFallBack() {
+        assertEquals("FALLBACK", TalkBackTakeoverPlan.speech(adWithClose.copy(popupText = "★ 🎉"), format) { "FALLBACK" })
     }
 
     @Test fun cannotPressAddsOnlyTheFixedSafetyLine() {
         assertTrue(noPressButton.cannotPressForUser)
-        assertEquals("이벤트 안내\nCANNOT", TalkBackTakeoverPlan.speech(noPressButton, format) { "FALLBACK" })
+        assertEquals("이벤트 안내.\nCANNOT", TalkBackTakeoverPlan.speech(noPressButton, format) { "FALLBACK" })
     }
 
     @Test fun noPopupTextFallsBackToTheUsualSentence() {
@@ -159,7 +168,7 @@ class TalkBackTakeoverTest {
         val log = Log()
         listener(FakeAnnouncer(log)).onShown(adWithClose, { false }, FakeFocus(log))
         advanceUntilIdle()
-        assertEquals(listOf("focus:FIRST_ITEM", "say:오늘만 특가\n닫기", "focus:CHOICE_BUTTON"), log.events)
+        assertEquals(listOf("focus:FIRST_ITEM", "say:오늘만 특가.\n닫기", "focus:CHOICE_BUTTON"), log.events)
     }
 
     @Test fun speechWaitsForTalkBackToReadTheFirstItem() = runTest {
@@ -172,7 +181,7 @@ class TalkBackTakeoverTest {
         assertEquals(1, log.events.size)
         advanceTimeBy(2)
         runCurrent()
-        assertEquals("say:오늘만 특가\n닫기", log.events[1])
+        assertEquals("say:오늘만 특가.\n닫기", log.events[1])
     }
 
     @Test fun firstFocusIsRetriedUntilTheWindowIsListed() = runTest {
@@ -188,7 +197,7 @@ class TalkBackTakeoverTest {
         listener(FakeAnnouncer(log)).onShown(adWithClose, { false }, FakeFocus(log, firstFailures = 99))
         advanceUntilIdle()
         assertEquals(3, log.events.count { it == "miss:FIRST_ITEM" })
-        assertTrue(log.events.contains("say:오늘만 특가\n닫기"))
+        assertTrue(log.events.contains("say:오늘만 특가.\n닫기"))
     }
 
     @Test fun speechThatDidNotPlayToTheEndLeavesFocusAlone() = runTest {
@@ -216,7 +225,7 @@ class TalkBackTakeoverTest {
         listener.onUserInteraction()
         announcer.gate?.complete(Unit)
         advanceUntilIdle()
-        assertEquals(listOf("focus:FIRST_ITEM", "say:오늘만 특가\n닫기", "stop"), log.events)
+        assertEquals(listOf("focus:FIRST_ITEM", "say:오늘만 특가.\n닫기", "stop"), log.events)
     }
 
     @Test fun userTouchAfterTheFlowDoesNothing() = runTest {

@@ -176,13 +176,18 @@ internal fun PromptSummary.textRes(): Int = when (this) {
 
 @Composable
 private fun PromptOption.label(): String = when (kind) {
-    PromptOptionKind.PRESS_CANDIDATE -> stringResource(R.string.ui_choice_press_candidate, buttonLabel.orEmpty())
-    PromptOptionKind.REMEMBER_ALWAYS -> stringResource(R.string.ui_choice_remember_always, buttonLabel.orEmpty())
+    PromptOptionKind.PRESS_CANDIDATE -> stringResource(R.string.ui_choice_press_candidate, shownName())
+    PromptOptionKind.REMEMBER_ALWAYS -> stringResource(R.string.ui_choice_remember_always, shownName())
     PromptOptionKind.MOVE_TO_BUTTON -> stringResource(R.string.ui_choice_move_to_button, buttonLabel.orEmpty())
     PromptOptionKind.READ_CONTENT -> stringResource(R.string.ui_choice_read_content)
     PromptOptionKind.KEEP_OPEN -> stringResource(R.string.ui_choice_keep_open)
     PromptOptionKind.STOP_ASKING -> stringResource(R.string.ui_choice_stop_asking)
 }
+
+/** A long or indirect close/skip label is shown by its role ([ButtonNameDisplay]). */
+@Composable
+private fun PromptOption.shownName(): String =
+    ButtonNameDisplay.roleNameRes(buttonLabel, candidateRole)?.let { stringResource(it) } ?: buttonLabel.orEmpty()
 
 /** Previews use the fixture's expected answer as a stand-in for B's classifier. */
 @Composable

@@ -331,7 +331,7 @@ class SpeechHandlingListenerTest {
         listOf("문의 010-1234-5678", "1588 1234 상담", "카드 1234567890123456", "계좌 123.456.789").forEach {
             assertNull(it, SpeechHandlingListener.spokenTitle(it))
         }
-        assertEquals("50% 할인 쿠폰 2024", SpeechHandlingListener.spokenTitle("50% 할인 쿠폰 2024"))
+        assertEquals("50퍼센트 할인 쿠폰 2024", SpeechHandlingListener.spokenTitle("50% 할인 쿠폰 2024"))
         handle(closed(ad, title = "상담 010-1234-5678"), l = titlesOn)
         assertEquals(listOf("광고를 닫았어요."), spoken())
     }
