@@ -8,6 +8,7 @@ import kotlinx.coroutines.launch
 import kr.closeforyou.R
 import kr.closeforyou.core.contract.AnnouncementKind
 import kr.closeforyou.core.contract.AnnouncementRequest
+import kr.closeforyou.core.contract.AnnouncementState
 import kr.closeforyou.core.contract.PopupAnnouncer
 import kr.closeforyou.core.model.PopupAnalysis
 import kr.closeforyou.ui.voice.PressResultSpeech
@@ -37,6 +38,9 @@ class PromptAnnouncementListener internal constructor(
     private val sentence: (ChoicePrompt, AnnouncementDetail) -> String,
     /** C's fixed sentences by resource id (REVALIDATING close); blank = say nothing. */
     private val text: (Int) -> String = { "" },
+    /** C's fixed sentences with arguments, for the takeover's safety lines. */
+    private val formatted: (Int, List<Any>) -> String = { _, _ -> "" },
+    private val takeoverTiming: TakeoverTiming = TakeoverTiming(),
 ) : OverlayListener {
     constructor(
         context: Context,
@@ -49,12 +53,17 @@ class PromptAnnouncementListener internal constructor(
         announcer, scope, mode, ttsDelayMillis, detail,
         { prompt, level -> PromptSpeech.sentence(context, prompt, level) },
         { context.getString(it) },
+        { res, args -> context.getString(res, *args.toTypedArray()) },
     )
 
     private var speaking: Job? = null
 
-    override fun onShown(prompt: ChoicePrompt, speakPressed: () -> Boolean) {
+    override fun onShown(prompt: ChoicePrompt, speakPressed: () -> Boolean, focus: PromptFocus) {
         speaking?.cancel()
+        if (focus.enabled) {
+            takeOver(prompt, speakPressed, focus)
+            return
+        }
         if (mode() != PromptAnnounceMode.PANE_TITLE_AND_TTS) return
         // A follow-up after a failed press: its result was just spoken by the caller.
         if (prompt.pressFailure != null) return
@@ -65,6 +74,40 @@ class PromptAnnouncementListener internal constructor(
             if (speakPressed()) return@launch
             announcer.announce(AnnouncementRequest(prompt.token, AnnouncementKind.POPUP_FOUND, text))
         }
+    }
+
+    /**
+     * TalkBack takeover ([TalkBackTakeoverFeature]): first item → the popup's own text → the button.
+     * Our speech is announced whatever [mode] says. Stopped speech ([그만 말하기], [말하기], dismiss,
+     * [onUserInteraction]) leaves focus where it is: only a fully played reading moves it.
+     */
+    private fun takeOver(prompt: ChoicePrompt, speakPressed: () -> Boolean, focus: PromptFocus) {
+        // A failed-press follow-up: its result is being spoken by the caller; focus and speech stay as before.
+        val words = TalkBackTakeoverPlan.speech(prompt, formatted) { sentence(prompt, detail()) } ?: return
+        speaking = scope.launch {
+            for (attempt in 1..takeoverTiming.firstFocusAttempts) {
+                if (focus.moveTo(TakeoverFocusTarget.FIRST_ITEM)) break
+                if (attempt < takeoverTiming.firstFocusAttempts) delay(takeoverTiming.firstFocusRetryMillis)
+            }
+            delay(takeoverTiming.speechDelayMillis)
+            if (speakPressed()) return@launch
+            val receipt = announcer.announce(AnnouncementRequest(prompt.token, AnnouncementKind.POPUP_FOUND, words))
+            if (receipt.state == AnnouncementState.TTS_COMPLETED && !speakPressed()) {
+                focus.moveTo(TakeoverFocusTarget.CHOICE_BUTTON)
+            }
+        }
+    }
+
+    /**
+     * A calls this on TYPE_TOUCH_INTERACTION_START while C's prompt is up: the person took over, so
+     * our reading stops (as TalkBack's own does) and the later focus move is dropped.
+     */
+    fun onUserInteraction() {
+        val job = speaking ?: return
+        if (!job.isActive) return
+        job.cancel()
+        speaking = null
+        announcer.stop()
     }
 
     override fun onDismissed() {
@@ -102,6 +145,13 @@ class PromptAnnouncementListener internal constructor(
         const val DEFAULT_TTS_DELAY_MILLIS = 700L
     }
 }
+
+/** Takeover waits; tests shorten them. */
+data class TakeoverTiming(
+    val firstFocusAttempts: Int = TalkBackTakeoverFeature.FIRST_FOCUS_ATTEMPTS,
+    val firstFocusRetryMillis: Long = TalkBackTakeoverFeature.FIRST_FOCUS_RETRY_MILLIS,
+    val speechDelayMillis: Long = TalkBackTakeoverFeature.SPEECH_DELAY_MILLIS,
+)
 
 /** One piece of spoken text: a string resource and its format arguments. Tests compare these. */
 data class SpeechPart(val resId: Int, val args: List<Any> = emptyList())

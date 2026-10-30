@@ -116,6 +116,15 @@
     <string name="ui_settings_detail_detailed_help">대신 누를 수 있는 버튼 이름과 선택지 개수도 함께 말해요.</string>
     <string name="ui_settings_prompt_tts">선택 창이 뜰 때 음성으로도 알리기</string>
     <string name="ui_settings_prompt_tts_help">끄면 창만 뜨고 말하지 않아요. TalkBack이 새 창을 스스로 읽지 않는 기기가 있어서 켜 두기를 권해요.</string>
+    <string name="ui_settings_takeover">선택 창이 뜨면 안내를 맡기기</string>
+    <string name="ui_settings_takeover_help">TalkBack이 켜져 있을 때, 선택 창이 뜨면 TalkBack 초점을 선택 창으로 가져와 팝업 글을 그대로 읽고, 다 읽으면 누를 버튼으로 초점을 옮겨요.</string>
+    <string name="ui_settings_speech_rate_label">읽는 속도</string>
+    <string name="ui_settings_speech_rate_system">기기 음성 속도 따르기</string>
+    <string name="ui_settings_speech_rate_system_help">TalkBack 설정에서 따로 속도를 바꿨다면 아래에서 비슷한 속도를 골라 주세요.</string>
+    <string name="ui_settings_speech_rate_slow">느리게</string>
+    <string name="ui_settings_speech_rate_normal">보통</string>
+    <string name="ui_settings_speech_rate_fast">빠르게</string>
+    <string name="ui_settings_speech_rate_very_fast">아주 빠르게</string>
     <string name="ui_settings_section_voice">음성 명령</string>
     <string name="ui_settings_voice_enable">선택 창에 말하기 버튼 보이기</string>
     <string name="ui_settings_voice_enable_help">말하기 버튼을 누를 때만 듣고, 기기 안에서만 알아들어요. 들은 말은 앱에 저장하지 않아요. 결제·동의 같은 버튼은 음성으로 누르지 않아요.</string>

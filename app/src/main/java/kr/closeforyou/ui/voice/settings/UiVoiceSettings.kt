@@ -7,6 +7,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kr.closeforyou.ui.voice.overlay.PromptAnnounceMode
+import kr.closeforyou.ui.voice.overlay.TalkBackTakeoverFeature
 
 enum class AnnouncementDetail { SHORT, DETAILED }
 
@@ -40,6 +41,10 @@ data class UiVoiceSettings(
     val autoCloseConsentPreset: HandlingPreset? = null,
     /** When the switch or its confirmed range last changed (epoch millis); null = never. */
     val autoCloseConsentChangedAt: Long? = null,
+    /** "선택 창이 뜨면 안내를 맡기기" ([TalkBackTakeoverFeature]); the default is that one constant. */
+    val talkBackTakeover: Boolean = TalkBackTakeoverFeature.DEFAULT_ON,
+    /** Our TTS rate; by default the device's TTS rate, like TalkBack ([SpeechRates]). */
+    val speechRate: SpeechRateChoice = SpeechRateChoice.FOLLOW_SYSTEM,
 ) {
     fun withAutoClose(packageName: String, enabled: Boolean) = copy(
         autoClosePackages = if (enabled) autoClosePackages + packageName else autoClosePackages - packageName,
@@ -74,6 +79,10 @@ class UiVoicePreferences private constructor(context: Context) {
     fun setPromptAnnounceMode(mode: PromptAnnounceMode) = write(current().copy(promptAnnounceMode = mode))
 
     fun setVoiceCommandsEnabled(enabled: Boolean) = write(current().copy(voiceCommandsEnabled = enabled))
+
+    fun setTalkBackTakeover(enabled: Boolean) = write(current().copy(talkBackTakeover = enabled))
+
+    fun setSpeechRate(rate: SpeechRateChoice) = write(current().copy(speechRate = rate))
 
     /** [widerConfirmed]: the person confirmed a wider range in the dialog (see [UiVoiceSettings.withPreset]). */
     fun setHandlingPreset(preset: HandlingPreset, widerConfirmed: Boolean = false) =
@@ -117,6 +126,8 @@ class UiVoicePreferences private constructor(context: Context) {
         private const val KEY_CONSENT = "auto_close_consent_v1"
         private const val KEY_CONSENT_PRESET = "auto_close_consent_preset_v1"
         private const val KEY_CONSENT_AT = "auto_close_consent_changed_at_v1"
+        private const val KEY_TAKEOVER = "talkback_takeover_v1"
+        private const val KEY_SPEECH_RATE = "speech_rate_v1"
         private const val NO_TIME = Long.MIN_VALUE
         @Volatile private var instance: UiVoicePreferences? = null
 
@@ -137,6 +148,8 @@ class UiVoicePreferences private constructor(context: Context) {
             editor.putBoolean(KEY_CONSENT, settings.autoCloseConsent)
             editor.putString(KEY_CONSENT_PRESET, settings.autoCloseConsentPreset?.name)
             settings.autoCloseConsentChangedAt?.let { editor.putLong(KEY_CONSENT_AT, it) } ?: editor.remove(KEY_CONSENT_AT)
+            editor.putBoolean(KEY_TAKEOVER, settings.talkBackTakeover)
+            editor.putString(KEY_SPEECH_RATE, settings.speechRate.name)
         }
 
         internal fun readFrom(preferences: SharedPreferences) = UiVoiceSettings(
@@ -157,6 +170,8 @@ class UiVoicePreferences private constructor(context: Context) {
                 it.name == preferences.getString(KEY_CONSENT_PRESET, null)
             },
             autoCloseConsentChangedAt = preferences.getLong(KEY_CONSENT_AT, NO_TIME).takeIf { it != NO_TIME },
+            talkBackTakeover = preferences.getBoolean(KEY_TAKEOVER, TalkBackTakeoverFeature.DEFAULT_ON),
+            speechRate = enumOrDefault(preferences.getString(KEY_SPEECH_RATE, null), SpeechRateChoice.FOLLOW_SYSTEM),
         )
 
         /** Unknown or missing stored values fall back to the safe default. */

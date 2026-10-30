@@ -45,8 +45,8 @@ data class OverlayWindowState(
  * C → A proposal (not yet in core/contract): the one call A's service makes to show "닫을까요?".
  *
  * A builds the [ChoicePrompt] with ChoicePromptPlanner and passes the resulting [UserChoice] to B's
- * policy and A's gate. The presenter never clicks, never moves TalkBack focus and never reads the
- * screen. Call every method on the main thread.
+ * policy and A's gate. The presenter never clicks and never reads the screen; it moves TalkBack
+ * focus only inside its own window, for the takeover ([TalkBackTakeoverFeature], 6-0 demo mode). Call every method on the main thread.
  */
 interface ChoicePromptPresenter {
     /** True only while a prompt is on screen and accepting answers. */

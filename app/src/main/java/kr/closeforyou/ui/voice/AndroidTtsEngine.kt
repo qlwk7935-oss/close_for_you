@@ -16,12 +16,19 @@ import java.util.concurrent.atomic.AtomicLong
  * Korean on-device TextToSpeech routed through the accessibility audio stream, like TalkBack.
  * Whether it overlaps TalkBack speech is unverified on real devices (docs/experiments/overlay-talkback.md).
  */
-class AndroidTtsEngine(context: Context) : SpeechEngine {
+class AndroidTtsEngine(
+    context: Context,
+    /** [kr.closeforyou.ui.voice.settings.SpeechRates.resolve]; null = the system default rate. */
+    private val rate: () -> Float? = { null },
+) : SpeechEngine {
     private val mutableReadiness = MutableStateFlow(SpeechReadiness.INITIALIZING)
     override val readiness: StateFlow<SpeechReadiness> = mutableReadiness.asStateFlow()
 
     private val pending = ConcurrentHashMap<String, CompletableDeferred<Boolean>>()
     private val nextId = AtomicLong()
+
+    /** Once a rate was set it stays in the engine's params, so "system default" must be set back explicitly. */
+    private var rateSet = false
 
     private val tts: TextToSpeech = TextToSpeech(context.applicationContext) { status ->
         mutableReadiness.value =
@@ -50,6 +57,7 @@ class AndroidTtsEngine(context: Context) : SpeechEngine {
 
     override suspend fun speak(text: String): Boolean {
         if (readiness.value != SpeechReadiness.READY) return false
+        applyRate()
         val id = "ui_voice_${nextId.incrementAndGet()}"
         val result = CompletableDeferred<Boolean>()
         pending[id] = result
@@ -76,7 +84,16 @@ class AndroidTtsEngine(context: Context) : SpeechEngine {
         mutableReadiness.value = SpeechReadiness.UNAVAILABLE
     }
 
+    private fun applyRate() {
+        val wanted = rate() ?: if (rateSet) DEFAULT_RATE else return
+        if (tts.setSpeechRate(wanted) == TextToSpeech.SUCCESS) rateSet = true
+    }
+
     private fun finish(utteranceId: String, completed: Boolean) {
         pending[utteranceId]?.complete(completed)
+    }
+
+    private companion object {
+        const val DEFAULT_RATE = 1.0f
     }
 }
