@@ -310,6 +310,20 @@ class ServiceTurnOnGuideTest {
         assertTrue(ServiceGuidePolicy.PLACE_MAX_MOVES <= 3)
     }
 
+    /** The log says why the person was taken to have taken over (no text). */
+    @Test fun personReasonIsHoverOrSwipe() {
+        val own = listOf("5단계 중 2단계", "다음")
+        assertEquals(PersonReason.HOVER, ServiceGuidePolicy.personReason(AccessibilityEvent.TYPE_VIEW_HOVER_ENTER, "", own))
+        assertEquals(PersonReason.SWIPE_FOCUS, ServiceGuidePolicy.personReason(AccessibilityEvent.TYPE_VIEW_ACCESSIBILITY_FOCUSED, "이전 단계", own))
+        assertNull(ServiceGuidePolicy.personReason(AccessibilityEvent.TYPE_VIEW_ACCESSIBILITY_FOCUSED, "5단계 중 2단계", own))
+        assertNull(ServiceGuidePolicy.personReason(AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED, "", own))
+    }
+
+    /** e71ee6f: TalkBack's back gesture right after resume was taken for the person; the grace covers it. */
+    @Test fun graceCoversTalkBacksReturnBeforeTheFirstMove() {
+        assertTrue(ServiceGuidePolicy.PLACE_DELAY_MILLIS >= 1_000L)
+    }
+
     @Test fun debugTraceNamesCarryNoScreenText() {
         FocusTrace.entries.forEach { assertTrue(it.name, it.name.matches(Regex("[A-Z_]+"))) }
     }

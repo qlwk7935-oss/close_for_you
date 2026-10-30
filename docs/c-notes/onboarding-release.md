@@ -52,6 +52,7 @@ TalkBack 사용자가 접근성 목록에서 우리 앱을 찾기 힘들어서, 
    - 처음 1번 옮기고(이미 [다음]에 있으면 안 옮김), 그 뒤엔 **TalkBack 포커스 이벤트가 다른 항목으로 갔다고 알려 줄 때만** 다시 옮긴다(시간마다 다시 옮기지 않음). 모두 합쳐 최대 3번, 6초까지.
    - 설정에서 돌아올 때 Activity가 다시 만들어져도(LG: relaunch 로그) 단계·고른 값은 saved state로 유지되고, "켜졌어요"는 실제로 말할 때 저장된 "돌아오는 중" 표시를 지워 한 번만 말한다. 화면이 resume된 뒤에만 시작한다.
    - debug 빌드에서만 logcat 태그 `CfyFocus`로 단계 이름(enum: `PLACE_MOVE`, `PLACE_LOST`, `PLACE_ALREADY`, `PLACE_PERSON`, `PLACE_DONE`, `TURNED_ON_SPOKEN`, `GUIDE_MOVE`)만 남긴다. 화면 글자·id·패키지 없음.
+   **10/30 3차**: e71ee6f는 돌아오자마자 `PLACE_PERSON`으로 멈춤 — TalkBack 뒤로 가기 제스처·복귀 포커스가 사람 조작으로 판정됨. 이제 화면이 보인 뒤 1.5초는 **유예 시간**(무엇이 와도 사람 조작 아님, debug 로그 `RETURN_HOVER`/`RETURN_FOCUS`로만 남김), 첫 이동 때부터 감시. 그 뒤 사람 조작은 우리 노드 위 손가락 터치(`PLACE_PERSON_HOVER`) 또는 단계 줄·[다음]이 아닌 항목으로 포커스 이동(`PLACE_PERSON_SWIPE`)만. "켜졌어요"도 같은 판정이라 이제 나와야 함.
    이전 시도(아래)는 기록용:
    LG 10/30: TTS는 들렸지만 포커스가 "5단계 중 2단계"에 남음(설정에서 돌아온 뒤 TalkBack이 첫 항목을 다시 잡음). 그래서 이동 뒤 [다음]이 실제로 접근성 포커스를 가졌는지(`isAccessibilityFocused`) 400ms 간격으로 5번 확인하고, 잃었으면 다시 옮긴다. 이 동안 TalkBack이 단계 줄·[다음]에 스스로 포커스를 두는 것은 사람 조작으로 보지 않고, 손가락 터치나 다른 항목으로 쓸기는 사람 조작으로 보아 멈춘다.
    live region만으로는 LG에서 화면 제목 알림에 묻혀 안 들렸다(10/30). 안내 맡기기 꺼짐이면 TalkBack만(상태 상자 "켜짐").

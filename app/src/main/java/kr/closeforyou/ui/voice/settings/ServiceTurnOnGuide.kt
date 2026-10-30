@@ -55,7 +55,24 @@ enum class PlaceStep { WAIT, MOVE, STOP }
  * What C's focus moves did, for debug logs only (enum names, never screen text or package names):
  * the next device run can line them up with TalkBack's own log.
  */
-enum class FocusTrace { GUIDE_MOVE, PLACE_ALREADY, PLACE_MOVE, PLACE_LOST, PLACE_PERSON, PLACE_DONE, TURNED_ON_SPOKEN }
+enum class FocusTrace {
+    GUIDE_MOVE,
+    PLACE_START,
+    /** An event in the grace period after resume (ignored): a hover, or a focus move. */
+    RETURN_HOVER,
+    RETURN_FOCUS,
+    PLACE_ALREADY,
+    PLACE_MOVE,
+    PLACE_LOST,
+    /** The person took over: a finger touch, or a swipe to an item other than the step line / [다음]. */
+    PLACE_PERSON_HOVER,
+    PLACE_PERSON_SWIPE,
+    PLACE_DONE,
+    TURNED_ON_SPOKEN,
+}
+
+/** Why the person was taken to have taken over. */
+enum class PersonReason { HOVER, SWIPE_FOCUS }
 
 /** When the guide or "켜졌어요" is also spoken by our TTS (pure, JVM-tested). */
 enum class GuideSpeech { NOW, AFTER_TALKBACK, NONE }
@@ -89,10 +106,15 @@ object ServiceGuidePolicy {
         isPersonEvent(eventType, eventText, selfFocusText?.let(::listOf))
 
     /** Same, with several texts TalkBack may focus by itself (null = every focus move counts). */
-    fun isPersonEvent(eventType: Int, eventText: String, selfFocusTexts: List<String>?): Boolean = when (eventType) {
-        AccessibilityEvent.TYPE_VIEW_HOVER_ENTER -> true
-        AccessibilityEvent.TYPE_VIEW_ACCESSIBILITY_FOCUSED -> selfFocusTexts == null || selfFocusTexts.none { eventText.contains(it) }
-        else -> false
+    fun isPersonEvent(eventType: Int, eventText: String, selfFocusTexts: List<String>?): Boolean =
+        personReason(eventType, eventText, selfFocusTexts) != null
+
+    /** Why an event counts as the person ([PersonReason]), or null when it does not. */
+    fun personReason(eventType: Int, eventText: String, selfFocusTexts: List<String>?): PersonReason? = when (eventType) {
+        AccessibilityEvent.TYPE_VIEW_HOVER_ENTER -> PersonReason.HOVER
+        AccessibilityEvent.TYPE_VIEW_ACCESSIBILITY_FOCUSED ->
+            PersonReason.SWIPE_FOCUS.takeIf { selfFocusTexts == null || selfFocusTexts.none { eventText.contains(it) } }
+        else -> null
     }
 
     /**
@@ -103,7 +125,12 @@ object ServiceGuidePolicy {
      */
     fun placeOnShow(serviceOn: Boolean, talkBackOn: Boolean, hasTarget: Boolean): Boolean = serviceOn && talkBackOn && hasTarget
 
-    /** First move this long after the screen shows, so TalkBack's own "back to this window" focus is done. */
+    /**
+     * First move this long after the screen shows, so TalkBack's own "back to this window" focus is done.
+     * It is also a grace period: nothing in it counts as the person (LG 10/30, e71ee6f: TalkBack's
+     * back gesture and its refocus right after resume were taken for the person, so nothing moved).
+     * Watching starts only at the first move.
+     */
     const val PLACE_DELAY_MILLIS = 1_500L
 
     /**
@@ -189,7 +216,7 @@ fun rememberServiceTurnOn(
     val focus = remember { OwnWindowFocus { engineHolder[0]?.stop() } }
     val debugLog = remember { DebugFocusLog(context) }
     // The screen's own window, for placing [다음].
-    val screenFocus = remember { OwnWindowFocus { engineHolder[0]?.stop() } }
+    val screenFocus = remember { OwnWindowFocus(onGraceEvent = debugLog::trace) { engineHolder[0]?.stop() } }
     // Counts resumes, so placing runs again whenever the screen comes back (from settings or elsewhere).
     var shown by remember { mutableIntStateOf(0) }
     LifecycleResumeEffect(Unit) {
@@ -276,10 +303,14 @@ fun rememberServiceTurnOn(
         }
         if (!place && speech == GuideSpeech.NONE) return@LaunchedEffect
         val firstPlaced = CompletableDeferred<Unit>()
-        screenFocus.startWatching(selfFocusTexts = returnSelfFocusTexts, targetText = focusTargetText)
+        // Grace period first: events now are TalkBack's return (and its back gesture), not the person.
+        screenFocus.startGrace()
         try {
             coroutineScope {
                 if (place && tag != null) launch {
+                    debugLog.trace(FocusTrace.PLACE_START)
+                    delay(ServiceGuidePolicy.PLACE_DELAY_MILLIS)
+                    screenFocus.startWatching(selfFocusTexts = returnSelfFocusTexts, targetText = focusTargetText)
                     placeFocus(screenFocus, tag, debugLog::trace) { firstPlaced.complete(Unit) }
                     firstPlaced.complete(Unit)
                 }
@@ -306,14 +337,12 @@ fun rememberServiceTurnOn(
 }
 
 /**
- * Puts TalkBack's focus on [tag] once, after TalkBack's own focus on the returning window
- * ([ServiceGuidePolicy.PLACE_DELAY_MILLIS]); skipped when it is already there. Moves again only after
+ * Puts TalkBack's focus on [tag] once (the caller waited [ServiceGuidePolicy.PLACE_DELAY_MILLIS] and
+ * started watching); skipped when it is already there. Moves again only after
  * TalkBack's focus event shows it went elsewhere ([ServiceGuidePolicy.placeStep]), until the
  * deadline or the person took over. [onFirstMove] runs after the first move (or the skip).
  */
 private suspend fun placeFocus(focus: OwnWindowFocus, tag: String, trace: (FocusTrace) -> Unit, onFirstMove: () -> Unit) {
-    delay(ServiceGuidePolicy.PLACE_DELAY_MILLIS)
-    if (focus.personInteracted) return trace(FocusTrace.PLACE_PERSON)
     var moves = 0
     if (focus.isFocused(tag)) {
         trace(FocusTrace.PLACE_ALREADY)
@@ -329,7 +358,13 @@ private suspend fun placeFocus(focus: OwnWindowFocus, tag: String, trace: (Focus
         waited += ServiceGuidePolicy.PLACE_CHECK_MILLIS
         when (ServiceGuidePolicy.placeStep(focus.personInteracted, focus.lostSinceMove, moves)) {
             PlaceStep.WAIT -> Unit
-            PlaceStep.STOP -> return trace(if (focus.personInteracted) FocusTrace.PLACE_PERSON else FocusTrace.PLACE_DONE)
+            PlaceStep.STOP -> return trace(
+                when (focus.personReason) {
+                    PersonReason.HOVER -> FocusTrace.PLACE_PERSON_HOVER
+                    PersonReason.SWIPE_FOCUS -> FocusTrace.PLACE_PERSON_SWIPE
+                    null -> FocusTrace.PLACE_DONE
+                },
+            )
             PlaceStep.MOVE -> {
                 trace(FocusTrace.PLACE_LOST)
                 focus.moveTo(tag)
@@ -373,7 +408,11 @@ private suspend fun speakWhenReady(engine: SpeechEngine, text: String): Boolean 
  *   Compose view's own AccessibilityNodeProvider (its virtual view id is the semantics id).
  * Main thread only. Device unverified.
  */
-internal class OwnWindowFocus(private val onPersonInteracted: () -> Unit) {
+internal class OwnWindowFocus(
+    /** Debug trace of events ignored in the grace period ([startGrace]). */
+    private val onGraceEvent: (FocusTrace) -> Unit = {},
+    private val onPersonInteracted: () -> Unit,
+) {
     private var view: View? = null
     private var container: View? = null
     private var previousDelegate: View.AccessibilityDelegate? = null
@@ -381,6 +420,8 @@ internal class OwnWindowFocus(private val onPersonInteracted: () -> Unit) {
     private var watchTexts: List<String>? = null
     private var targetText: String? = null
     private var lost = false
+    private var grace = false
+    private var reason: PersonReason? = null
     private var watching = false
     private var touched = false
     private var ownMove = false
@@ -400,9 +441,18 @@ internal class OwnWindowFocus(private val onPersonInteracted: () -> Unit) {
                     val target = targetText
                     if (target == null || !text.contains(target)) lost = true
                 }
-                if (watching && !ownMove && ServiceGuidePolicy.isPersonEvent(event.eventType, text, watchTexts)) {
+                if (grace && !watching && !ownMove) {
+                    when (event.eventType) {
+                        AccessibilityEvent.TYPE_VIEW_HOVER_ENTER -> onGraceEvent(FocusTrace.RETURN_HOVER)
+                        AccessibilityEvent.TYPE_VIEW_ACCESSIBILITY_FOCUSED -> onGraceEvent(FocusTrace.RETURN_FOCUS)
+                        else -> Unit
+                    }
+                }
+                val why = if (watching && !ownMove) ServiceGuidePolicy.personReason(event.eventType, text, watchTexts) else null
+                if (why != null) {
                     watching = false
                     touched = true
+                    reason = why
                     onPersonInteracted()
                 }
                 return previous?.onRequestSendAccessibilityEvent(host, child, event)
@@ -424,9 +474,22 @@ internal class OwnWindowFocus(private val onPersonInteracted: () -> Unit) {
         watchTexts = selfFocusTexts ?: title?.let(::listOf)
         this.targetText = targetText
         touched = false
+        reason = null
         lost = false
+        grace = false
         watching = true
     }
+
+    /** Not watching yet: forget an earlier "person took over", only trace what comes in. */
+    fun startGrace() {
+        watching = false
+        touched = false
+        reason = null
+        grace = true
+    }
+
+    /** Why [personInteracted] became true (null = it did not). */
+    val personReason: PersonReason? get() = reason
 
     /** TalkBack's focus went somewhere other than the target since the last [moveTo]. */
     val lostSinceMove: Boolean get() = lost
@@ -445,6 +508,7 @@ internal class OwnWindowFocus(private val onPersonInteracted: () -> Unit) {
     /** Stops watching; true when the person touched or swiped meanwhile. */
     fun stopWatching(): Boolean {
         watching = false
+        grace = false
         return touched
     }
 
