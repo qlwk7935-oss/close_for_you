@@ -33,7 +33,7 @@ internal object ManualPromptLog {
     }, displayReviewSink = { attempt, c ->
         Log.i("A_ManualPrompt", "A_MANUAL_DISPLAY_REVIEW;ATTEMPT=$attempt;EVENT=${c.kind.name};MASK=${c.mask.name};RESULT=${c.verdict.name}" +
             ";POINT=${c.point.name};DETAIL=${c.detail.name}" +
-            ";LIVE_COUNT=${c.owned.count.name};LIVE_QUERY=${c.owned.query.name};LIVE_SCAN=${c.owned.scan.name};NATIVE_RELATION=${c.owned.native.name}")
+            ";LIVE_COUNT=${c.owned.count.name};LIVE_QUERY=${c.owned.query.name};LIVE_SCAN=${c.owned.scan.name};NATIVE_RELATION=${c.owned.native.name};NATIVE_LISTING=${c.listing.name}")
     }, cleanupEventSink = { attempt, c ->
         Log.i("A_ManualPrompt", "A_MANUAL_CLEANUP_EVENT;ATTEMPT=$attempt;EVENT=${c.kind.name};MASK=${c.mask.name}" +
             ";BOUNDS=${if (c.bounds) "YES" else "NO"};ADDED=${if (c.added) "YES" else "NO"};REMOVED=${if (c.removed) "YES" else "NO"}" +

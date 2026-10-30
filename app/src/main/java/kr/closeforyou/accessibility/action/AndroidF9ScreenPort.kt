@@ -17,6 +17,7 @@ import kr.closeforyou.accessibility.AndroidScreenGeometry
 import kr.closeforyou.accessibility.PrivacyPolicy
 import kr.closeforyou.accessibility.integration.ManualDisplayContinuity
 import kr.closeforyou.accessibility.integration.ManualDisplayVerdict
+import kr.closeforyou.accessibility.integration.ManualDisplayIdentity
 import kr.closeforyou.accessibility.integration.ManualDisplayProbe
 import kr.closeforyou.core.model.*
 
@@ -43,15 +44,17 @@ internal class AndroidF9ScreenPort(
     override fun readFor(purpose: F9ReadPurpose, checkpoint: () -> Unit): F9Scene? =
         scan(checkpoint, null, purpose = purpose) { scene, _ -> scene }.takeIf { healthy }
 
-    private class DisplayRead(val source: PopupSnapshot, val overlayId: Int, val probe: ManualDisplayProbe?)
+    private class DisplayRead(val source: PopupSnapshot, val identity: ManualDisplayIdentity, val probe: ManualDisplayProbe?) {
+        val overlayId get() = identity.window
+    }
 
     /** Read-only presentation continuity. This NEVER exposes a F9Scene or token, invokes consume
      * for an action, or changes the strict overlay rejection in read()/press(). Caller confirms
      * THIS native C generation/ownership before and after the entire bounded operation. */
-    fun verifyDisplayedPopup(source: PopupSnapshot, nativeOverlayId: Int, checkpoint: () -> Unit,
+    fun verifyDisplayedPopup(source: PopupSnapshot, identity: ManualDisplayIdentity, checkpoint: () -> Unit,
         probe: ManualDisplayProbe? = null): ManualDisplayVerdict {
-        val verdict = scan(checkpoint, null, DisplayRead(source, nativeOverlayId, probe), F9ReadPurpose.DISPLAY_REVIEW) { scene, _ ->
-            ManualDisplayContinuity.assess(source, scene, nativeOverlayId, probe)
+        val verdict = scan(checkpoint, null, DisplayRead(source, identity, probe), F9ReadPurpose.DISPLAY_REVIEW) { scene, _ ->
+            ManualDisplayContinuity.assess(source, scene, identity.window, probe, identity.listing)
         }
         if (!healthy || verdict == null) {
             probe?.screenUnavailable(resourceFailure = !healthy)
@@ -115,7 +118,7 @@ internal class AndroidF9ScreenPort(
                 windows.singleOrNull { it.isActive && it.type == AccessibilityWindowInfo.TYPE_APPLICATION }
                     ?: return reject(F9ReadDetail.ACTIVE_APPLICATION_UNCONFIRMED)
             } else {
-                val selected = ManualDisplayContinuity.target(windows.map { window(it, readTrace) }, display.source.token.windowId, display.overlayId, display.probe)
+                val selected = ManualDisplayContinuity.target(windows.map { window(it, readTrace) }, display.source.token.windowId, display.overlayId, display.probe, display.identity.listing)
                     ?: return reject(F9ReadDetail.DISPLAY_TARGET_UNCONFIRMED)
                 windows.singleOrNull { it.id == selected.id } ?: return reject(F9ReadDetail.DISPLAY_TARGET_UNCONFIRMED)
             }

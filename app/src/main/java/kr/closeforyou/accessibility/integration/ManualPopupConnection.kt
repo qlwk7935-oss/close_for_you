@@ -31,12 +31,13 @@ internal class ManualPopupConnection(
     private val collectForChoice: (PopupSnapshot, () -> Unit) -> PopupSnapshot?,
     private val awaitInteractionEnd: suspend () -> Unit, private val intentInteracting: () -> Boolean,
     private val speechReadiness: StateFlow<SpeechReadiness>,
-    private val verifyDisplay: (PopupSnapshot, Int, () -> Unit, ManualDisplayProbe) -> ManualDisplayVerdict,
+    private val verifyDisplay: (PopupSnapshot, ManualDisplayIdentity, () -> Unit, ManualDisplayProbe) -> ManualDisplayVerdict,
     private val trace: ManualPromptTrace? = null,
 ) {
     private val handler = Handler(Looper.getMainLooper())
     private val promptLifetime = ManualPromptLifetime(SystemClock::uptimeMillis)
     private val binding = OwnedOverlayBinding()
+    private val displayRegistration = ManualDisplayRegistration()
     private val nativeOwner = Any()
     private var native: OverlayNativeWindowLifetime? = null
     private var retiredId: Int? = null
@@ -113,7 +114,7 @@ internal class ManualPopupConnection(
     }, PromptControlsSupport(tts, null) { kr.closeforyou.ui.voice.command.SpeakButtonState.TURNED_OFF }).also { view ->
         view.observeNativeWindows(object : OverlayNativeWindowObserver {
             override fun created(generation: Long) = OverlayNativeWindowLifetime(generation, nativeOwner).also {
-                promptLifetime.nativeCreating(generation); native = it
+                displayRegistration.created(generation); promptLifetime.nativeCreating(generation); native = it
             }
             override fun changed(lifetime: OverlayNativeWindowLifetime) {
                 handler.post { manualCleanupCall(ManualCleanupSite.NATIVE_CALLBACK, trace?.cleanup, cleanup) { nativeProcessed(lifetime) } }
@@ -353,23 +354,13 @@ internal class ManualPopupConnection(
                     overlay.windowState.status == OverlayWindowStatus.SHOWING && overlay.windowState.generation == generation &&
                     promptLifetime.current() == source.token && epoch() == version }, SystemClock::uptimeMillis, started, probe)
             }
-            fun owned(): Int? = manualDisplayOwnedId({ readManualNativeWindow(native, nativeOwner, generation, null) },
+            fun owned(): ManualDisplayIdentity? = displayRegistration.read(generation, { readManualNativeWindow(native, nativeOwner, generation, null) },
                 { before?.contains(it) }, {
-                    val read = if (trace != null) ManualOwnedReadProbe() else null
-                    try { readOwned(read) } finally { if (read != null) probe.ownedRead = read.code() }
+                    val read = ManualOwnedReadProbe() // policy facts must be identical in Debug and Release
+                    try { readOwned(read) } finally { probe.ownedRead = read.code() }
                 }, probe)
-            checkedManualDisplay(probe) {
-                checkpoint()
-                probe.point = ManualDisplayPoint.NATIVE_BEFORE
-                val id = owned() ?: return@reviewManualDisplay ManualDisplayVerdict.UNAVAILABLE
-                checkpoint()
-                probe.point = ManualDisplayPoint.SCREEN
-                val verdict = verifyDisplay(source, id, ::checkpoint, probe)
-                checkpoint()
-                probe.point = ManualDisplayPoint.NATIVE_AFTER
-                if (owned() != id) { probe.reject(ManualDisplayDetail.NATIVE_ID_CHANGED); return@reviewManualDisplay ManualDisplayVerdict.UNAVAILABLE }
-                checkpoint()
-                verdict
+            verifyRegisteredManualDisplay(probe, ::checkpoint, ::owned) { identity ->
+                verifyDisplay(source, identity, ::checkpoint, probe)
             }
         }, remove = {
             invalidate(version, ttl = false, ownedRetirement = false, cause =
@@ -385,7 +376,7 @@ internal class ManualPopupConnection(
                 AccessibilityEvent.TYPE_WINDOWS_CHANGED -> ManualEventKind.WINDOW_SET
                 else -> ManualEventKind.WINDOW_STATE
             }, if (type == AccessibilityEvent.TYPE_WINDOWS_CHANGED) manualWindowMask(changes) else ManualWindowMask.NOT_APPLICABLE,
-                verdict, probe.failurePoint, probe.detail, probe.failureOwned))
+                verdict, probe.failurePoint, probe.detail, probe.failureOwned, probe.failureListing))
         })
         val cause = when (result) {
             ManualDisplayVerdict.SAME -> ManualPromptCause.TARGET_RECONFIRMED
@@ -417,6 +408,7 @@ internal class ManualPopupConnection(
                     { event.eventTime }, { event.packageName?.toString() }, service.packageName, { event.windowId },
                     { readManualNativeWindow(native, nativeOwner, state.generation, probe) }, before, { readOwned() }, probe)
             })
+            if (ignored) displayRegistration.confirmed(state.generation)
             if (ignored && event.eventType == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED)
                 trace?.record(ManualPromptPoint.DISPLAY_RETAINED, ManualPromptCause.OWNED_CONTENT_CONFIRMED)
             if (ignored && manualWindowEvent(event.eventType))
@@ -484,7 +476,7 @@ internal class ManualPopupConnection(
                 !n.identityUnavailable && n.registrationConfirmed(nativeOwner, n.generation) &&
                     n.retirementWindow(nativeOwner, n.generation) == id && before?.contains(id) == false &&
                     target != null && target != id
-            })
+            }, nativeRemovalComplete = { n.removalComplete(nativeOwner, n.generation, id) })
         trace?.retirement(code)
         return code.check == ManualRetirementCheck.CLEANUP_WAIT
     }
@@ -507,8 +499,14 @@ internal class ManualPopupConnection(
         { root, w -> root.packageName?.toString() == service.packageName && root.windowId == w.id },
         { it.title?.toString() == service.getString(R.string.ui_choice_pane_title) }, { it.id }, { it.recycle() }, { it.recycle() },
         { manualOwnedReadFailed(health, trace?.cleanup) }, eventDiagnostic, probe)
-    fun processed(receipt: OverlayCleanupBarrier.Receipt?) {
-        if (receipt == null || closed) return
+    fun processed(receipt: OverlayCleanupBarrier.Receipt?, nativeCleanupWait: Boolean = false) {
+        if (closed) return
+        if (receipt == null) {
+            // A queued mixed removal is not a receipt. After NORMAL handler invalidation,
+            // recheck this exact View's actual detach + full-list absence under the old deadline.
+            if (nativeCleanupWait) (retiredNative ?: native)?.let(::nativeProcessed)
+            return
+        }
         val wasPending = cleanup.pending
         val hidden = overlay.windowState.status == OverlayWindowStatus.HIDDEN
         cleanup.processed(receipt, hidden, presence = ::presence)

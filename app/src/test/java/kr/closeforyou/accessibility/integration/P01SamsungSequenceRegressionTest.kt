@@ -32,6 +32,7 @@ class P01SamsungSequenceRegressionTest {
         var rawToken: SnapshotToken? = original.token
         var valid = true; var selected = false; var quiet = CompletableDeferred<Unit>()
         var access = F9SessionAccess(true, true, true, false, false, announcementAvailable = true)
+        val registration = ManualDisplayRegistration()
         val lifetime = ManualPromptLifetime(::now)
         val health = ChoicePresentationHealth()
         val actions = mutableListOf<ManualActionCode>(); val reads = mutableListOf<F9ReadCode>()
@@ -89,7 +90,7 @@ class P01SamsungSequenceRegressionTest {
             override val isShowing get() = keeper.status == OverlayWindowStatus.SHOWING
             override fun present(value: ChoicePrompt, receiver: (PromptAnswer) -> Unit): PromptShowResult {
                 val result = keeper.show { generation ->
-                    lifetime.nativeCreating(generation)
+                    registration.created(generation); lifetime.nativeCreating(generation)
                     nativeId = 30 + generation.toInt(); detached = false
                     val n = OverlayNativeWindowLifetime(generation, owner); native = n
                     Native(value, n)
@@ -195,21 +196,29 @@ class P01SamsungSequenceRegressionTest {
             return barrier.nativeProcessed(n, keeper.status == OverlayWindowStatus.HIDDEN) { presence }
         }
         fun expireOriginal() { rawToken = null; gate.clear() }
-        fun ownedIds(includeNative: Boolean, ownedRoot: Boolean = true): Set<Int>? = readOwnedOverlayIds(
+        fun ownedIds(includeNative: Boolean, ownedRoot: Boolean = true, probe: ManualOwnedReadProbe? = null): Set<Int>? = readOwnedOverlayIds(
             { offered.windows + if (includeNative) listOf(WindowSnapshot(nativeId, WindowType.ACCESSIBILITY_OVERLAY,
                 offered.screenBounds, false, false, 4)) else emptyList() },
             { it.type == WindowType.ACCESSIBILITY_OVERLAY }, { it.id }, { id, window -> ownedRoot && id == window.id },
-            { true }, { it.id }, {}, {}, health::fail, null)
-        fun review(live: Set<Int>? = setOf(nativeId), changed: Boolean = false): ManualDisplayVerdict {
+            { true }, { it.id }, {}, {}, health::fail, null, probe)
+        fun review(live: Set<Int>? = setOf(nativeId), changed: Boolean = false, ownedRoot: Boolean = true): ManualDisplayVerdict {
             val probe = ManualDisplayProbe().also { it.point = ManualDisplayPoint.NATIVE_BEFORE }
             return reviewManualDisplay(retire = { expireOriginal() }, verify = {
-                val id = manualDisplayOwnedId({ readManualNativeWindow(native, owner, keeper.windowGeneration, null) }, { false }, { live }, probe)
-                    ?: return@reviewManualDisplay ManualDisplayVerdict.UNAVAILABLE
-                if (blockedRead(F9ReadPurpose.DISPLAY_REVIEW)) return@reviewManualDisplay ManualDisplayVerdict.UNAVAILABLE
-                val overlay = WindowSnapshot(id, WindowType.ACCESSIBILITY_OVERLAY, original.screenBounds, true, true, 4)
-                val windows = offered.windows.map { if (it.id == offered.token.windowId) it.copy(active = false, focused = false) else it } + overlay
-                val scene = f.before.copy(nodes = if (changed) listOf(body.copy(text = "다른 안내")) else offered.nodes, windows = windows)
-                ManualDisplayContinuity.assess(offered, scene, id, probe)
+                verifyRegisteredManualDisplay(probe, { check(valid) }, {
+                    registration.read(keeper.windowGeneration,
+                        { readManualNativeWindow(native, owner, keeper.windowGeneration, null) }, { false }, {
+                            val p = ManualOwnedReadProbe()
+                            try { if (live == null) null else ownedIds(includeNative = !ownedRoot || live.contains(nativeId), ownedRoot = ownedRoot, probe = p) }
+                            finally { probe.ownedRead = p.code() }
+                        }, probe)
+                }) { identity ->
+                    if (blockedRead(F9ReadPurpose.DISPLAY_REVIEW)) return@verifyRegisteredManualDisplay ManualDisplayVerdict.UNAVAILABLE
+                    val overlay = WindowSnapshot(identity.window, WindowType.ACCESSIBILITY_OVERLAY, original.screenBounds, true, true, 4)
+                    val windows = if (identity.listing == ManualDisplayListing.NOT_ENUMERATED) offered.windows else
+                        offered.windows.map { if (it.id == offered.token.windowId) it.copy(active = false, focused = false) else it } + overlay
+                    val scene = f.before.copy(nodes = if (changed) listOf(body.copy(text = "다른 안내")) else offered.nodes, windows = windows)
+                    ManualDisplayContinuity.assess(offered, scene, identity.window, probe, identity.listing)
+                }
             }, remove = {
                 valid = false; guarded.revoke(); lifetime.clear()
                 stream.tryEmit(PopupEvent.Invalidated(offered.token.screenVersion + 1)); delegate.dismiss(); announcer.stop()
@@ -244,11 +253,16 @@ class P01SamsungSequenceRegressionTest {
         assertFalse(r.guarded.isShowing); assertTrue(ManualSpeechState.CANCELLED in r.speech)
         assertTrue(r.removal()); assertTrue(r.barrier.ready); assertFalse(r.health.failed); assertEquals(0, r.f.clicks)
     }
-    @Test fun attachedNativeAbsentFromOwnedListNeverCountsAsConfirmedDisplayOrResurrectsItsAnswer() = runTest {
+    @Test fun initialUnlistedNativeCanRetainVerifiedTargetButLaterLossCannotResurrectItsAnswer() = runTest {
         val r = Rig(this); r.show(); val oldAnswer = r.answer
         assertNotNull(r.native?.liveWindow(r.owner, r.native!!.generation))
         val noRemote = r.ownedIds(includeNative = false); assertEquals(emptySet<Int>(), noRemote)
         val oldPrompt = requireNotNull(r.prompt); val oldGeneration = requireNotNull(r.native).generation
+        assertEquals(ManualDisplayVerdict.SAME, r.review(noRemote)); runCurrent()
+        assertTrue(r.guarded.isShowing); assertEquals(0, r.f.clicks)
+        // Only the initial unlisted phase has a strict target-only display path. Once listed,
+        // a later loss cannot silently reopen registration for this generation.
+        assertEquals(ManualDisplayVerdict.SAME, r.review(setOf(r.nativeId)))
         assertEquals(ManualDisplayVerdict.UNAVAILABLE, r.review(noRemote)); runCurrent()
         assertFalse(r.guarded.isShowing); assertEquals(0, r.freshReads); assertEquals(0, r.f.clicks)
         // The later remote sample cannot retroactively authorize this removed generation.
@@ -256,6 +270,26 @@ class P01SamsungSequenceRegressionTest {
         val oldChoice = ChoicePromptPlanner.toUserChoice(oldPrompt, oldPrompt.options.first { it.kind == PromptOptionKind.PRESS_CANDIDATE })
         requireNotNull(oldAnswer)(PromptAnswer.Picked(oldChoice, ChoiceOrigin.TAP, oldGeneration)); runCurrent()
         assertFalse(r.selected); assertTrue(r.removal()); assertEquals(0, r.f.clicks)
+    }
+    @Test fun initialMissingRemoteRegistrationKeepsActualCFlowAndSpeechButNeverSkipsFreshF0OrClickGates() = runTest {
+        val r = Rig(this); assertTrue(r.show())
+        assertEquals(ManualDisplayVerdict.SAME, r.review(emptySet())); runCurrent()
+        assertTrue(r.guarded.isShowing); assertEquals(0, r.freshReads); assertEquals(0, r.f.clicks)
+        advanceTimeBy(700); runCurrent(); r.completeSpeech(); runCurrent()
+        assertTrue(ManualSpeechState.COMPLETED in r.speech)
+        advanceTimeBy(5_400); assertTrue(r.guarded.isShowing)
+        r.choose(); runCurrent(); assertEquals(0, r.f.clicks); assertEquals(0, r.freshReads)
+        assertFalse(r.removal(detach = false)); assertTrue(r.removal())
+        r.quiet.complete(Unit); runCurrent(); advanceTimeBy(1_500); runCurrent()
+        assertEquals(1, r.freshReads); assertEquals(1, r.decisionCalls); assertEquals(1, r.f.clicks)
+        assertEquals(ClickOutcome.CLOSED_CONFIRMED, r.results.single().outcome)
+    }
+    @Test fun actualTargetChangeWhileRemoteNativeIsStillUnlistedCancelsRealCFlowAndSpeech() = runTest {
+        val r = Rig(this); r.show(); advanceTimeBy(700); runCurrent()
+        assertEquals(ManualDisplayVerdict.CHANGED, r.review(emptySet(), changed = true)); runCurrent()
+        r.completeSpeech(); runCurrent(); assertFalse(r.guarded.isShowing)
+        assertFalse(ManualSpeechState.COMPLETED in r.speech); assertEquals(0, r.f.clicks)
+        assertTrue(r.removal())
     }
     @Test fun changedWholePopupRemovesAndNoSpeechOrActionCanBeCompletedByLateCallback() = runTest {
         val r = Rig(this); r.show(); advanceTimeBy(700); runCurrent()
@@ -345,7 +379,7 @@ class P01SamsungSequenceRegressionTest {
     @Test fun metadataOwnershipRejectionNeverBecomesRemotePresenceSuccess() = runTest {
         val r = Rig(this); r.show()
         assertEquals(emptySet<Int>(), r.ownedIds(includeNative = true, ownedRoot = false))
-        assertEquals(ManualDisplayVerdict.UNAVAILABLE, r.review(r.ownedIds(true, ownedRoot = false)))
+        assertEquals(ManualDisplayVerdict.UNAVAILABLE, r.review(r.ownedIds(true, ownedRoot = false), ownedRoot = false))
         runCurrent(); assertEquals(0, r.f.clicks); assertFalse(r.guarded.isShowing)
     }
 

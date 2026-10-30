@@ -113,6 +113,7 @@ class CloseForYouAccessibilityService : AccessibilityService() {
         val owner = f9
         var receipt: kr.closeforyou.accessibility.integration.OverlayCleanupBarrier.Receipt? = null
         var processed = false
+        var cleanupWaitOnly = false
         completeSynchronousAccessibilityCallback(onRejected = { issue ->
             owner?.eventRejected(issue)
             try {
@@ -123,10 +124,10 @@ class CloseForYouAccessibilityService : AccessibilityService() {
             // receipt/cleanup callback. That callback is inside the same Android error boundary.
             CollectionResourceSafety.run(body = {
                 val nativeRetirement = owner?.compatibleRetirementEvent(event) == true
-                val cleanupWaitOnly = !nativeRetirement && owner?.nativeCleanupRetirementEvent(event) == true
+                cleanupWaitOnly = !nativeRetirement && owner?.nativeCleanupRetirementEvent(event) == true
                 receipt = owner?.observeEvent(event, nativeRetirement || cleanupWaitOnly)
                 handleAccessibilityEvent(event, nativeRetirement && f9 === owner); processed = true
-            }, cleanup = { if (processed) owner?.processed(receipt) else owner?.cleanupFailed() },
+            }, cleanup = { if (processed) owner?.processed(receipt, cleanupWaitOnly) else owner?.cleanupFailed() },
                 cleanupFailure = { throw CollectionCleanupFailure() })
         }
     }

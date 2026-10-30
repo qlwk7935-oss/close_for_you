@@ -30,6 +30,15 @@ internal fun nativeRetirementTransientEvent(type: Int, changes: Int): Boolean = 
     else -> false
 }
 
+/** Cleanup-only combination: known REMOVED + teardown metadata, never ADDED/unknown bits.
+ * It grants no choice compatibility or receipt. Requires exact native removal completion. */
+internal fun nativeCleanupRemovalCombination(type: Int, changes: Int): Boolean {
+    val allowed = E.WINDOWS_CHANGE_REMOVED or E.WINDOWS_CHANGE_BOUNDS or E.WINDOWS_CHANGE_LAYER or
+        E.WINDOWS_CHANGE_TITLE or E.WINDOWS_CHANGE_ACTIVE or E.WINDOWS_CHANGE_FOCUSED or E.WINDOWS_CHANGE_ACCESSIBILITY_FOCUSED
+    return type == E.TYPE_WINDOWS_CHANGED && changes != E.WINDOWS_CHANGE_REMOVED &&
+        changes and E.WINDOWS_CHANGE_REMOVED != 0 && changes and allowed.inv() == 0
+}
+
 /** Shared with the real event driver. COMPATIBLE preserves a pending explicit intent only;
  * it is not removal evidence or permission to collect/press. The barrier separately requires
  * actual native removal completion plus full window absence and the unchanged deadline. */
@@ -67,7 +76,8 @@ internal fun inspectManualRetirementEvent(type: Int, changes: Int, choice: () ->
  * COMPATIBLE this NEVER preserves user intent, event handling, evidence or an execution token.
  * Callers must already be in pending cleanup with the exact event/native ID. No permit here. */
 internal fun inspectNativeCleanupRetirement(type: Int, changes: Int, hidden: () -> Boolean,
-    packageMatches: () -> Boolean, nativeRegistered: () -> Boolean): ManualRetirementCode {
+    packageMatches: () -> Boolean, nativeRegistered: () -> Boolean,
+    nativeRemovalComplete: () -> Boolean = { false }): ManualRetirementCode {
     val kind = when (type) {
         E.TYPE_VIEW_CLICKED -> ManualEventKind.CLICK
         E.TYPE_VIEW_FOCUSED, E.TYPE_VIEW_ACCESSIBILITY_FOCUSED, E.TYPE_VIEW_ACCESSIBILITY_FOCUS_CLEARED -> ManualEventKind.FOCUS
@@ -84,7 +94,8 @@ internal fun inspectNativeCleanupRetirement(type: Int, changes: Int, hidden: () 
         display, pkg, native)
     return try {
         when {
-            !nativeRetirementTransientEvent(type, changes) -> code(ManualRetirementCheck.EVENT_TYPE)
+            !nativeRetirementTransientEvent(type, changes) &&
+                !(nativeCleanupRemovalCombination(type, changes) && nativeRemovalComplete()) -> code(ManualRetirementCheck.EVENT_TYPE)
             !hidden().also { display = if (it) OwnershipRelation.MATCH else OwnershipRelation.MISMATCH } -> code(ManualRetirementCheck.DISPLAY)
             !packageMatches().also { pkg = if (it) OwnershipRelation.MATCH else OwnershipRelation.MISMATCH } -> code(ManualRetirementCheck.PACKAGE)
             !nativeRegistered().also { native = if (it) OwnershipRelation.MATCH else OwnershipRelation.MISMATCH } -> code(ManualRetirementCheck.NATIVE)

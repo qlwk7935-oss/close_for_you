@@ -130,7 +130,7 @@ internal class F9ServiceConnection(
         return cleanup.observeWindowEvent(event.windowId, event.eventType,
             if (event.eventType == AccessibilityEvent.TYPE_WINDOWS_CHANGED) event.windowChanges else 0, nativeTransientConfirmed)
     }
-    fun processed(receipt: OverlayCleanupBarrier.Receipt?) = manual.processed(receipt)
+    fun processed(receipt: OverlayCleanupBarrier.Receipt?, nativeCleanupWait: Boolean = false) = manual.processed(receipt, nativeCleanupWait)
     fun eventRejected(issue: ManualCleanupIssue) {
         trace?.cleanup?.record(ManualCleanupSite.EVENT_HANDLER, issue)
     }

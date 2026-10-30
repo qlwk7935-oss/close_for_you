@@ -174,7 +174,11 @@ internal class OverlayCleanupBarrier(private val timeoutMillis: Long = 5_000L, p
                 windowsChanged && changes == AccessibilityEvent.WINDOWS_CHANGE_REMOVED,
                 windowsChanged && changes == AccessibilityEvent.WINDOWS_CHANGE_LAYER,
                 detachedContent = eventType == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED,
-                nativeTransient = nativeTransientConfirmed && nativeRetirementTransientEvent(eventType, changes)).also { receipt = it }
+                nativeTransient = nativeTransientConfirmed && (nativeRetirementTransientEvent(eventType, changes) ||
+                    (nativeCleanupRemovalCombination(eventType, changes) && retiring?.let { r ->
+                        val owner = r.nativeSession; val id = r.window
+                        owner != null && id != null && r.native?.removalComplete(owner, r.generation, id) == true
+                    } == true))).also { receipt = it }
         } finally {
             // Report AFTER the original observe, including if its failure callback throws. The
             // fixed outcome labels this event; it never grants removal/ownership authority.
