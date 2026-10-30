@@ -34,6 +34,7 @@ import kr.closeforyou.ui.voice.choice.PressableLabelPolicy
 import kr.closeforyou.ui.voice.choice.PromptOptionKind
 import kr.closeforyou.ui.voice.choice.RememberChoiceFeature
 import kr.closeforyou.ui.voice.choice.RememberChoiceSpeech
+import kr.closeforyou.ui.voice.settings.HandlingPreset
 import kr.closeforyou.ui.voice.choice.SharedLabelPolicy
 import kr.closeforyou.ui.voice.choice.VideoAdAnnouncementFeature
 import kr.closeforyou.ui.voice.choice.VideoAdInfo
@@ -132,6 +133,11 @@ class PopupChoiceFlow(
      * [팀 확정 필요] No A signal exists yet, so the default says "different" for every candidate.
      */
     private val isSamePopup: (PopupEvent.Candidate) -> Boolean = { false },
+    /**
+     * The person's preset, for where [앞으로 항상 닫기] shows ([RememberChoiceRules]). C's assembly passes
+     * `{ UiVoicePreferences.get(context).current().handlingPreset }`; null = unknown.
+     */
+    private val handlingPreset: () -> HandlingPreset? = { null },
 ) {
     suspend fun run() {
         if (!revalidatingEnabled) {
@@ -198,6 +204,7 @@ class PopupChoiceFlow(
         val videoAd = if (videoAdEnabled) videoAdOf(analysis) else null
         var prompt: ChoicePrompt? = ChoicePromptPlanner.plan(
             analysis, classification, labelPolicy, moveToButtonEnabled, rememberChoicesEnabled, videoAd, videoAdEnabled,
+            preset = handlingPreset(),
         )
         // Only the first prompt of a confirmed same popup goes into the revalidating window.
         var refill = confirmSamePopup

@@ -32,16 +32,26 @@ class RememberChoiceTest {
         MockPopupFixtures.advertisement().analysis.copy(closeCandidates = persistentListOf(*candidates)),
         classification,
         rememberChoicesEnabled = enabled,
+        // These cases describe both buttons; [다시 묻지 않기] itself stays off in the app.
+        stopAskingEnabled = enabled,
+        suspicious = false,
     )
 
     private fun ChoicePrompt.kinds() = options.map { it.kind }
 
-    @Test fun featureIsOffByDefaultAndAddsNothing() {
-        assertFalse(RememberChoiceFeature.enabled)
+    @Test fun demoModeShowsAlwaysCloseButNotStopAsking() {
+        assertTrue(RememberChoiceFeature.enabled)
+        assertFalse(RememberChoiceFeature.stopAskingEnabled)
         val prompt = ChoicePromptPlanner.plan(
             MockPopupFixtures.advertisement().analysis.copy(closeCandidates = persistentListOf(candidate())),
             PopupClassification.ADVERTISEMENT,
         )
+        assertTrue(PromptOptionKind.REMEMBER_ALWAYS in prompt.kinds())
+        assertFalse(PromptOptionKind.STOP_ASKING in prompt.kinds())
+    }
+
+    @Test fun switchedOffAddsNothing() {
+        val prompt = plan(candidate(), enabled = false)
         assertFalse(PromptOptionKind.REMEMBER_ALWAYS in prompt.kinds())
         assertFalse(PromptOptionKind.STOP_ASKING in prompt.kinds())
     }

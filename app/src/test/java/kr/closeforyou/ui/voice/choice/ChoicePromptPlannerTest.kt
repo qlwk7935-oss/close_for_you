@@ -27,7 +27,7 @@ class ChoicePromptPlannerTest {
 
     @Test fun advertisementOffersNamedCloseButtonFirstThenReadAndKeep() {
         val fixture = MockPopupFixtures.advertisement()
-        val prompt = ChoicePromptPlanner.plan(fixture.analysis, PopupClassification.ADVERTISEMENT)
+        val prompt = ChoicePromptPlanner.plan(fixture.analysis, PopupClassification.ADVERTISEMENT, rememberChoicesEnabled = false)
         assertEquals(PromptSummary.LIKELY_AD, prompt.summary)
         assertFalse(prompt.cannotPressForUser)
         assertEquals(
@@ -125,7 +125,7 @@ class ChoicePromptPlannerTest {
     @Test fun pressOptionsCarryCandidateRoleAndOthersDoNot() {
         val prompt = ChoicePromptPlanner.plan(MockPopupFixtures.advertisement().analysis, PopupClassification.ADVERTISEMENT)
         prompt.options.forEach {
-            if (it.kind == PromptOptionKind.PRESS_CANDIDATE) assertEquals(ButtonRole.CLOSE, it.candidateRole)
+            if (it.kind == PromptOptionKind.PRESS_CANDIDATE || it.kind == PromptOptionKind.REMEMBER_ALWAYS) assertEquals(ButtonRole.CLOSE, it.candidateRole)
             else assertNull(it.candidateRole)
         }
     }

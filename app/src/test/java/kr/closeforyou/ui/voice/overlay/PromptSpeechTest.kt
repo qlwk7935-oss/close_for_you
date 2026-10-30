@@ -43,6 +43,7 @@ class PromptSpeechTest {
             closeCandidates = persistentListOf(candidate("c", "닫기", ButtonRole.CLOSE), candidate("s", "건너뛰기", ButtonRole.SKIP)),
         ),
         PopupClassification.ADVERTISEMENT,
+        rememberChoicesEnabled = false,
     )
 
     @Test fun shortIsSummaryThenWhere() {
