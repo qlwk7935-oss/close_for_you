@@ -1,5 +1,6 @@
 package kr.closeforyou.accessibility
 
+import java.util.concurrent.CancellationException
 import android.content.Context
 import android.graphics.Point
 import android.hardware.display.DisplayManager
@@ -8,7 +9,7 @@ import android.view.Display
 import android.view.WindowManager
 import kr.closeforyou.core.model.ScreenBounds
 
-internal data class ScreenGeometryRead(val frame: ScreenBounds?, val status: ScreenFrameStatus) {
+internal data class ScreenGeometryRead(val frame: ScreenBounds?, val status: ScreenFrameStatus, val rotation: Int? = null) {
     override fun toString(): String = "ScreenGeometryRead(status=$status)"
 }
 
@@ -47,9 +48,13 @@ internal class AndroidScreenGeometry(private val context: Context) {
             } else {
                 val status = ScreenFramePolicy.validate(frame, after.x, after.y)
                 if (status != ScreenFrameStatus.VERIFIED) reset()
-                ScreenGeometryRead(frame.takeIf { status == ScreenFrameStatus.VERIFIED }, status)
+                ScreenGeometryRead(frame.takeIf { status == ScreenFrameStatus.VERIFIED }, status,
+                    configuration.rotation.takeIf { status == ScreenFrameStatus.VERIFIED })
             }
         }
+    } catch (cancelled: CancellationException) {
+        reset()
+        throw cancelled
     } catch (_: Exception) {
         // Framework exceptions may include identifiers or coordinates. Return a fixed code only.
         reset()

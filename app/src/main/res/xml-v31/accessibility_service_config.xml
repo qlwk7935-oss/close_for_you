@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- API 31 introduced isAccessibilityTool. Keep events/capabilities in sync with xml/. -->
 <accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
-    android:accessibilityEventTypes="typeWindowStateChanged|typeWindowsChanged|typeWindowContentChanged|typeViewScrolled|typeViewClicked|typeViewLongClicked|typeViewTextChanged|typeTouchInteractionStart|typeTouchInteractionEnd|typeTouchExplorationGestureStart|typeTouchExplorationGestureEnd|typeViewAccessibilityFocused|typeViewAccessibilityFocusCleared|typeViewFocused|typeViewTextSelectionChanged"
+    android:accessibilityEventTypes="typeNotificationStateChanged|typeWindowStateChanged|typeWindowsChanged|typeWindowContentChanged|typeViewScrolled|typeViewClicked|typeViewLongClicked|typeViewTextChanged|typeTouchInteractionStart|typeTouchInteractionEnd|typeTouchExplorationGestureStart|typeTouchExplorationGestureEnd|typeViewAccessibilityFocused|typeViewAccessibilityFocusCleared|typeViewFocused|typeViewTextSelectionChanged"
     android:accessibilityFeedbackType="feedbackGeneric"
     android:accessibilityFlags="flagReportViewIds|flagRetrieveInteractiveWindows"
     android:canPerformGestures="false"

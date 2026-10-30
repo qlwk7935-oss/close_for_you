@@ -6,6 +6,7 @@ import android.content.Intent
 import android.content.res.Configuration
 import android.os.Looper
 import android.os.Process
+import android.os.SystemClock
 import android.view.accessibility.AccessibilityEvent
 import android.view.inputmethod.InputMethodManager
 import kotlinx.collections.immutable.toPersistentSet
@@ -71,10 +72,11 @@ class CloseForYouAccessibilityService : AccessibilityService() {
         val screenshots = AndroidScreenshotManager(this, preferences, ::isCurrent) { connected && !touching }
         AccessibilityRuntime.attachCaptureCapability(screenshots)
         pipeline = CaptureOcrPipeline(screenshots, KoreanMlKitOcr(), ::isCurrent, { verifyScreen(it) })
-        AccessibilityRuntime.connect()
+        AccessibilityRuntime.connect(::isPolicyCurrent)
         invalidate(clearBaseline = true)
         settingsObserver = serviceScope.launch {
             preferences.state.collect {
+                DetectionObservationHook.policyChanged()
                 invalidate(clearBaseline = true)
                 if (!it.consentGranted) AccessibilityRuntime.block(PrivacyBlockReason.NO_CONSENT, freshness.version)
                 else if (it.paused) AccessibilityRuntime.block(PrivacyBlockReason.PAUSED, freshness.version)
@@ -83,9 +85,21 @@ class CloseForYouAccessibilityService : AccessibilityService() {
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
-        if (!connected || event == null || event.eventType !in OBSERVED_EVENTS) return
+        if (!connected || event == null) return
+        // Toast/notification payloads are never read and do not start tree/OCR collection.
+        if (event.eventType == AccessibilityEvent.TYPE_NOTIFICATION_STATE_CHANGED) {
+            DetectionObservationHook.event(event.packageName?.toString(), event.windowId, DetectionInput.NOTIFICATION)
+            return
+        }
+        if (event.eventType !in OBSERVED_EVENTS) return
         // Copy only primitive enums/IDs, never keep the event or request event.source.
         val eventType = event.eventType
+        DetectionObservationHook.event(event.packageName?.toString(), event.windowId, when (eventType) {
+            AccessibilityEvent.TYPE_VIEW_SCROLLED -> DetectionInput.SCROLL
+            AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED, AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED -> DetectionInput.CONTENT
+            AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED, AccessibilityEvent.TYPE_WINDOWS_CHANGED -> DetectionInput.WINDOW
+            else -> DetectionInput.INTERACTION
+        })
         val epoch = invalidate(clearBaseline = false)
         if (eventType == AccessibilityEvent.TYPE_TOUCH_INTERACTION_START ||
             eventType == AccessibilityEvent.TYPE_TOUCH_EXPLORATION_GESTURE_START) {
@@ -124,75 +138,99 @@ class CloseForYouAccessibilityService : AccessibilityService() {
         pendingCapture = serviceScope.launch {
             delay(DEBOUNCE_MILLIS)
             if (!freshness.isCurrent(epoch) || touching) return@launch
-            capture(epoch, trigger, eventWindowId)
+            val owner = currentCoroutineContext()[Job] ?: throw CancellationException("NO_COLLECTION_OWNER")
+            capture(epoch, trigger, eventWindowId) {
+                freshness.checkActive(epoch, owner) { connected && !touching }
+            }
         }
     }
 
-    private fun capture(epoch: Long, trigger: PopupTrigger, eventWindowId: Int) {
+    private fun capture(epoch: Long, trigger: PopupTrigger, eventWindowId: Int, checkActive: () -> Unit) {
         val trace = CaptureDiagnostics.trace(eventWindowId, epoch)
-        when (val result = collector.capture(this, epoch, trigger, ::packageBlock, trace = trace)) {
+        val observation = DetectionObservationHook.beginAttempt()
+        when (val result = collector.capture(this, epoch, trigger, ::packageBlock, trace = trace, checkActive = checkActive)) {
             is CollectionResult.Blocked -> {
+                checkActive()
                 detector.clear()
+                DetectionObservationHook.blocked(result.targetPackage, result.windowId, result.reason, result.diagnostic, observation)
                 AccessibilityRuntime.block(result.reason, epoch)
             }
             is CollectionResult.Ready -> {
                 if (!freshness.isCurrent(epoch) || touching) return
-                val signals = detector.detect(result.frame)
-                if (signals.isEmpty()) {
+                val assessment = detector.assess(result.frame)
+                DetectionObservationHook.assessed(result.snapshot.token.packageName, result.snapshot.token.windowId, assessment, observation)
+                if (assessment.disposition != DetectionDisposition.POPUP_CANDIDATE) {
+                    // Preserve unknown transition/structure evidence in A diagnostics. Do not
+                    // count it as a confirmed popup or capture merely because a screen changed.
                     trace.detail(CaptureDetail.NO_POPUP_SIGNAL)
                     return
                 }
+                val signals = assessment.signals
                 trace.stage(CaptureStage.POPUP_DETECTED)
-                AccessibilityRuntime.begin(result.snapshot.token)
                 // Replace the transient event with Invalidated even if a collector stalled.
                 expiry = serviceScope.launch {
-                    delay(SNAPSHOT_TTL_MILLIS)
+                    delay((result.snapshot.capturedAtUptimeMillis + SNAPSHOT_TTL_MILLIS -
+                        SystemClock.uptimeMillis()).coerceAtLeast(0))
                     if (freshness.isCurrent(epoch)) invalidate(clearBaseline = false)
                 }
                 evidenceJob = serviceScope.launch {
+                    val owner = currentCoroutineContext()[Job] ?: throw CancellationException("NO_EVIDENCE_OWNER")
+                    val operation = AccessibilityRuntime.begin(result.snapshot, owner) ?: return@launch
+                    var published = false
                     try {
-                        when (val evidence = pipeline.analyze(result.snapshot, trace) { verifyScreen(it, trace) }) {
+                        val checkEvidence = {
+                            freshness.checkActive(epoch, owner) { isCurrent(result.snapshot.token) }
+                        }
+                        when (val evidence = pipeline.analyze(result.snapshot, trace) { verifyScreen(it, trace, checkEvidence) }) {
                             is EvidenceOutcome.Ready -> if (isCurrent(result.snapshot.token)) {
                                 trace.evidence(evidence.issue)
-                                AccessibilityRuntime.recordEvidenceIssue(evidence.issue)
-                                AccessibilityRuntime.publish(evidence.snapshot,
+                                checkEvidence()
+                                published = AccessibilityRuntime.publish(operation, evidence.snapshot,
                                     PopupDetection(result.snapshot.token, signals.toPersistentSet(), requiresUserReview = true),
-                                    evidence.analysis)
-                                trace.stage(CaptureStage.PUBLISHED)
+                                    evidence.analysis, evidence.issue)
+                                if (published) trace.stage(CaptureStage.PUBLISHED)
                             }
                             is EvidenceOutcome.Blocked -> if (isCurrent(result.snapshot.token)) {
                                 trace.evidence(evidence.issue)
                                 AccessibilityRuntime.recordEvidenceIssue(evidence.issue)
-                                AccessibilityRuntime.block(evidence.reason, epoch)
+                                AccessibilityRuntime.block(evidence.reason, epoch, operation)
                             }
                         }
                     } catch (cancelled: CancellationException) {
+                        published = false
                         trace.stage(CaptureStage.CANCELLED)
                         throw cancelled
                     } catch (_: Exception) {
+                        published = false
                         if (isCurrent(result.snapshot.token)) {
                             trace.detail(CaptureDetail.PIPELINE_FAILED)
                             trace.evidence(EvidenceIssue.PRIVACY_UNCERTAIN)
                             trace.block(PrivacyBlockReason.UNREADABLE_TREE)
                             AccessibilityRuntime.recordEvidenceIssue(EvidenceIssue.PRIVACY_UNCERTAIN)
-                            AccessibilityRuntime.block(PrivacyBlockReason.UNREADABLE_TREE, epoch)
+                            AccessibilityRuntime.block(PrivacyBlockReason.UNREADABLE_TREE, epoch, operation)
                         }
+                    } finally {
+                        if (!published || !isActive) AccessibilityRuntime.abandon(operation, epoch)
                     }
                 }
             }
         }
     }
 
-    private fun isCurrent(token: SnapshotToken): Boolean = connected && !touching &&
-        freshness.isCurrent(token.screenVersion) && AccessibilityRuntime.currentToken() == token
+    private fun isPolicyCurrent(token: SnapshotToken): Boolean = connected && !touching &&
+        freshness.isCurrent(token.screenVersion) && packageBlock(token.packageName) == null
+
+    private fun isCurrent(token: SnapshotToken): Boolean = isPolicyCurrent(token) && AccessibilityRuntime.currentToken() == token
 
     /** F0-A again before/after capture and after async OCR, using fresh framework nodes. */
-    private fun verifyScreen(snapshot: PopupSnapshot, trace: CaptureTrace = CaptureTrace(null)): PrivacyBlockReason? {
+    private fun verifyScreen(snapshot: PopupSnapshot, trace: CaptureTrace = CaptureTrace(null),
+        checkActive: () -> Unit = {}): PrivacyBlockReason? {
+        checkActive()
         if (!isCurrent(snapshot.token)) return PrivacyBlockReason.UNREADABLE_TREE
         val s = preferences.currentSettings()
         val isolation = s.captureConsentGranted && snapshot.token.packageName in s.captureAllowedPackages
         return when (val fresh = collector.capture(this, snapshot.token.captureEpoch, snapshot.trigger,
-            ::packageBlock, requireCaptureIsolation = isolation, trace = trace)) {
+            ::packageBlock, requireCaptureIsolation = isolation, trace = trace, checkActive = checkActive)) {
             is CollectionResult.Blocked -> fresh.reason
             is CollectionResult.Ready -> {
                 val a = snapshot.token
@@ -224,10 +262,11 @@ class CloseForYouAccessibilityService : AccessibilityService() {
         return freshness.invalidate().also(AccessibilityRuntime::invalidate)
     }
 
-    override fun onInterrupt() { invalidate(clearBaseline = true) }
+    override fun onInterrupt() { DetectionObservationHook.policyChanged(); invalidate(clearBaseline = true) }
 
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
+        DetectionObservationHook.policyChanged()
         collector.resetGeometry()
         invalidate(clearBaseline = true)
     }
@@ -244,6 +283,7 @@ class CloseForYouAccessibilityService : AccessibilityService() {
     }
 
     private fun disconnect() {
+        DetectionObservationHook.policyChanged()
         AccessibilityRuntime.serviceLifecycle.phase(ServiceLifecyclePhase.UNBOUND)
         connected = false
         touching = false
@@ -255,7 +295,7 @@ class CloseForYouAccessibilityService : AccessibilityService() {
 
     companion object {
         private const val DEBOUNCE_MILLIS = 180L
-        const val SNAPSHOT_TTL_MILLIS = 5_000L
+        const val SNAPSHOT_TTL_MILLIS = LiveEvidenceState.TTL_MILLIS
         private val SCREEN_EVENTS = setOf(
             AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED, AccessibilityEvent.TYPE_WINDOWS_CHANGED,
             AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED, AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED,

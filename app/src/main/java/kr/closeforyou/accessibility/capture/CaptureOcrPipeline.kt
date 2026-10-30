@@ -18,6 +18,8 @@ internal interface CaptureFrame : AutoCloseable { val bounds: ScreenBounds }
 internal interface ScreenshotPort : CaptureCapability {
     val isolatedWindowCapture: Boolean get() = false
     fun denial(token: SnapshotToken): EvidenceIssue?
+    /** Revalidate in-flight consent/currentness without reacquiring/rate-checking its own permit. */
+    fun ongoingDenial(token: SnapshotToken): EvidenceIssue? = denial(token)
     fun denialTraced(token: SnapshotToken, trace: CaptureTrace): EvidenceIssue? = denial(token)
     suspend fun captureTraced(snapshot: PopupSnapshot, region: CaptureRegion, trace: CaptureTrace): CaptureFrame = capture(snapshot, region)
     suspend fun capture(snapshot: PopupSnapshot, region: CaptureRegion): CaptureFrame
@@ -42,6 +44,16 @@ internal class CaptureOcrPipeline(
         trace: CaptureTrace = CaptureTrace(null),
         protection: (PopupSnapshot) -> PrivacyBlockReason? = preflight,
     ): EvidenceOutcome {
+        val result = analyzeChecked(snapshot, trace, protection)
+        checkCurrent(snapshot) // Includes every early tree/summary/failure fallback and frame close.
+        return result
+    }
+
+    private suspend fun analyzeChecked(snapshot: PopupSnapshot, trace: CaptureTrace,
+        protection: (PopupSnapshot) -> PrivacyBlockReason?): EvidenceOutcome {
+        checkCurrent(snapshot)
+        if (snapshot.completeness != SnapshotCompleteness.COMPLETE)
+            return EvidenceOutcome.Blocked(PrivacyBlockReason.UNREADABLE_TREE, EvidenceIssue.PRIVACY_BLOCKED)
         trace.stage(CaptureStage.F0_A)
         checkCurrent(snapshot)
         protection(snapshot)?.let { trace.block(it); return EvidenceOutcome.Blocked(it, EvidenceIssue.PRIVACY_BLOCKED) }
@@ -68,12 +80,19 @@ internal class CaptureOcrPipeline(
         val region = resolution.region ?: return partial(EvidenceIssue.REGION_UNCERTAIN)
         if (!PopupRegionResolver.needsOcr(snapshot, region)) return partial(EvidenceIssue.TREE_SUFFICIENT)
         var frame: CaptureFrame? = null
+        var primary: Throwable? = null
+        var privacyBlocked = false
+        fun blocked(reason: PrivacyBlockReason, issue: EvidenceIssue): EvidenceOutcome.Blocked {
+            privacyBlocked = true
+            return EvidenceOutcome.Blocked(reason, issue)
+        }
         try {
             trace.stage(CaptureStage.CAPTURE_REQUEST)
             frame = screenshots.captureTraced(snapshot, region, trace)
             trace.stage(CaptureStage.CAPTURE_RETURNED)
             checkCurrent(snapshot)
-            protection(snapshot)?.let { trace.block(it); return EvidenceOutcome.Blocked(it, EvidenceIssue.PRIVACY_BLOCKED) }
+            protection(snapshot)?.let { trace.block(it); return blocked(it, EvidenceIssue.PRIVACY_BLOCKED) }
+            screenshots.ongoingDenial(snapshot.token)?.let { return partial(it) }
             if (frame.bounds != region.bounds) {
                 trace.detail(CaptureDetail.FRAME_GEOMETRY)
                 return partial(EvidenceIssue.REGION_UNCERTAIN)
@@ -84,15 +103,16 @@ internal class CaptureOcrPipeline(
             } catch (_: TimeoutCancellationException) {
                 currentCoroutineContext().ensureActive()
                 checkCurrent(snapshot)
-                protection(snapshot)?.let { trace.block(it); return EvidenceOutcome.Blocked(it, EvidenceIssue.PRIVACY_BLOCKED) }
+                protection(snapshot)?.let { trace.block(it); return blocked(it, EvidenceIssue.PRIVACY_BLOCKED) }
                 return partial(EvidenceIssue.OCR_TIMEOUT)
             }
             trace.stage(CaptureStage.OCR_RETURNED)
             checkCurrent(snapshot)
-            protection(snapshot)?.let { trace.block(it); return EvidenceOutcome.Blocked(it, EvidenceIssue.PRIVACY_BLOCKED) }
+            protection(snapshot)?.let { trace.block(it); return blocked(it, EvidenceIssue.PRIVACY_BLOCKED) }
+            screenshots.ongoingDenial(snapshot.token)?.let { return partial(it) }
             trace.stage(CaptureStage.F0_B)
             when (OcrPrivacyReview.review(lines, region.bounds)) {
-                PrivacyReview.SENSITIVE -> { trace.block(PrivacyBlockReason.SENSITIVE_CONTENT); return EvidenceOutcome.Blocked(PrivacyBlockReason.SENSITIVE_CONTENT, EvidenceIssue.PRIVACY_BLOCKED) }
+                PrivacyReview.SENSITIVE -> { trace.block(PrivacyBlockReason.SENSITIVE_CONTENT); return blocked(PrivacyBlockReason.SENSITIVE_CONTENT, EvidenceIssue.PRIVACY_BLOCKED) }
                 PrivacyReview.UNCERTAIN -> return partial(EvidenceIssue.PRIVACY_UNCERTAIN)
                 PrivacyReview.TEXT_CHECK_PASSED -> Unit
             }
@@ -103,17 +123,32 @@ internal class CaptureOcrPipeline(
                 .distinctBy { Triple(it.source, it.text.trim(), it.bounds) }
                 .sortedWith(compareBy<ExtractedText> { it.bounds.top }.thenBy { it.bounds.left }.thenBy { it.source.ordinal })
             checkCurrent(snapshot)
+            screenshots.ongoingDenial(snapshot.token)?.let { return partial(it) }
             DecisionEvidence.summarize(snapshot, combined)?.let { return it }
             return EvidenceOutcome.Ready(PopupAnalysis(snapshot.token, texts = combined.toPersistentList(),
                 limitations = persistentSetOf(AnalysisLimit.INCOMPLETE_EVIDENCE, AnalysisLimit.IMAGE_MODEL_NOT_IMPLEMENTED)), EvidenceIssue.NONE, snapshot)
         } catch (cancelled: CancellationException) {
+            primary = cancelled
             throw cancelled
         } catch (failure: EvidenceFailure) {
-            checkCurrent(snapshot)
-            protection(snapshot)?.let { trace.block(it); return EvidenceOutcome.Blocked(it, EvidenceIssue.PRIVACY_BLOCKED) }
-            return partial(failure.issue)
+            try {
+                checkCurrent(snapshot)
+                protection(snapshot)?.let { trace.block(it); return blocked(it, EvidenceIssue.PRIVACY_BLOCKED) }
+                return partial(failure.issue)
+            } catch (rejected: Throwable) {
+                primary = rejected
+                throw rejected
+            }
+        } catch (failure: Throwable) {
+            primary = failure
+            throw failure
         } finally {
-            frame?.close()
+            try { frame?.close() }
+            catch (cancelled: CancellationException) {
+                if (primary !is CancellationException && primary !is Error) throw cancelled
+            } catch (_: Exception) {
+                if (primary == null && !privacyBlocked) throw EvidenceFailure(EvidenceIssue.PRIVACY_UNCERTAIN)
+            }
         }
     }
 

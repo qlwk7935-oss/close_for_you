@@ -1,8 +1,28 @@
 # A 담당 개발 상태 — 1차 기반과 2차 캡처/OCR
 
+2026-10-22 PR #7 최종 검토: 기존 A 독립 변경24개를 보존하고 native OCR 제출/리스너 등록 예외에서 조기 lease 해제를 차단했습니다. 상세 구현·실제 재검증 결과·Android 미검증 범위는 [A 독립 안전성 후속](A_INDEPENDENT_SAFETY_COMPLETION.md)을 따릅니다. 최신 main은 비교만 하고 합치지 않았습니다.
+
+2026-10-21 최신 후속은 [A 독립 안전성 개선](A_INDEPENDENT_SAFETY_COMPLETION.md)입니다. 기존 미커밋 취소/정리·동일 capture window/frame 검사를 보존하고, 실제 Job·현재 정책 checkpoint, 첫 보호 pass의 불변 검사값, childCount 일관성, Runtime 발행 작업 identity/원래5초 TTL/중복 방지, OCR 동의 철회·정리 경계를 보강합니다. 아래 과거 기록과 구분합니다. 합성 CollectionAttempt의 운영 연결·실제 F0 완전성 인증·B/C 소비자 통합·실제 행동은 여전히 보류입니다. API37 새 버전은 미실행이며 Scroll/Window·원본14개 UNOBSERVED를 해결했다고 주장하지 않습니다.
+
 기준일: 2026-10-17. Android 코어와 최초 공통 계약을 제안하는 단계입니다. 개발 환경에서 실기기·에뮬레이터·TalkBack 시험은 미실시입니다. **사용자 제공 API 37 에뮬레이터 결과는 아래 PR별 기록과 [최신 PR #6 정리](PR6_REVIEW_SCOPE.md)에 별도로 반영**합니다. 이전 절의 미실시/미검증은 당시 개발 환경의 기록이며 후속 사용자 실측과 구분합니다. 제조사별 호환성·팝업 감지 성능·사용성 개선을 주장하지 않습니다. 원문 설계와 검증 계획은 보존하고 최신 팀 결정을 적용합니다.
 
 A 2차는 PR #1 병합 후 최신 `main`(`f52be56`)에서 만든 `feature/core-capture-ocr`입니다. [캡처/OCR 구현·자원 수명·시험 절차](CAPTURE_OCR.md)가 현재 캡처 경로의 상세 기준입니다. 기존 공통 계약은 유지하고 캡처는 별도 동의·앱별 허락 기본 꺼짐으로 연결했습니다.
+
+최신 F1 개선은 PR #6 병합 후 `main`의 `db63c83`에서 생성한 **feature/f1-popup-detection**입니다. [F1 판정·고정 시나리오·기대/실제 비교와 Windows API 37 절차](F1_DETECTION_VALIDATION.md)를 추가했습니다. 아래 F1 절은 JVM과 실제 Android 미검증을 구분합니다.
+
+최신 후속은 **A 내부 증거 표현·DTO 변환 게이트 1단계**입니다. 운영 수집기에 연결하지 않은 순수 Kotlin 구현이며, 보호 완료/순회 완료/geometry 완료를 분리하고 불완전 관측의 DTO 생성을 거부합니다. 아래 마지막 절과 [구현 범위·신뢰 경계](F1_PROTECTION_GEOMETRY_CONTRACT_REVIEW.md#0-1단계-구현--운영과-연결하지-않은-구조-검증)를 참고합니다. Scroll/Window 문제나 원래14개 baseline을 복구한 변경이 아닙니다.
+
+## 운영 F0 검사값·사용값 결박 (2026-10-20, d75e752 이후)
+
+현재 후속 변경은 실제 collector SNAPSHOT_PASS에 CheckedNodeRead를 연결한 것입니다. 위 독립 증거 모델·projection·합성 CollectionAttempt·지문 codec은 여전히 운영에 연결하지 않습니다. [상세 보호 경계](F1_PROTECTION_GEOMETRY_CONTRACT_REVIEW.md#0-g-운영-snapshot_pass의-검사값사용값-결박--d75e752-이후)를 기준으로 합니다.
+
+기존 첫 보호 pass의 target/동일 앱 배경·숨김 자식 순회는 원문 그대로 유지합니다. 두 번째 pass는 기존 모든 보호 필드를 순서대로 재검사하며, 제한된 불변 복사값으로 허용된 text/description/viewId/className/paneTitle을 getter 재조회 없이 DTO·지문·outline에 재사용합니다. 가변 입력의 크기 초과·관측 길이 변화·민감/불확실 값·getter/copy 실패는 전체 거부합니다. Source·Android 객체·가변 CharSequence·원문 예외를 새 결과에 보관하지 않습니다.
+
+기존 두 pass 공유2400 방문/100ms·필드4096/본문32768, actions/childCount/노드·부모 관계, V1 salt/인코딩·토큰·기존 Ready/Blocked·최초 진단·해제 및 서비스의 현재성/TTL 경로는 유지합니다. 실제 입력의 변화나 새 복사 경계에서의 실패는 해당 경계로 기록하며 과거의 두 번째 getter 실패를 만들어내지 않습니다. malformed Rect는 기존처럼 Blocked이며 geometry 미완료를 실행 가능한 Ready/Candidate로 만들지 않습니다. Service/Runtime·공통 DTO·BCD·UI·행동 게이트·기존 계측/원본14개·Manifest·gradle.properties는 변경하지 않습니다. 원문/좌표/지문/토큰의 로그·파일·DB·IPC 출력도 추가하지 않습니다.
+
+이 변경은 전체 F0 완전성·화면 원자성/현재성·TTL·토큰/지문 결합을 증명하지 않습니다. 기존 취소 삼킴·실제 Job 관측 및 정리 예외 위험은 남습니다. Scroll/Window 문제와 원본14개 UNOBSERVED도 미해결이며, 기존 사용자 Prepared Dialog/Layout/Scroll 실측을 새 버전의 성공으로 재사용하지 않습니다. 추가 ScrollClip 계측이나 timeout 변경은 없습니다. API37 수정 버전은 미실행이며 커밋·푸시·병합·PR 변경도 하지 않습니다.
+
+이번 실제 로컬 검증은 신규34개 포함 JVM866개(앱430/호스트436), 실패·오류·skip0입니다. 양쪽 Debug/AndroidTest APK·앱 Release, 앱 Debug/Release·호스트 Debug Lint(이슈0), 패키징/DEX 격리 및 diff/공백 검사를 통과했습니다. 기존832개는 과거 기록입니다. 기존 독립 golden 바이트와 합성 DTO/outline 필드 보존을 검증했으며 실제 Android 수집기 전체의 시점·성능 동등성은 미검증입니다.
 
 ## 구현 범위
 
@@ -13,7 +33,7 @@ A 2차는 PR #1 병합 후 최신 `main`(`f52be56`)에서 만든 `feature/core-c
 | 접근성 서비스 등록·활성화 안내 | 서비스 선언·메타데이터, 목적·제한 안내, 시스템 설정 이동 | A/C: 실제 설정 화면·TalkBack 탐색 확인 |
 | F0-A 분석 보호 | 앱별 허용 기본값 없음, 비밀번호·입력·민감 징후·판정 불가 차단 구조 | A/D: 보호 시나리오 확장·오차단/누락 측정 |
 | F0-B 캡처 후 보호 | 2차: 영역 제한·OCR 후 독립 보호 검사, 민감/불명 OCR 미전달 | A/D: 이미지 민감 신호·OCR 누락·native 메모리 수명 실기기 검증 |
-| F1 팝업 감지 | 새 창·동일 창 덮개·전면 전환의 후보 감지 기반 | A/D: 실제 팝업과 일반 전환 구분 실험·캔버스/WebView 한계 확인 |
+| F1 팝업 감지 | bounded 창/의미 있는 overlay 근거와 비후보·불확실 분리, 고정 14개 모델 비교 및 실제 서비스 계측 소스 | 사용자 API 37은 baseline 차단으로 14개 미관측. 추가 차단 진단은 기기 미검증, 일반 앱 precision/recall 미확인 |
 | F2 노드·한국어 OCR | 2차: 번들 ML Kit 한국어 모델, tree/OCR 출처·화면 좌표·정렬 결합 | A: 실제 인식 정확도·복잡한 읽기 순서·확대/풀스크린 영역 확장 검증 |
 | F3 닫기 후보 | 공통 데이터와 Mock만 제공 | B/A: E1~E4 증거·현재 대상 재탐색; 아이콘만으로 자동 실행 금지 |
 | F4 이미지 의미 설명 | TODO, 분석기 인터페이스 경계 | A/B: 로컬 모델·실행 환경·한국어 품질 검증; ML Kit GenAI 배경 실행 가정 금지 |
@@ -236,3 +256,314 @@ python3 -B tools/verify_capture_test_apks.py --release-apk app/build/outputs/apk
 ```
 
 **BUILD SUCCESSFUL (13초, 196 tasks: 5 executed / 191 up-to-date)**. 기존 JVM 결과 147개(본 앱 92/호스트 55), 실패/오류/건너뜀 0. 양쪽 debug Lint 이슈 0. Debug/Release·계측 APK 빌드 및 DEX의 독립 Kotlin 런타임/driver 분리·release 합성 probe 부재 검사 통과. 문서 변경으로 대부분 작업은 up-to-date이며 새 기기 실행이나 새 런타임 회귀를 수행한 것은 아닙니다. adb 연결 기기 0대입니다. 정리 커밋의 CI는 기존 PR #6 Checks에서 별도 확인하며, 사용자 계측 결과와 CI/로컬 빌드를 구분합니다.
+
+## A 담당 F1 개선: 고정 시나리오와 판정 정확도 회귀
+
+기준 main `db63c83`(PR #6 병합), 새 `feature/f1-popup-detection` 브랜치입니다. 이번 변경은 기존 PR #6의 추가 커밋이 아니며 새 PR로 검토합니다.
+
+- 감지: 새 창 ID/자식 수만으로 후보를 만들던 규칙을 bounded 창 또는 의미 있는 overlay 근거로 제한했습니다. 일반 첫 화면은 baseline, 일반 전환/이름 없는 구조 변화는 불확실로 분리합니다. 숨김·화면 밖·scrollable 조상 아래 노드 제외, 안정적 outline identity 및 중복/연속 Dialog 판정을 보강했습니다. 현재 휴리스틱의 불확실·미지원 화면을 자동 성공으로 올리지 않습니다.
+- 실제 연결: `AndroidSnapshotCollector`가 불변 A 내부 frame에 창 경계·가시성·pane/해제 의미·스크롤 조상 근거를 전달하고 서비스가 F1 판정 뒤 기존 분석 경로를 사용합니다. 공통 `PopupSnapshot/PopupEvent` 및 B·C·D 계약은 유지합니다. Candidate는 광고 판정이나 클릭 허가가 아닙니다. 불확실 신호의 별도 사용자 안내 연동은 TODO입니다.
+- 호스트: 기존 독립 testOnly 앱에 실제 Dialog, 같은 Activity의 pane overlay, 새 두 번째 Dialog, 실제 Activity 전환, scroll/layout/Toast/IME, 빈 로그인/금융 입력, 가상 권한 안내 및 해석 불확실 화면을 추가했습니다. 모두 고정 합성 정보이며 실제 입력·권한 요청·버튼 승인·자동 외부 행동은 없습니다.
+- 관측: signature/고정 host로 보호한 debug F1 IPC와 외부 계측을 추가했습니다. 수집 동의·단일 호스트 허용·분석 시작·실제 연결 및 **캡처 동의 OFF/캡처 앱 없음**을 요구합니다. 관측은 동일 소유 창으로 결박하고 45초/256개 코드로 제한합니다. 설정/연결/회전/중단·만료·END에서 폐기하며 release는 no-op입니다. 미관측·overflow·상충 관측·정리 실패를 성공으로 숨기지 않습니다.
+- 보호: PrivacyPolicy·F0-B·캡처 영역/불일치 버퍼 거부·동의/예산/메모리/해제·기존 OCR/패턴 계측은 변경하지 않았습니다. notification-state 이벤트는 payload를 읽지 않고 진단 코드만 관측하며 tree/OCR을 시작하지 않습니다. 스크롤·사용자 조작의 기존 무효화는 유지합니다. 화면 원문/이미지/실제 좌표/개인정보를 로그·파일에 쓰지 않습니다.
+
+**확인된 모델 결과:** JVM의 14개 합성 DTO/primitive 시나리오에서 탐지 5, 보호 차단 4, 일반 비후보 3, 불확실 유지 1, 미해결 일반 전환 1을 기대 결과와 비교해 통과했습니다. 해당 고정 모델 집합의 미탐/오탐은 0입니다. 실제 Android 이벤트/창/IME/Toast를 실행한 결과가 아니며 보호/불확실을 true negative에 포함하거나 모든 앱의 precision/recall로 환산하지 않습니다.
+
+최종 로컬 실행(JDK 17):
+
+```sh
+./gradlew --no-daemon :app:assembleDebug :app:assembleDebugAndroidTest :app:testDebugUnitTest :capture-test-host:testDebugUnitTest :app:lintDebug :capture-test-host:lintDebug :app:assembleRelease
+python3 -B tools/verify_capture_test_apks.py --release-apk app/build/outputs/apk/release/app-release-unsigned.apk
+```
+
+**BUILD SUCCESSFUL**. F1 코드/관측 수명 검증은 1분 10초(196 tasks: 25 executed / 171 up-to-date), 연속 시험의 첫 Dialog 성공 전제 보강 후 최종 동일 명령은 **31초(196 tasks: 11 executed / 185 up-to-date)**입니다. JVM **175개**(본 앱 115/호스트 60), 실패/오류/건너뜀 0. PR #6 이후 순증 28개: detector 회귀 순증 11 + 고정 matrix 1 + 관측 세션 11 + 정답 집계 5. 양쪽 debug Lint 이슈 0, Kotlin 컴파일 경고 없음. Debug/Release·계측 APK 빌드, 새로운 호스트/외부 driver/provider의 DEX 포함·독립 Kotlin 런타임/driver 분리·release debug/합성 코드 부재 검사 통과. 초기 합성 문자열 Lint 경고는 resources로 옮겨 해소했습니다.
+
+**실제 Android 결과는 미검증:** adb 기기 0대이며 새 API 37/35 F1 계측을 실행하지 않았습니다. 일반 앱 감지율, 빠른 연속 이벤트, full-width/bottom sheet/캔버스, 동일 경로 inline 교체, 가상화·freeform·TalkBack 호환성·지연/메모리는 후속 기기 검증입니다. PR #6의 일반 Dialog 큰 버퍼 및 전체 OCR 통합 실패도 그대로 미해결입니다. [F1_DETECTION_VALIDATION.md](F1_DETECTION_VALIDATION.md)에 고정 CASE별 기대 결과·실제 결과 해석과 Windows 설치/실행 명령을 기록했습니다. CI는 새 PR의 Checks에서 별도로 확인합니다. 자동 병합하지 않습니다. F5 유지/F6 제외/F10·F12·F13 필수도 유지합니다.
+
+## PR #7 후속: API 37 BASELINE_BLOCKED 고정 진단
+
+사용자 실제 보고: Windows API 37에서 SERVICE_CONNECTION_READY 뒤 SEQUENCE_SECOND를 제외한 13개 CASE가 BASELINE_BLOCKED, SEQUENCE_SECOND는 SEQUENCE_PREREQUISITE_MISSING. F1_SUMMARY는 UNOBSERVED=14, 탐지 성공/오탐/미탐 등은 0이며 전체 시험은 실패했습니다. 사용자는 APK·서비스·수집 동의·단일 host 허용·분석 시작 및 캡처 동의/앱 목록 OFF를 확인했습니다. **F1 정확도의 실패/성공으로 평가할 수 없는 baseline 미관측 결과**입니다.
+
+확인된 결함은 baseline의 blocks 검사 직후 예외가 나서 실제 차단 근거를 출력하지 않는 점입니다. 원래 bridge에는 수집 단계/검사 필드 진단도 없었습니다. 실제 Android 차단 원인은 이 보고만으로 확정하지 못했습니다. 알려진 고정 baseline 문구/위젯 클래스 문자열은 JVM 보호 검사에서 차단을 재현하지 않았으나, Android의 입력 속성/메타데이터/창/geometry/수집 상태가 검증된 것은 아닙니다.
+
+변경:
+
+- baseline assertion 이전 F1_EVIDENCE와 F1_COLLECTION 출력, BASELINE/STIMULUS 단계 분리. 기존 BASELINE_BLOCKED/UNOBSERVED 및 연속 시험 전제 실패 판정 유지.
+- Collector의 같은 실제 차단에 속한 사유·단계·CaptureDetail·대상/동일 앱 배경 트리·검사 필드·원인 범주·관련 창 종류·frame 상태를 enum tuple로 전달. 독립 시도의 마지막 사유들을 혼합하지 않음. 실제 값/노드/창 ID/좌표/예외 메시지는 출력하지 않음.
+- 기존 F0-A 필드/문자 검사를 동일 순서의 helper로 옮겨 진단만 부여. 비밀번호·editable·nonzero inputType·민감/불확실 텍스트·수집 상한은 그대로 차단. 시간/노드/깊이/자식 제한도 원래 상한과 short-circuit 순서 유지. PrivacyPolicy·F0-B·캡처/가림/동의/허용/예산·F1 판정·공통 계약 및 fixture 동작은 변경하지 않음.
+- baseline은 실제 collection 결과를 요구하고 raw SCROLL/notification 이벤트만으로 통과하지 않음. 이후 각 실제 자극/결과를 따로 요구하는 기존 검사 유지. 새 진단 문자열은 host의 enum allowlist에 없는 값을 출력하지 않으며 malformed 값도 반사하지 않음.
+- JVM 회귀 9개 추가: 기존 필드 보호 결과 동등성, non-editable/nonzero inputType 보호 유지, password/editable 구분, 텍스트 보호/상한·출처, 고정 baseline 문자열 검사, 창별 실패 tuple 결박/초기화, 고정 코드 형식·유출 방지, raw 이벤트만으로 baseline 통과 금지.
+
+최종 JDK 17 실행:
+
+```sh
+./gradlew --no-daemon :app:assembleDebug :app:assembleDebugAndroidTest :app:testDebugUnitTest :capture-test-host:testDebugUnitTest :app:lintDebug :capture-test-host:lintDebug :app:assembleRelease
+python3 -B tools/verify_capture_test_apks.py --release-apk app/build/outputs/apk/release/app-release-unsigned.apk
+```
+
+**BUILD SUCCESSFUL (1분 20초, 196 tasks: 35 executed / 161 up-to-date)**. JVM **184개**(본 앱121/호스트63), 실패/오류/건너뜀0. 양쪽 debug Lint 이슈0. Debug/Release·계측 APK 빌드 및 새 baseline formatter/readiness DEX 포함·독립 런타임/driver 분리·release debug/합성 구현 부재 패키징 검사 통과. GitHub Actions는 기존 PR #7의 해당 커밋 Checks에서 확인합니다.
+
+연결 Android 기기 0대로 **새 진단의 실제 API 37 출력, baseline 통과, 14개 실제 F1 자극 및 OCR 성공은 확인하지 않았습니다**. 원인 미확정 상태에서 임의의 보호 예외/fixture 변경/성공 변환/timeout 확대는 하지 않았습니다. [F1 문서의 최신 baseline 조사와 Windows 명령](F1_DETECTION_VALIDATION.md)에 해석·재설치 절차가 있습니다. 제출할 자료는 F1_EVIDENCE/F1_COLLECTION/F1_CASE/F1_SUMMARY 고정 코드이며 전체 Logcat/원문/이미지는 요청하지 않습니다. 새 PR/자동 병합은 하지 않습니다.
+
+
+## PR #7 후속: SNAPSHOT_PASS 예외 위치와 수집 시도 분리
+
+사용자 API 37 재실행(`f3c13dd` 설치): SERVICE_CONNECTION_READY 통과 뒤 13개 baseline이 `INVALID_GEOMETRY` 집계와 `SNAPSHOT_PASS/COLLECTION_FAILED/TARGET/NONE/FRAMEWORK_FAILURE/VERIFIED` 차단을 보고했습니다. UNMARKED_OVERLAY에 WINDOWS/TARGET_MISSING도 한 번 있으며 최종 UNOBSERVED=14, Tests run 1 / Failures 1입니다. baseline 문제가 남아 실제 F1 감지율은 측정하지 못했습니다.
+
+**코드로 확인:** INVALID_GEOMETRY는 완전 수집 후 Ready를 F1 평가할 때, SNAPSHOT_PASS 예외는 Blocked를 반환할 때 발생합니다. 따라서 서로 다른 수집 시도입니다. 이전 F1_EVIDENCE는 같은 관측 구간의 집합이어서 두 결과가 함께 보였습니다. FRAMEWORK_FAILURE라는 일반 catch 명칭도 Android framework 자체 원인을 입증하지 못합니다. TARGET_MISSING은 활성 root와 별도 window 목록 사이의 불일치 거부이며 전환 가능성만으로 주원인을 확정하지 않습니다.
+
+**이번 변경:**
+
+- Collector의 실제 경계에 OP와 EXCEPTION을 추가했습니다. 보호용 필드/텍스트 getter와 검사, bounds 읽기/모델 변환, action 읽기/불변 set 구성, 노드 DTO, 구조/본문/outline/앱 지문 SHA-256, 최종 digest·token·snapshot·DetectionFrame 구성을 분리합니다. 일반 예외는 COLLECTION_EXCEPTION이며 정해진 예외 타입 범주만 반환합니다. framework/앱 원인으로 추정하지 않습니다. 기존 guard는 원래 보호 사유와 EXCEPTION=NONE입니다.
+- 경계 helper는 inline으로 적용하며 실패 시 가장 안쪽 경계의 enum만 보존합니다. 원래 예외를 다시 던져 부분 결과 전체 폐기를 유지합니다. Throwable/메시지/stack·사용자 값은 진단 객체에 보관하지 않습니다.
+- debug F1 수집 시작 시 세션 내부 순번을 발급하고 결과를 한 번만 소비합니다. F1_ATTEMPT는 한 시도의 ASSESSED 또는 BLOCKED만 표시합니다. 집계 F1_EVIDENCE에는 SCOPE=AGGREGATE를 명시합니다. 실제 창/노드/화면 버전/시간을 번호로 변환하지 않습니다. RESET 이전 진행 중 결과·다른 세션/소유 창 결과는 다음 구간에 섞이지 않습니다. 원래 45초/256 records에 추가하여 256 attempts 상한도 적용하며 초과는 UNOBSERVED입니다.
+- host 출력은 enum별 allowlist와 1~256의 익명 순번만 허용합니다. 공개 common model/BCD 계약은 유지하고 관측 IPC는 debug 전용입니다. release hook은 no-op입니다.
+- 새 JVM 12개: 예외 타입 분류/동일 예외 전파·메시지 미보관, 안쪽 위치/필드 보존, 실제 bounds 생성 거부와 getter 구분, 기존 보호 guard 보존, 정상 경계 상태, 서로 다른 수집 결과의 분리, RESET 중 진행 중 시도 폐기, 중복/다른 세션 ticket 거부, 관측 상한, 출력 형식과 유출 방지 및 상세 미관측 표현입니다. bounds 생성 거부 회귀는 진단 분류를 검증하며 실제 API 37 오류의 원인이라는 증거가 아닙니다.
+
+**미확정:** API 37의 실제 예외 위치/유형은 새 F1_ATTEMPT 실측이 필요합니다. 코드의 재현 가능한 원인 오류를 아직 확인하지 못해 보호 판정/fixture/감지 휴리스틱/재시도를 수정하지 않았습니다. F0-A/F0-B, 비밀번호·편집/민감 화면, 시스템/가림/좌표 검사, 캡처 동의·앱별 허용·ROI/불일치 버퍼 거부, 메모리·시간 상한·해제는 그대로입니다. baseline 차단/UNOBSERVED/연속 전제/실제 자극의 성공 조건과 timeout을 유지합니다. 자동 행동은 없습니다. adb 연결 기기 0대로 새 API 37 런타임·baseline 복구·F1 정확도·실제 캡처/OCR 성공을 주장하지 않습니다.
+
+[최신 진단 해석과 Windows 빌드/설치/계측 명령](F1_DETECTION_VALIDATION.md)을 갱신했습니다. 실제 사용자 화면·전체 Logcat·좌표·이미지를 요구하거나 저장하지 않습니다. 기존 feature/f1-popup-detection 및 PR #7에서만 계속하며 새 PR/자동 병합은 하지 않습니다.
+
+로컬 최종 검증(JDK 17):
+
+```sh
+./gradlew --no-daemon :app:assembleDebug :app:assembleDebugAndroidTest :app:testDebugUnitTest :capture-test-host:testDebugUnitTest :app:lintDebug :capture-test-host:lintDebug :app:assembleRelease
+python3 -B tools/verify_capture_test_apks.py --release-apk app/build/outputs/apk/release/app-release-unsigned.apk
+```
+
+**BUILD SUCCESSFUL (1분 16초, 196 tasks: 31 executed / 165 up-to-date)**. JVM **196개**(앱130/호스트66), 실패/오류/건너뜀0, 양쪽 debug Lint 이슈0, Kotlin 컴파일 경고0. Debug/Release·계측 APK 빌드와 실제 DEX의 새 attempt formatter 포함, host 독립 Kotlin 런타임, driver의 앱 내부 클래스 의존 부재, release debug/합성 probe 부재 패키징 검사 통과입니다. CI는 이 커밋의 기존 PR #7 Checks에서 별도 확인합니다. 빌드/패키징 성공은 실제 Android 수집/감지/캡처/OCR 성공을 뜻하지 않습니다.
+
+
+## PR #7 후속: 역전된 노드 Rect와 독립 F1 창 경계 조사
+
+사용자 API 37 실측의 14개 시나리오는 BASELINE_BLOCKED/UNOBSERVED입니다. 다른 ATTEMPT에서 ASSESSED/INVALID_GEOMETRY와 SNAPSHOT_PASS/NODE_BOUNDS_DTO/ILLEGAL_ARGUMENT가 각각 발생합니다. 일부 TARGET_MISSING은 별도 창 목록 불일치이며 주원인으로 확정하지 않습니다. ScreenBounds의 순서 require와 해당 DTO 위치를 연결하면 역전 Rect 입력의 거부로 판단할 수 있으나, Android가 제공한 경계의 축/가시성/스크롤/전환 원인은 아직 실측이 필요합니다.
+
+공개 AOSP View에서 접근성 경계를 만들 때 부모 scroll을 빼고 max/min clipping을 적용해, viewport 밖 자식의 경계가 역전될 수 있는 경로를 확인했습니다. android15-release와 고정 main 리비전에서 읽었으며 **사용자의 API 37 이미지와 동일한 구현이라는 증거나 해당 실제 실패 원인 확정은 아닙니다**. 창 bounds의 region/변환 경로도 화면 frame과의 무조건 일치를 보장하지 않아 포함 관계를 임의로 완화하지 않았습니다.
+
+변경:
+
+- `NodeBoundsPolicy`가 전체 보호 순회 및 snapshot node의 inspect 이후 기존 Rect 변환 자리에 순서 검사를 수행합니다. 역전이면 UNREADABLE_TREE/TREE_PROTECTION/MALFORMED_NODE_BOUNDS/NODE_BOUNDS_VALIDATE/EXCEPTION=NONE으로 명시적 수집 거부합니다. 부분 데이터 전체 폐기를 유지하며 비가시성 노드도 생략하지 않습니다. 좌표를 정렬/보정하지 않습니다. NONE은 guard이며 성공이 아닙니다.
+- 동일 거부에 역전 축, isVisibleToUser의 고정 범주(읽기 실패 포함), 기존 순회의 스크롤 조상 boolean과 ROOT/DESCENDANT만 붙입니다. 실제 좌표/노드 ID/경로/값은 출력하지 않습니다.
+- F1 geometry guard를 같은 거부 조건/우선순위의 순수 helper로 분리하고 NONPOSITIVE_FRAME/WINDOW_OUTSIDE_FRAME/NONPOSITIVE_WINDOW, 축별 비양수와 초과 방향을 같은 ASSESSED에만 붙입니다. VALID는 허가가 아니며 기존 baseline 폐기와 UNCERTAIN을 유지합니다.
+- API 34+ 공개 window bounds transition time은 실제 시각 대신 고정 age bucket만 관측합니다. bounds가 최근 바뀌었다는 단서이며 애니메이션/노드 안정성의 증거나 허용/재시도 조건이 아닙니다. API 30~33은 UNSUPPORTED입니다. 노드 거부에는 고정 TRIGGER도 붙입니다.
+- 변경하지 않은 합성 baseline의 실제 native View 노드를 관측하는 `SyntheticBaselineBoundsTest`를 추가했습니다. 소유 View의 layout/가시성/스크롤/Rect 형태만 출력하고 일반 가시 control과 ScrollView의 실제 관측을 요구합니다. 가짜 bounds 주입이나 F1 성공 판정은 없습니다. SOURCE=OWN_VIEW/SERVICE_COLLECTION=NOT_TESTED이며 원격 service 경로와 구분합니다.
+- F0-A/F0-B·비밀번호/입력/민감 보호·창/시스템/가림·좌표/캡처 동의·앱별 허용·ROI/버퍼 거부·메모리/시간/해제·공통 계약/BCD 기능·자동 행동 금지를 유지합니다. baseline 조건/시간/UNOBSERVED 및 연속 시나리오 전제를 낮추지 않았습니다.
+
+[새 경계 조사 문서](F1_BOUNDS_INVESTIGATION.md)에 공개 소스 permalink, 수정 전후 거부 코드와 원인 미확정 범위, Windows 전체 빌드/3개 APK 설치/native probe/실제 F1 계측 명령을 기록했습니다. adb 연결 기기 0대로 **새 API 35/37 계측·baseline 복구·실제 F1 정확도·일반 앱 캡처/OCR 성공은 미검증**입니다. 실제 원인을 모르는 노드를 생략하거나 좌표를 보정해 통과시키지 않았습니다. 기존 PR #7에만 반영하며 새 PR/자동 병합은 하지 않습니다.
+
+최종 로컬 검증(JDK 17):
+
+```sh
+./gradlew --no-daemon :app:assembleDebug :app:assembleDebugAndroidTest :app:testDebugUnitTest :capture-test-host:testDebugUnitTest :app:lintDebug :capture-test-host:lintDebug :app:assembleRelease
+python3 -B tools/verify_capture_test_apks.py --release-apk app/build/outputs/apk/release/app-release-unsigned.apk
+```
+
+**BUILD SUCCESSFUL (1분 7초, 196 tasks: 19 executed / 177 up-to-date)**. JVM **205개**(앱137/호스트68), 실패/오류/건너뜀0. 새 회귀9개(앱7/호스트2)이며 기존 F0/보호 시험도 통과했습니다. 양쪽 debug Lint 이슈0, Kotlin 컴파일 경고0. Debug/Release·계측 APK 및 실제 DEX의 새 native bounds probe/geometry formatter 포함, 독립 host Kotlin 런타임·driver 격리·release debug/합성 구현 부재 패키징 검사 통과입니다. CI는 기존 PR #7의 이번 커밋 Checks에서 별도 확인합니다. 이 성공은 API 35/37 기기 실행 또는 F1 baseline 통과가 아닙니다.
+
+
+## PR #7 후속: ScrollView/최소 baseline 독립 대조
+
+사용자 `f79ad2d` API37 실측은 14개 BASELINE_BLOCKED/UNOBSERVED=14입니다. 실제 서비스와 안정된 native ScrollView 자식에서 REVERSED_Y/NOT_VISIBLE/SCROLL_ANCESTOR가 확인됐습니다. 별도의 완전 수집에서는 WINDOW_OUTSIDE_FRAME(RIGHT 또는 RIGHT,BOTTOM), 일부 VALID/BASELINE_ONLY도 관측됐습니다. bounds age만으로 애니메이션이라고 단정하지 않습니다.
+
+현재 공통 NodeSnapshot에는 geometry 미확인 표현이 없고 완전성/지문/토폴로지 및 B 후보 경로를 보존해야 합니다. F0-A를 완료했다는 이유만으로 geometry가 부적격인 노드를 삭제하고 COMPLETE로 반환하는 안전성을 입증하지 못해 프로덕션의 전체 차단을 유지했습니다. [분리 실험 문서](F1_BASELINE_ISOLATION.md)에 전체 트리 보호, 노드 의미/부모·자식/지문 보존, 미확인 coverage, 불완전 수집·토큰 폐기·실행 불가 및 필수 Android 회귀의 설계 불변식을 정리했습니다. 실행되지 않는 우회용 production 모델/부분 수집 모드를 추가하지 않았습니다.
+
+변경은 독립 testOnly host/계측·JVM·패키징·문서에 한정합니다. 기존 DetectionScenarioActivity와 ServiceDetectionScenariosOptInTest 및 app/src는 변경하지 않았습니다. 최소 Activity를 기존 14개 baseline에 대입하지 않습니다. 새 ServiceBaselineIsolationOptInTest 하나가 원래 ScrollView와 화면 밖 자식 없는 별도 MinimalBaselineActivity를 비교하고, 첫 일관된 창 샘플/실제 값과 레이아웃이 반복해서 같은 관측 안정 구간을 분리합니다. 최소 화면의 native control이 실제로 맞는지 확인하고, 소유 metadata의 실제 변경으로 기존 서비스 수집을 유발합니다. ROOT/geometry/서비스 연결/결과를 주입하지 않습니다.
+
+실제 서비스 ATTEMPT와 별도의 host/UiAutomation 좌표 관계 샘플은 출처를 구분합니다. display/overlay context/Activity max·current/decor/content/window/remote root의 관계와 초과 변만 출력합니다. actual raw 값·창 ID·시각은 bounded RAM에서만 비교하며 이미지·텍스트·좌표를 로그/파일에 남기지 않습니다. native 노드·window 참조는 해제하고 window context를 매 샘플 생성하지 않습니다. 시간이나 관계 enum이 같다는 이유만으로 안정/유효성을 인정하지 않습니다. 안정 관측은 안전 허가가 아니고, 이때도 실제 거부는 그대로 기록합니다.
+
+새 JVM 5개는 mixed 수집과 geometry의 독립성, 불완전/overflow/다른 차단 대조를 깨끗한 대조로 승격하지 않음, 안정된 malformed도 거부 유지, 원시 사각형 관계·redacted 표현, 시간/관계 코드만으로 안정 판정 금지를 확인합니다. app의 기존 보호 회귀도 그대로 실행합니다. F0-A/F0-B·입력/암호/민감·시스템/다른 앱/가림·좌표/ROI·캡처 동의/허용·큰 버퍼·시간/메모리/해제 및 자동 행동 금지는 유지합니다. BCD/공통 계약도 변경하지 않습니다.
+
+개발 환경 adb 기기0대로 **새 독립 계측과 API35/37 비교, baseline 복구·실제 F1 정확도·캡처/OCR 성공은 미검증**입니다. probe OK는 대조 관측 완료일 뿐 원래 14개의 실패를 대체하지 않습니다. 두 문제가 해결되기 전 F1 정확도 완료를 주장하지 않습니다. [Windows 설치 및 독립 비교→원래 14개 회귀 순서](F1_BASELINE_ISOLATION.md)를 기록했습니다. 기존 PR #7에만 반영하고 새 PR/자동 병합은 하지 않습니다.
+
+최종 로컬 검증(JDK17):
+
+```sh
+./gradlew --no-daemon :app:assembleDebug :app:assembleDebugAndroidTest :app:testDebugUnitTest :capture-test-host:testDebugUnitTest :app:lintDebug :capture-test-host:lintDebug :app:assembleRelease
+python3 -B tools/verify_capture_test_apks.py --release-apk app/build/outputs/apk/release/app-release-unsigned.apk
+```
+
+**BUILD SUCCESSFUL (34초, 196 tasks: 9 executed / 187 up-to-date)**. JVM **210개**(앱137/호스트73), 실패/오류/건너뜀0. 양쪽 debug Lint 이슈0, Kotlin 컴파일 경고0. Debug/Release·계측 APK 및 실제 DEX의 독립 최소 Activity/새 isolation driver·reader/evidence 포함, Kotlin 런타임/driver 격리/release debug·합성 probe 부재 패키징 검사 통과입니다. app 소스가 변경되지 않아 관련 작업은 대부분 up-to-date이며 기기 실행을 뜻하지 않습니다. 최초 새 fixture 빌드의 View 상수 미지정 컴파일 오류는 `View.IMPORTANT_FOR_ACCESSIBILITY_YES`로 수정했고 후속 전체 검증을 통과했습니다. CI는 기존 PR #7의 이번 커밋 Checks에서 별도 확인합니다.
+
+
+## PR #7 후속: 2b407da 실측 및 운영 변경 보류 근거
+
+사용자 Windows API37 실측: 독립 baseline 비교 OK (1 test), 안정 Scroll은 OLDER에서도 MALFORMED_ONLY/REVERSED_Y/NOT_VISIBLE/SCROLL_ANCESTOR/DESCENDANT 지속. 최소 화면은 시작 시 LEFT 초과 후 VALID, 안정 구간 READY_ONLY/VALID_ONLY/NO_POPUP/ORDINARY_CONTENT_CHANGE이며 native 대조 조건도 충족했습니다. NODE_CONTRAST=MALFORMED_ISOLATED_TO_SCROLL, SCROLL_FRAME=UNOBSERVED, MINIMAL_FRAME=VALID_ONLY입니다. 독립 UiAutomation의 다른 시점 일치는 실제 서비스 시도의 거부를 취소하지 않습니다. 원래14개는 FAILURES/UNOBSERVED=14/DETECTION_SUCCESS=0/OCR=NOT_TESTED/ACTIONS=NONE이며, 일부 TIME_LIMIT와 TARGET_MISSING은 별도 시도입니다.
+
+**이번에는 문서만 변경했습니다.** 운영 안전성을 입증하지 못한 부분 수집/geometry 제외를 강행하지 않았습니다. NodeSnapshot 필수 bounds, Ready(snapshot+frame), coverage가 없는 DetectionFrame, Candidate/pipeline 연결, 지문/토폴로지 및 기존 baseline 의미를 함께 검토했습니다. [구체적 계약 검토안](F1_PROTECTION_GEOMETRY_CONTRACT_REVIEW.md)에 A-private NodeRecord/Valid·Unusable geometry/보호·tree·geometry coverage, V1 변환·F1 shortcut 이전 거부·downstream 호출 금지 게이트, 지문 byte 호환/namespace 및 BCD와 합의할 범위를 명시했습니다. 이는 미구현 설계이며 공통 모델/계약을 독단적으로 수정하지 않았습니다. 이 분리를 해도 incomplete geometry를 기존 baseline 성공으로 승격할 수는 없습니다.
+
+창 관계는 코드상 windows snapshot→frame read→tree passes 순서이며 동일 capture도 원자적 동시 읽기는 아닙니다. 현재 출력만으로 animation/cache/region/변환 중 실제 원인을 확정하지 못합니다. 같은 서비스 시도 안의 bounded 전후 관계 조사와 비용 검증이 후속이며 추가 진단 패치를 이번에 넣지 않았습니다. TIME_LIMIT의 두 pass 공유100ms/상한 순서와 TARGET_MISSING 목록 거부도 유지하며, clock/목록 회귀가 필요한 범위를 별도로 기록했습니다.
+
+F0-A/F0-B·숨김 입력/암호/민감 정보·전체 자식 검사·창/시스템/가림·동의/허용·ROI/PR6 버퍼 거부·시간/메모리/해제·자동 행동 금지·원래14개 화면/자극/정답을 모두 유지합니다. 앱·테스트 소스 변경과 새 JVM 회귀는 없습니다. 개발 환경 기기0대로 새 API37 실행·운영 개선·F1 정확도 완료·캡처/OCR 성공을 주장하지 않습니다. 설계안이 구현/검증됐다는 주장도 하지 않습니다. Windows 최소 재현 명령은 계약 검토 문서에 있고, 문서-only 커밋 설치/반복 실행으로 해결될 것으로 안내하지 않습니다. 기존 PR #7에서만 진행하며 새 PR/자동 병합은 하지 않습니다.
+
+이번 문서 커밋의 로컬 재검증(JDK17): 위와 동일한 전체 Gradle 명령 **BUILD SUCCESSFUL (14초, 196 tasks: 5 executed / 191 up-to-date)**. 기존 JVM **210개**(앱137/호스트73), 실패/오류/건너뜀0, 양쪽 debug Lint 이슈0. Debug/Release·계측 APK 및 `verify_capture_test_apks.py --release-apk ...` 패키징 검사 통과입니다. 문서만 변경해 대부분 up-to-date이며 새 회귀를 추가하거나 기기 시험을 실행한 결과가 아닙니다. CI는 이번 커밋의 기존 PR #7 Checks에서 별도 확인합니다.
+
+
+## PR #7 후속: A 내부 수집 증거·안전한 DTO 변환 1단계
+
+기준 `b8d8aab`, 원격과 일치하는 `feature/f1-popup-detection`의 깨끗한 작업 트리에서 시작했습니다. 신규 main 파일은 `accessibility/CollectedTreeEvidence.kt`, `accessibility/CollectionProjection.kt` 두 개이고 JVM 파일도 대응 두 개입니다. 문서는 이 파일과 F1_PROTECTION_GEOMETRY_CONTRACT_REVIEW.md만 갱신합니다.
+
+- 보호 완료, 전체/각 root 순회 완료, 개별 node 읽기 완료, 원시 성분으로 계산한 geometry 상태를 구분합니다. 완료 상태의 기본값은 UNKNOWN이며 숨김·같은 앱 배경 노드도 보호 완료가 필요합니다. 모든 선언 root와 원래 preorder/부모/형제 순서/childCount가 맞아야 합니다.
+- 역전 X/Y/양축은 원래 네 성분과 모든 노드·자식을 그대로 보존하며 전체 DTO 변환을 거부합니다. 정렬/clamp/허용 오차/가짜 경계/노드 삭제가 없습니다. 정상 Dialog와 malformed 노드가 혼재해도 부분 snapshot/frame을 만들지 않습니다.
+- UNKNOWN/INCOMPLETE/BLOCKED 보호, 노드 실패·미확인, 자식 누락, 순회/시간/개수/깊이 제한·취소, 불완전 geometry 및 정확한 창/frame 관계 실패는 고정 enum으로만 거부합니다. 성공 결과도 `ProjectionOutcome.Complete`이며 운영 `CollectionResult.Ready`가 아닙니다.
+- path/viewId/class/본문/설명/actions/팝업·pane 의미/가시성/scroll/outline 지문, 원래 token·구조/본문 지문을 보존합니다. 지문 재계산·인증이나 byte-level V1 호환 입증은 이번에 하지 않았습니다. root 범위·완료 표시가 실제 Android 화면에서 얻어졌는지는 순수 gate가 증명할 수 없습니다.
+- 새 모델·metadata·완료 wrapper의 문자열 표현은 고정 redacted이며 입력을 담은 예외/로그/파일/DB/IPC 출력 경로가 없습니다. 기존 DTO 자체의 문자열 표현까지 바꾼 것은 아닙니다. 민감 값은 RAM 전용이며 미래 reader의 짧은 수명/무효화/참조 폐기 검증이 따로 필요합니다.
+
+**운영 불변 근거:** `b8d8aab` 대비 기존 app/host/synthetic-support의 모든 추적 파일을 바이트 비교해 변경 0개를 확인했습니다. collector/service/Runtime/공통 모델·계약/BCD/기존 Mock/14개 fixture·계측은 변경하지 않았습니다. 신규 모델·gate는 기존 main/debug/host 코드에서 참조하지 않습니다. Ready/Blocked 생성 조건, 보호·snapshot 두 pass와 공유 예산, 진단·F1 판정, F0-A/F0-B·암호/입력/민감·시스템/다른 앱/가림·동의/허용·ROI/PR6 버퍼 거부·메모리/시간/해제 및 자동 행동 금지를 그대로 유지합니다. PR #10은 건드리지 않았습니다.
+
+신규 JVM **40개**(모델9/투영31): 역전 축/가시성/원본 보존, 보호·geometry 독립성, 완료/미완료/불명/차단, 숨김/배경 노드, 정상 합성 Dialog/트리의 전체 기록 보존, malformed 혼재·부모, 중간 노드 실패/자식 누락/시간·기타 한도/취소, root와 topology 완전성, metadata/창 관계 실패, 문자열 비노출·잘못된 입력의 안전 거부를 검증했습니다. 테스트 코드가 공급한 완료 표시를 실제 F0 실행 증거로 해석하지 않습니다. 최초 테스트 컴파일의 ImmutableList add/set 사용 오류는 persistent 복사본으로 수정한 뒤 재검증했습니다.
+
+최종 로컬 검증(JDK17):
+
+```sh
+./gradlew --no-daemon :app:assembleDebug :app:assembleDebugAndroidTest :app:testDebugUnitTest :capture-test-host:testDebugUnitTest :app:lintDebug :capture-test-host:lintDebug :app:assembleRelease
+python3 -B tools/verify_capture_test_apks.py --release-apk app/build/outputs/apk/release/app-release-unsigned.apk
+```
+
+**BUILD SUCCESSFUL (1분54초, 196 tasks: 66 executed / 130 up-to-date)**. JVM **250개**(앱177/호스트73), 실패/오류/건너뜀0. 앱·호스트 debug Lint 이슈0, Debug/Release·계측 APK 빌드와 독립 호스트 Kotlin 런타임/driver 격리/release 합성 probe 부재 패키징 검사 통과입니다. 이번 커밋의 CI 상태는 기존 PR #7 Checks에서 별도로 확인합니다. 새 PR/자동 병합은 하지 않습니다.
+
+**미해결/다음 단계:** 실제 Android 계측은 실행하지 않았습니다. Scroll의 역전 노드 차단, 별도 WINDOW_OUTSIDE_FRAME, TIME_LIMIT/TARGET_MISSING과 원래14개 UNOBSERVED=14는 그대로입니다. 합성 통과는 실제 수집 복구·감지 정확도·캡처/OCR 성공이나 기존 collector와의 완전한 동등성 증명이 아닙니다. 다음 연결 전에는 A 소유 reader의 전체 숨김/배경/모든 필드 보호, 원래 topology/지문 byte 동등성, 두 pass 사이 화면/세대 일관성, 기존 100ms/노드 예산 안의 추가 비용, 취소·터치·동의 철회·만료 시 전체 폐기 및 downstream 비발행을 입증해야 합니다. geometry 불완전은 계속 기존 Ready/F1 baseline/B 후보/캡처/OCR/실행으로 승격하지 않습니다. 공개 완전성·BCD 입력·지문 namespace 변경은 별도 팀 합의입니다.
+
+이번 단계의 Windows 최소 확인(운영 미연결이므로 이 설치만으로 기존 F1 재시험을 통과할 것으로 안내하지 않음):
+
+```powershell
+git switch feature/f1-popup-detection
+git pull --ff-only origin feature/f1-popup-detection
+.\gradlew.bat --no-daemon :app:testDebugUnitTest --tests "kr.closeforyou.accessibility.CollectedTreeEvidenceTest" --tests "kr.closeforyou.accessibility.CollectionProjectionTest"
+.\gradlew.bat --no-daemon :app:assembleDebug :app:assembleDebugAndroidTest :app:testDebugUnitTest :capture-test-host:testDebugUnitTest :app:lintDebug :capture-test-host:lintDebug :app:assembleRelease
+```
+
+합성 시험은 40개 통과가 기대 결과입니다. 실제 API35/37의 collector 연결은 다음 단계이며 기존 기기 재현 절차/실패 해석은 F1_BASELINE_ISOLATION.md와 F1_DETECTION_VALIDATION.md를 유지합니다.
+
+
+## PR #7 후속: 독립 증거·변환 게이트의 상한과 할당 보강
+
+`8496608`에서 원격과 일치하는 feature/f1-popup-detection 및 깨끗한 작업 트리를 확인했습니다. 변경은 기존 신규 모델/변환기, 대응 시험, 이 문서와 F1_PROTECTION_GEOMETRY_CONTRACT_REVIEW.md에 한정합니다. AndroidSnapshotCollector·운영 service/Runtime·공통 계약·BCD·Mock·PR #10·원래14개 fixture/계측은 변경하지 않습니다.
+
+수정 전 기존 collector의 한도 대응을 검토했습니다. [상세 대응표와 불일치 범위](F1_PROTECTION_GEOMETRY_CONTRACT_REVIEW.md#0-a-독립-게이트-상한할당-보강--8496608-이후)를 기록했으며, 동일 소스의 모델 보존량에 적용할 수 있는 상한만 추가했습니다.
+
+- 창/보호 root 목록 각각32개, 전체 보존 노드2400개를 파생 목록 생성 전 검사합니다. 노드 합산은 잔여량 비교로 overflow를 피합니다. 이2400은 실제 두 pass의 공유 방문 수를 인증하는 값이 아닙니다.
+- root 깊이0 기준60, 노드당 자식1200, 모델에 보존되는 네 보호 필드 각각4096 UTF-16 코드 단위, 대상 root의 text+description 합계32768을 검사합니다. 합계는 Long입니다. 숨김/배경의 개별 필드도 검사하지만 기존에 없는 배경 본문 합계 제한이나 임의 target 노드1200 제한은 넣지 않습니다.
+- 깊이·ordinal에서 유도한 path/parentPath 최대301자를 검사합니다. 자식별 예상 경로/substring 생성을 없애고 열린 부모 stack만 O(depth)로 유지하며 원래 preorder·parent·ordinal·childCount 및 canonical 숫자를 비교합니다. 누락·중복·순서 오류는 계속 전체 거부합니다.
+- geometry 집계의 flatMap 전체 복사를 제거하고 원래 INCOMPLETE 우선 의미를 유지합니다. snapshot/outline/window는 persistent builder로 생성하고 동일 노드 bounds를 재사용합니다. 본문·경로·지문을 변경하거나 지문을 새로 만들지 않습니다.
+- 새 모델·완료 wrapper는 redacted, 실패는 enum만 반환합니다. 합성 sentinel과 메모리 stdout/stderr 시험에서 신규 출력·예외 노출이 없는지 검증합니다. 기존 공통 DTO를 꺼내 직접 출력하는 위험은 여전히 남아 있으며 공통 DTO는 변경하지 않았습니다.
+
+신규 JVM **27개**: 보존 노드2400/2401, 창·root32/33, 깊이60/61, 자식1200/1201·4자리 ordinal, 과도한 path/parentPath, 잘못된 숫자/path·누락·분기/형제 순회, 개별 필드4096/4097, 대상 합계32768/32769, 배경 합계와의 구분, null/빈 값 및 정상 snapshot/frame 전체 필드 보존, geometry 우선순위와 출력 비노출입니다. 기존 invalidChildCounts 시험은 Int.MAX_VALUE의 새 CHILD_COUNT_LIMIT 사유를 반영하되 거부 조건은 유지했습니다.
+
+**미해결 P1:** 실제 F0 전체 검사·배경 coverage, 동일 시도 token/구조·본문·outline 지문 결합, 실제 Android 서비스 세션·화면 무효화·TTL은 해결하지 않았습니다. 공급된 완료 표시는 인증이 아닙니다. 크기 상한은 실제100ms 수집 예산·코루틴 취소·전체 heap 사용량 또는 입력 생성 전 할당을 보장하지 않습니다. collector와의 DTO/지문 byte 동등성 및 기존 더 엄격한 배경 geometry/활성 창/Window-frame 거부 차이도 미검증입니다.
+
+운영 미연결을 유지하므로 Scroll MALFORMED_NODE_BOUNDS, 별도 WINDOW_OUTSIDE_FRAME, TIME_LIMIT/TARGET_MISSING과 기존14개 UNOBSERVED=14는 여전히 미해결입니다. 실제 Android API35/37 계측을 실행하지 않았으며 수집 복구/F1 정확도/캡처·OCR 성공을 주장하지 않습니다. 기존 F0/F1·ROI/버퍼 거부·동의/허용·개인정보 보호·예산·자동 행동 금지를 그대로 유지합니다. 기존 PR #7에만 반영하고 새 PR/병합은 하지 않습니다.
+
+최종 로컬 검증(JDK17)은 위와 같은 전체 Gradle 명령으로 **BUILD SUCCESSFUL (1분26초, 196 tasks: 26 executed / 170 up-to-date)**입니다. JVM **277개**(앱204/호스트73), 실패/오류/건너뜀0, 앱·호스트 debug Lint 이슈0. Debug/Release·계측 APK 빌드와 `verify_capture_test_apks.py --release-apk ...`의 호스트 런타임/driver 격리/release 합성 probe 부재 패키징 검사를 통과했습니다. 승인된6개 경로 밖의 app/host/synthetic-support 기존 추적 파일을8496608과 바이트 비교하여 변경0개를 확인했고, 나머지 추적 파일도 Git diff 변경이 없습니다. 전체 raw 바이트 비교에서는 기존 checkout의 gradlew.bat 줄바꿈 변환 차이가 있으므로 그 파일까지 바이트 동일하다고 주장하지 않습니다. CI는 이번 커밋의 기존 PR #7 Checks에서 별도 확인하며, 실제 Android 실행 결과로 해석하지 않습니다.
+
+Windows에서 신규 독립 회귀만 확인하려면 다음을 실행합니다. 원래14개 기기 baseline을 통과시키는 수정이 아니므로 새 Android 성공을 기대 결과로 안내하지 않습니다.
+
+```powershell
+git switch feature/f1-popup-detection
+git pull --ff-only origin feature/f1-popup-detection
+.\gradlew.bat --no-daemon :app:testDebugUnitTest --tests "kr.closeforyou.accessibility.CollectionProjectionLimitsTest"
+```
+
+기대 결과는 신규 합성27개 통과이며 전체 검증은 위 전체 Gradle 명령을 Windows의 `.\gradlew.bat`으로 실행합니다.
+
+
+## PR #7 후속: V1 지문 codec 독립 검증 — 운영 미연결
+
+기준 `07d2eda`, 깨끗하고 원격과 일치하는 feature/f1-popup-detection에서 시작했습니다. 신규 A 내부 `SnapshotFingerprintCodec.kt`만 구현하고 AndroidSnapshotCollector에는 연결하지 않았습니다. 기존 collector/service/Runtime·F0/F1·두 pass/예산/진단·evidence/projection·BCD/공통 계약·PR #10·원래14개 시나리오는 변경하지 않았습니다.
+
+codec은 caller가 공급하는 기존 방식의32바이트 salt를 복사하여 각 새 SHA-256의 맨 앞에 넣습니다. UTF-8 바이트 수의4바이트 big-endian 길이, null=-1/빈 값=0, 원래 노드/구조 필드 순서, CLICK→DISMISS의 정확한 `CLICK,DISMISS` 직렬화, 본문의 path/text/description, outline의 path/viewId/className, application의 package 규격을 유지합니다. 기존에 없는 domain tag·보호 증거·geometry 필드를 추가하지 않습니다. salt를 생성하거나 token·완료 플래그를 발급하지 않습니다.
+
+[독립 생성 방법과 전체 규격](SNAPSHOT_FINGERPRINT_V1.md)에 기존 코드 대응과 한계를 기록했습니다. `tools/generate_snapshot_fingerprint_goldens.py`가 별도로 선언한 고정 합성 노드·테스트 전용 salt에 Python `struct.pack(">i", ...)`·UTF-8·`hashlib.sha256`을 적용하여22개 vector의 raw stream과 예상 hash를 JVM test resource에 사전 계산합니다. Kotlin codec 호출·소스 파싱·실제 사용자 입력은 없습니다. JVM 시험은 정적 예상32바이트와 `assertArrayEquals`로 비교하며 codec을 expected 생성기로 사용하지 않습니다. Python 기본 명령의 재계산 비교도 통과했습니다. 콘솔에는 고정 합성 상태 코드만 출력합니다.
+
+신규 JVM **34개**는 네 지문 종류의 독립 golden, null/빈 값·한글/emoji·255바이트 초과 길이·고립 surrogate·정규화 부재, 필드/노드 순서, actions 네 조합/역순 set, 포함/제외 필드, 고정 salt 재현성·변경·방어적 복사, 반환 bytes 복사·새 hash 상태·hex·redacted/no-output 및 salt 오류의 고정 메시지를 검사합니다. 최초 시험의 test resource 조회를 Properties 클래스 기준으로 수행한 오류는 테스트 클래스 기준 조회로 수정했고, 후속 신규34개를 통과했습니다. 운영 codec 지문 규격을 바꿔서 테스트를 맞춘 변경은 아닙니다.
+
+codec·노드 wrapper·digest wrapper는 redacted이며 로그/파일/DB/네트워크 출력이 없습니다. 명시적으로 꺼낸 bytes/hex도 민감 데이터이므로 출력·저장해서는 안 됩니다. 독립 생성기·golden resource·모든 시험 입력은 합성 전용입니다.
+
+**남은 P1/다음 단계:** 실제 F0 전체 검사·배경 coverage, 같은 수집 시도의 token/구조·본문·outline 지문 결합, 서비스 세션·무효화·TTL은 미해결입니다. golden 통과는 Android getter/다중 childCount 읽기/두 pass 사이 변경·collector 전체 DTO/진단/성능/100ms/취소의 동등성을 증명하지 않습니다. 다음 승인 단계는 A 소유 보호 증거와 대상 노드 기록을 분리하고 기존 두 pass 안의 실제 값에 결합하는 설계이며, 세 번째 Android 전체 순회·가짜 지문에 의한 통과·부분 Ready는 금지입니다. Scroll malformed/Window-frame/원래14개 UNOBSERVED는 그대로이며 실제 API35/37 계측을 실행하지 않았습니다.
+
+최종 로컬 검증(JDK17):
+
+```sh
+python3 -B tools/generate_snapshot_fingerprint_goldens.py
+./gradlew --no-daemon :app:assembleDebug :app:assembleDebugAndroidTest :app:testDebugUnitTest :capture-test-host:testDebugUnitTest :app:lintDebug :capture-test-host:lintDebug :app:assembleRelease
+python3 -B tools/verify_capture_test_apks.py --release-apk app/build/outputs/apk/release/app-release-unsigned.apk
+```
+
+**BUILD SUCCESSFUL (1분16초, 196 tasks: 22 executed / 174 up-to-date)**. JVM **311개**(앱238/호스트73), 실패/오류/건너뜀0, 앱·호스트 debug Lint 이슈0. Debug/Release·계측 APK 및 기존 패키징 검사를 통과했고 golden 리소스가 앱 Debug/Release·계측 APK에 포함되지 않음을 확인했습니다. codec만 추가한 상태로 기존 app/host/synthetic-support 추적 파일을07d2eda와 바이트 비교해 변경0개, 운영 코드의 codec 참조0개를 확인했습니다. 이 성공은 실제 Android 수집 동등성이나 F1 baseline 복구가 아닙니다. CI 상태는 이번 커밋의 기존 PR #7 Checks에서 별도로 확인합니다. 새 PR/자동 병합은 하지 않습니다.
+
+
+## PR #7 후속: 기존 F0 보호 root 범위 고정 — 9922c80 이후
+
+깨끗한 feature/f1-popup-detection에서 시작했고 로컬/원격 기준9922c80 일치를 확인했습니다. 이번에는 승인된 **기존 collector의 root 검사 생략 방지**만 운영 경로에 적용합니다. CollectionAttempt·보호 완료 receipt·독립 evidence/projection/codec은 연결하지 않습니다.
+
+- AndroidSnapshotCollector의 해제 소유 roots 목록은 그대로 유지하고, 열거 당시 대상/동일 앱/정책상 제외 root 여부와 기대 창을 capture 지역 guard에 기록합니다. 최초 target 창 ID를 선택 기준으로 사용해 나중 root ID로 다른 창을 선택하지 않습니다.
+- 보호 대상 root의 package null/불일치는 PACKAGE_MISMATCH, 창 소속 불일치는 ROOT_WINDOW_MISMATCH로 UNREADABLE_TREE 차단합니다. getter 실패는 기존 COLLECTION_FAILED와 고정 operation/exception 코드로 처리합니다. 실제 root의 재검사에서도 두 pass 모두 null package를 거부하며 자식의 기존 package-null 정책은 유지합니다.
+- 비활성·비포커스 타사 창의 기존 제외 조건과 active/focused/capture isolation 타사 차단식은 그대로입니다. 제외 root가 이후 대상 앱으로 읽히면 PROTECTION_SCOPE_CHANGED로 거부하며 보호 범위를 정상 완료로 확장하지 않습니다.
+- 최초 실패 진단·기존 catch/finally, 모든 자식 F0 검사·두 pass·공유2400 방문/100ms·기존 지문/DTO/Ready 생성은 유지합니다. 새 root getter는 예산을 늘리지 않습니다. 원본14개 fixture/계측/정답·서비스/Runtime·공통 계약/BCD·PR10·자동 행동 경로는 변경하지 않았습니다.
+- 새 finding2개/operation1개는 host의 고정 진단 allowlist에만 추가합니다. 화면 원문·package·실제 창 ID·좌표·지문·salt·예외 메시지 로그를 추가하지 않습니다.
+
+신규 JVM20개(guard19 + host formatter1)를 추가했습니다. 정상 대상/배경, package 변경/null/실패, window 변경/실패, 타사 제외 유지와 범위 변경, 두 번째 root package 읽기, 숨김 합성 민감 자식의 F0 실패 전파, 최초 진단/후속 단계 중단/문자열 비노출을 검사합니다. guard의 합성 scalar getter와 callback 시험이며 실제 Android root 변경·framework 객체 해제·서비스 후보 미발행을 재현한 시험이 아닙니다. 서비스의 Blocked→detector.clear 및 Ready 분기 미진입은 소스로 확인했습니다.
+
+상세 추가 거부 조건·유지한 제외 정책·미검증 범위는 [계약 검토 0-C](F1_PROTECTION_GEOMETRY_CONTRACT_REVIEW.md#0-c-등록한-보호-root의-검사-생략-방지--9922c80-이후)에 있습니다. 기기에서는 [Windows API37 기존 절차](F1_BASELINE_ISOLATION.md#windows-api-37-실행-순서)로 본 앱/host/host 계측 APK 세 개를 설치하고, 서비스·수집 동의·host 단독 허용·분석 시작 및 캡처 OFF 상태에서 독립 baseline과 원래14개 회귀를 구분해 확인합니다. 기존 Scroll/Window 차단이 없어지거나14개가 통과할 것으로 기대하는 수정은 아닙니다.
+
+실제 Android 계측은 미실시입니다. root 읽기 사이의 변경, 새 창/배경 내용 변화, snapshot 보호 후 값 재조회, 세션/정책/토큰/지문/취소·TTL 결합은 후속입니다. Scroll malformed, WINDOW_OUTSIDE_FRAME, TIME_LIMIT/TARGET_MISSING과 원래14개 UNOBSERVED는 미해결이며 F1 정확도·캡처/OCR 성공을 주장하지 않습니다.
+
+검증(JDK17):
+```sh
+./gradlew --no-daemon :app:assembleDebug :app:assembleRelease :app:assembleDebugAndroidTest :app:testDebugUnitTest :capture-test-host:testDebugUnitTest :app:lintDebug :capture-test-host:lintDebug
+python3 -B tools/verify_capture_test_apks.py --release-apk app/build/outputs/apk/release/app-release-unsigned.apk
+```
+BUILD SUCCESSFUL (1분31초, 196 tasks: 31 executed/165 up-to-date). JVM331개(앱257/host74), 실패·오류·건너뜀0. 앱/host Debug Lint 이슈0. Debug/Release·계측 APK 및 독립 호스트 Kotlin 런타임/driver 격리/release probe 부재 패키징 검사를 통과했습니다. 기준9922c80과 기존 파일을 비교해 허용한 collector/진단/host formatter·시험 외 app/host/synthetic-support 파일 변경0, collector의 walk/예산/지문/최종 DTO·Ready/catch/finally와 타사 창 차단식 동일을 확인했습니다. 새 순수 지문/증거/projection과 서비스/Runtime은 미변경입니다. 실제 계측 실행 결과는 아닙니다.
+
+## PR #7 후속: 합성 CollectionAttempt 소유권·계약 분리 — 00c7223 이후
+
+원격과 동일한 `feature/f1-popup-detection` / `00c7223` 및 깨끗한 작업 트리를 확인하고 시작했습니다. **실제 Android reader 연결은 하지 않습니다.** 상세 계약·상태 전이·한계는 [F1_COLLECTION_ATTEMPT.md](F1_COLLECTION_ATTEMPT.md)에 있습니다.
+
+- 신규 CollectionAttempt는 private 생성자와 syntheticReview factory만 제공합니다. STARTED → SCOPE_FIXED → PROTECTION_REVIEWED → TARGET_RECORDED → FINAL_REVIEWED → CONSUMED 또는 DISCARDED로 진행하며 역행/재시작을 거부합니다. 최초 실패 보존, monitor 동기화, 다른 owner receipt/완료 handle 거부,1회 소비, 취소·무효화·입력 실패 후 참조 해제를 구현했습니다.
+- receipt와 완료 handle의 실제 구현은 owner 내부 private 일반 클래스입니다. copy/UUID/임의 상태 인자로 생성하지 못하며 owner identity와 발급한 객체 동일성을 확인합니다. 모든 결과는 합성 검토이고 productionReady=false입니다. 소비는 고정 enum만 반환하며 DTO/Ready/행동 권한을 내보내지 않습니다.
+- 배경은 ProtectionRootEvidence의 보호·순회 관측만 보존합니다. 실제 F0 증거가 아닌 미인증 합성 입력입니다. 대상 root만 전체 노드/본문/actions/geometry/outline 기록을 갖습니다. 배경에 geometry getter나 가짜 노드를 요구하지 않습니다. 기존 prototype의 배경 개별 노드 검사는 후속 실제 reader 책임으로 분리했고, 이번에 그 검사가 수행됐다고 주장하지 않습니다.
+- 독립 projection의 Complete를 StructuralMatch로 명확히 이름 변경했습니다. target 노드 보호/순회/topology/원시 geometry·상한, 모든 보호 root의 관측·coverage 관계 검사와 정상 DTO 필드 보존은 유지합니다. 배경 불완전과 target geometry 불완전은 서로 대신할 수 없습니다. 최대2400은 이제 보존 target 기록 수이고 실제2T+B 방문/100ms를 증명하지 않습니다.
+- 민감 데이터는 로그/파일/DB에 출력하지 않습니다. wrapper/handle은 redacted이며 입력 실패는 고정 코드입니다. 입력 CancellationException은 폐기 후 고정 메시지의 새 취소 예외로 전파하고 원본 메시지/cause/suppressed를 전달하지 않습니다. 이미 호출자가 소유한 raw fixture나 JVM heap의 물리적 소거를 보장하지 않습니다.
+
+신규 JVM **44개**(CollectionAttemptTest40 + CollectionProjectionTest4)를 추가했고 기존 evidence9/projection31/limits27 회귀를 계약 분리에 맞게 갱신했습니다. 순서·누락/중복/변경·다른 attempt·동시/재소비·모든 미소비 단계 취소/무효화·최초 실패·배경/target 독립성·hidden 보호·malformed·필드/상한·제한된 입력 복사·재진입·예외 비노출·참조 해제를 검사합니다. 최초 targeted 실행의 reflection 시험은 컴파일러 정적 필드를 잘못 포함한 실패를 instance 필드 검사로 수정했습니다. 실제 보호 규칙을 완화한 수정이 아닙니다.
+
+기준00c7223과 허용된 prototype/시험 경로 외 기존 app/host/synthetic-support 추적 파일을 바이트 비교해 변경0개를 확인했습니다. Collector, root guard, 서비스/Runtime, F0/F1, 두 pass/예산/지문/진단, 공통 계약/BCD, PR10, 원래14개 시나리오는 그대로입니다. 신규 모델/attempt/projection의 운영 호출 지점0개를 소스로 확인했습니다. 실제 Android 실행의 동등성을 계측으로 입증한 것은 아닙니다.
+
+**미해결 P1:** 실제 전체 F0/숨김·배경 coverage, 실제 Android getter 값과 같은 시도의 token/salt/구조·본문·outline 지문 결합, 정책 revision/서비스 session/무효화/TTL/취소, root/windows/frame 읽기 시점 불일치는 해결하지 않았습니다. supplied COMPLETE/raw fixture는 인증이 아니며 같은 raw 입력을 다른 attempt에 재제출하는 것을 실제 화면 출처로 식별하지 못합니다. 실제 reader의 생성 권한·두 pass 안의 값 결박·비용/최초 진단/DTO·지문 동등성·실패 시 downstream 호출0을 별도 승인 후 검증해야 합니다. 세 번째 Android 전체 순회는 추가하지 않습니다.
+
+실제 API35/37 계측 미실시입니다. Scroll MALFORMED_NODE_BOUNDS와 별도 WINDOW_OUTSIDE_FRAME, TIME_LIMIT/TARGET_MISSING, 원래14개 UNOBSERVED=14는 그대로 미해결입니다. 이번 합성 계약 통과는 F0 완료·수집 복구·F1 정확도·일반 앱 OCR 성공이 아닙니다. PR #7과 Draft PR #10을 미병합으로 유지합니다.
+
+최종 로컬 검증(JDK17):
+```sh
+./gradlew --no-daemon :app:assembleDebug :app:assembleRelease :app:assembleDebugAndroidTest :app:testDebugUnitTest :capture-test-host:testDebugUnitTest :app:lintDebug :capture-test-host:lintDebug
+python3 -B tools/verify_capture_test_apks.py --release-apk app/build/outputs/apk/release/app-release-unsigned.apk
+```
+**BUILD SUCCESSFUL (1분20초, 196 tasks: 24 executed / 172 up-to-date)**. JVM **375개**(앱301/호스트74), 실패·오류·건너뜀0. 앱·호스트 Debug Lint 이슈0. Debug/Release·계측 APK와 독립 호스트 Kotlin 런타임/driver 격리/release probe 부재 패키징 검사 통과입니다. CI는 push한 동일 커밋의 기존 PR #7 Checks에서 별도로 확인합니다.
+
+Windows에서 이번 순수 합성 계약 회귀만 실행하려면:
+```powershell
+.\gradlew.bat --no-daemon :app:testDebugUnitTest --tests "kr.closeforyou.accessibility.CollectionAttemptTest" --tests "kr.closeforyou.accessibility.CollectedTreeEvidenceTest" --tests "kr.closeforyou.accessibility.CollectionProjectionTest" --tests "kr.closeforyou.accessibility.CollectionProjectionLimitsTest"
+```
+기대 결과는 합성111개 통과입니다. 실제 서비스 F0·14개 시나리오의 baseline 성공을 뜻하지 않습니다.
+
+## PR #7 후속: 미연결 합성 코드 P2 두 건 보강 — a341dd6 이후
+
+정확한 feature/f1-popup-detection, 로컬/원격 기준a341dd6 및 깨끗한 작업 트리를 확인하고 시작했습니다. [합성 계약 P2 보강](F1_COLLECTION_ATTEMPT.md#합성-코드-p2-보강--a341dd6-이후)에 한도·예외 경계와 한계를 기록했습니다.
+
+1. CollectionAttempt.recordSyntheticTarget의 입력 조회/대상 검증/evidence 생성/projection/결과 기록을 하나의 Exception 경계로 묶었습니다. 일반 예외는 REVIEW_FAILED로 폐기, 취소는 CANCELLED로 폐기 후 COLLECTION_REVIEW_CANCELLED 고정 메시지로 전파합니다. 최초 실패 보존·참조 해제·재완료 금지는 유지하며 원본 메시지/cause/suppressed는 전달하지 않습니다. Throwable/Error 전체 포획은 추가하지 않았습니다.
+2. application/structure/content/outline 지문 각각128자, packageName256자, popupInstanceId128자 상한을 적용합니다. 각 길이를 O(1)로 먼저 확인하며 초과하면 IDENTITY_LENGTH_LIMIT로 전체 거부합니다. 상한 통과 후 기존 isBlank 검사를 수행합니다. 실제 V1 SHA-256 hex64자·UUID36자와 기존 합성 label은 그대로 수용합니다. 형식/출처 인증이나 실제 시간 예산 검증이 아닙니다.
+
+신규 JVM **17개**(CollectionAttemptTest9 + CollectionProjectionLimitsTest8)입니다. isEmpty 일반·취소 예외, 노드 수/순회·창 수/순회·late DTO actions 조회 fault, 재완료 거부·최초 실패·참조 해제·원본 메시지 비노출·Error 비포획, 모든6개 문자열의 경계/경계+1/긴 공백+비공백/긴 blank/상한 내 blank, 기존 label·독립 golden64자리 보존과 출력 비노출을 검사합니다. 수정 전 isEmpty 회귀2개가 예상대로 실패했고 수정 후 통과했습니다. Android framework 재현이 아닌 합성 collection fault 주입입니다. 기존 codec/golden 파일은 수정하지 않았고 Python read-only 재계산도 SYNTHETIC_GOLDENS_MATCH입니다.
+
+허용한 신규 모델2개와 대응 시험2개 외 app/host/synthetic-support의 기존 추적 파일을a341dd6과 바이트 비교하여 변경0개, 신규 모델의 운영 호출 지점0개를 확인했습니다. AndroidSnapshotCollector/ProtectionRootGuard/서비스/Runtime·F0/F1·두 pass/예산/지문/진단·공통 계약/BCD·PR10·원래14개·클릭/캡처/OCR 경로를 수정하거나 연결하지 않았습니다. 이번 수정은 미연결 합성 코드의 P2 두 건만 처리합니다.
+
+**P1 세 건은 미해결:** (1) 실제 전체 F0·숨김/동일 앱 배경 coverage와 실제 reader의 receipt 발급 권한, (2) 검사한 scalar/대상 기록과 동일 시도의 salt/토큰/구조·본문·outline 지문 결합, (3) 실제 서비스 세션·정책 철회·취소·화면 현재성·TTL. 순수 projection과 기존 collector의 DTO/최초 진단/거부 단계 동등성 및 비용 검증도 후속입니다. 합성 완료를 실제 F0 증명이나 운영 Ready로 사용하지 않습니다.
+
+실제 API35/37 계측 미실시입니다. Scroll 역전 Rect, Window/frame 불일치, 별도 TIME_LIMIT/TARGET_MISSING과 원래14개 UNOBSERVED=14는 그대로 미해결입니다. F1 감지 정확도·일반 앱 OCR 성공을 주장하지 않습니다. PR #7 및 Draft PR #10은 미병합으로 유지합니다.
+
+최종 로컬 검증(JDK17):
+```sh
+python3 -B tools/generate_snapshot_fingerprint_goldens.py
+./gradlew --no-daemon :app:assembleDebug :app:assembleRelease :app:assembleDebugAndroidTest :app:testDebugUnitTest :capture-test-host:testDebugUnitTest :app:lintDebug :capture-test-host:lintDebug
+python3 -B tools/verify_capture_test_apks.py --release-apk app/build/outputs/apk/release/app-release-unsigned.apk
+```
+**BUILD SUCCESSFUL (1분20초, 196 tasks: 22 executed / 174 up-to-date)**. JVM **392개**(앱318/호스트74), 실패·오류·건너뜀0. 앱·호스트 Debug Lint 이슈0. Debug/Release·계측 APK와 독립 호스트 Kotlin 런타임/driver 격리/release probe 부재 패키징 검사 통과입니다. push한 동일 커밋의 CI는 기존 PR #7 Checks에서 별도로 확인합니다.

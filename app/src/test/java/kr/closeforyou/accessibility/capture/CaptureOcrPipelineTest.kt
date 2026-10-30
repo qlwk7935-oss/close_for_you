@@ -19,6 +19,87 @@ import org.junit.Test
 @OptIn(ExperimentalCoroutinesApi::class)
 class CaptureOcrPipelineTest {
     private val box = ScreenBounds(100, 500, 900, 560)
+    @Test fun incompleteSnapshotNeverReachesCaptureOrOcr() = runTest {
+        val shots = Shots(); var preflights = 0
+        val result = CaptureOcrPipeline(shots, OcrPort { error("NO_OCR") }, { true }, { preflights++; null })
+            .analyze(imagePopup().copy(completeness = SnapshotCompleteness.TRUNCATED))
+        assertTrue(result is EvidenceOutcome.Blocked); assertEquals(0, shots.calls); assertEquals(0, preflights)
+    }
+    @Test fun treeOnlyEarlyReturnRechecksCurrentnessAfterDenialCallback() = runTest {
+        var current = true
+        val shots = object : ScreenshotPort {
+            override fun availability(token: SnapshotToken) = CaptureAvailability.PRIVACY_BLOCKED
+            override fun denial(token: SnapshotToken): EvidenceIssue { current = false; return EvidenceIssue.NOT_REQUESTED }
+            override suspend fun capture(snapshot: PopupSnapshot, region: CaptureRegion): CaptureFrame = error("NO_CAPTURE")
+        }
+        val job = async { CaptureOcrPipeline(shots, OcrPort { error("NO_OCR") }, { current }, { null }).analyze(imagePopup()) }
+        job.join(); assertTrue(job.isCancelled)
+    }
+    private fun failingCloseShots(afterClose: () -> Unit = {}, fail: Boolean = true): ScreenshotPort = object : ScreenshotPort {
+        override fun availability(token: SnapshotToken) = CaptureAvailability.AVAILABLE
+        override fun denial(token: SnapshotToken): EvidenceIssue? = null
+        override suspend fun capture(snapshot: PopupSnapshot, region: CaptureRegion) = object : CaptureFrame {
+            override val bounds = region.bounds
+            override fun close() { afterClose(); if (fail) throw IllegalStateException("SYNTHETIC_PRIVATE") }
+        }
+    }
+    @Test fun successfulOcrCannotReturnReadyIfFrameCloseFails() = runTest {
+        var failure: EvidenceFailure? = null
+        try { CaptureOcrPipeline(failingCloseShots(), OcrPort { listOf(OcrLine("합성 공지", box)) }, { true }, { null })
+            .analyze(imagePopup()) } catch (f: EvidenceFailure) { failure = f }
+        assertEquals(EvidenceIssue.PRIVACY_UNCERTAIN, failure?.issue)
+        assertNull(failure?.cause)
+    }
+    @Test fun currentnessChangeDuringSuccessfulCloseCannotReturnReady() = runTest {
+        var current = true
+        val job = async { CaptureOcrPipeline(failingCloseShots({ current = false }, false),
+            OcrPort { listOf(OcrLine("합성 공지", box)) }, { current }, { null }).analyze(imagePopup()) }
+        job.join(); assertTrue(job.isCancelled)
+    }
+    @Test fun ocrCancellationIsNotMaskedByFrameCloseFailure() = runTest {
+        val original = kotlinx.coroutines.CancellationException("SYNTHETIC_PRIVATE")
+        var caught: Throwable? = null
+        try { CaptureOcrPipeline(failingCloseShots(), OcrPort { throw original }, { true }, { null }).analyze(imagePopup()) }
+        catch (f: Throwable) { caught = f }
+        assertTrue(caught is kotlinx.coroutines.CancellationException)
+        assertTrue(caught === original || caught?.cause === original)
+        assertTrue(original.suppressed.isEmpty())
+    }
+    @Test fun cancellationInRecoveryPreflightIsNotMaskedByCloseFailure() = runTest {
+        val original = kotlinx.coroutines.CancellationException("SYNTHETIC_PRIVATE")
+        var checks = 0; var caught: Throwable? = null
+        try { CaptureOcrPipeline(failingCloseShots(), OcrPort { throw EvidenceFailure(EvidenceIssue.OCR_FAILED) },
+            { true }, { checks++; if (checks == 3) throw original else null }).analyze(imagePopup()) }
+        catch (f: Throwable) { caught = f }
+        assertSame(original, caught)
+    }
+    @Test fun privacyBlockIsPreservedWhenFrameCloseAlsoFails() = runTest {
+        val result = CaptureOcrPipeline(failingCloseShots(), OcrPort { listOf(OcrLine("비밀번호", box)) },
+            { true }, { null }).analyze(imagePopup()) as EvidenceOutcome.Blocked
+        assertEquals(PrivacyBlockReason.SENSITIVE_CONTENT, result.reason)
+    }
+    @Test fun liveTtlExpiryOrDisconnectDuringOcrPreventsCompletion() = runTest {
+        for (disconnect in listOf(false, true)) {
+            val s = imagePopup().let { it.copy(capturedAtUptimeMillis = 0,
+                token = it.token.copy(captureEpoch = it.token.screenVersion)) }
+            var time = 0L; val live = LiveEvidenceState({ time })
+            live.connect(); live.invalidate(s.token.screenVersion); assertNotNull(live.begin(s))
+            val ready = CompletableDeferred<Unit>(); val shots = Shots()
+            val job = async { CaptureOcrPipeline(shots, OcrPort { ready.await(); listOf(OcrLine("합성 공지", box)) },
+                { live.currentToken() == it }, { null }).analyze(s) }
+            runCurrent()
+            if (disconnect) live.disconnect() else time = 5_000
+            ready.complete(Unit); job.join(); assertTrue(job.isCancelled); assertTrue(shots.frame!!.closed)
+        }
+    }
+    @Test fun captureConsentRevokedDuringOcrDiscardsAllOcrText() = runTest {
+        val shots = Shots()
+        val result = CaptureOcrPipeline(shots, OcrPort {
+            shots.issue = EvidenceIssue.NOT_REQUESTED; listOf(OcrLine("합성 공지", box))
+        }, { true }, { null }).analyze(imagePopup()) as EvidenceOutcome.Ready
+        assertEquals(EvidenceIssue.NOT_REQUESTED, result.issue)
+        assertTrue(result.analysis.texts.none { it.source == TextSource.OCR }); assertTrue(shots.frame!!.closed)
+    }
     private fun imagePopup(): PopupSnapshot {
         val source = MockPopupFixtures.notice().snapshot
         return source.copy(nodes = source.nodes.toPersistentList().add(NodeSnapshot(

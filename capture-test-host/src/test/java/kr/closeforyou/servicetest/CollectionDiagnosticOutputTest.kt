@@ -1,0 +1,36 @@
+package kr.closeforyou.servicetest
+
+import org.junit.Assert.*
+import org.junit.Test
+
+class CollectionDiagnosticOutputTest {
+    @Test fun `new root ownership diagnostics use only fixed allowlisted codes`() {
+        for ((finding, operation) in listOf("ROOT_WINDOW_MISMATCH" to "ROOT_WINDOW_READ",
+            "PROTECTION_SCOPE_CHANGED" to "NODE_PACKAGE_READ")) {
+            val encoded = "UNREADABLE_TREE:PROTECTION_PASS:TREE_PROTECTION:SAME_APP_BACKGROUND:NODE_PACKAGE:$finding:NONE:VERIFIED:$operation:NONE:UNOBSERVED:UNOBSERVED:UNOBSERVED:UNOBSERVED:UNOBSERVED:UNOBSERVED"
+            val rendered = CollectionDiagnosticOutput.format(encoded)
+            assertTrue(rendered.contains("CAUSE=$finding"))
+            assertTrue(rendered.contains("OP=$operation"))
+            assertEquals("COLLECTION_DIAGNOSTIC_INVALID", CollectionDiagnosticOutput.format(
+                encoded.replace(finding, "PRIVATE_PACKAGE_OR_WINDOW")))
+        }
+    }
+    @Test fun `renders one correlated fixed code tuple`() {
+        assertEquals("BLOCK=EDITABLE_FIELD;STEP=PROTECTION_PASS;DETAIL=TREE_PROTECTION;TREE=TARGET;FIELD=INPUT_TYPE;CAUSE=NON_ZERO_INPUT_TYPE;RELATED=NONE;FRAME=VERIFIED;OP=NODE_FIELD_CHECK;EXCEPTION=NONE;NODE_RECT=UNOBSERVED;NODE_VISIBILITY=UNOBSERVED;NODE_ANCESTRY=UNOBSERVED;NODE_ROLE=UNOBSERVED;WINDOW_BOUNDS_AGE=UNOBSERVED;TRIGGER=UNOBSERVED",
+            CollectionDiagnosticOutput.format("EDITABLE_FIELD:PROTECTION_PASS:TREE_PROTECTION:TARGET:INPUT_TYPE:NON_ZERO_INPUT_TYPE:NONE:VERIFIED:NODE_FIELD_CHECK:NONE:UNOBSERVED:UNOBSERVED:UNOBSERVED:UNOBSERVED:UNOBSERVED:UNOBSERVED"))
+    }
+    @Test fun `malformed payload never echoes text positions or identities`() {
+        for (payload in listOf("합성 문서", "123", "APP:100,200", "A:B:C:D:E:F:G:H;INJECTED", "A:B:C:D:E:F:G", "a:B:C:D:E:F:G:H",
+            "EDITABLE_FIELD:PROTECTION_PASS:TREE_PROTECTION:TARGET:INPUT_TYPE:ARBITRARY_UPPERCASE:NONE:VERIFIED")) {
+            assertEquals("COLLECTION_DIAGNOSTIC_INVALID", CollectionDiagnosticOutput.format(payload))
+        }
+    }
+    @Test fun `raw events do not make a collected baseline and incomplete collection is not usable`() {
+        assertFalse(DetectionObservationReadiness.collected(0, 0, 0, 0))
+        assertFalse(DetectionObservationReadiness.usableBaseline(0, 0, true))
+        assertFalse(DetectionObservationReadiness.usableBaseline(1, 0, false))
+        assertTrue(DetectionObservationReadiness.collected(0, 0, 0, 1)) // Stop and diagnose, not a pass.
+        assertFalse(DetectionObservationReadiness.usableBaseline(0, 0, true))
+        assertTrue(DetectionObservationReadiness.usableBaseline(1, 0, true))
+    }
+}
