@@ -176,7 +176,7 @@ internal class AndroidF9ScreenPort(
                 val result = mutableListOf<NodeSnapshot>()
                 val visible = mutableSetOf<String>()
                 val nativeRows = if (captureTarget && display?.nativeNeeded == true && kr.closeforyou.accessibility.integration.ManualDemoBoundsFeature.enabled)
-                    mutableListOf<kr.closeforyou.accessibility.NativeActionPresence>() else null
+                    mutableListOf<kr.closeforyou.accessibility.NativeActionSummary>() else null
                 fun visit(node: AccessibilityNodeInfo, path: String, depth: Int) {
                     tick()
                     readTrace.require(++nodeCount <= 1_200, F9ReadDetail.NODE_LIMIT)
@@ -200,14 +200,16 @@ internal class AndroidF9ScreenPort(
                     listOf(node.error, node.hintText, node.paneTitle, node.tooltipText, node.stateDescription).forEach(::freeze)
                     val actions = node.actionList
                     readTrace.require(actions.size <= 64, F9ReadDetail.ACTION_LIMIT)
-                    // Same single getter. Debug freezes references; full-list presence needs no
-                    // additional native getId calls. Release keeps the original action list.
+                    // Same actionList getter. Selected Debug reads freeze each existing action ID
+                    // once for both classification and DTO projection; Release is unchanged.
                     val readActions = if (nativeRows != null) actions.toList() else actions
-                    nativeRows?.add(kr.closeforyou.accessibility.nativeActionPresence(readActions.size))
+                    val readIds = if (nativeRows != null) readActions.map { it.id } else null
+                    nativeRows?.add(kr.closeforyou.accessibility.NativeActionSummary.fromIds(requireNotNull(readIds),
+                        hasUnverifiedLabel = readActions.any { it.label != null }))
                     val descriptor = NodeSnapshot(path, viewId, className, text, description, node.isClickable,
                         node.isEnabled, rect(node, readTrace), buildSet {
-                            if (readActions.any { it.id == AccessibilityNodeInfo.ACTION_CLICK }) add(NodeAction.CLICK)
-                            if (readActions.any { it.id == AccessibilityNodeInfo.ACTION_DISMISS }) add(NodeAction.DISMISS)
+                            if (readIds?.contains(AccessibilityNodeInfo.ACTION_CLICK) ?: actions.any { it.id == AccessibilityNodeInfo.ACTION_CLICK }) add(NodeAction.CLICK)
+                            if (readIds?.contains(AccessibilityNodeInfo.ACTION_DISMISS) ?: actions.any { it.id == AccessibilityNodeInfo.ACTION_DISMISS }) add(NodeAction.DISMISS)
                         }.toPersistentSet())
                     result += descriptor
                     if (node.isVisibleToUser) visible += path
@@ -223,7 +225,7 @@ internal class AndroidF9ScreenPort(
                     tick()
                 }
                 visit(start, "0", 0)
-                displayNativeActions = nativeRows?.let { kr.closeforyou.accessibility.NativeNodeActions.forNodes(result, it) } ?: displayNativeActions
+                displayNativeActions = nativeRows?.let { kr.closeforyou.accessibility.NativeNodeActions.forNodeSummaries(result, it) } ?: displayNativeActions
                 return result to visible
             }
             readTrace.stage = F9ReadStage.TREE

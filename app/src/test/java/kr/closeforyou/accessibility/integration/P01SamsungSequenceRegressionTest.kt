@@ -8,6 +8,7 @@ import kotlinx.coroutines.test.*
 import kr.closeforyou.accessibility.*
 import kr.closeforyou.accessibility.action.*
 import kr.closeforyou.core.contract.*
+import kr.closeforyou.accessibility.NativeActionSummary
 import kr.closeforyou.core.model.*
 import kr.closeforyou.decision.*
 import kr.closeforyou.ui.voice.*
@@ -220,11 +221,14 @@ class P01SamsungSequenceRegressionTest {
                     val scene = demoScene ?: f.before.copy(nodes = if (changed) listOf(body.copy(text = "다른 안내")) else offered.nodes, windows = windows)
                     // These fake native reads explicitly report the fixture's full action lists.
                     // Production requires the collector/reader metadata; DTO inference is forbidden.
-                    fun states(nodes: List<NodeSnapshot>) = nodes.map { if (it.actions.isEmpty()) NativeActionPresence.NONE else NativeActionPresence.PRESENT }
+                    fun states(nodes: List<NodeSnapshot>) = nodes.map { n -> NativeActionSummary.fromIds(n.actions.map { when (it) {
+                        NodeAction.CLICK -> android.view.accessibility.AccessibilityNodeInfo.ACTION_CLICK
+                        NodeAction.DISMISS -> android.view.accessibility.AccessibilityNodeInfo.ACTION_DISMISS
+                    } }) }
                     val displayRead = if (demoCandidates == null) scene else scene.copy(
-                        nativeActions = NativeNodeActions.forNodes(scene.nodes, states(scene.nodes)))
+                        nativeActions = NativeNodeActions.forNodeSummaries(scene.nodes, states(scene.nodes)))
                     ManualDisplayContinuity.assess(offered, displayRead, identity.window, probe, identity.listing, demoCandidates,
-                        if (demoCandidates == null) null else NativeNodeActions.forSnapshot(offered, states(offered.nodes)))
+                        if (demoCandidates == null) null else NativeNodeActions.forSnapshotSummaries(offered, states(offered.nodes)))
                 }
             }, remove = {
                 valid = false; guarded.revoke(); lifetime.clear()

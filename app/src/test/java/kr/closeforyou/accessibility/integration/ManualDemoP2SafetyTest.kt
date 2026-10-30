@@ -33,7 +33,7 @@ class ManualDemoP2SafetyTest {
         }
     }
     @Test fun selectedSameStillRejectsNativeActionChangesHiddenByClickDismissProjection() {
-        val r = same(); r.freshNativeStates = mapOf(r.source.nodes[5].path to NativeActionPresence.PRESENT)
+        val r = same(); r.freshSummaries = mapOf(r.source.nodes[5].path to NativeActionSummary.fromIds(listOf(N.ACTION_LONG_CLICK)))
         assertEquals(ManualDisplayVerdict.CHANGED, r.run())
         assertEquals(POLICY_NATIVE_ACTIONS_CHANGED, r.row!!.demoBounds); assertEquals(1, r.removed)
     }
@@ -43,7 +43,7 @@ class ManualDemoP2SafetyTest {
         assertEquals(POLICY_NATIVE_ACTIONS_UNCONFIRMED, r.row!!.demoBounds); assertEquals(1, r.removed)
     }
     @Test fun knownStableRootFocusDoesNotNeedAPassiveExceptionWhenThereWasNoGeometryChange() {
-        val r = same(); r.originalNativeStates = mapOf("0" to NativeActionPresence.PRESENT); r.freshNativeStates = r.originalNativeStates
+        val r = same(); r.originalSummaries = mapOf("0" to NativeActionSummary.fromIds(listOf(N.ACTION_FOCUS))); r.freshSummaries = r.originalSummaries
         assertEquals(ManualDisplayVerdict.SAME, r.run())
         assertEquals(SELECTED, r.row!!.demoBounds) // Strict equality, not POLICY_RETAIN_*.
         assertEquals(0, r.removed); assertNull(r.raw); assertEquals(0, r.f.clicks)
@@ -57,9 +57,9 @@ class ManualDemoP2SafetyTest {
         for (id in listOf(N.ACTION_LONG_CLICK, N.ACTION_SCROLL_FORWARD, N.ACTION_ACCESSIBILITY_FOCUS, Int.MAX_VALUE)) {
             val r = rig(); val path = r.source.nodes[5].path
             assertFalse(r.source.nodes[5].clickable); assertTrue(r.source.nodes[5].actions.isEmpty())
-            r.originalNativeStates = mapOf(path to nativeActionPresence(listOf(id).size))
-            r.freshNativeStates = r.originalNativeStates; moveBody(r)
-            r.rejected(POLICY_INTERACTIVE_BOUNDS)
+            r.originalSummaries = mapOf(path to NativeActionSummary.fromIds(listOf(id)))
+            r.freshSummaries = r.originalSummaries; moveBody(r)
+            r.rejected(if (id == Int.MAX_VALUE) POLICY_NATIVE_ACTIONS_UNCONFIRMED else POLICY_INTERACTIVE_BOUNDS)
         }
     }
     @Test fun eitherMissingNativeReadRejectsEvenWhenAllProjectedPassiveActionsAreEmpty() {
@@ -76,16 +76,18 @@ class ManualDemoP2SafetyTest {
         }
     }
     @Test fun actionPresenceChangeIsAChangeEvenIfClickAndDismissProjectionDidNotChange() {
-        val r = rig(); r.freshNativeStates = mapOf(r.source.nodes[5].path to NativeActionPresence.PRESENT)
+        val r = rig(); r.freshSummaries = mapOf(r.source.nodes[5].path to NativeActionSummary.fromIds(listOf(N.ACTION_LONG_CLICK)))
         r.rejected(POLICY_NATIVE_ACTIONS_CHANGED)
     }
     @Test fun copiedSnapshotOrForeignFreshListCannotReuseMetadata() {
         for (badOriginal in listOf(false, true)) {
             val r = rig(); val codes = mutableListOf<ManualDemoBoundsReason>()
-            val rows = r.source.nodes.map { if (it.actions.isEmpty()) NativeActionPresence.NONE else NativeActionPresence.PRESENT }
-            val original = if (badOriginal) NativeNodeActions.forSnapshot(r.source.copy(), rows) else r.originalProof()
+            val rows = r.source.nodes.map { n -> NativeActionSummary.fromIds(n.actions.map { when (it) {
+                NodeAction.CLICK -> N.ACTION_CLICK; NodeAction.DISMISS -> N.ACTION_DISMISS
+            } }) }
+            val original = if (badOriginal) NativeNodeActions.forSnapshotSummaries(r.source.copy(), rows) else r.originalProof()
             val fresh = if (badOriginal) r.withFreshProof() else r.fresh.copy(
-                nativeActions = NativeNodeActions.forNodes(r.fresh.nodes.toMutableList(), rows))
+                nativeActions = NativeNodeActions.forNodeSummaries(r.fresh.nodes.toMutableList(), rows))
             assertFalse(ManualDemoBoundsPolicy.retains(r.source, fresh, 30, ManualDisplayListing.NOT_ENUMERATED,
                 r.analysis!!.closeCandidates, original, codes::add))
             assertEquals(listOf(POLICY_NATIVE_ACTIONS_UNCONFIRMED), codes)
@@ -109,7 +111,7 @@ class ManualDemoP2SafetyTest {
         val r = rig(); val path = r.source.nodes[6].path
         r.source = r.source.copy(nodes = r.source.nodes.map { if (it.path == path) it.copy(clickable = false, actions = persistentSetOf()) else it }.toPersistentList())
         r.attach(); r.expand(reflow = true)
-        r.originalNativeStates = mapOf(path to NativeActionPresence.PRESENT); r.freshNativeStates = r.originalNativeStates
+        r.originalSummaries = mapOf(path to NativeActionSummary.fromIds(listOf(N.ACTION_LONG_CLICK))); r.freshSummaries = r.originalSummaries
         moveBody(r, ScreenBounds(40, 180, 220, 245)); r.rejected(POLICY_REFLOW_OVERLAP)
     }
     @Test fun normalAncestorsContainingButtonsAreNotMisclassifiedAsSiblingOcclusion() {
@@ -130,7 +132,7 @@ class ManualDemoP2SafetyTest {
     }
     @Test fun actionBearingRootNeverBypassesViaResizeTranslationOrPassiveReflow() {
         for (mode in 0..2) {
-            val r = rig(); r.originalNativeStates = mapOf("0" to NativeActionPresence.PRESENT); r.freshNativeStates = r.originalNativeStates
+            val r = rig(); r.originalSummaries = mapOf("0" to NativeActionSummary.fromIds(listOf(N.ACTION_LONG_CLICK))); r.freshSummaries = r.originalSummaries
             if (mode == 0) r.expand()
             if (mode == 1) {
                 fun shift(b: ScreenBounds) = ScreenBounds(b.left + 2, b.top + 2, b.right + 2, b.bottom + 2)

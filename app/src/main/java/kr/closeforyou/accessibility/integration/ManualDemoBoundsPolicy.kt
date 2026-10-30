@@ -17,7 +17,7 @@ internal enum class ManualDemoBoundsReason {
     POLICY_INCOMPLETE, POLICY_BINDING, POLICY_NODE_COUNT, POLICY_WINDOW_SCOPE, POLICY_CANDIDATE_COUNT,
     POLICY_TARGET_UNCONFIRMED, POLICY_ORIGINAL_TARGET, POLICY_WINDOW_UNCHANGED, POLICY_NATIVE_COLLISION,
     POLICY_WINDOW_SET, POLICY_OTHER_WINDOW, POLICY_TARGET_METADATA, POLICY_WINDOW_GEOMETRY,
-    POLICY_ROOT_PATH, POLICY_ROOT_INTERACTIVE, POLICY_ROOT_WINDOW, POLICY_NODE_FIELDS,
+    POLICY_ROOT_PATH, POLICY_ROOT_CLICKABLE, POLICY_ROOT_INTERACTIVE, POLICY_ROOT_WINDOW, POLICY_NODE_FIELDS,
     POLICY_ORIGINAL_NODE_GEOMETRY, POLICY_CURRENT_NODE_GEOMETRY,
     POLICY_CANDIDATE_NODE, POLICY_CANDIDATE_ROLE_EVIDENCE, POLICY_CANDIDATE_LABEL,
     POLICY_CANDIDATE_BINDING, POLICY_CANDIDATE_ACTION, POLICY_CANDIDATE_NOT_VISIBLE,
@@ -64,11 +64,10 @@ internal object ManualDemoBoundsPolicy {
         if (count !in 1..1_200 || fresh.nodes.size != count) return ManualDemoBoundsReason.POLICY_NATIVE_ACTIONS_UNCONFIRMED
         var changed = false
         for (i in original.nodes.indices) {
-            val before = originalActions?.state(original, count, i) ?: NativeActionPresence.UNKNOWN
-            val after = fresh.nativeActions?.state(fresh.nodes, count, i) ?: NativeActionPresence.UNKNOWN
-            if (before == NativeActionPresence.UNKNOWN || after == NativeActionPresence.UNKNOWN ||
-                (original.nodes[i].actions.isNotEmpty() && before == NativeActionPresence.NONE) ||
-                (fresh.nodes[i].actions.isNotEmpty() && after == NativeActionPresence.NONE))
+            val before = originalActions?.summary(original, count, i)
+            val after = fresh.nativeActions?.summary(fresh.nodes, count, i)
+            if (before == null || after == null || !before.hasExactKnownSet || !after.hasExactKnownSet ||
+                !before.matchesProjection(original.nodes[i].actions) || !after.matchesProjection(fresh.nodes[i].actions))
                 return ManualDemoBoundsReason.POLICY_NATIVE_ACTIONS_UNCONFIRMED
             if (before != after) changed = true
         }
@@ -108,7 +107,7 @@ internal object ManualDemoBoundsPolicy {
             !contains(fresh.screen, current.bounds) || current.bounds == fresh.screen) return reject(ManualDemoBoundsReason.POLICY_WINDOW_GEOMETRY)
         val oldRoot = original.nodes.first(); val newRoot = fresh.nodes.first()
         if (oldRoot.path != "0" || newRoot.path != "0") return reject(ManualDemoBoundsReason.POLICY_ROOT_PATH)
-        if (oldRoot.clickable || newRoot.clickable) return reject(ManualDemoBoundsReason.POLICY_ROOT_INTERACTIVE)
+        if (oldRoot.clickable || newRoot.clickable) return reject(ManualDemoBoundsReason.POLICY_ROOT_CLICKABLE)
         if (oldRoot.bounds != previous.bounds || newRoot.bounds != current.bounds) return reject(ManualDemoBoundsReason.POLICY_ROOT_WINDOW)
         if (original.nodes.map { it.path }.toSet().size != original.nodes.size) return reject(ManualDemoBoundsReason.POLICY_ROOT_PATH)
         for (i in original.nodes.indices) {
@@ -138,8 +137,11 @@ internal object ManualDemoBoundsPolicy {
             F9ContentSafety.blocked(fresh.nodes.flatMap { listOfNotNull(it.text, it.contentDescription) }.joinToString("\n"))) return reject(ManualDemoBoundsReason.POLICY_PROTECTED_CONTENT)
         nativeActionFailure(original, fresh, originalActions)?.let { return reject(it) }
         val oldActions = original.nodes.indices.map { requireNotNull(originalActions).state(original, original.nodes.size, it) }
-        // Root-only resize and coherent translation cannot bypass the root's full native proof.
-        if (oldRoot.actions.isNotEmpty() || oldActions[0] != NativeActionPresence.NONE)
+        // ROOT is a structural container, not a passive leaf. Stable, fully classified
+        // navigation-only capabilities do not grant execution or excuse other node changes.
+        // Presence-only, custom, click, long-click, dismiss, scroll, and unknown reads refuse.
+        val rootNavigationOnly = requireNotNull(originalActions).summary(original, original.nodes.size, 0).displayRootSafe
+        if (oldRoot.actions.isNotEmpty() || !rootNavigationOnly)
             return reject(ManualDemoBoundsReason.POLICY_ROOT_INTERACTIVE)
         val dx = current.bounds.left.toLong() - previous.bounds.left
         val dy = current.bounds.top.toLong() - previous.bounds.top
@@ -152,7 +154,7 @@ internal object ManualDemoBoundsPolicy {
             original.nodes.indices.drop(1).all { original.nodes[it].bounds == fresh.nodes[it].bounds }
         // A window translation with independently stationary/moving children is still ambiguous.
         if (!translation && shifted(previous.bounds, current.bounds)) return reject(ManualDemoBoundsReason.POLICY_NONCOHERENT_TRANSLATION)
-        val reflowFailure = checkedLayout(original.nodes, fresh.nodes, oldActions, !translation && !rootOnlyResize, ::contains)
+        val reflowFailure = checkedLayout(original.nodes, fresh.nodes, oldActions, rootNavigationOnly, !translation && !rootOnlyResize, ::contains)
         if (reflowFailure != null) return reject(reflowFailure)
         reportDemoBounds(report, when {
             translation -> ManualDemoBoundsReason.POLICY_RETAIN_TRANSLATION
@@ -166,10 +168,10 @@ internal object ManualDemoBoundsPolicy {
      * No missing metadata, raw native handle, repaired Rect, or render-order assumption is used.
      * Window-level occlusion remains checked by the Android reader before this function. */
     private fun checkedLayout(before: List<NodeSnapshot>, after: List<NodeSnapshot>,
-        nativeActions: List<NativeActionPresence>, reflow: Boolean,
+        nativeActions: List<NativeActionPresence>, rootNavigationOnly: Boolean, reflow: Boolean,
         contains: (ScreenBounds, ScreenBounds) -> Boolean): ManualDemoBoundsReason? {
         fun container(i: Int): Boolean { val n = before[i]; return !n.clickable && n.actions.isEmpty() &&
-            nativeActions[i] == NativeActionPresence.NONE &&
+            (nativeActions[i] == NativeActionPresence.NONE || (i == 0 && rootNavigationOnly)) &&
             (n.className == "android.widget.FrameLayout" || n.className == "android.widget.LinearLayout") &&
             n.text.isNullOrBlank() && n.contentDescription.isNullOrBlank() }
         if (!container(0)) return ManualDemoBoundsReason.POLICY_DESCENDANT_BOUNDS

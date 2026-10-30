@@ -1,5 +1,7 @@
 # P01 Debug 표시 전용 passive reflow — 2026-10-30
 
+> 후속 ROOT action 표시 정책 검토 및 변경은 [A_P01_ROOT_DISPLAY_CAPABILITIES_2026-10-30.md](A_P01_ROOT_DISPLAY_CAPABILITIES_2026-10-30.md)를 따른다. 아래 native NONE만 허용했던 조건과 검증 수치는 각 이전 구현 시점의 기록이다.
+
 ## 근거와 범위
 
 기준 `b5c23add9822dcbfe730c4d7174cb5cd6138c1a3`, branch `fix/a-samsung-p01-lifetime-20261028`.

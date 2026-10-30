@@ -5,6 +5,7 @@ import kotlinx.collections.immutable.*
 import kotlinx.coroutines.CancellationException
 import kr.closeforyou.accessibility.action.F9AutoCloserTest
 import kr.closeforyou.accessibility.action.F9Scene
+import kr.closeforyou.accessibility.NativeActionSummary
 import kr.closeforyou.accessibility.NativeActionPresence
 import kr.closeforyou.accessibility.NativeNodeActions
 import kr.closeforyou.accessibility.integration.ManualDemoBoundsReason.*
@@ -43,11 +44,19 @@ class ManualDemoBoundsRejectionTest {
         // Explicit fake native reads; the DTO's projected actions are NOT production proof.
         var originalNativeStates = emptyMap<String, NativeActionPresence>()
         var freshNativeStates = emptyMap<String, NativeActionPresence>()
+        var originalSummaries = emptyMap<String, NativeActionSummary>()
+        var freshSummaries = emptyMap<String, NativeActionSummary>()
         var originalProofEnabled = true; var freshProofEnabled = true
-        fun originalProof() = if (originalProofEnabled) NativeNodeActions.forSnapshot(source, source.nodes.map {
-            originalNativeStates[it.path] ?: if (it.actions.isEmpty()) NativeActionPresence.NONE else NativeActionPresence.PRESENT }) else null
-        fun withFreshProof() = fresh.copy(nativeActions = if (freshProofEnabled) NativeNodeActions.forNodes(fresh.nodes, fresh.nodes.map {
-            freshNativeStates[it.path] ?: if (it.actions.isEmpty()) NativeActionPresence.NONE else NativeActionPresence.PRESENT }) else null)
+        // Explicit fake native ID lists. Production never reconstructs a full list from DTO actions.
+        private fun fakeActions(node: NodeSnapshot, override: NativeActionPresence?) = override?.let(NativeActionSummary::presenceOnly)
+            ?: NativeActionSummary.fromIds(node.actions.map { when (it) {
+                NodeAction.CLICK -> android.view.accessibility.AccessibilityNodeInfo.ACTION_CLICK
+                NodeAction.DISMISS -> android.view.accessibility.AccessibilityNodeInfo.ACTION_DISMISS
+            } })
+        fun originalProof() = if (originalProofEnabled) NativeNodeActions.forSnapshotSummaries(source, source.nodes.map {
+            originalSummaries[it.path] ?: fakeActions(it, originalNativeStates[it.path]) }) else null
+        fun withFreshProof() = fresh.copy(nativeActions = if (freshProofEnabled) NativeNodeActions.forNodeSummaries(fresh.nodes, fresh.nodes.map {
+            freshSummaries[it.path] ?: fakeActions(it, freshNativeStates[it.path]) }) else null)
         var row: ManualDisplayReviewCode? = null
         init { attach(); expand() }
         fun attach() {
@@ -151,7 +160,7 @@ class ManualDemoBoundsRejectionTest {
             r.rejected(POLICY_NODE_FIELDS)
         }
         val root = Rig(); root.source = root.source.copy(nodes = root.source.nodes.map { if (it.path == "0") it.copy(clickable = true) else it }.toPersistentList())
-        root.attach(); root.expand(); root.rejected(POLICY_ROOT_INTERACTIVE)
+        root.attach(); root.expand(); root.rejected(POLICY_ROOT_CLICKABLE)
     }
     @Test fun acceptedPolicyCannotTurnLaterTimeoutOrNativeFailureIntoRetainedResult() {
         val timeout = Rig(); timeout.read = { timeout.now += 100 }

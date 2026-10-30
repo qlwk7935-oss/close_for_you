@@ -109,7 +109,7 @@ internal class AndroidSnapshotCollector {
 
             val nodes = mutableListOf<NodeSnapshot>()
             val nativeRows = if (kr.closeforyou.accessibility.integration.ManualDemoBoundsFeature.enabled)
-                mutableListOf<NativeActionPresence>() else null
+                mutableListOf<NativeActionSummary>() else null
             val outlines = mutableListOf<DetectionOutline>()
             val structure = MessageDigest.getInstance("SHA-256").apply { update(salt) }
             val content = MessageDigest.getInstance("SHA-256").apply { update(salt) }
@@ -122,8 +122,11 @@ internal class AndroidSnapshotCollector {
                 if (textCharacters > MAX_TEXT_CHARACTERS) throw GuardFailure(PrivacyBlockReason.TRUNCATED_TREE)
                 val bounds = node.bounds()
                 val actions = buildSet {
-                    val ids = node.actionList.map { it.id }
-                    nativeRows?.add(nativeActionPresence(ids.size))
+                    val actions = node.actionList
+                    val readActions = if (nativeRows != null) actions.toList() else actions
+                    val ids = readActions.map { it.id }
+                    nativeRows?.add(if (ids.size <= 64) NativeActionSummary.fromIds(ids,
+                        hasUnverifiedLabel = readActions.any { it.label != null }) else NativeActionSummary.UNKNOWN)
                     if (AccessibilityNodeInfo.ACTION_CLICK in ids) add(NodeAction.CLICK)
                     if (AccessibilityNodeInfo.ACTION_DISMISS in ids) add(NodeAction.DISMISS)
                 }.toPersistentSet()
@@ -153,7 +156,7 @@ internal class AndroidSnapshotCollector {
                 digest(packageName), root.windowId,
                 windows.filter { it.type == WindowType.APPLICATION }.mapTo(mutableSetOf()) { it.id },
                 structureDigest, screen, outlines.toList(), trigger, targetWindow.bounds,
-            ), nativeRows?.let { NativeNodeActions.forSnapshot(snapshot, it) })
+            ), nativeRows?.let { NativeNodeActions.forSnapshotSummaries(snapshot, it) })
         } catch (failure: GuardFailure) {
             blocked(failure.reason, CaptureDetail.TREE_PROTECTION)
         } catch (_: Exception) {
