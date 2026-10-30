@@ -15,7 +15,8 @@ import java.security.SecureRandom
 import java.util.UUID
 
 internal sealed interface CollectionResult {
-    data class Ready(val snapshot: PopupSnapshot, val frame: DetectionFrame) : CollectionResult
+    data class Ready(val snapshot: PopupSnapshot, val frame: DetectionFrame,
+        val nativeActions: NativeNodeActions? = null) : CollectionResult
     data class Blocked(val reason: PrivacyBlockReason) : CollectionResult
 }
 
@@ -107,6 +108,8 @@ internal class AndroidSnapshotCollector {
             }
 
             val nodes = mutableListOf<NodeSnapshot>()
+            val nativeRows = if (kr.closeforyou.accessibility.integration.ManualDemoBoundsFeature.enabled)
+                mutableListOf<NativeActionPresence>() else null
             val outlines = mutableListOf<DetectionOutline>()
             val structure = MessageDigest.getInstance("SHA-256").apply { update(salt) }
             val content = MessageDigest.getInstance("SHA-256").apply { update(salt) }
@@ -120,6 +123,7 @@ internal class AndroidSnapshotCollector {
                 val bounds = node.bounds()
                 val actions = buildSet {
                     val ids = node.actionList.map { it.id }
+                    nativeRows?.add(nativeActionPresence(ids.size))
                     if (AccessibilityNodeInfo.ACTION_CLICK in ids) add(NodeAction.CLICK)
                     if (AccessibilityNodeInfo.ACTION_DISMISS in ids) add(NodeAction.DISMISS)
                 }.toPersistentSet()
@@ -149,7 +153,7 @@ internal class AndroidSnapshotCollector {
                 digest(packageName), root.windowId,
                 windows.filter { it.type == WindowType.APPLICATION }.mapTo(mutableSetOf()) { it.id },
                 structureDigest, screen, outlines.toList(), trigger, targetWindow.bounds,
-            ))
+            ), nativeRows?.let { NativeNodeActions.forSnapshot(snapshot, it) })
         } catch (failure: GuardFailure) {
             blocked(failure.reason, CaptureDetail.TREE_PROTECTION)
         } catch (_: Exception) {

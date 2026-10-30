@@ -62,7 +62,8 @@ internal data class F9Press(val attempted: Boolean, val returned: Boolean?)
 /** Only immutable descriptors leave the synchronous Android reader. Node handles never do. */
 internal data class F9Scene(val packageName: String, val windowId: Int, val pageWindowId: Int,
     val screen: ScreenBounds, val windows: List<WindowSnapshot>, val nodes: List<NodeSnapshot>,
-    val visiblePaths: Set<String>, val complete: Boolean, val pageDigest: String? = null) {
+    val visiblePaths: Set<String>, val complete: Boolean, val pageDigest: String? = null,
+    val nativeActions: kr.closeforyou.accessibility.NativeNodeActions? = null) {
     override fun toString() = "F9Scene(redacted)"
 }
 internal interface F9ScreenPort {

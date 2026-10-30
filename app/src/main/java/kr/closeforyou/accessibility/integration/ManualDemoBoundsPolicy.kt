@@ -4,6 +4,8 @@ import android.view.accessibility.AccessibilityEvent as E
 import kr.closeforyou.accessibility.action.F9AutoCloser
 import kr.closeforyou.accessibility.action.F9ContentSafety
 import kr.closeforyou.accessibility.action.F9Scene
+import kr.closeforyou.accessibility.NativeActionPresence
+import kr.closeforyou.accessibility.NativeNodeActions
 import kr.closeforyou.core.model.*
 
 /** One Debug report field. Selection, first policy rejection, and policy-only acceptance are
@@ -21,7 +23,10 @@ internal enum class ManualDemoBoundsReason {
     POLICY_CANDIDATE_BINDING, POLICY_CANDIDATE_ACTION, POLICY_CANDIDATE_NOT_VISIBLE,
     POLICY_AMBIGUOUS_LABELS, POLICY_MULTIPLE_ACTION_LABELS, POLICY_PROTECTED_CONTENT,
     POLICY_NONCOHERENT_TRANSLATION, POLICY_DESCENDANT_BOUNDS,
-    POLICY_RETAIN_TRANSLATION, POLICY_RETAIN_ROOT_RESIZE,
+    POLICY_REFLOW_PATH, POLICY_REFLOW_PARENT, POLICY_INTERACTIVE_BOUNDS,
+    POLICY_NATIVE_ACTIONS_UNCONFIRMED, POLICY_NATIVE_ACTIONS_CHANGED,
+    POLICY_REFLOW_OVERLAP, POLICY_LAYOUT_LIMIT,
+    POLICY_RETAIN_TRANSLATION, POLICY_RETAIN_ROOT_RESIZE, POLICY_RETAIN_PASSIVE_REFLOW,
 }
 private fun reportDemoBounds(report: ((ManualDemoBoundsReason) -> Unit)?, value: ManualDemoBoundsReason) {
     if (report != null) kr.closeforyou.accessibility.diagnosticWrite { report(value) }
@@ -48,11 +53,31 @@ internal fun manualDemoBoundsCandidates(enabled: Boolean, type: Int, changes: In
 
 /** Demo-only observable continuity, not native-generation authentication or F0/F9 approval.
  * Bounds remain exact: either the WHOLE popup translates, or only the nonclickable root/window
- * resizes while every descendant (including the close button) stays exactly where it was.
+ * resizes while every descendant stays fixed, or proven descriptor-level passive layout reflows.
+ * Reflow never moves an interactive/unknown widget or relaxes any execution comparison.
  * No coordinate conversion, rebase, retry, token/time mutation, or framework call exists here. */
 internal object ManualDemoBoundsPolicy {
+    /** Also used by a selected Debug Demo read that ends in strict SAME. Missing action data
+     * must not gain an approval by taking the equal-DTO fallback. No geometry permission here. */
+    fun nativeActionFailure(original: PopupSnapshot, fresh: F9Scene, originalActions: NativeNodeActions?): ManualDemoBoundsReason? {
+        val count = original.nodes.size
+        if (count !in 1..1_200 || fresh.nodes.size != count) return ManualDemoBoundsReason.POLICY_NATIVE_ACTIONS_UNCONFIRMED
+        var changed = false
+        for (i in original.nodes.indices) {
+            val before = originalActions?.state(original, count, i) ?: NativeActionPresence.UNKNOWN
+            val after = fresh.nativeActions?.state(fresh.nodes, count, i) ?: NativeActionPresence.UNKNOWN
+            if (before == NativeActionPresence.UNKNOWN || after == NativeActionPresence.UNKNOWN ||
+                (original.nodes[i].actions.isNotEmpty() && before == NativeActionPresence.NONE) ||
+                (fresh.nodes[i].actions.isNotEmpty() && after == NativeActionPresence.NONE))
+                return ManualDemoBoundsReason.POLICY_NATIVE_ACTIONS_UNCONFIRMED
+            if (before != after) changed = true
+        }
+        return if (changed) ManualDemoBoundsReason.POLICY_NATIVE_ACTIONS_CHANGED else null
+    }
+
     fun retains(original: PopupSnapshot, fresh: F9Scene, nativeId: Int, listing: ManualDisplayListing,
-        candidates: List<CloseCandidate>, report: ((ManualDemoBoundsReason) -> Unit)? = null): Boolean {
+        candidates: List<CloseCandidate>, originalActions: NativeNodeActions? = null,
+        report: ((ManualDemoBoundsReason) -> Unit)? = null): Boolean {
         fun reject(reason: ManualDemoBoundsReason): Boolean { reportDemoBounds(report, reason); return false }
         if (original.completeness != SnapshotCompleteness.COMPLETE || !fresh.complete) return reject(ManualDemoBoundsReason.POLICY_INCOMPLETE)
         if (original.token.packageName != fresh.packageName || original.token.windowId != fresh.windowId ||
@@ -111,6 +136,11 @@ internal object ManualDemoBoundsPolicy {
             return reject(ManualDemoBoundsReason.POLICY_MULTIPLE_ACTION_LABELS)
         if (F9ContentSafety.protectedPackage(fresh.packageName) ||
             F9ContentSafety.blocked(fresh.nodes.flatMap { listOfNotNull(it.text, it.contentDescription) }.joinToString("\n"))) return reject(ManualDemoBoundsReason.POLICY_PROTECTED_CONTENT)
+        nativeActionFailure(original, fresh, originalActions)?.let { return reject(it) }
+        val oldActions = original.nodes.indices.map { requireNotNull(originalActions).state(original, original.nodes.size, it) }
+        // Root-only resize and coherent translation cannot bypass the root's full native proof.
+        if (oldRoot.actions.isNotEmpty() || oldActions[0] != NativeActionPresence.NONE)
+            return reject(ManualDemoBoundsReason.POLICY_ROOT_INTERACTIVE)
         val dx = current.bounds.left.toLong() - previous.bounds.left
         val dy = current.bounds.top.toLong() - previous.bounds.top
         fun shifted(a: ScreenBounds, b: ScreenBounds) = b.left.toLong() - a.left == dx && b.right.toLong() - a.right == dx &&
@@ -120,9 +150,73 @@ internal object ManualDemoBoundsPolicy {
         }
         val rootOnlyResize = !shifted(previous.bounds, current.bounds) &&
             original.nodes.indices.drop(1).all { original.nodes[it].bounds == fresh.nodes[it].bounds }
-        if (translation) { reportDemoBounds(report, ManualDemoBoundsReason.POLICY_RETAIN_TRANSLATION); return true }
-        if (rootOnlyResize) { reportDemoBounds(report, ManualDemoBoundsReason.POLICY_RETAIN_ROOT_RESIZE); return true }
-        return reject(if (shifted(previous.bounds, current.bounds)) ManualDemoBoundsReason.POLICY_NONCOHERENT_TRANSLATION
-            else ManualDemoBoundsReason.POLICY_DESCENDANT_BOUNDS)
+        // A window translation with independently stationary/moving children is still ambiguous.
+        if (!translation && shifted(previous.bounds, current.bounds)) return reject(ManualDemoBoundsReason.POLICY_NONCOHERENT_TRANSLATION)
+        val reflowFailure = checkedLayout(original.nodes, fresh.nodes, oldActions, !translation && !rootOnlyResize, ::contains)
+        if (reflowFailure != null) return reject(reflowFailure)
+        reportDemoBounds(report, when {
+            translation -> ManualDemoBoundsReason.POLICY_RETAIN_TRANSLATION
+            rootOnlyResize -> ManualDemoBoundsReason.POLICY_RETAIN_ROOT_RESIZE
+            else -> ManualDemoBoundsReason.POLICY_RETAIN_PASSIVE_REFLOW
+        })
+        return true
+    }
+
+    /** All Demo geometry paths require bound full-native action metadata and a valid graph.
+     * No missing metadata, raw native handle, repaired Rect, or render-order assumption is used.
+     * Window-level occlusion remains checked by the Android reader before this function. */
+    private fun checkedLayout(before: List<NodeSnapshot>, after: List<NodeSnapshot>,
+        nativeActions: List<NativeActionPresence>, reflow: Boolean,
+        contains: (ScreenBounds, ScreenBounds) -> Boolean): ManualDemoBoundsReason? {
+        fun container(i: Int): Boolean { val n = before[i]; return !n.clickable && n.actions.isEmpty() &&
+            nativeActions[i] == NativeActionPresence.NONE &&
+            (n.className == "android.widget.FrameLayout" || n.className == "android.widget.LinearLayout") &&
+            n.text.isNullOrBlank() && n.contentDescription.isNullOrBlank() }
+        if (!container(0)) return ManualDemoBoundsReason.POLICY_DESCENDANT_BOUNDS
+        val byPath = HashMap<String, Int>(before.size)
+        val hasChildren = BooleanArray(before.size)
+        byPath["0"] = 0
+        // Android's bounded preorder paths, including parents, must be represented in both
+        // unchanged descriptor graphs. Do not infer a missing parent or repair a clipped Rect.
+        for (i in 1 until before.size) {
+            val path = before[i].path
+            val split = path.lastIndexOf('/')
+            if (split < 1 || path.length > 301) return ManualDemoBoundsReason.POLICY_REFLOW_PATH
+            val segment = path.substring(split + 1)
+            if (segment.isEmpty() || segment.length > 4 || segment.any { it !in '0'..'9' } ||
+                (segment.length > 1 && segment[0] == '0') || segment.toInt() >= 1_200)
+                return ManualDemoBoundsReason.POLICY_REFLOW_PATH
+            val parent = byPath[path.substring(0, split)] ?: return ManualDemoBoundsReason.POLICY_REFLOW_PATH
+            if ((reflow && !container(parent)) || !contains(before[parent].bounds, before[i].bounds) ||
+                !contains(after[parent].bounds, after[i].bounds)) return ManualDemoBoundsReason.POLICY_REFLOW_PARENT
+            hasChildren[parent] = true
+            byPath[path] = i
+        }
+        for (i in 1 until before.size) {
+            val n = before[i]
+            if (!reflow || n.bounds == after[i].bounds) continue
+            if (n.clickable || n.actions.isNotEmpty() || nativeActions[i] != NativeActionPresence.NONE)
+                return ManualDemoBoundsReason.POLICY_INTERACTIVE_BOUNDS
+            val body = n.className == "android.widget.TextView" && !hasChildren[i] &&
+                !n.text.isNullOrBlank() && listOfNotNull(n.text, n.contentDescription).all { F9AutoCloser.role(it) == null }
+            if (!container(i) && !body) return ManualDemoBoundsReason.POLICY_DESCENDANT_BOUNDS
+        }
+        val interactive = before.indices.filter { before[it].clickable || before[it].actions.isNotEmpty() || nativeActions[it] != NativeActionPresence.NONE }
+        val prefixes = before.map { it.path + "/" }
+        fun intersects(a: ScreenBounds, b: ScreenBounds) = a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom
+        var comparisons = 0
+        for (i in before.indices) {
+            if (before[i].bounds == after[i].bounds || before[i].clickable || before[i].actions.isNotEmpty() || nativeActions[i] != NativeActionPresence.NONE) continue
+            for (j in interactive) {
+                if (++comparisons > 16_384) return ManualDemoBoundsReason.POLICY_LAYOUT_LIMIT
+                // Proven ancestry plus both parent-containment chains is legitimate layout,
+                // whereas unrelated overlap has no z-order/opaque-region proof. Fail closed
+                // even if it was also present before; isVisibleToUser is not occlusion evidence.
+                if (before[j].path.startsWith(prefixes[i]) || before[i].path.startsWith(prefixes[j])) continue
+                if (intersects(before[i].bounds, before[j].bounds) || intersects(after[i].bounds, after[j].bounds))
+                    return ManualDemoBoundsReason.POLICY_REFLOW_OVERLAP
+            }
+        }
+        return null
     }
 }

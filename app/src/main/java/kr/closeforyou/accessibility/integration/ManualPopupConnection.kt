@@ -33,7 +33,7 @@ internal class ManualPopupConnection(
     private val speechReadiness: StateFlow<SpeechReadiness>,
     private val verifyDisplay: (PopupSnapshot, ManualDisplayIdentity, () -> Unit, ManualDisplayProbe) -> ManualDisplayVerdict,
     private val trace: ManualPromptTrace? = null,
-    private val verifyBoundsDisplay: ((PopupSnapshot, ManualDisplayIdentity, () -> Unit, ManualDisplayProbe, List<CloseCandidate>) -> ManualDisplayVerdict)? = null,
+    private val verifyBoundsDisplay: ((PopupSnapshot, ManualDisplayIdentity, () -> Unit, ManualDisplayProbe, List<CloseCandidate>, kr.closeforyou.accessibility.NativeNodeActions?) -> ManualDisplayVerdict)? = null,
 ) {
     private val handler = Handler(Looper.getMainLooper())
     private val promptLifetime = ManualPromptLifetime(SystemClock::uptimeMillis)
@@ -48,7 +48,9 @@ internal class ManualPopupConnection(
     private var closed = false
     private var job: Job? = null
     private var displayTimer: Job? = null
+    private var originalNativeActions: kr.closeforyou.accessibility.NativeNodeActions? = null
     private var original: PopupSnapshot? = null
+        set(value) { field = value; if (value == null) originalNativeActions = null }
     private var shownAnalysis: PopupAnalysis? = null
     private var shownDetection: PopupDetection? = null
     private var displayedCandidates: PopupAnalysis? = null
@@ -227,7 +229,8 @@ internal class ManualPopupConnection(
             }
         }
     }
-    fun offer(snapshot: PopupSnapshot, detection: PopupDetection, display: PopupSnapshot, analysis: PopupAnalysis) {
+    fun offer(snapshot: PopupSnapshot, detection: PopupDetection, display: PopupSnapshot, analysis: PopupAnalysis,
+        nativeActions: kr.closeforyou.accessibility.NativeNodeActions? = null) {
         val key = Triple(snapshot.token.packageName, snapshot.token.windowId, snapshot.token.contentDigest)
         val rejection = manualOfferRejection(closed, { health.failed }, { completedKey == key },
             { cleanup.ready }, { overlay.isShowing }, { selected != null })
@@ -252,6 +255,7 @@ internal class ManualPopupConnection(
         })
         trace?.review(ManualReviewCode(ManualReviewPoint.ADMITTED, reviews.lastAdmission, reviews.lastChange))
         original = snapshot; shownAnalysis = analysis; shownDetection = detection; displayedCandidates = null
+        originalNativeActions = nativeActions
         gate.prepare(snapshot, permit)
         AccessibilityRuntime.manualBoundary("OFFERED")
         events.tryEmit(PopupEvent.Candidate(display, detection))
@@ -366,7 +370,7 @@ internal class ManualPopupConnection(
                 }, probe)
             verifyRegisteredManualDisplay(probe, ::checkpoint, ::owned) { identity ->
                 if (boundsCandidates == null) verifyDisplay(source, identity, ::checkpoint, probe)
-                else requireNotNull(verifyBoundsDisplay)(source, identity, ::checkpoint, probe, boundsCandidates)
+                else requireNotNull(verifyBoundsDisplay)(source, identity, ::checkpoint, probe, boundsCandidates, originalNativeActions)
             }
         }, remove = {
             invalidate(version, ttl = false, ownedRetirement = false, cause =

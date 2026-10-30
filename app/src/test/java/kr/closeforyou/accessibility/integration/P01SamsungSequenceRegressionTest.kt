@@ -218,7 +218,13 @@ class P01SamsungSequenceRegressionTest {
                     val windows = if (identity.listing == ManualDisplayListing.NOT_ENUMERATED) offered.windows else
                         offered.windows.map { if (it.id == offered.token.windowId) it.copy(active = false, focused = false) else it } + overlay
                     val scene = demoScene ?: f.before.copy(nodes = if (changed) listOf(body.copy(text = "다른 안내")) else offered.nodes, windows = windows)
-                    ManualDisplayContinuity.assess(offered, scene, identity.window, probe, identity.listing, demoCandidates)
+                    // These fake native reads explicitly report the fixture's full action lists.
+                    // Production requires the collector/reader metadata; DTO inference is forbidden.
+                    fun states(nodes: List<NodeSnapshot>) = nodes.map { if (it.actions.isEmpty()) NativeActionPresence.NONE else NativeActionPresence.PRESENT }
+                    val displayRead = if (demoCandidates == null) scene else scene.copy(
+                        nativeActions = NativeNodeActions.forNodes(scene.nodes, states(scene.nodes)))
+                    ManualDisplayContinuity.assess(offered, displayRead, identity.window, probe, identity.listing, demoCandidates,
+                        if (demoCandidates == null) null else NativeNodeActions.forSnapshot(offered, states(offered.nodes)))
                 }
             }, remove = {
                 valid = false; guarded.revoke(); lifetime.clear()

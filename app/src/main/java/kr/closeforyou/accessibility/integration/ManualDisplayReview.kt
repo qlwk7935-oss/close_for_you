@@ -253,7 +253,8 @@ internal object ManualDisplayContinuity {
     }
     fun assess(original: PopupSnapshot, fresh: F9Scene, nativeOverlayId: Int, probe: ManualDisplayProbe? = null,
         listing: ManualDisplayListing = ManualDisplayListing.LISTED,
-        demoBoundsCandidates: List<CloseCandidate>? = null): ManualDisplayVerdict {
+        demoBoundsCandidates: List<CloseCandidate>? = null,
+        originalActions: kr.closeforyou.accessibility.NativeNodeActions? = null): ManualDisplayVerdict {
         probe?.point = ManualDisplayPoint.COMPARISON
         fun reject(detail: ManualDisplayDetail, verdict: ManualDisplayVerdict = ManualDisplayVerdict.UNAVAILABLE): ManualDisplayVerdict {
             probe?.reject(detail); return verdict
@@ -269,10 +270,20 @@ internal object ManualDisplayContinuity {
         if (fresh.screen != original.screenBounds) return reject(ManualDisplayDetail.FRAME_CHANGED, ManualDisplayVerdict.CHANGED)
         if (fresh.nodes != original.nodes) {
             if (demoBoundsCandidates != null && ManualDemoBoundsPolicy.retains(original, fresh, nativeOverlayId, listing,
-                    demoBoundsCandidates, probe?.let { it::recordDemoBounds }))
+                    demoBoundsCandidates, originalActions, probe?.let { it::recordDemoBounds }))
                 return ManualDisplayVerdict.BOUNDS_RETAINED
             probe?.nodesChanged(original, fresh)
             return reject(ManualDisplayDetail.NODES_CHANGED, ManualDisplayVerdict.CHANGED)
+        }
+        // Only a selected Debug Demo read has these metadata requirements. Ordinary strict
+        // reads (including Release) never infer action absence and keep their original policy.
+        if (demoBoundsCandidates != null) {
+            ManualDemoBoundsPolicy.nativeActionFailure(original, fresh, originalActions)?.let { reason ->
+                probe?.recordDemoBounds(reason)
+                return if (reason == ManualDemoBoundsReason.POLICY_NATIVE_ACTIONS_CHANGED)
+                    reject(ManualDisplayDetail.NODES_CHANGED, ManualDisplayVerdict.CHANGED)
+                else reject(ManualDisplayDetail.INCOMPLETE)
+            }
         }
         val expected = original.windows.singleOrNull { it.id == original.token.windowId } ?: return reject(ManualDisplayDetail.ORIGINAL_WINDOW_UNAVAILABLE)
         // C alone may own active/input focus. Only those flags on the SAME application window

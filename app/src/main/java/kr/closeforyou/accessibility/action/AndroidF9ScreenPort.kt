@@ -44,7 +44,8 @@ internal class AndroidF9ScreenPort(
     override fun readFor(purpose: F9ReadPurpose, checkpoint: () -> Unit): F9Scene? =
         scan(checkpoint, null, purpose = purpose) { scene, _ -> scene }.takeIf { healthy }
 
-    private class DisplayRead(val source: PopupSnapshot, val identity: ManualDisplayIdentity, val probe: ManualDisplayProbe?) {
+    private class DisplayRead(val source: PopupSnapshot, val identity: ManualDisplayIdentity, val probe: ManualDisplayProbe?,
+        val nativeNeeded: Boolean) {
         val overlayId get() = identity.window
     }
 
@@ -52,10 +53,11 @@ internal class AndroidF9ScreenPort(
      * for an action, or changes the strict overlay rejection in read()/press(). Caller confirms
      * THIS native C generation/ownership before and after the entire bounded operation. */
     fun verifyDisplayedPopup(source: PopupSnapshot, identity: ManualDisplayIdentity, checkpoint: () -> Unit,
-        probe: ManualDisplayProbe? = null, boundsCandidates: List<CloseCandidate>? = null): ManualDisplayVerdict {
+        probe: ManualDisplayProbe? = null, boundsCandidates: List<CloseCandidate>? = null,
+        originalActions: kr.closeforyou.accessibility.NativeNodeActions? = null): ManualDisplayVerdict {
         val demoCandidates = boundsCandidates.takeIf { kr.closeforyou.accessibility.integration.ManualDemoBoundsFeature.enabled }
-        val verdict = scan(checkpoint, null, DisplayRead(source, identity, probe), F9ReadPurpose.DISPLAY_REVIEW) { scene, _ ->
-            ManualDisplayContinuity.assess(source, scene, identity.window, probe, identity.listing, demoCandidates)
+        val verdict = scan(checkpoint, null, DisplayRead(source, identity, probe, demoCandidates != null), F9ReadPurpose.DISPLAY_REVIEW) { scene, _ ->
+            ManualDisplayContinuity.assess(source, scene, identity.window, probe, identity.listing, demoCandidates, originalActions)
         }
         if (!healthy || verdict == null) {
             probe?.screenUnavailable(resourceFailure = !healthy)
@@ -169,9 +171,12 @@ internal class AndroidF9ScreenPort(
             var target: AccessibilityNodeInfo? = null
             var textCount = 0
             var nodeCount = 0
+            var displayNativeActions: kr.closeforyou.accessibility.NativeNodeActions? = null
             fun tree(start: AccessibilityNodeInfo, captureTarget: Boolean): Pair<List<NodeSnapshot>, Set<String>> {
                 val result = mutableListOf<NodeSnapshot>()
                 val visible = mutableSetOf<String>()
+                val nativeRows = if (captureTarget && display?.nativeNeeded == true && kr.closeforyou.accessibility.integration.ManualDemoBoundsFeature.enabled)
+                    mutableListOf<kr.closeforyou.accessibility.NativeActionPresence>() else null
                 fun visit(node: AccessibilityNodeInfo, path: String, depth: Int) {
                     tick()
                     readTrace.require(++nodeCount <= 1_200, F9ReadDetail.NODE_LIMIT)
@@ -195,10 +200,14 @@ internal class AndroidF9ScreenPort(
                     listOf(node.error, node.hintText, node.paneTitle, node.tooltipText, node.stateDescription).forEach(::freeze)
                     val actions = node.actionList
                     readTrace.require(actions.size <= 64, F9ReadDetail.ACTION_LIMIT)
+                    // Same single getter. Debug freezes references; full-list presence needs no
+                    // additional native getId calls. Release keeps the original action list.
+                    val readActions = if (nativeRows != null) actions.toList() else actions
+                    nativeRows?.add(kr.closeforyou.accessibility.nativeActionPresence(readActions.size))
                     val descriptor = NodeSnapshot(path, viewId, className, text, description, node.isClickable,
                         node.isEnabled, rect(node, readTrace), buildSet {
-                            if (actions.any { it.id == AccessibilityNodeInfo.ACTION_CLICK }) add(NodeAction.CLICK)
-                            if (actions.any { it.id == AccessibilityNodeInfo.ACTION_DISMISS }) add(NodeAction.DISMISS)
+                            if (readActions.any { it.id == AccessibilityNodeInfo.ACTION_CLICK }) add(NodeAction.CLICK)
+                            if (readActions.any { it.id == AccessibilityNodeInfo.ACTION_DISMISS }) add(NodeAction.DISMISS)
                         }.toPersistentSet())
                     result += descriptor
                     if (node.isVisibleToUser) visible += path
@@ -214,6 +223,7 @@ internal class AndroidF9ScreenPort(
                     tick()
                 }
                 visit(start, "0", 0)
+                displayNativeActions = nativeRows?.let { kr.closeforyou.accessibility.NativeNodeActions.forNodes(result, it) } ?: displayNativeActions
                 return result to visible
             }
             readTrace.stage = F9ReadStage.TREE
@@ -274,7 +284,7 @@ internal class AndroidF9ScreenPort(
             }
             tick()
             readTrace.stage = F9ReadStage.COMPLETE
-            return consume(F9Scene(packageName, active.id, base.id, frame, dtos, descriptors, visible, true, pageDigest), target)
+            return consume(F9Scene(packageName, active.id, base.id, frame, dtos, descriptors, visible, true, pageDigest, displayNativeActions), target)
                 .also { completed = true; readTrace.complete() }
         }, cleanup = {
             nodes.asReversed().forEach { if (!readTrace.release(node = true) { it.recycle() }) healthy = false }

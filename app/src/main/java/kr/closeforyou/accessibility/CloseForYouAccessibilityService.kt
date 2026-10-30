@@ -266,7 +266,7 @@ class CloseForYouAccessibilityService : AccessibilityService() {
                                     evidence.analysis)
                                 f9?.collected(result.snapshot,
                                     PopupDetection(result.snapshot.token, signals.toPersistentSet(), requiresUserReview = true),
-                                    evidence.snapshot, evidence.analysis)
+                                    evidence.snapshot, evidence.analysis, result.nativeActions)
                                 trace.stage(CaptureStage.PUBLISHED)
                             }
                             is EvidenceOutcome.Blocked -> if (isCurrent(result.snapshot.token)) {

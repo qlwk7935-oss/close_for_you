@@ -5,6 +5,8 @@ import kotlinx.collections.immutable.*
 import kotlinx.coroutines.CancellationException
 import kr.closeforyou.accessibility.action.F9AutoCloserTest
 import kr.closeforyou.accessibility.action.F9Scene
+import kr.closeforyou.accessibility.NativeActionPresence
+import kr.closeforyou.accessibility.NativeNodeActions
 import kr.closeforyou.accessibility.integration.ManualDemoBoundsReason.*
 import kr.closeforyou.core.contract.PopupEvent
 import kr.closeforyou.core.model.*
@@ -15,7 +17,7 @@ import org.junit.Test
 /** Multiple Android-shaped containers, two buttons, actual B attachment, then the real
  * selector/probe/registered read/comparison/terminal report. Still not a native Samsung tree. */
 class ManualDemoBoundsRejectionTest {
-    private class Rig(val diagnostics: Boolean = true) {
+    internal class Rig(val diagnostics: Boolean = true) {
         val f = F9AutoCloserTest.Fixture()
         private fun box(path: String, kind: String, b: ScreenBounds, text: String? = null, clickable: Boolean = false) =
             f.node.copy(path = path, viewId = "synthetic:$path", className = kind, bounds = b, text = text,
@@ -38,6 +40,14 @@ class ManualDemoBoundsRejectionTest {
         var native: ManualDisplayIdentity? = ManualDisplayIdentity(30, ManualDisplayListing.NOT_ENUMERATED)
         var read: (() -> Unit)? = null
         var failCleanup = false; var failSink = false
+        // Explicit fake native reads; the DTO's projected actions are NOT production proof.
+        var originalNativeStates = emptyMap<String, NativeActionPresence>()
+        var freshNativeStates = emptyMap<String, NativeActionPresence>()
+        var originalProofEnabled = true; var freshProofEnabled = true
+        fun originalProof() = if (originalProofEnabled) NativeNodeActions.forSnapshot(source, source.nodes.map {
+            originalNativeStates[it.path] ?: if (it.actions.isEmpty()) NativeActionPresence.NONE else NativeActionPresence.PRESENT }) else null
+        fun withFreshProof() = fresh.copy(nativeActions = if (freshProofEnabled) NativeNodeActions.forNodes(fresh.nodes, fresh.nodes.map {
+            freshNativeStates[it.path] ?: if (it.actions.isEmpty()) NativeActionPresence.NONE else NativeActionPresence.PRESENT }) else null)
         var row: ManualDisplayReviewCode? = null
         init { attach(); expand() }
         fun attach() {
@@ -55,12 +65,13 @@ class ManualDemoBoundsRejectionTest {
         }
         fun run(enabled: Boolean = true, type: Int = E.TYPE_WINDOWS_CHANGED, changes: Int = E.WINDOWS_CHANGE_BOUNDS,
             eventId: Int = 20): ManualDisplayVerdict {
+            val nativeSource = originalProof()
             val candidates = manualDemoBoundsCandidates(enabled, type, changes, eventId, source, analysis, detection, probe::recordDemoBounds)
             return reviewManualDisplay({ raw = null }, {
                 val started = now
                 verifyRegisteredManualDisplay(probe, { manualDisplayCheckpoint({ true }, { now }, started, probe) }, { native }) { id ->
                     reads++; read?.invoke()
-                    ManualDisplayContinuity.assess(source, fresh, id.window, probe, id.listing, candidates)
+                    ManualDisplayContinuity.assess(source, withFreshProof(), id.window, probe, id.listing, candidates, nativeSource)
                 }
             }, { removed++; if (failCleanup) throw IllegalStateException("SYNTHETIC_CLEANUP") }, { v ->
                 row = ManualDisplayReviewCode(ManualEventKind.WINDOW_SET, ManualWindowMask.BOUNDS, v, probe.failurePoint,
@@ -80,16 +91,17 @@ class ManualDemoBoundsRejectionTest {
         assertEquals(ManualDisplayVerdict.BOUNDS_RETAINED, r.run()); assertEquals(POLICY_RETAIN_ROOT_RESIZE, r.row!!.demoBounds)
         assertEquals(0, r.removed); assertEquals(1, r.reads); assertNull(r.raw); assertEquals(0, r.f.clicks)
     }
-    @Test fun nestedContainerReflowIsAnExistingPolicyLimitationNotProofOfThisSamsungCause() {
-        val r = Rig(); r.expand(reflow = true); r.rejected(POLICY_DESCENDANT_BOUNDS)
-        // Same symptoms as the supplied root-first log, but this is only a synthetic example.
-        assertEquals(ManualNodeMismatch.BOUNDS, r.probe.failureNodes)
-        assertEquals(ManualBoundsChange.EXPANDED, r.probe.failureBounds!!.change)
+    @Test fun nestedPassiveContainerReflowNowRequiresTheNarrowParentCheckedPolicy() {
+        val r = Rig(); r.expand(reflow = true)
+        assertEquals(ManualDisplayVerdict.BOUNDS_RETAINED, r.run())
+        assertEquals(POLICY_RETAIN_PASSIVE_REFLOW, r.row!!.demoBounds)
+        assertEquals(0, r.removed); assertEquals(0, r.f.clicks); assertNull(r.raw)
     }
-    @Test fun bodyReflowWithUnchangedWordsAndButtonStillRejectsRatherThanSilentlyRelaxingPolicy() {
+    @Test fun bodyReflowWithUnchangedWordsAndFixedButtonUsesExplicitPassiveReflowCode() {
         val r = Rig(); r.fresh = r.fresh.copy(nodes = r.fresh.nodes.map { if (it.path == "0/0/0/0/1")
             it.copy(bounds = it.bounds.copy(bottom = 150)) else it })
-        r.rejected(POLICY_DESCENDANT_BOUNDS)
+        assertEquals(ManualDisplayVerdict.BOUNDS_RETAINED, r.run())
+        assertEquals(POLICY_RETAIN_PASSIVE_REFLOW, r.row!!.demoBounds)
     }
     @Test fun selectorTokenScopeAndCandidateFailuresAreReportedBeforeAnyPolicyAssessment() {
         val changes: List<Pair<(Rig) -> Unit, ManualDemoBoundsReason>> = listOf(
@@ -151,11 +163,13 @@ class ManualDemoBoundsRejectionTest {
         assertEquals(POLICY_RETAIN_ROOT_RESIZE, native.row!!.demoBounds); assertEquals(1, native.removed)
     }
     @Test fun firstPolicyCodeSurvivesCleanupAndReportingFailuresAndExistingCancellationWins() {
-        val r = Rig(); r.expand(reflow = true); r.failSink = true; r.failCleanup = true
+        val r = Rig(); r.fresh = r.fresh.copy(nodes = r.fresh.nodes.map {
+            if (it.path.endsWith("/3")) it.copy(bounds = it.bounds.copy(left = it.bounds.left + 1)) else it })
+        r.failSink = true; r.failCleanup = true
         try { r.run(); fail("CLEANUP_REQUIRED") } catch (_: kr.closeforyou.accessibility.CollectionCleanupFailure) { }
-        assertEquals(POLICY_DESCENDANT_BOUNDS, r.row!!.demoBounds)
+        assertEquals(POLICY_INTERACTIVE_BOUNDS, r.row!!.demoBounds)
         r.probe.recordDemoBounds(SELECT_DISABLED); r.probe.reject(ManualDisplayDetail.NATIVE_ID_CHANGED)
-        assertEquals(POLICY_DESCENDANT_BOUNDS, r.probe.demoBounds); assertEquals(1, r.removed)
+        assertEquals(POLICY_INTERACTIVE_BOUNDS, r.probe.demoBounds); assertEquals(1, r.removed)
         val c = Rig(); val primary = CancellationException("SYNTHETIC_PRIMARY")
         c.read = { throw primary }; c.failCleanup = true
         try { c.run(); fail("CANCEL_REQUIRED") } catch (e: CancellationException) { assertSame(primary, e) }
@@ -170,8 +184,8 @@ class ManualDemoBoundsRejectionTest {
         val list = manualDemoBoundsCandidates(true, E.TYPE_WINDOWS_CHANGED, E.WINDOWS_CHANGE_BOUNDS, 20,
             r.source, r.analysis, r.detection) { throw CancellationException("SYNTHETIC_DIAGNOSTIC") }
         assertEquals(r.analysis!!.closeCandidates, list)
-        assertTrue(ManualDemoBoundsPolicy.retains(r.source, r.fresh, 30, ManualDisplayListing.NOT_ENUMERATED,
-            requireNotNull(list)) { throw CancellationException("SYNTHETIC_DIAGNOSTIC") })
+        assertTrue(ManualDemoBoundsPolicy.retains(r.source, r.withFreshProof(), 30, ManualDisplayListing.NOT_ENUMERATED,
+            requireNotNull(list), r.originalProof()) { throw CancellationException("SYNTHETIC_DIAGNOSTIC") })
         assertEquals("ManualDisplayProbe(redacted)", r.probe.toString())
     }
     @Test fun remainingDefensivePolicyBranchesReportTheirActualFirstFailureOnly() {
@@ -179,8 +193,8 @@ class ManualDemoBoundsRejectionTest {
         // malformed inputs earlier. They are not claims that those inputs reached Samsung.
         fun rejected(reason: ManualDemoBoundsReason, change: (Rig) -> Unit) {
             val r = Rig(); change(r); val codes = mutableListOf<ManualDemoBoundsReason>()
-            assertFalse(reason.name, ManualDemoBoundsPolicy.retains(r.source, r.fresh, 30,
-                ManualDisplayListing.NOT_ENUMERATED, r.analysis!!.closeCandidates, codes::add))
+            assertFalse(reason.name, ManualDemoBoundsPolicy.retains(r.source, r.withFreshProof(), 30,
+                ManualDisplayListing.NOT_ENUMERATED, r.analysis!!.closeCandidates, r.originalProof(), codes::add))
             assertEquals(listOf(reason), codes)
         }
         rejected(POLICY_INCOMPLETE) { it.fresh = it.fresh.copy(complete = false) }

@@ -69,8 +69,8 @@ internal class F9ServiceConnection(
         history::clear, userInteracting, epoch, verifyPresentation, requestObservation,
         collectForChoice, awaitInteractionEnd, intentInteracting, speechEngine.readiness,
         { source, identity, check, probe -> screen.verifyDisplayedPopup(source, identity, check, probe) }, trace,
-        verifyBoundsDisplay = if (ManualDemoBoundsFeature.enabled) { source, identity, check, probe, candidates ->
-            screen.verifyDisplayedPopup(source, identity, check, probe, candidates)
+        verifyBoundsDisplay = if (ManualDemoBoundsFeature.enabled) { source, identity, check, probe, candidates, actions ->
+            screen.verifyDisplayedPopup(source, identity, check, probe, candidates, actions)
         } else null)
     val observationReady: Boolean get() = !closed && manual.canObserve()
     fun hasPrompt() = manual.hasPrompt()
@@ -112,13 +112,14 @@ internal class F9ServiceConnection(
         }
         consentObserver = scope.launch { ui.state.drop(1).collect { policyChanged() } }
     }
-    fun collected(snapshot: PopupSnapshot, detection: PopupDetection, display: PopupSnapshot, analysis: PopupAnalysis) {
+    fun collected(snapshot: PopupSnapshot, detection: PopupDetection, display: PopupSnapshot, analysis: PopupAnalysis,
+        nativeActions: kr.closeforyou.accessibility.NativeNodeActions? = null) {
         if (!observationReady) return
         val key = Triple(snapshot.token.packageName, snapshot.token.windowId, snapshot.token.structureDigest)
         if (PopupSignal.NEW_WINDOW in detection.signals && popupIdentity != key) feedback.onNewPopup()
         popupIdentity = key
         raw.publish(snapshot, detection)
-        manual.offer(snapshot, detection, display, analysis)
+        manual.offer(snapshot, detection, display, analysis, nativeActions)
     }
     fun observePage() { if (observationReady) session.observePage() }
     fun invalidate(version: Long, permissionOrInteraction: Boolean, ttl: Boolean = false, ownedRetirement: Boolean = false, preserveManual: Boolean = false,

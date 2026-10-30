@@ -5,6 +5,8 @@ import kotlinx.collections.immutable.*
 import kotlinx.coroutines.CancellationException
 import kr.closeforyou.accessibility.action.F9AutoCloserTest
 import kr.closeforyou.accessibility.action.F9Scene
+import kr.closeforyou.accessibility.NativeActionPresence
+import kr.closeforyou.accessibility.NativeNodeActions
 import kr.closeforyou.core.model.*
 import org.junit.Assert.*
 import org.junit.Test
@@ -46,7 +48,11 @@ class ManualDemoBoundsPolicyTest {
                     manualDisplayCheckpoint({ current }, { now }, started, probe)
                 }, { native }) { id ->
                     reads++; readFailure?.invoke()
-                    ManualDisplayContinuity.assess(original, fresh, id.window, probe, id.listing, candidates)
+                    // Explicit synthetic full-native observations, not inference in production.
+                    fun states(nodes: List<NodeSnapshot>) = nodes.map { if (it.actions.isEmpty()) NativeActionPresence.NONE else NativeActionPresence.PRESENT }
+                    val scene = fresh.copy(nativeActions = NativeNodeActions.forNodes(fresh.nodes, states(fresh.nodes)))
+                    ManualDisplayContinuity.assess(original, scene, id.window, probe, id.listing, candidates,
+                        NativeNodeActions.forSnapshot(original, states(original.nodes)))
                 }
             }, remove = {
                 showing = false; stops++
