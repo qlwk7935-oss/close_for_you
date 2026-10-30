@@ -376,7 +376,7 @@ internal class ManualPopupConnection(
                 AccessibilityEvent.TYPE_WINDOWS_CHANGED -> ManualEventKind.WINDOW_SET
                 else -> ManualEventKind.WINDOW_STATE
             }, if (type == AccessibilityEvent.TYPE_WINDOWS_CHANGED) manualWindowMask(changes) else ManualWindowMask.NOT_APPLICABLE,
-                verdict, probe.failurePoint, probe.detail, probe.failureOwned, probe.failureListing, probe.failureNodes))
+                verdict, probe.failurePoint, probe.detail, probe.failureOwned, probe.failureListing, probe.failureNodes, probe.failureBounds))
         })
         val cause = when (result) {
             ManualDisplayVerdict.SAME -> ManualPromptCause.TARGET_RECONFIRMED

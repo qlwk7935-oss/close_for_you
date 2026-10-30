@@ -25,7 +25,8 @@ internal enum class ManualNodeMismatch {
 }
 /** Pure diagnostic on already frozen DTOs. Counts first, then positional node order and DTO
  * declaration field order. Never used for equality/authorization; bounded to the existing 1200. */
-internal fun firstManualNodeMismatch(original: List<NodeSnapshot>, fresh: List<NodeSnapshot>): ManualNodeMismatch {
+internal fun firstManualNodeMismatch(original: List<NodeSnapshot>, fresh: List<NodeSnapshot>,
+    onBounds: ((NodeSnapshot, NodeSnapshot) -> Unit)? = null): ManualNodeMismatch {
     if (original.size != fresh.size) return ManualNodeMismatch.NODE_COUNT
     if (original.size > 1_200) return ManualNodeMismatch.LIMIT_EXCEEDED
     for (i in original.indices) {
@@ -38,7 +39,7 @@ internal fun firstManualNodeMismatch(original: List<NodeSnapshot>, fresh: List<N
             a.contentDescription != b.contentDescription -> return ManualNodeMismatch.CONTENT_DESCRIPTION
             a.clickable != b.clickable -> return ManualNodeMismatch.CLICKABLE
             a.enabled != b.enabled -> return ManualNodeMismatch.ENABLED
-            a.bounds != b.bounds -> return ManualNodeMismatch.BOUNDS
+            a.bounds != b.bounds -> { onBounds?.invoke(a, b); return ManualNodeMismatch.BOUNDS }
             a.actions != b.actions -> return ManualNodeMismatch.ACTIONS
         }
     }
@@ -56,11 +57,26 @@ internal class ManualDisplayProbe(private val nodeDiagnostics: Boolean = false) 
     private var firstNodes: ManualNodeMismatch? = null
     private var nodes = ManualNodeMismatch.NOT_CHECKED
     val failureNodes get() = firstNodes ?: nodes
-    fun nodesChanged(original: List<NodeSnapshot>, fresh: List<NodeSnapshot>) {
+    private var firstBounds: ManualBoundsCode? = null
+    private var bounds: ManualBoundsCode? = null
+    val failureBounds get() = if (detail == ManualDisplayDetail.NONE) bounds else firstBounds
+    fun nodesChanged(original: List<NodeSnapshot>, fresh: List<NodeSnapshot>) = classifyNodes(original, fresh, null)
+    fun nodesChanged(original: PopupSnapshot, fresh: F9Scene) {
+        if (!nodeDiagnostics) return // No bounds formatter/DTO analysis in the Release driver.
+        classifyNodes(original.nodes, fresh.nodes) { a, b -> describeManualBoundsMismatch(a, b, original, fresh) }
+    }
+    private fun classifyNodes(original: List<NodeSnapshot>, fresh: List<NodeSnapshot>,
+        describe: ((NodeSnapshot, NodeSnapshot) -> ManualBoundsCode)?) {
         if (!nodeDiagnostics || detail != ManualDisplayDetail.NONE || nodes != ManualNodeMismatch.NOT_CHECKED) return
         nodes = ManualNodeMismatch.UNKNOWN
         kr.closeforyou.accessibility.diagnosticWrite {
-            val first = firstManualNodeMismatch(original, fresh)
+            val first = firstManualNodeMismatch(original, fresh) { a, b ->
+                nodes = ManualNodeMismatch.BOUNDS // Secondary diagnostics cannot erase this observed first field.
+                if (describe != null) {
+                    bounds = ManualBoundsCode.UNKNOWN
+                    kr.closeforyou.accessibility.diagnosticWrite { bounds = describe(a, b) }
+                }
+            }
             nodes = if (first == ManualNodeMismatch.NONE) ManualNodeMismatch.UNKNOWN else first
         }
     }
@@ -69,7 +85,7 @@ internal class ManualDisplayProbe(private val nodeDiagnostics: Boolean = false) 
     var detail = ManualDisplayDetail.NONE; private set
     val failurePoint get() = firstPoint ?: point
     fun reject(value: ManualDisplayDetail) {
-        if (detail == ManualDisplayDetail.NONE) { detail = value; firstPoint = point; firstOwned = ownedRead; firstListing = listing; firstNodes = nodes }
+        if (detail == ManualDisplayDetail.NONE) { detail = value; firstPoint = point; firstOwned = ownedRead; firstListing = listing; firstNodes = nodes; firstBounds = bounds }
     }
     fun require(condition: Boolean, value: ManualDisplayDetail) {
         if (!condition) { reject(value); check(false) { "MANUAL_DISPLAY_UNAVAILABLE" } }
@@ -175,7 +191,7 @@ internal data class ManualDisplayReviewCode(val kind: ManualEventKind, val mask:
     val verdict: ManualDisplayVerdict, val point: ManualDisplayPoint = ManualDisplayPoint.NOT_CHECKED,
     val detail: ManualDisplayDetail = ManualDisplayDetail.NONE, val owned: ManualOwnedReadCode = ManualOwnedReadCode(),
     val listing: ManualDisplayListing = ManualDisplayListing.NOT_CHECKED,
-    val nodes: ManualNodeMismatch = ManualNodeMismatch.NOT_CHECKED)
+    val nodes: ManualNodeMismatch = ManualNodeMismatch.NOT_CHECKED, val bounds: ManualBoundsCode? = null)
 
 /** A target BOUNDS notification is a request to re-read, not proof that C or the target caused it.
  * Mixed/structural/unknown masks and unrelated windows keep ordinary invalidation. */
@@ -246,7 +262,7 @@ internal object ManualDisplayContinuity {
         if (fresh.windowId != original.token.windowId) return reject(ManualDisplayDetail.WINDOW_CHANGED, ManualDisplayVerdict.CHANGED)
         if (fresh.screen != original.screenBounds) return reject(ManualDisplayDetail.FRAME_CHANGED, ManualDisplayVerdict.CHANGED)
         if (fresh.nodes != original.nodes) {
-            probe?.nodesChanged(original.nodes, fresh.nodes)
+            probe?.nodesChanged(original, fresh)
             return reject(ManualDisplayDetail.NODES_CHANGED, ManualDisplayVerdict.CHANGED)
         }
         val expected = original.windows.singleOrNull { it.id == original.token.windowId } ?: return reject(ManualDisplayDetail.ORIGINAL_WINDOW_UNAVAILABLE)
