@@ -125,6 +125,14 @@ internal fun <W : Any, N : Any> readOwnedOverlayIds(
         }, cleanupFailure = {
             onUnhealthy(); diagnostic?.ownedQueryUncertain(OverlayOwnedWindowDetail.QUERY_FAILED); null
         })
+    } catch (cancelled: kotlinx.coroutines.CancellationException) {
+        // All acquired handles were already independently released by the inner scope. Refuse
+        // future ownership on uncertainty, but never turn cancellation into an ordinary null or
+        // let a secondary health/diagnostic callback replace the original cancellation.
+        try { onUnhealthy() } catch (_: Exception) { /* Original cancellation has precedence. */ }
+        diagnosticWrite { diagnostic?.ownedQueryUncertain(OverlayOwnedWindowDetail.QUERY_FAILED) }
+        probe?.completed(null)
+        throw cancelled
     } catch (_: Exception) {
         onUnhealthy(); diagnostic?.ownedQueryUncertain(OverlayOwnedWindowDetail.QUERY_FAILED); null
     } finally { roots.clear(); windows.clear() }

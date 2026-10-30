@@ -152,4 +152,55 @@ class F9OcclusionDiagnosticsTest {
         F9ReadObservation(F9ReadPurpose.MANUAL_ELIGIBILITY, rows::add).report()
         assertNull(rows.last().occlusion)
     }
+    @Test fun boundedSystemEdgeStripStillRejectsAndDoesNotInventOwnerProof() {
+        val popup = ScreenBounds(20, 10, 380, 600)
+        val r = Rig().also { it.type = WindowType.SYSTEM; it.rect = ScreenBounds(0, 0, 400, 40); it.passive = true }
+        assertTrue(r.check(popup, frame))
+        val code = r.codes.single()
+        assertEquals(F9OcclusionShape.TOP_EDGE_STRIP, code.shape)
+        assertEquals(F9PassiveBarResult.NOT_CHECKED_BOUNDED_TARGET, code.passive)
+        assertFalse(r.calls.contains("PASSIVE"))
+    }
+    @Test fun shapeUsesOnlyExistingRawBoundsAndNeverRepairsOutsideOrEmptyMetadata() {
+        val cases = listOf(ScreenBounds(0, 0, 400, 800) to F9OcclusionShape.FULL_FRAME,
+            ScreenBounds(0, 760, 400, 800) to F9OcclusionShape.BOTTOM_EDGE_STRIP,
+            ScreenBounds(0, 0, 400, 40) to F9OcclusionShape.TOP_EDGE_STRIP,
+            ScreenBounds(0, -1, 400, 40) to F9OcclusionShape.OUTSIDE_FRAME,
+            ScreenBounds(0, 0, 400, 0) to F9OcclusionShape.EMPTY,
+            ScreenBounds(0, 100, 400, 140) to F9OcclusionShape.OTHER,
+            ScreenBounds(1, 0, 400, 40) to F9OcclusionShape.OTHER)
+        for ((bounds, expected) in cases) assertEquals(expected, f9OcclusionShape(bounds, frame))
+    }
+
+    @Test fun realPassiveOwnerContractRequiresRootThenOwnPackageThenExactWindow() {
+        val order = mutableListOf<String>(); val p = F9PassiveBarProbe()
+        assertTrue(f9PassiveBarOwner({ order += "ROOT"; 7 }, { order += "OWN"; it },
+            { order += "PACKAGE"; true }, { order += "WINDOW"; true }, p))
+        assertEquals(listOf("ROOT", "OWN", "PACKAGE", "WINDOW"), order)
+        assertEquals(F9PassiveBarResult.NOT_CHECKED, p.result) // only entire bar helper can mark PASSED
+    }
+    @Test fun missingSystemRootAndWrongPackageNeverReachFurtherGetters() {
+        val missing = F9PassiveBarProbe()
+        assertFalse(f9PassiveBarOwner<Int>({ null }, { error("NO_OWN") }, { error("NO_PACKAGE") }, { error("NO_ID") }, missing))
+        assertEquals(F9PassiveBarResult.ROOT_UNAVAILABLE, missing.result)
+        val wrong = F9PassiveBarProbe()
+        assertFalse(f9PassiveBarOwner({ 7 }, { it }, { false }, { error("NO_ID") }, wrong))
+        assertEquals(F9PassiveBarResult.OWNER_UNCONFIRMED, wrong.result)
+    }
+    @Test fun exactSystemRootWindowMismatchCannotEarnPassiveAllowance() {
+        val p = F9PassiveBarProbe()
+        assertFalse(f9PassiveSystemBar({ true }, { false }, { false }, { ScreenBounds(0, 0, 400, 20) }, frame,
+            { f9PassiveBarOwner({ 7 }, { it }, { true }, { false }, it) }, p))
+        assertEquals(F9PassiveBarResult.ROOT_WINDOW_MISMATCH, p.result)
+    }
+    @Test fun systemOwnerRootAcquisitionCancellationStillPropagatesThroughActualScanBoundary() {
+        val cancel = CancellationException("SYNTHETIC_CANCEL"); var releases = 0; val rows = mutableListOf<F9ReadCode>()
+        val trace = F9ReadObservation(F9ReadPurpose.PAGE, rows::add)
+        assertSame(cancel, runCatching { trace.run(body = {
+            trace.stage = F9ReadStage.OCCLUSION
+            f9PassiveBarOwner<Int>({ throw cancel }, { it }, { true }, { true }, F9PassiveBarProbe())
+        }, cleanup = { releases++ }) }.exceptionOrNull())
+        assertEquals(1, releases); assertEquals(F9ReadOutcome.CANCELLED, rows.single().outcome)
+    }
+
 }

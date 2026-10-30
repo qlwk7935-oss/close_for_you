@@ -15,6 +15,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
 import kr.closeforyou.accessibility.integration.unattributedManualTouch
 import kr.closeforyou.accessibility.integration.ManualTouchState
+import kr.closeforyou.accessibility.integration.completeSynchronousAccessibilityCallback
+import kr.closeforyou.accessibility.integration.invalidateAfterOwnedCleanup
 import kr.closeforyou.accessibility.integration.ManualPromptCause
 import kr.closeforyou.app.CorePreferences
 import kr.closeforyou.accessibility.capture.AndroidScreenshotManager
@@ -111,12 +113,22 @@ class CloseForYouAccessibilityService : AccessibilityService() {
         val owner = f9
         var receipt: kr.closeforyou.accessibility.integration.OverlayCleanupBarrier.Receipt? = null
         var processed = false
-        try {
-            val nativeRetirement = owner?.compatibleRetirementEvent(event) == true
-            val cleanupWaitOnly = !nativeRetirement && owner?.nativeCleanupRetirementEvent(event) == true
-            receipt = owner?.observeEvent(event, nativeRetirement || cleanupWaitOnly)
-            handleAccessibilityEvent(event, nativeRetirement && f9 === owner); processed = true
-        } finally { if (processed) owner?.processed(receipt) else owner?.cleanupFailed() }
+        completeSynchronousAccessibilityCallback(onRejected = { issue ->
+            owner?.eventRejected(issue)
+            try {
+                invalidate(clearBaseline = true, permissionOrInteraction = true, cause = ManualPromptCause.SCREEN_EVENT_INVALIDATED)
+            } finally { owner?.cleanupFailed() }
+        }) {
+            // Preserve the handler's primary failure while always attempting its original
+            // receipt/cleanup callback. That callback is inside the same Android error boundary.
+            CollectionResourceSafety.run(body = {
+                val nativeRetirement = owner?.compatibleRetirementEvent(event) == true
+                val cleanupWaitOnly = !nativeRetirement && owner?.nativeCleanupRetirementEvent(event) == true
+                receipt = owner?.observeEvent(event, nativeRetirement || cleanupWaitOnly)
+                handleAccessibilityEvent(event, nativeRetirement && f9 === owner); processed = true
+            }, cleanup = { if (processed) owner?.processed(receipt) else owner?.cleanupFailed() },
+                cleanupFailure = { throw CollectionCleanupFailure() })
+        }
     }
 
     private fun handleAccessibilityEvent(event: AccessibilityEvent, nativeRetirement: Boolean = false) {
@@ -356,8 +368,8 @@ class CloseForYouAccessibilityService : AccessibilityService() {
         expiry = null
         if (clearBaseline) detector.clear()
         return freshness.invalidate().also { version ->
-            f9?.invalidate(version, permissionOrInteraction, ttl, ownedRetirement, preserveManual, cause)
-            AccessibilityRuntime.invalidate(version)
+            invalidateAfterOwnedCleanup({ f9?.invalidate(version, permissionOrInteraction, ttl, ownedRetirement, preserveManual, cause) },
+                { AccessibilityRuntime.invalidate(version) })
         }
     }
 

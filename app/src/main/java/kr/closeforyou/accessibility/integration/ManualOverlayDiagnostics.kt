@@ -173,3 +173,21 @@ internal fun dismissManualOverlay(dismiss: () -> Unit, status: () -> OverlayWind
         barrier.fail(CleanupFailure.REMOVE_NOT_HIDDEN)
     } else if (barrier.pending) barrier.removalReturned(state == OverlayWindowStatus.HIDDEN)
 }
+
+/** Presentation cleanup cannot leave downstream session/runtime evidence live on failure.
+ * Normal order is unchanged; preserve cancellation/primary failure using the existing scope. */
+internal fun invalidateAfterOwnedCleanup(owner: () -> Unit, downstream: () -> Unit) {
+    kr.closeforyou.accessibility.CollectionResourceSafety.run(owner, downstream,
+        cleanupFailure = { throw kr.closeforyou.accessibility.CollectionCleanupFailure() })
+}
+
+/** Android invokes this synchronous callback without a coroutine Job to receive cancellation.
+ * Abort/invalidate with fixed cause instead of leaking framework messages through AndroidRuntime.
+ * Coroutine callers of the readers do NOT use this adapter and retain their primary failure. */
+internal inline fun completeSynchronousAccessibilityCallback(onRejected: (ManualCleanupIssue) -> Unit, body: () -> Unit): Boolean {
+    val issue = try { body(); return true }
+    catch (_: CancellationException) { ManualCleanupIssue.CANCELLED }
+    catch (_: Exception) { ManualCleanupIssue.EXCEPTION }
+    try { onRejected(issue) } catch (_: Exception) { /* Caller finally still marks cleanup unhealthy. */ }
+    return false
+}

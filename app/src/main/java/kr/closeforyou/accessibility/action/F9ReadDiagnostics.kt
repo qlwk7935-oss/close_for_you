@@ -95,8 +95,20 @@ internal enum class F9PassiveBarResult {
     NOT_CHECKED, NOT_CHECKED_TARGET_PATH, NOT_CHECKED_BOUNDED_TARGET, NOT_SYSTEM, ACTIVE, FOCUSED,
     WIDTH, HEIGHT, EDGE, ROOT_UNAVAILABLE, OWNER_UNCONFIRMED, ROOT_WINDOW_MISMATCH, PASSED,
 }
+internal enum class F9OcclusionShape { NOT_CHECKED, EMPTY, OUTSIDE_FRAME, FULL_FRAME, TOP_EDGE_STRIP, BOTTOM_EDGE_STRIP, OTHER }
+/** Geometry label only. Even EDGE_STRIP proves no owner, opacity or safe execution. */
+internal fun f9OcclusionShape(bounds: kr.closeforyou.core.model.ScreenBounds,
+    frame: kr.closeforyou.core.model.ScreenBounds): F9OcclusionShape = when {
+    bounds.width <= 0 || bounds.height <= 0 || frame.width <= 0 || frame.height <= 0 -> F9OcclusionShape.EMPTY
+    !F9AutoCloser.contains(frame, bounds) -> F9OcclusionShape.OUTSIDE_FRAME
+    bounds == frame -> F9OcclusionShape.FULL_FRAME
+    bounds.left != frame.left || bounds.right != frame.right || bounds.height !in 1..(frame.height / 8) -> F9OcclusionShape.OTHER
+    bounds.top == frame.top -> F9OcclusionShape.TOP_EDGE_STRIP
+    bounds.bottom == frame.bottom -> F9OcclusionShape.BOTTOM_EDGE_STRIP
+    else -> F9OcclusionShape.OTHER
+}
 internal data class F9OcclusionCode(val type: kr.closeforyou.core.model.WindowType,
-    val layer: F9OcclusionLayer, val overlap: F9OcclusionOverlap, val passive: F9PassiveBarResult)
+    val layer: F9OcclusionLayer, val overlap: F9OcclusionOverlap, val passive: F9PassiveBarResult, val shape: F9OcclusionShape = F9OcclusionShape.NOT_CHECKED)
 internal class F9PassiveBarProbe {
     var result = F9PassiveBarResult.NOT_CHECKED
     fun rejected(value: F9PassiveBarResult): Boolean { result = value; return false }
@@ -129,7 +141,7 @@ internal fun f9OccludingWindow(isTarget: () -> Boolean, isOwnedOverlay: () -> Bo
         target.left <= other.left && target.top <= other.top && target.right >= other.right && target.bottom >= other.bottom -> F9OcclusionOverlap.WITHIN_TARGET
         else -> F9OcclusionOverlap.PARTIAL
     }
-    diagnosticWrite { record(F9OcclusionCode(kind, if (otherLayer == targetLayer) F9OcclusionLayer.EQUAL else F9OcclusionLayer.ABOVE, overlap, passiveCode)) }
+    diagnosticWrite { record(F9OcclusionCode(kind, if (otherLayer == targetLayer) F9OcclusionLayer.EQUAL else F9OcclusionLayer.ABOVE, overlap, passiveCode, f9OcclusionShape(other, frame))) }
     return true
 }
 
@@ -147,5 +159,15 @@ internal fun f9PassiveSystemBar(isSystem: () -> Boolean, active: () -> Boolean, 
     if (bar.top != frame.top && bar.bottom != frame.bottom) return probe.rejected(F9PassiveBarResult.EDGE)
     if (!owner(probe)) return false
     probe.result = F9PassiveBarResult.PASSED
+    return true
+}
+
+/** Same existing SystemUI owner metadata guards. Shared to test their short-circuit order;
+ * it is called only where the ORIGINAL full-frame passive exception already read a root. */
+internal fun <N : Any> f9PassiveBarOwner(readRoot: () -> N?, own: (N) -> N,
+    packageMatches: (N) -> Boolean, windowMatches: (N) -> Boolean, probe: F9PassiveBarProbe): Boolean {
+    val root = own(readRoot() ?: return probe.rejected(F9PassiveBarResult.ROOT_UNAVAILABLE))
+    if (!packageMatches(root)) return probe.rejected(F9PassiveBarResult.OWNER_UNCONFIRMED)
+    if (!windowMatches(root)) return probe.rejected(F9PassiveBarResult.ROOT_WINDOW_MISMATCH)
     return true
 }

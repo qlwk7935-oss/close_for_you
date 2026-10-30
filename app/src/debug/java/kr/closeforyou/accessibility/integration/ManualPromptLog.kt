@@ -46,7 +46,7 @@ internal object ManualPromptLog {
     }, readSink = { attempt, c ->
         Log.i("A_ManualPrompt", "A_F9_READ;ATTEMPT=$attempt;PURPOSE=${c.purpose.name};STAGE=${c.stage.name};DETAIL=${c.detail.name}" +
             ";OUTCOME=${c.outcome.name};RELEASE=${c.release.name};CALLBACK_RETURNED=${if (c.consumed) "YES" else "NO"}" +
-            (c.occlusion?.let { ";OCCLUDER_TYPE=${it.type.name};LAYER=${it.layer.name};OVERLAP=${it.overlap.name};PASSIVE_BAR=${it.passive.name}" } ?: ""))
+            (c.occlusion?.let { ";OCCLUDER_TYPE=${it.type.name};LAYER=${it.layer.name};OVERLAP=${it.overlap.name};PASSIVE_BAR=${it.passive.name};FRAME_SHAPE=${it.shape.name}" } ?: ""))
     }, cleanupSink = { attempt, c ->
         Log.i("A_ManualPrompt", "A_MANUAL_CLEANUP;ATTEMPT=$attempt;PHASE=${c.phase.name}" +
             ";SITE=${c.current.site.name};ISSUE=${c.current.issue.name};BARRIER=${c.current.barrier?.name ?: "NONE"}" +

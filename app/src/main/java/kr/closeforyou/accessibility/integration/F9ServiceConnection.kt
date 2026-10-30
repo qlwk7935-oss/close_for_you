@@ -120,8 +120,8 @@ internal class F9ServiceConnection(
     fun invalidate(version: Long, permissionOrInteraction: Boolean, ttl: Boolean = false, ownedRetirement: Boolean = false, preserveManual: Boolean = false,
         cause: ManualPromptCause = if (ttl) ManualPromptCause.ORIGINAL_EVIDENCE_EXPIRED else
             if (preserveManual) ManualPromptCause.UNATTRIBUTED_TOUCH else ManualPromptCause.UNKNOWN) {
-        manual.invalidate(version, ttl, ownedRetirement, preserveManual, cause)
-        session.invalidate(version, permissionOrInteraction && !ownedRetirement)
+        invalidateAfterOwnedCleanup({ manual.invalidate(version, ttl, ownedRetirement, preserveManual, cause) },
+            { session.invalidate(version, permissionOrInteraction && !ownedRetirement) })
     }
     fun observeEvent(event: AccessibilityEvent, nativeTransientConfirmed: Boolean = false): OverlayCleanupBarrier.Receipt? {
         if (closed) return null
@@ -131,6 +131,9 @@ internal class F9ServiceConnection(
             if (event.eventType == AccessibilityEvent.TYPE_WINDOWS_CHANGED) event.windowChanges else 0, nativeTransientConfirmed)
     }
     fun processed(receipt: OverlayCleanupBarrier.Receipt?) = manual.processed(receipt)
+    fun eventRejected(issue: ManualCleanupIssue) {
+        trace?.cleanup?.record(ManualCleanupSite.EVENT_HANDLER, issue)
+    }
     fun cleanupFailed() {
         trace?.cleanup?.record(ManualCleanupSite.EVENT_HANDLER, ManualCleanupIssue.HANDLER_NOT_COMPLETED)
         cleanup.fail()

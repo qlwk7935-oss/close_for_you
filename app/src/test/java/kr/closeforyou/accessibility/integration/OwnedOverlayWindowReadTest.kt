@@ -96,7 +96,10 @@ class OwnedOverlayWindowReadTest {
             for (cancel in listOf(false, true)) {
                 val d = Driver(); d.windows = listOf(Window(), Window(id = 3, root = Node(id = 3)))
                 d.failAt = step; d.cancel = cancel
-                val result = d.read(); assertNull(result); assertTrue(d.unhealthy); d.finish(result)
+                val attempted = runCatching { d.read() }
+                if (cancel) assertTrue(attempted.exceptionOrNull() is CancellationException)
+                else assertNull(attempted.exceptionOrNull())
+                val result = attempted.getOrNull(); assertNull(result); assertTrue(d.unhealthy); d.finish(result)
                 assertEquals(listOf(OverlayOwnedWindowDetail.QUERY_FAILED), d.details)
                 assertEquals(if (step == "WINDOWS") 0 else 2, d.releasedWindows.size)
                 assertEquals(when (step) {
@@ -144,7 +147,7 @@ class OwnedOverlayWindowReadTest {
         val unavailable = d.read(); assertNull(unavailable); d.finish(unavailable)
         assertTrue(d.calls.isEmpty()); assertEquals(OverlayOwnedWindowDetail.UNCERTAIN, d.details.last())
     }
-    @Test fun debugAndReleaseMatchV5ResultsGetterCountsAndCleanupForNormalAndFaultPaths() {
+    @Test fun debugAndReleaseKeepV5GetterAndCleanupOrderButPropagateCancellation() {
         val configurations: List<(Driver) -> Unit> = listOf({}, { it.windows = emptyList() },
             { it.windows = (1..33).map { id -> Window(id = id) } },
             { it.windows = listOf(Window(overlay = false), Window(defaultDisplay = false), Window(root = null),
@@ -156,7 +159,15 @@ class OwnedOverlayWindowReadTest {
             val baseline = Driver(); val debug = Driver(); val release = Driver()
             for (d in listOf(baseline, debug, release)) { configure(d); d.failAt = step; d.cancel = cancel }
             val original = baseline.originalV5()
-            assertEquals(original, debug.read()); assertEquals(original, release.read(null))
+            val debugResult = runCatching { debug.read() }; val releaseResult = runCatching { release.read(null) }
+            val cancelled = cancel && step != null && step in baseline.calls
+            if (cancelled) {
+                assertTrue(debugResult.exceptionOrNull() is CancellationException)
+                assertTrue(releaseResult.exceptionOrNull() is CancellationException)
+            } else {
+                assertNull(debugResult.exceptionOrNull()); assertNull(releaseResult.exceptionOrNull())
+                assertEquals(original, debugResult.getOrNull()); assertEquals(original, releaseResult.getOrNull())
+            }
             for (d in listOf(debug, release)) {
                 assertEquals(baseline.calls, d.calls); assertEquals(baseline.unhealthy, d.unhealthy)
                 assertEquals(baseline.releasedRoots.size, d.releasedRoots.size)

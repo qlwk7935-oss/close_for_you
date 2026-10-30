@@ -299,10 +299,8 @@ internal class AndroidF9ScreenPort(
         f9PassiveSystemBar({ window.type == AccessibilityWindowInfo.TYPE_SYSTEM }, { window.isActive }, { window.isFocused },
             { rect(window, trace) }, frame, owner = { p ->
                 // Original owner-only metadata checks: never traverse or read system window text.
-                val root = own(window.root ?: return@f9PassiveSystemBar p.rejected(F9PassiveBarResult.ROOT_UNAVAILABLE))
-                if (root.packageName?.toString() != "com.android.systemui") return@f9PassiveSystemBar p.rejected(F9PassiveBarResult.OWNER_UNCONFIRMED)
-                if (root.windowId != window.id) return@f9PassiveSystemBar p.rejected(F9PassiveBarResult.ROOT_WINDOW_MISMATCH)
-                true
+                f9PassiveBarOwner({ window.root }, own,
+                    { root -> root.packageName?.toString() == "com.android.systemui" }, { root -> root.windowId == window.id }, p)
             }, probe = probe)
     override fun toString() = "AndroidF9ScreenPort(redacted)"
 }

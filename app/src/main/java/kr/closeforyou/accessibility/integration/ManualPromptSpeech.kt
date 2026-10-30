@@ -44,6 +44,9 @@ internal suspend fun announceManualPrompt(readiness: StateFlow<SpeechReadiness>,
         code(if (readiness.value == SpeechReadiness.READY) ManualSpeechState.READY else ManualSpeechState.UNAVAILABLE)
         val result = deliver()
         currentCoroutineContext().ensureActive()
+        // A late backend completion must not belong to an expired/replaced display or request.
+        // This checks the existing display-only lease; it never extends the execution TTL.
+        if (!current()) return stale()
         code(if (result.state == AnnouncementState.TTS_COMPLETED) ManualSpeechState.COMPLETED else ManualSpeechState.NOT_DELIVERED)
         return result
     } catch (cancelled: CancellationException) { code(ManualSpeechState.CANCELLED); throw cancelled }

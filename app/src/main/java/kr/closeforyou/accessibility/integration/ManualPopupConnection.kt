@@ -356,7 +356,7 @@ internal class ManualPopupConnection(
             fun owned(): Int? = manualDisplayOwnedId({ readManualNativeWindow(native, nativeOwner, generation, null) },
                 { before?.contains(it) }, {
                     val read = if (trace != null) ManualOwnedReadProbe() else null
-                    readOwned(read).also { if (read != null) probe.ownedRead = read.code() }
+                    try { readOwned(read) } finally { if (read != null) probe.ownedRead = read.code() }
                 }, probe)
             checkedManualDisplay(probe) {
                 checkpoint()
