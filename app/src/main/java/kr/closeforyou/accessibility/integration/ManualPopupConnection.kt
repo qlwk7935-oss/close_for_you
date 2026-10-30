@@ -33,6 +33,7 @@ internal class ManualPopupConnection(
     private val speechReadiness: StateFlow<SpeechReadiness>,
     private val verifyDisplay: (PopupSnapshot, ManualDisplayIdentity, () -> Unit, ManualDisplayProbe) -> ManualDisplayVerdict,
     private val trace: ManualPromptTrace? = null,
+    private val verifyBoundsDisplay: ((PopupSnapshot, ManualDisplayIdentity, () -> Unit, ManualDisplayProbe, List<CloseCandidate>) -> ManualDisplayVerdict)? = null,
 ) {
     private val handler = Handler(Looper.getMainLooper())
     private val promptLifetime = ManualPromptLifetime(SystemClock::uptimeMillis)
@@ -50,6 +51,7 @@ internal class ManualPopupConnection(
     private var original: PopupSnapshot? = null
     private var shownAnalysis: PopupAnalysis? = null
     private var shownDetection: PopupDetection? = null
+    private var displayedCandidates: PopupAnalysis? = null
     private var selected: SnapshotToken? = null
     private var selectedValid = false
     private var selectedAction: ManualActionTrace? = null
@@ -200,6 +202,7 @@ internal class ManualPopupConnection(
                     throw CancellationException("MANUAL_PRESENTATION_STALE")
                 }
                 trace?.record(ManualPromptPoint.ADMISSION_ACCEPTED)
+                displayedCandidates = analysis
                 return analysis
             } catch (cancelled: CancellationException) {
                 trace?.record(ManualPromptPoint.FLOW_CANCELLED, ManualPromptCause.FLOW_CANCELLED)
@@ -248,7 +251,7 @@ internal class ManualPopupConnection(
             ManualReviewAdmission.EXHAUSTED -> ManualPromptCause.REVIEW_BUDGET_EXHAUSTED
         })
         trace?.review(ManualReviewCode(ManualReviewPoint.ADMITTED, reviews.lastAdmission, reviews.lastChange))
-        original = snapshot; shownAnalysis = analysis; shownDetection = detection
+        original = snapshot; shownAnalysis = analysis; shownDetection = detection; displayedCandidates = null
         gate.prepare(snapshot, permit)
         AccessibilityRuntime.manualBoundary("OFFERED")
         events.tryEmit(PopupEvent.Candidate(display, detection))
@@ -265,7 +268,7 @@ internal class ManualPopupConnection(
         }
         completedKey = Triple(old.token.packageName, old.token.windowId, old.token.contentDigest)
         if (choice.kind == ChoiceKind.KEEP_OPEN) {
-            original = null; shownAnalysis = null; shownDetection = null; promptLifetime.clear(); return null
+            original = null; shownAnalysis = null; shownDetection = null; displayedCandidates = null; promptLifetime.clear(); return null
         }
         if (choice.kind != ChoiceKind.CLOSE_ONCE || !choice.buttonMeaningConfirmed) {
             promptLifetime.clear(); return null
@@ -303,7 +306,7 @@ internal class ManualPopupConnection(
             throw failure
         } finally {
             if (selectedAction === action) selectedAction = null
-            selectedValid = false; selected = null; original = null; shownAnalysis = null; shownDetection = null; gate.clear(); promptLifetime.clear()
+            selectedValid = false; selected = null; original = null; shownAnalysis = null; shownDetection = null; displayedCandidates = null; gate.clear(); promptLifetime.clear()
             retiredNative = null; retiredId = null
             // A next popup may have arrived while this result was being observed. Never replay
             // it: explicitly ask F0/F1 for a new read after the accepted choice finishes.
@@ -321,7 +324,7 @@ internal class ManualPopupConnection(
                 endCause = cause
                 selectedValid = false; guarded.revoke(); promptLifetime.clear(); displayTimer?.cancel()
             }, remove = {
-                original = null; shownAnalysis = null; shownDetection = null; clearHistory()
+                original = null; shownAnalysis = null; shownDetection = null; displayedCandidates = null; clearHistory()
                 events.tryEmit(PopupEvent.Invalidated(version))
                 val batch = kr.closeforyou.accessibility.CollectionReleaseBatch()
                 batch.attempt { dismissOverlay() }; batch.attempt { announcer.stop() }
@@ -343,6 +346,8 @@ internal class ManualPopupConnection(
             !overlay.isShowing || promptLifetime.current() == null ||
             shownDetection?.signals?.contains(PopupSignal.NEW_WINDOW) != true) return false
         val source = original ?: return false
+        val boundsCandidates = manualDemoBoundsCandidates(ManualDemoBoundsFeature.enabled && verifyBoundsDisplay != null,
+            type, changes, eventWindow, source, displayedCandidates, shownDetection)
         var version = epoch()
         val probe = ManualDisplayProbe(nodeDiagnostics = trace != null)
         trace?.record(ManualPromptPoint.DISPLAY_REVIEW_STARTED)
@@ -360,7 +365,8 @@ internal class ManualPopupConnection(
                     try { readOwned(read) } finally { probe.ownedRead = read.code() }
                 }, probe)
             verifyRegisteredManualDisplay(probe, ::checkpoint, ::owned) { identity ->
-                verifyDisplay(source, identity, ::checkpoint, probe)
+                if (boundsCandidates == null) verifyDisplay(source, identity, ::checkpoint, probe)
+                else requireNotNull(verifyBoundsDisplay)(source, identity, ::checkpoint, probe, boundsCandidates)
             }
         }, remove = {
             invalidate(version, ttl = false, ownedRetirement = false, cause =
@@ -382,9 +388,10 @@ internal class ManualPopupConnection(
             ManualDisplayVerdict.SAME -> ManualPromptCause.TARGET_RECONFIRMED
             ManualDisplayVerdict.CHANGED -> ManualPromptCause.TARGET_CHANGED
             ManualDisplayVerdict.UNAVAILABLE -> ManualPromptCause.TARGET_REVIEW_UNAVAILABLE
+            ManualDisplayVerdict.BOUNDS_RETAINED -> ManualPromptCause.DEMO_BOUNDS_RECONFIRMED
         }
         trace?.record(ManualPromptPoint.DISPLAY_REVIEW_FINISHED, cause)
-        if (result == ManualDisplayVerdict.SAME) trace?.record(ManualPromptPoint.DISPLAY_RETAINED, cause)
+        if (result == ManualDisplayVerdict.SAME || result == ManualDisplayVerdict.BOUNDS_RETAINED) trace?.record(ManualPromptPoint.DISPLAY_RETAINED, cause)
         return true
     }
     fun shouldIgnore(event: AccessibilityEvent): Boolean {
@@ -528,7 +535,7 @@ internal class ManualPopupConnection(
         trace?.record(ManualPromptPoint.SERVICE_CLOSED, ManualPromptCause.SERVICE_STOPPED)
         endCause = ManualPromptCause.SERVICE_STOPPED
         closed = true; selectedValid = false; gate.clear(); promptLifetime.clear(); guarded.revoke(); displayTimer?.cancel()
-        job?.cancel(); original = null; shownAnalysis = null; shownDetection = null; clearHistory(); eventDiagnostic.disarm()
+        job?.cancel(); original = null; shownAnalysis = null; shownDetection = null; displayedCandidates = null; clearHistory(); eventDiagnostic.disarm()
         retiredNative = null; retiredId = null
         val batch = kr.closeforyou.accessibility.CollectionReleaseBatch()
         batch.attempt { dismissOverlay() }

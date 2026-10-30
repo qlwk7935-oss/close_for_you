@@ -8,7 +8,7 @@ import kr.closeforyou.accessibility.action.F9AutoCloser
 import kr.closeforyou.accessibility.action.F9Scene
 import kr.closeforyou.core.model.*
 
-internal enum class ManualDisplayVerdict { SAME, CHANGED, UNAVAILABLE }
+internal enum class ManualDisplayVerdict { SAME, CHANGED, UNAVAILABLE, BOUNDS_RETAINED }
 internal enum class ManualDisplayPoint { NOT_CHECKED, CHECKPOINT, NATIVE_BEFORE, SCREEN, NATIVE_AFTER, COMPARISON }
 internal enum class ManualDisplayDetail {
     NONE, CURRENTNESS_FAILED, TIME_LIMIT, NATIVE_ID_UNAVAILABLE, NATIVE_ID_CHANGED, BEFORE_SET_UNCONFIRMED, LIVE_SET_UNCONFIRMED, REGISTRATION_CHANGED,
@@ -213,7 +213,7 @@ internal fun reviewManualDisplay(retire: () -> Unit, verify: () -> ManualDisplay
             kr.closeforyou.accessibility.diagnosticWrite { onChecked(ManualDisplayVerdict.UNAVAILABLE) }
             throw failure
         }
-        retain = verdict == ManualDisplayVerdict.SAME
+        retain = verdict == ManualDisplayVerdict.SAME || verdict == ManualDisplayVerdict.BOUNDS_RETAINED
         // Record the verified result BEFORE remove can throw; the sink has no policy authority.
         kr.closeforyou.accessibility.diagnosticWrite { onChecked(verdict) }
         verdict
@@ -247,7 +247,8 @@ internal object ManualDisplayContinuity {
         return target
     }
     fun assess(original: PopupSnapshot, fresh: F9Scene, nativeOverlayId: Int, probe: ManualDisplayProbe? = null,
-        listing: ManualDisplayListing = ManualDisplayListing.LISTED): ManualDisplayVerdict {
+        listing: ManualDisplayListing = ManualDisplayListing.LISTED,
+        demoBoundsCandidates: List<CloseCandidate>? = null): ManualDisplayVerdict {
         probe?.point = ManualDisplayPoint.COMPARISON
         fun reject(detail: ManualDisplayDetail, verdict: ManualDisplayVerdict = ManualDisplayVerdict.UNAVAILABLE): ManualDisplayVerdict {
             probe?.reject(detail); return verdict
@@ -262,6 +263,8 @@ internal object ManualDisplayContinuity {
         if (fresh.windowId != original.token.windowId) return reject(ManualDisplayDetail.WINDOW_CHANGED, ManualDisplayVerdict.CHANGED)
         if (fresh.screen != original.screenBounds) return reject(ManualDisplayDetail.FRAME_CHANGED, ManualDisplayVerdict.CHANGED)
         if (fresh.nodes != original.nodes) {
+            if (demoBoundsCandidates != null && ManualDemoBoundsPolicy.retains(original, fresh, nativeOverlayId, listing, demoBoundsCandidates))
+                return ManualDisplayVerdict.BOUNDS_RETAINED
             probe?.nodesChanged(original, fresh)
             return reject(ManualDisplayDetail.NODES_CHANGED, ManualDisplayVerdict.CHANGED)
         }

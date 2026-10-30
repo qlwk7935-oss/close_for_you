@@ -52,9 +52,10 @@ internal class AndroidF9ScreenPort(
      * for an action, or changes the strict overlay rejection in read()/press(). Caller confirms
      * THIS native C generation/ownership before and after the entire bounded operation. */
     fun verifyDisplayedPopup(source: PopupSnapshot, identity: ManualDisplayIdentity, checkpoint: () -> Unit,
-        probe: ManualDisplayProbe? = null): ManualDisplayVerdict {
+        probe: ManualDisplayProbe? = null, boundsCandidates: List<CloseCandidate>? = null): ManualDisplayVerdict {
+        val demoCandidates = boundsCandidates.takeIf { kr.closeforyou.accessibility.integration.ManualDemoBoundsFeature.enabled }
         val verdict = scan(checkpoint, null, DisplayRead(source, identity, probe), F9ReadPurpose.DISPLAY_REVIEW) { scene, _ ->
-            ManualDisplayContinuity.assess(source, scene, identity.window, probe, identity.listing)
+            ManualDisplayContinuity.assess(source, scene, identity.window, probe, identity.listing, demoCandidates)
         }
         if (!healthy || verdict == null) {
             probe?.screenUnavailable(resourceFailure = !healthy)

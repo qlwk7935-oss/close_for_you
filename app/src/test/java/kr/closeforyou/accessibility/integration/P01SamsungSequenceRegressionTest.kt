@@ -201,7 +201,8 @@ class P01SamsungSequenceRegressionTest {
                 offered.screenBounds, false, false, 4)) else emptyList() },
             { it.type == WindowType.ACCESSIBILITY_OVERLAY }, { it.id }, { id, window -> ownedRoot && id == window.id },
             { true }, { it.id }, {}, {}, health::fail, null, probe)
-        fun review(live: Set<Int>? = setOf(nativeId), changed: Boolean = false, ownedRoot: Boolean = true): ManualDisplayVerdict {
+        fun review(live: Set<Int>? = setOf(nativeId), changed: Boolean = false, ownedRoot: Boolean = true,
+            demoScene: F9Scene? = null, demoCandidates: List<CloseCandidate>? = null): ManualDisplayVerdict {
             val probe = ManualDisplayProbe().also { it.point = ManualDisplayPoint.NATIVE_BEFORE }
             return reviewManualDisplay(retire = { expireOriginal() }, verify = {
                 verifyRegisteredManualDisplay(probe, { check(valid) }, {
@@ -216,8 +217,8 @@ class P01SamsungSequenceRegressionTest {
                     val overlay = WindowSnapshot(identity.window, WindowType.ACCESSIBILITY_OVERLAY, original.screenBounds, true, true, 4)
                     val windows = if (identity.listing == ManualDisplayListing.NOT_ENUMERATED) offered.windows else
                         offered.windows.map { if (it.id == offered.token.windowId) it.copy(active = false, focused = false) else it } + overlay
-                    val scene = f.before.copy(nodes = if (changed) listOf(body.copy(text = "다른 안내")) else offered.nodes, windows = windows)
-                    ManualDisplayContinuity.assess(offered, scene, identity.window, probe, identity.listing)
+                    val scene = demoScene ?: f.before.copy(nodes = if (changed) listOf(body.copy(text = "다른 안내")) else offered.nodes, windows = windows)
+                    ManualDisplayContinuity.assess(offered, scene, identity.window, probe, identity.listing, demoCandidates)
                 }
             }, remove = {
                 valid = false; guarded.revoke(); lifetime.clear()
@@ -238,6 +239,42 @@ class P01SamsungSequenceRegressionTest {
         assertEquals(ClickOutcome.CLOSED_CONFIRMED, r.results.single().outcome)
         callback(picked); runCurrent(); assertEquals(1, r.f.clicks)
         assertTrue(r.order.indexOf("ABSENT") < r.order.indexOf("F0")); assertTrue(r.order.indexOf("F0") < r.order.indexOf("B_EXECUTE"))
+    }
+    @Test fun demoRootResizeKeepsActualCAndSpeechPastSixSecondsButDoesNotPermitChangedFreshF0() = runTest {
+        val r = Rig(this)
+        val root = r.f.node.copy(path = "0", viewId = "synthetic-root", text = null, className = "android.widget.FrameLayout",
+            bounds = r.f.bounds, clickable = false, actions = persistentSetOf())
+        val source = r.original.copy(nodes = persistentListOf(root, r.f.node, r.body))
+        assertTrue(r.show(source)); advanceTimeBy(700); runCurrent()
+        val expanded = ScreenBounds(18, 18, 202, 202)
+        val scene = r.f.before.copy(nodes = source.nodes.map { if (it.path == "0") it.copy(bounds = expanded) else it },
+            windows = source.windows.map { if (it.id == 20) it.copy(bounds = expanded) else it })
+        val stops = r.order.count { it == "TTS_STOP" }
+        assertEquals(ManualDisplayVerdict.BOUNDS_RETAINED, r.review(emptySet(), demoScene = scene, demoCandidates = listOf(r.f.candidate)))
+        runCurrent(); assertTrue(r.guarded.isShowing); assertEquals(stops, r.order.count { it == "TTS_STOP" })
+        advanceTimeBy(6_000); runCurrent(); r.completeSpeech(); runCurrent()
+        assertTrue(r.guarded.isShowing); assertTrue(ManualSpeechState.COMPLETED in r.speech)
+        assertEquals(1, r.shows); assertEquals(source.token, r.lifetime.current()); assertNull(r.rawToken)
+        r.collection = { it.copy(nodes = scene.nodes.toPersistentList(), windows = scene.windows.toPersistentList()) }
+        r.choose(); assertTrue(r.removal()); r.quiet.complete(Unit); runCurrent(); advanceTimeBy(1_500); runCurrent()
+        assertEquals(1, r.freshReads); assertEquals(0, r.f.clicks); assertFalse(r.results.single().attempted)
+        assertEquals(source.capturedAtUptimeMillis, r.offered.capturedAtUptimeMillis)
+    }
+    @Test fun demoRetentionCannotBypassFinalF9WhenTargetMovesAfterApprovedRefresh() = runTest {
+        val r = Rig(this)
+        val root = r.f.node.copy(path = "0", viewId = "synthetic-root", text = null, className = "android.widget.FrameLayout",
+            bounds = r.f.bounds, clickable = false, actions = persistentSetOf())
+        val source = r.original.copy(nodes = persistentListOf(root, r.f.node, r.body)); assertTrue(r.show(source))
+        val b = ScreenBounds(18, 18, 202, 202)
+        val scene = r.f.before.copy(nodes = source.nodes.map { if (it.path == "0") it.copy(bounds = b) else it },
+            windows = source.windows.map { if (it.id == 20) it.copy(bounds = b) else it })
+        assertEquals(ManualDisplayVerdict.BOUNDS_RETAINED, r.review(emptySet(), demoScene = scene, demoCandidates = listOf(r.f.candidate)))
+        // Actual fresh F0 after C removal returns the exact original tree; no timestamp copying
+        // by retention. Then the final press re-read changes independently and must not click.
+        r.f.beforePress = { r.f.scene = scene }
+        r.choose(); assertTrue(r.removal()); r.quiet.complete(Unit); runCurrent(); advanceTimeBy(1_500); runCurrent()
+        assertEquals(1, r.freshReads); assertEquals(1, r.decisionCalls); assertEquals(0, r.f.clicks)
+        assertFalse(r.results.single().attempted)
     }
     @Test fun latestSamsungSystemOcclusionBlocksManualEligibilityEvenAfterBApproves() = runTest {
         val r = Rig(this); r.blockPurpose = F9ReadPurpose.MANUAL_ELIGIBILITY; r.show(); r.choose(); r.removal(); r.quiet.complete(Unit)

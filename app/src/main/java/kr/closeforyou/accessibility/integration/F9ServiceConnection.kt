@@ -67,7 +67,11 @@ internal class F9ServiceConnection(
     })
     private val manual = ManualPopupConnection(service, scope, session, cleanup, presentationHealth, tts, batcher,
         history::clear, userInteracting, epoch, verifyPresentation, requestObservation,
-        collectForChoice, awaitInteractionEnd, intentInteracting, speechEngine.readiness, screen::verifyDisplayedPopup, trace)
+        collectForChoice, awaitInteractionEnd, intentInteracting, speechEngine.readiness,
+        { source, identity, check, probe -> screen.verifyDisplayedPopup(source, identity, check, probe) }, trace,
+        verifyBoundsDisplay = if (ManualDemoBoundsFeature.enabled) { source, identity, check, probe, candidates ->
+            screen.verifyDisplayedPopup(source, identity, check, probe, candidates)
+        } else null)
     val observationReady: Boolean get() = !closed && manual.canObserve()
     fun hasPrompt() = manual.hasPrompt()
     fun hasPendingPresentation() = manual.hasPendingPresentation()
