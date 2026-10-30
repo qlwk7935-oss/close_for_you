@@ -18,20 +18,58 @@ internal enum class ManualDisplayDetail {
     PACKAGE_CHANGED, WINDOW_CHANGED, FRAME_CHANGED, NODES_CHANGED, WINDOW_SET_CHANGED,
     ORIGINAL_WINDOW_UNAVAILABLE, PROTECTED_CONTENT, CANCELLED, EXCEPTION, UNKNOWN,
 }
+/** Field type only; no node index/path/value/identifier is retained or printed. */
+internal enum class ManualNodeMismatch {
+    NOT_CHECKED, NONE, NODE_COUNT, PATH_OR_ORDER, VIEW_ID, CLASS_NAME, TEXT, CONTENT_DESCRIPTION,
+    CLICKABLE, ENABLED, BOUNDS, ACTIONS, LIMIT_EXCEEDED, UNKNOWN,
+}
+/** Pure diagnostic on already frozen DTOs. Counts first, then positional node order and DTO
+ * declaration field order. Never used for equality/authorization; bounded to the existing 1200. */
+internal fun firstManualNodeMismatch(original: List<NodeSnapshot>, fresh: List<NodeSnapshot>): ManualNodeMismatch {
+    if (original.size != fresh.size) return ManualNodeMismatch.NODE_COUNT
+    if (original.size > 1_200) return ManualNodeMismatch.LIMIT_EXCEEDED
+    for (i in original.indices) {
+        val a = original[i]; val b = fresh[i]
+        when {
+            a.path != b.path -> return ManualNodeMismatch.PATH_OR_ORDER
+            a.viewId != b.viewId -> return ManualNodeMismatch.VIEW_ID
+            a.className != b.className -> return ManualNodeMismatch.CLASS_NAME
+            a.text != b.text -> return ManualNodeMismatch.TEXT
+            a.contentDescription != b.contentDescription -> return ManualNodeMismatch.CONTENT_DESCRIPTION
+            a.clickable != b.clickable -> return ManualNodeMismatch.CLICKABLE
+            a.enabled != b.enabled -> return ManualNodeMismatch.ENABLED
+            a.bounds != b.bounds -> return ManualNodeMismatch.BOUNDS
+            a.actions != b.actions -> return ManualNodeMismatch.ACTIONS
+        }
+    }
+    return ManualNodeMismatch.NONE
+}
+
 /** Comparison/ownership diagnostics only. First failure survives later exceptions and cleanup. */
-internal class ManualDisplayProbe {
+internal class ManualDisplayProbe(private val nodeDiagnostics: Boolean = false) {
     var listing = ManualDisplayListing.NOT_CHECKED
     var ownedRead = ManualOwnedReadCode()
     var point = ManualDisplayPoint.NOT_CHECKED
     private var firstPoint: ManualDisplayPoint? = null
     private var firstOwned: ManualOwnedReadCode? = null
     private var firstListing: ManualDisplayListing? = null
+    private var firstNodes: ManualNodeMismatch? = null
+    private var nodes = ManualNodeMismatch.NOT_CHECKED
+    val failureNodes get() = firstNodes ?: nodes
+    fun nodesChanged(original: List<NodeSnapshot>, fresh: List<NodeSnapshot>) {
+        if (!nodeDiagnostics || detail != ManualDisplayDetail.NONE || nodes != ManualNodeMismatch.NOT_CHECKED) return
+        nodes = ManualNodeMismatch.UNKNOWN
+        kr.closeforyou.accessibility.diagnosticWrite {
+            val first = firstManualNodeMismatch(original, fresh)
+            nodes = if (first == ManualNodeMismatch.NONE) ManualNodeMismatch.UNKNOWN else first
+        }
+    }
     val failureListing get() = firstListing ?: listing
     val failureOwned get() = firstOwned ?: ownedRead
     var detail = ManualDisplayDetail.NONE; private set
     val failurePoint get() = firstPoint ?: point
     fun reject(value: ManualDisplayDetail) {
-        if (detail == ManualDisplayDetail.NONE) { detail = value; firstPoint = point; firstOwned = ownedRead; firstListing = listing }
+        if (detail == ManualDisplayDetail.NONE) { detail = value; firstPoint = point; firstOwned = ownedRead; firstListing = listing; firstNodes = nodes }
     }
     fun require(condition: Boolean, value: ManualDisplayDetail) {
         if (!condition) { reject(value); check(false) { "MANUAL_DISPLAY_UNAVAILABLE" } }
@@ -136,7 +174,8 @@ internal inline fun checkedManualDisplay(probe: ManualDisplayProbe, verify: () -
 internal data class ManualDisplayReviewCode(val kind: ManualEventKind, val mask: ManualWindowMask,
     val verdict: ManualDisplayVerdict, val point: ManualDisplayPoint = ManualDisplayPoint.NOT_CHECKED,
     val detail: ManualDisplayDetail = ManualDisplayDetail.NONE, val owned: ManualOwnedReadCode = ManualOwnedReadCode(),
-    val listing: ManualDisplayListing = ManualDisplayListing.NOT_CHECKED)
+    val listing: ManualDisplayListing = ManualDisplayListing.NOT_CHECKED,
+    val nodes: ManualNodeMismatch = ManualNodeMismatch.NOT_CHECKED)
 
 /** A target BOUNDS notification is a request to re-read, not proof that C or the target caused it.
  * Mixed/structural/unknown masks and unrelated windows keep ordinary invalidation. */
@@ -206,7 +245,10 @@ internal object ManualDisplayContinuity {
         if (fresh.packageName != original.token.packageName) return reject(ManualDisplayDetail.PACKAGE_CHANGED, ManualDisplayVerdict.CHANGED)
         if (fresh.windowId != original.token.windowId) return reject(ManualDisplayDetail.WINDOW_CHANGED, ManualDisplayVerdict.CHANGED)
         if (fresh.screen != original.screenBounds) return reject(ManualDisplayDetail.FRAME_CHANGED, ManualDisplayVerdict.CHANGED)
-        if (fresh.nodes != original.nodes) return reject(ManualDisplayDetail.NODES_CHANGED, ManualDisplayVerdict.CHANGED)
+        if (fresh.nodes != original.nodes) {
+            probe?.nodesChanged(original.nodes, fresh.nodes)
+            return reject(ManualDisplayDetail.NODES_CHANGED, ManualDisplayVerdict.CHANGED)
+        }
         val expected = original.windows.singleOrNull { it.id == original.token.windowId } ?: return reject(ManualDisplayDetail.ORIGINAL_WINDOW_UNAVAILABLE)
         // C alone may own active/input focus. Only those flags on the SAME application window
         // may differ; bounds/type/layer/other windows and the entire target tree must agree.

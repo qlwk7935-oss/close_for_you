@@ -344,7 +344,7 @@ internal class ManualPopupConnection(
             shownDetection?.signals?.contains(PopupSignal.NEW_WINDOW) != true) return false
         val source = original ?: return false
         var version = epoch()
-        val probe = ManualDisplayProbe()
+        val probe = ManualDisplayProbe(nodeDiagnostics = trace != null)
         trace?.record(ManualPromptPoint.DISPLAY_REVIEW_STARTED)
         val result = reviewManualDisplay(retire = { version = retire() }, verify = {
             val started = SystemClock.uptimeMillis()
@@ -376,7 +376,7 @@ internal class ManualPopupConnection(
                 AccessibilityEvent.TYPE_WINDOWS_CHANGED -> ManualEventKind.WINDOW_SET
                 else -> ManualEventKind.WINDOW_STATE
             }, if (type == AccessibilityEvent.TYPE_WINDOWS_CHANGED) manualWindowMask(changes) else ManualWindowMask.NOT_APPLICABLE,
-                verdict, probe.failurePoint, probe.detail, probe.failureOwned, probe.failureListing))
+                verdict, probe.failurePoint, probe.detail, probe.failureOwned, probe.failureListing, probe.failureNodes))
         })
         val cause = when (result) {
             ManualDisplayVerdict.SAME -> ManualPromptCause.TARGET_RECONFIRMED
