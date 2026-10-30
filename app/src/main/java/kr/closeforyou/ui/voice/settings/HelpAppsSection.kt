@@ -19,7 +19,6 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.verticalScroll
@@ -29,7 +28,6 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -84,7 +82,11 @@ fun rememberAppCatalog(): AppCatalog? {
     val context = LocalContext.current
     val catalog by produceState<AppCatalog?>(null) {
         value = withContext(Dispatchers.IO) {
-            HelpAppsCatalog.build(LauncherAppSource(context.packageManager).launchableApps(), context.packageName)
+            HelpAppsCatalog.build(
+                LauncherAppSource(context.packageManager).launchableApps(),
+                context.packageName,
+                unknownLabel = context.getString(R.string.ui_app_unknown),
+            )
         }
     }
     return catalog
@@ -179,26 +181,17 @@ private fun HelpAppsModeSection(
     onDraftChange: (HelpAppsDraft) -> Unit,
     onPageChange: (HelpAppsPage) -> Unit,
 ) {
-    Text(stringResource(R.string.ui_help_apps_intro))
-    Text(stringResource(R.string.ui_help_apps_scope))
-    Text(stringResource(R.string.ui_help_apps_separate), style = MaterialTheme.typography.bodySmall)
+    BodyText(stringResource(R.string.ui_help_apps_intro))
+    BodyText(stringResource(R.string.ui_help_apps_scope))
+    HelpText(stringResource(R.string.ui_help_apps_separate))
     Column(Modifier.selectableGroup()) {
         HelpAppsMode.entries.forEach { mode ->
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .heightIn(min = 48.dp)
-                    .selectable(selected = draft.mode == mode, role = Role.RadioButton) {
-                        onDraftChange(draft.copy(mode = mode))
-                    },
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                RadioButton(selected = draft.mode == mode, onClick = null)
-                Column(Modifier.padding(start = 8.dp).padding(vertical = 4.dp)) {
-                    Text(stringResource(HelpAppsText.modeLabelRes(mode)))
-                    Text(stringResource(HelpAppsText.modeHelpRes(mode)), style = MaterialTheme.typography.bodySmall)
-                }
-            }
+            ChoiceCard(
+                title = stringResource(HelpAppsText.modeLabelRes(mode)),
+                body = stringResource(HelpAppsText.modeHelpRes(mode)),
+                selected = draft.mode == mode,
+                onClick = { onDraftChange(draft.copy(mode = mode)) },
+            )
         }
     }
     when {
@@ -430,9 +423,9 @@ private fun AppInfoRow(app: InstalledApp) {
     }
 }
 
-/** Decorative (the name is read instead). Loaded off the main thread; blank while loading. */
+/** Decorative (the name is read instead). Loaded off the main thread; blank while loading or hidden. */
 @Composable
-private fun AppIcon(packageName: String) {
+internal fun AppIcon(packageName: String) {
     val context = LocalContext.current
     val icon by produceState<ImageBitmap?>(null, packageName) {
         value = withContext(Dispatchers.IO) {
@@ -448,30 +441,26 @@ private fun AppIcon(packageName: String) {
     else Spacer(Modifier.size(40.dp))
 }
 
-/** Settings' "도와줄 앱" block: how many apps A helps, what waits for consent, the last result. */
+/** Settings' "도와줄 앱" block: one line ([HelpAppsStatusPlan]), "준비 중" when waiting, then the buttons. */
 @Composable
-fun HelpAppsStatus(
-    mode: HelpAppsMode?,
-    allowedCount: Int,
-    pendingCount: Int,
-    outcome: HelpAppsOutcome?,
-    onChange: () -> Unit,
-) {
-    val resources = LocalContext.current.resources
-    Text(
-        if (allowedCount == 0) stringResource(R.string.ui_help_apps_status_none)
-        else stringResource(R.string.ui_help_apps_status_count, allowedCount),
+fun HelpAppsStatus(line: HelpAppsStatusLine, onChange: () -> Unit, onExclude: () -> Unit) {
+    BodyText(
+        when {
+            line.mode == HelpAppsMode.ALL && line.excludedCount != null ->
+                stringResource(R.string.ui_help_apps_status_all_excluded, line.excludedCount)
+            line.mode == HelpAppsMode.ALL -> stringResource(R.string.ui_help_apps_status_all)
+            line.mode == HelpAppsMode.CHOSEN -> stringResource(R.string.ui_help_apps_status_chosen, line.helpedCount)
+            else -> stringResource(R.string.ui_help_apps_status_none)
+        },
     )
-    HelpAppsText.statusModeRes(mode)?.let { Text(stringResource(it)) }
-    if (pendingCount > 0) Text(stringResource(R.string.ui_help_apps_status_pending, pendingCount))
-    if (outcome != null) {
-        Text(
-            HelpAppsText.outcomeLines(outcome).joinToString(" ") { (res, count) -> resources.getString(res, count) },
-            modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
-        )
+    if (line.waiting) HelpText(stringResource(R.string.ui_help_apps_status_waiting))
+    if (line.mode == HelpAppsMode.ALL) {
+        OutlinedButton(onClick = onExclude, modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp)) {
+            Text(stringResource(R.string.ui_help_apps_exclude_button), fontSize = UiType.body)
+        }
     }
-    OutlinedButton(onClick = onChange, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) {
-        Text(stringResource(R.string.ui_help_apps_change))
+    OutlinedButton(onClick = onChange, modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp)) {
+        Text(stringResource(R.string.ui_help_apps_change), fontSize = UiType.body)
     }
 }
 
@@ -480,7 +469,7 @@ fun HelpAppsStatus(
  * [저장] applies through A ([HelpAppsSync]) and closes, [취소] or back closes without changes.
  */
 @Composable
-fun HelpAppsEditScreen(onClose: () -> Unit, modifier: Modifier = Modifier) {
+fun HelpAppsEditScreen(onClose: () -> Unit, modifier: Modifier = Modifier, initialPage: HelpAppsPage = HelpAppsPage.MODE) {
     val context = LocalContext.current
     val preferences = remember { UiVoicePreferences.get(context) }
     val core = remember { CorePreferences.get(context) }
@@ -494,7 +483,7 @@ fun HelpAppsEditScreen(onClose: () -> Unit, modifier: Modifier = Modifier) {
             ),
         )
     }
-    var page by rememberSaveable { mutableStateOf(HelpAppsPage.MODE) }
+    var page by rememberSaveable { mutableStateOf(initialPage) }
     if (page == HelpAppsPage.MODE) BackHandler(onBack = onClose)
     HelpAppsEditor(
         catalog = catalog,

@@ -6,6 +6,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -46,6 +47,8 @@ import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import kotlinx.collections.immutable.ImmutableList
@@ -84,8 +87,14 @@ fun UiVoiceSettingsRoute(
     deleteAll: suspend () -> Unit = repository::deleteAll,
     clock: Clock = Clock.systemDefaultZone(),
     onOpenCleanUp: suspend () -> Unit = {},
+    /** A's "기본 설정" (consent, start/pause, OCR); null hides [기본 설정 열기]. See [UiVoiceAppRoot]. */
+    onOpenCoreSettings: (() -> Unit)? = null,
+    status: CoreSetupStatus? = null,
 ) {
     val context = LocalContext.current
+    val setupStatus = status ?: remember { AndroidCoreSetupStatus(context) }
+    var serviceOn by remember { mutableStateOf(setupStatus.serviceEnabled()) }
+    var serviceOpenFailed by rememberSaveable { mutableStateOf(false) }
     val preferences = remember { UiVoicePreferences.get(context) }
     val core = remember { CorePreferences.get(context) }
     val settings by preferences.state.collectAsState()
@@ -110,12 +119,22 @@ fun UiVoiceSettingsRoute(
     }
     // "도와줄 앱" saved before A's consent is added once consent is there (also on opening).
     PendingHelpAppsEffect()
-    val helpOutcome by HelpAppsSync.lastOutcome.collectAsState()
-    var editingHelpApps by rememberSaveable { mutableStateOf(false) }
+    // Which "도와줄 앱" page is open over the settings (null = none).
+    var editingHelpApps by rememberSaveable { mutableStateOf<HelpAppsPage?>(null) }
     var now by remember { mutableLongStateOf(clock.millis()) }
     val labelSource = remember { PackageManagerAppLabelSource(context.packageManager) }
+    val unknownApp = stringResource(R.string.ui_app_unknown)
     val packages = coreSettings.allowedPackages + rules.map { it.key.packageName }
-    val appNames = remember(packages) { AppNames.displayNames(packages, labelSource) }
+    val appNames = remember(packages, unknownApp) { AppNames.displayNames(packages, labelSource, unknownApp) }
+    val catalog = rememberAppCatalog()
+    val helpLine = HelpAppsStatusPlan.line(
+        mode = settings.helpAppsMode,
+        allowed = coreSettings.allowedPackages,
+        pending = settings.pendingHelpPackages,
+        userExcluded = settings.helpAppsExcluded,
+        catalog = catalog,
+        consentGranted = coreSettings.consentGranted,
+    )
     // Microphone: asked only here inside the Activity, never from the service's overlay.
     val microphone = remember { AndroidMicrophoneAccess(context) }
     fun micState() = SpeakButtonPolicy.state(featureEnabled = true, settingEnabled = true, microphone = microphone)
@@ -129,11 +148,12 @@ fun UiVoiceSettingsRoute(
     LifecycleResumeEffect(Unit) {
         microphoneState = micState()
         now = clock.millis()
+        serviceOn = setupStatus.serviceEnabled()
         onPauseOrDispose {}
     }
 
-    if (editingHelpApps) {
-        HelpAppsEditScreen(onClose = { editingHelpApps = false }, modifier = modifier)
+    editingHelpApps?.let { page ->
+        HelpAppsEditScreen(onClose = { editingHelpApps = null }, modifier = modifier, initialPage = page)
         return
     }
 
@@ -142,7 +162,7 @@ fun UiVoiceSettingsRoute(
         coreAllowedPackages = coreSettings.allowedPackages,
         collectionEnabled = coreSettings.collectionEnabled,
         rules = rules,
-        appName = { appNames[it] ?: it },
+        appName = { appNames[it] ?: unknownApp },
         onAutoCloseChange = preferences::setAutoClose,
         onDetailChange = preferences::setDetail,
         onPromptModeChange = preferences::setPromptAnnounceMode,
@@ -165,8 +185,14 @@ fun UiVoiceSettingsRoute(
         nowEpochMillis = now,
         zone = clock.zone,
         deleteAllFailed = deleteFailed,
-        helpOutcome = helpOutcome,
-        onChangeHelpApps = { editingHelpApps = true },
+        helpLine = helpLine,
+        onChangeHelpApps = { editingHelpApps = HelpAppsPage.MODE },
+        onExcludeHelpApps = { editingHelpApps = HelpAppsPage.EXCLUDE_MORE },
+        serviceOn = serviceOn,
+        serviceOpenFailed = serviceOpenFailed,
+        onOpenServiceSettings = rememberServiceTurnOn(serviceOn, onOpenFailed = { serviceOpenFailed = true }),
+        onOpenCoreSettings = onOpenCoreSettings,
+        onRestartSetup = preferences::restartOnboarding,
     )
 }
 
@@ -177,7 +203,7 @@ fun UiVoiceSettingsScreen(
     coreAllowedPackages: Set<String>,
     collectionEnabled: Boolean,
     rules: ImmutableList<PopupRule>,
-    /** Package name → shown app name (falls back to the package name). */
+    /** Package name → shown app name ("알 수 없는 앱" when unreadable; never the package name). */
     appName: (String) -> String,
     onAutoCloseChange: (String, Boolean) -> Unit,
     onDetailChange: (AnnouncementDetail) -> Unit,
@@ -201,26 +227,49 @@ fun UiVoiceSettingsScreen(
     nowEpochMillis: Long = System.currentTimeMillis(),
     zone: ZoneId = ZoneId.systemDefault(),
     deleteAllFailed: Boolean = false,
-    /** Counts of the last "도와줄 앱" save or retry (in memory only). */
-    helpOutcome: HelpAppsOutcome? = null,
+    /** The "도와줄 앱" line ([HelpAppsStatusPlan]). */
+    helpLine: HelpAppsStatusLine = HelpAppsStatusLine(null, 0, null, waiting = false),
     /** Opens [HelpAppsEditScreen]; null hides the "도와줄 앱" block. */
     onChangeHelpApps: (() -> Unit)? = null,
+    /** [제외할 앱 고르기] ("모든 앱" only): opens the editor on the exclusion list. */
+    onExcludeHelpApps: () -> Unit = {},
     /** [TalkBackTakeoverFeature]; false hides its switch. */
     takeoverFeatureEnabled: Boolean = false,
     onTalkBackTakeoverChange: (Boolean) -> Unit = {},
     onSpeechRateChange: (SpeechRateChoice) -> Unit = {},
+    /** A's accessibility service; null hides the block (previews). */
+    serviceOn: Boolean? = null,
+    serviceOpenFailed: Boolean = false,
+    onOpenServiceSettings: () -> Unit = {},
+    /** A's "기본 설정"; null hides [기본 설정 열기]. */
+    onOpenCoreSettings: (() -> Unit)? = null,
+    /** [처음 설정 다시 하기]; null hides it. */
+    onRestartSetup: (() -> Unit)? = null,
 ) {
     var confirmDeleteAll by rememberSaveable { mutableStateOf(false) }
     Column(
         modifier = modifier
             .verticalScroll(rememberScrollState())
-            .padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
+            .padding(horizontal = 20.dp, vertical = 16.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
-        Heading(R.string.ui_settings_title, MaterialTheme.typography.titleLarge)
+        StepTitle(stringResource(R.string.ui_settings_title))
+
+        if (serviceOn != null) {
+            Heading(R.string.ui_settings_section_service)
+            // Polite: back from system settings, TalkBack reads the new state once; focus stays.
+            Box(Modifier.semantics(mergeDescendants = true) { liveRegion = LiveRegionMode.Polite }) { ServiceStateBox(serviceOn) }
+            if (!serviceOn) {
+                val appName = stringResource(R.string.app_name)
+                HelpText(stringResource(R.string.ui_setup_service_how, appName))
+                BrandButton(stringResource(R.string.ui_setup_service_turn_on), onOpenServiceSettings)
+                if (serviceOpenFailed) BodyText(stringResource(R.string.ui_setup_service_open_failed, appName))
+            }
+            HorizontalDivider()
+        }
 
         Heading(R.string.ui_preset_section)
-        Text(stringResource(R.string.ui_preset_section_help))
+        BodyText(stringResource(R.string.ui_preset_section_help))
         HandlingPresetWithConsent(
             selected = settings.handlingPreset,
             consentOn = settings.autoCloseConsent,
@@ -231,13 +280,7 @@ fun UiVoiceSettingsScreen(
         if (onChangeHelpApps != null) {
             HorizontalDivider()
             Heading(R.string.ui_help_apps_section)
-            HelpAppsStatus(
-                mode = settings.helpAppsMode,
-                allowedCount = coreAllowedPackages.size,
-                pendingCount = (settings.pendingHelpPackages - coreAllowedPackages).size,
-                outcome = helpOutcome,
-                onChange = onChangeHelpApps,
-            )
+            HelpAppsStatus(line = helpLine, onChange = onChangeHelpApps, onExclude = onExcludeHelpApps)
         }
 
         HorizontalDivider()
@@ -247,26 +290,42 @@ fun UiVoiceSettingsScreen(
                 if (collectionEnabled) R.string.ui_settings_status_running else R.string.ui_settings_status_paused,
             ),
         )
-        Text(stringResource(R.string.ui_settings_status_where), style = MaterialTheme.typography.bodySmall)
-
-        HorizontalDivider()
-        Heading(R.string.ui_settings_section_auto_close)
-        Text(stringResource(R.string.ui_settings_auto_close_help))
-        if (coreAllowedPackages.isEmpty()) {
-            Text(stringResource(R.string.ui_settings_auto_close_no_apps))
+        if (onOpenCoreSettings != null) {
+            HelpText(stringResource(R.string.ui_settings_open_core_help))
+            OutlinedButton(onClick = onOpenCoreSettings, modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp)) {
+                Text(stringResource(R.string.ui_settings_open_core), fontSize = UiType.body)
+            }
         } else {
-            coreAllowedPackages.sorted().forEach { packageName ->
-                SwitchRow(
-                    label = stringResource(R.string.ui_settings_auto_close_app, appName(packageName)),
-                    checked = settings.autoCloseAllowed(packageName, coreAllowedPackages),
-                    onCheckedChange = { onAutoCloseChange(packageName, it) },
-                )
+            HelpText(stringResource(R.string.ui_settings_status_where))
+        }
+
+        // Demo mode (10/30): no per-app switch; every helped app follows the preset and its remembered popups.
+        if (PerAppAutoCloseGateFeature.enabled) {
+            HorizontalDivider()
+            Heading(R.string.ui_settings_section_auto_close)
+            BodyText(stringResource(R.string.ui_settings_auto_close_help))
+            val autoCloseApps = AutoCloseApps.candidates(
+                rememberedPackages = rules.filter { it.choice == ChoiceKind.REMEMBER_EXACT_POPUP }.map { it.key.packageName },
+                autoClosePackages = settings.autoClosePackages,
+                allowed = coreAllowedPackages,
+            )
+            if (autoCloseApps.isEmpty()) {
+                HelpText(stringResource(R.string.ui_settings_auto_close_no_apps))
+            } else {
+                autoCloseApps.sortedBy(appName).forEach { packageName ->
+                    SwitchRow(
+                        label = stringResource(R.string.ui_settings_auto_close_app, appName(packageName)),
+                        checked = settings.autoCloseAllowed(packageName, coreAllowedPackages),
+                        onCheckedChange = { onAutoCloseChange(packageName, it) },
+                        iconPackage = packageName,
+                    )
+                }
             }
         }
 
         HorizontalDivider()
         Heading(R.string.ui_settings_section_announce)
-        Text(stringResource(R.string.ui_settings_detail_label))
+        BodyText(stringResource(R.string.ui_settings_detail_label))
         Column(Modifier.selectableGroup()) {
             AnnouncementDetail.entries.forEach { detail ->
                 RadioRow(
@@ -293,7 +352,7 @@ fun UiVoiceSettingsScreen(
                 onCheckedChange = onTalkBackTakeoverChange,
             )
         }
-        Text(stringResource(R.string.ui_settings_speech_rate_label))
+        BodyText(stringResource(R.string.ui_settings_speech_rate_label))
         Column(Modifier.selectableGroup()) {
             SpeechRateChoice.entries.forEach { rate ->
                 RadioRow(
@@ -316,6 +375,7 @@ fun UiVoiceSettingsScreen(
 
         HorizontalDivider()
         Heading(R.string.ui_settings_section_rules)
+        HelpText(stringResource(R.string.ui_settings_rules_help))
         if (rules.isEmpty()) {
             Text(stringResource(R.string.ui_settings_rules_empty))
             Text(stringResource(R.string.ui_settings_rules_empty_help), style = MaterialTheme.typography.bodySmall)
@@ -333,6 +393,15 @@ fun UiVoiceSettingsScreen(
                 stringResource(R.string.ui_settings_rules_delete_all_failed),
                 modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
             )
+        }
+
+        if (onRestartSetup != null) {
+            HorizontalDivider()
+            Heading(R.string.ui_settings_section_setup)
+            HelpText(stringResource(R.string.ui_settings_restart_setup_help))
+            OutlinedButton(onClick = onRestartSetup, modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp)) {
+                Text(stringResource(R.string.ui_settings_restart_setup), fontSize = UiType.body)
+            }
         }
     }
 
@@ -401,7 +470,10 @@ private fun RuleRow(rule: PopupRule, appName: String, nowEpochMillis: Long, zone
         text = { res, args -> resources.getString(res, *args) },
     )
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        Text(summary)
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            AppIcon(rule.key.packageName)
+            Text(summary, fontSize = UiType.body, modifier = Modifier.padding(start = 12.dp))
+        }
         if (RuleStatusPolicy.canRevoke(RuleStatusPolicy.statusOf(rule, nowEpochMillis))) {
             val revokeDescription = stringResource(R.string.ui_settings_rule_revoke_description, summary)
             OutlinedButton(
@@ -416,8 +488,13 @@ private fun RuleRow(rule: PopupRule, appName: String, nowEpochMillis: Long, zone
 }
 
 @Composable
-private fun Heading(textRes: Int, style: androidx.compose.ui.text.TextStyle = MaterialTheme.typography.titleMedium) {
-    Text(stringResource(textRes), style = style, modifier = Modifier.semantics { heading() })
+private fun Heading(textRes: Int) {
+    Text(
+        stringResource(textRes),
+        fontSize = UiType.subtitle,
+        fontWeight = FontWeight.Bold,
+        modifier = Modifier.padding(top = 4.dp).semantics { heading() },
+    )
 }
 
 /** [description] sits inside the toggleable row, so TalkBack reads it with the label and state. */
@@ -427,26 +504,32 @@ private fun SwitchRow(
     checked: Boolean,
     onCheckedChange: (Boolean) -> Unit,
     description: String? = null,
+    /** Shows that app's icon first (decorative). */
+    iconPackage: String? = null,
 ) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .heightIn(min = 48.dp)
+            .heightIn(min = 56.dp)
             .toggleable(value = checked, role = Role.Switch, onValueChange = onCheckedChange),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        LabelWithDescription(label, description, Modifier.weight(1f).padding(end = 8.dp))
+        if (iconPackage != null) AppIcon(iconPackage)
+        LabelWithDescription(label, description, Modifier.weight(1f).padding(horizontal = 8.dp))
         Switch(checked = checked, onCheckedChange = null)
     }
 }
 
+/** One node: label, description, "선택됨"/"선택 안 됨" (explicit, same words as the first run), 라디오 버튼. */
 @Composable
 private fun RadioRow(label: String, description: String?, selected: Boolean, onClick: () -> Unit) {
+    val state = stringResource(if (selected) R.string.ui_setup_selected else R.string.ui_setup_not_selected)
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .heightIn(min = 48.dp)
-            .selectable(selected = selected, onClick = onClick, role = Role.RadioButton),
+            .heightIn(min = 56.dp)
+            .selectable(selected = selected, onClick = onClick, role = Role.RadioButton)
+            .semantics { stateDescription = state },
         verticalAlignment = Alignment.CenterVertically,
     ) {
         RadioButton(selected = selected, onClick = null)
@@ -457,8 +540,8 @@ private fun RadioRow(label: String, description: String?, selected: Boolean, onC
 @Composable
 private fun LabelWithDescription(label: String, description: String?, modifier: Modifier = Modifier) {
     Column(modifier.padding(vertical = 4.dp)) {
-        Text(label)
-        if (description != null) Text(description, style = MaterialTheme.typography.bodySmall)
+        Text(label, fontSize = UiType.body)
+        if (description != null) HelpText(description)
     }
 }
 
@@ -501,7 +584,7 @@ private fun SettingsPreview() {
                 previewRule("revoked", createdAt = PREVIEW_NOW - PREVIEW_DAY).copy(enabled = false),
             ),
             nowEpochMillis = PREVIEW_NOW,
-            appName = { if (it == "kr.example.shop") "예시 쇼핑" else it },
+            appName = { if (it == "kr.example.shop") "예시 쇼핑" else "알 수 없는 앱" },
             onAutoCloseChange = { _, _ -> }, onDetailChange = {}, onPromptModeChange = {},
             onRevoke = {}, onDeleteAll = {},
             voiceFeatureEnabled = true,

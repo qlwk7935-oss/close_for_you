@@ -11,7 +11,7 @@ import androidx.compose.runtime.Composable
  * Minimal theme for windows C owns (the choice overlay, C debug/preview screens).
  * Follows the system dark setting with Material's default schemes only: no C-specific colors, so
  * it can be swapped for the app-wide theme A introduces at integration (A, 10/19).
- * Screens shown inside A's activity (settings) use A's theme instead and do not call this.
+ * C screens inside A's activity (first run, settings via UiVoiceAppRoot) also use it, for dark mode.
  * REPLACE-WITH-APP-THEME
  */
 @Composable

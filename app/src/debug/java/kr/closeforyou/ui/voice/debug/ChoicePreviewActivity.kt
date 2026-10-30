@@ -81,6 +81,7 @@ import kr.closeforyou.ui.voice.BatchSentence
 import kr.closeforyou.ui.voice.BatchSummary
 import kr.closeforyou.ui.voice.PressResultSpeech
 import kr.closeforyou.ui.voice.TtsPopupAnnouncer
+import kr.closeforyou.ui.voice.settings.AndroidCoreSetupStatus
 import kr.closeforyou.ui.voice.settings.OnboardingGatePolicy
 import kr.closeforyou.ui.voice.settings.UiVoiceOnboardingScreen
 import kr.closeforyou.ui.voice.settings.UiVoicePreferences
@@ -514,26 +515,29 @@ private fun SettingsPage(onBack: () -> Unit) {
 }
 
 /**
- * First-run setup, shown even when it was already finished. [시작하기] saves the preset and the
- * "done" flag in C's real preferences (this build's MainActivity has no gate yet), then comes back.
+ * First-run setup (five steps), shown even when it was already finished, starting like a real first
+ * run (nothing chosen, [OnboardingGatePolicy.firstRunDraft]). [사용 시작] saves the
+ * preset, the switches and the "done" flag in C's real preferences, then comes back.
  * "도와줄 앱" is saved through A's real CorePreferences (pending until A's collection consent).
+ * The service step reads A's real service state; [서비스 켜기] opens system settings.
  */
 @Composable
 private fun OnboardingPage(onBack: () -> Unit) {
-    BackHandler(onBack = onBack)
     val context = LocalContext.current
     val preferences = remember { UiVoicePreferences.get(context) }
     val core = remember { CorePreferences.get(context) }
+    val status = remember { AndroidCoreSetupStatus(context) }
+    // The first step's back returns to the preview list (later steps go one step back themselves).
+    BackHandler(onBack = onBack)
     Scaffold { innerPadding ->
         UiVoiceOnboardingScreen(
-            initialPreset = OnboardingGatePolicy.initialPreset(preferences.current()),
-            initialAutoCloseConsent = preferences.current().autoCloseConsent,
-            onStart = { preset, autoCloseConsent, helpApps ->
-                helpApps?.let { HelpAppsSync.save(it.draft, it.catalog, preferences, CoreAllowedApps(core)) }
-                preferences.completeOnboarding(preset, autoCloseConsent)
+            initialDraft = OnboardingGatePolicy.firstRunDraft(preferences.current()),
+            status = status,
+            onFinish = { result ->
+                result.helpApps?.let { HelpAppsSync.save(it.draft, it.catalog, preferences, CoreAllowedApps(core)) }
+                preferences.completeOnboarding(result.preset, result.autoCloseConsent, result.talkBackTakeover)
                 onBack()
             },
-            consentGranted = core.currentSettings().consentGranted,
             modifier = Modifier.padding(innerPadding),
         )
     }

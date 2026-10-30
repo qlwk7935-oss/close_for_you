@@ -119,8 +119,14 @@ class RememberChoiceTest {
     }
 
     @Test fun autoCloseOffSaysWeWillAskAgain() {
-        assertEquals(R.string.ui_remember_auto_close_off, RememberChoiceSpeech.afterRememberRes(false))
-        assertEquals(R.string.ui_remember_auto_close_on, RememberChoiceSpeech.afterRememberRes(true))
+        assertEquals(R.string.ui_remember_auto_close_off, RememberChoiceSpeech.afterRememberRes(false, perAppGate = true))
+        assertEquals(R.string.ui_remember_auto_close_on, RememberChoiceSpeech.afterRememberRes(true, perAppGate = true))
+    }
+
+    /** Demo mode (10/30): no per-app switch, so never "이 앱은 자동 닫기가 꺼져 있어서… 설정에서 켤 수 있어요". */
+    @Test fun demoModeNeverPointsToAPerAppSetting() {
+        assertEquals(R.string.ui_remember_auto_close_on, RememberChoiceSpeech.afterRememberRes(false, perAppGate = false))
+        assertEquals(R.string.ui_remember_auto_close_on, RememberChoiceSpeech.afterRememberRes(false))
     }
 
     @Test fun optionToStringStaysRedacted() {

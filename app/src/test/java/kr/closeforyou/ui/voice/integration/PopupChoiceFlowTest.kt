@@ -453,7 +453,7 @@ class PopupChoiceFlowTest {
 
         val said = h.announcer.said.single()
         assertEquals(AnnouncementKind.ACTION_RESULT, said.kind)
-        assertEquals("res${R.string.ui_remember_saved} res${R.string.ui_remember_auto_close_off}", said.text)
+        assertEquals("res${R.string.ui_remember_saved} res${R.string.ui_remember_auto_close_on}", said.text)
         assertFalse(h.presenter.isShowing)
         advanceTimeBy(AnnouncementBatcher.DEFAULT_WINDOW_MILLIS + 1)
         assertEquals(listOf(BatchSummary(closed = 1, skipped = 0, notConfirmed = 0)), h.flushed)
@@ -631,7 +631,7 @@ class PopupChoiceFlowTest {
         tapRemember(h)
         assertEquals(1, repository.observeRules().first().size)
         assertEquals(
-            "res${R.string.ui_remember_saved} res${R.string.ui_remember_auto_close_off}",
+            "res${R.string.ui_remember_saved} res${R.string.ui_remember_auto_close_on}",
             h.announcer.said.single().text,
         )
     }

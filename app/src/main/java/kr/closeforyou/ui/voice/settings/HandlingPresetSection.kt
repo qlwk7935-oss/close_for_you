@@ -2,26 +2,17 @@ package kr.closeforyou.ui.voice.settings
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.selectableGroup
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.RadioButton
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
 import kr.closeforyou.R
 
 /**
- * The three presets as one radio group (first-run screen and settings). Each row is one TalkBack
- * node: name, what it does to ads / notices / coupons, then "선택됨". Selecting never moves focus.
+ * The three presets as one radio group (first-run screen and settings). Each row is one large card
+ * and one TalkBack node: name, what it does to ads / notices / coupons, then "선택됨" / "선택 안 됨"
+ * (explicit stateDescription). Selecting never moves focus.
  * The fixed lines follow the group: important popups are always asked, and (while
  * [PresetAutoCloseFeature.live] is false) nothing is closed automatically yet. [notLiveLine] false
  * when the caller shows that line itself (after the "자동 닫기" switch, [HandlingPresetWithConsent]).
@@ -40,35 +31,26 @@ fun HandlingPresetGroup(
                 PresetRow(preset, selected = preset == selected, onClick = { onSelect(preset) })
             }
         }
-        Text(stringResource(R.string.ui_preset_decision_fixed))
-        if (notLiveLine && !PresetAutoCloseFeature.live) Text(stringResource(R.string.ui_preset_not_live))
+        HelpText(stringResource(R.string.ui_preset_decision_fixed))
+        if (notLiveLine && !PresetAutoCloseFeature.live) HelpText(stringResource(R.string.ui_preset_not_live))
     }
 }
 
+/** One large radio card ([ChoiceCard]): name, ads / notices / coupons line, note, "선택됨". */
 @Composable
 private fun PresetRow(preset: HandlingPreset, selected: Boolean, onClick: () -> Unit) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .heightIn(min = 48.dp)
-            .selectable(selected = selected, onClick = onClick, role = Role.RadioButton),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        RadioButton(selected = selected, onClick = null)
-        Column(Modifier.padding(start = 8.dp).padding(vertical = 4.dp)) {
-            Text(stringResource(PresetText.labelRes(preset)))
-            Text(
-                stringResource(
-                    R.string.ui_preset_line,
-                    stringResource(PresetText.preferenceRes(preset.preferenceFor(PresetPopupKind.ADVERTISEMENT))),
-                    stringResource(PresetText.preferenceRes(preset.preferenceFor(PresetPopupKind.NOTICE))),
-                    stringResource(PresetText.preferenceRes(preset.preferenceFor(PresetPopupKind.COUPON))),
-                ),
-                style = MaterialTheme.typography.bodySmall,
-            )
-            PresetText.noteRes(preset)?.let { Text(stringResource(it), style = MaterialTheme.typography.bodySmall) }
-        }
-    }
+    ChoiceCard(
+        title = stringResource(PresetText.labelRes(preset)),
+        body = stringResource(
+            R.string.ui_preset_line,
+            stringResource(PresetText.preferenceRes(preset.preferenceFor(PresetPopupKind.ADVERTISEMENT))),
+            stringResource(PresetText.preferenceRes(preset.preferenceFor(PresetPopupKind.NOTICE))),
+            stringResource(PresetText.preferenceRes(preset.preferenceFor(PresetPopupKind.COUPON))),
+        ),
+        selected = selected,
+        onClick = onClick,
+        note = PresetText.noteRes(preset)?.let { stringResource(it) },
+    )
 }
 
 /** String resources per preset, separate so a JVM test can check every preset has its text. */

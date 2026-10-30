@@ -45,5 +45,5 @@
    연결하지 않으면 프리셋을 모르는 것으로 보고(null) 프리셋 숨김이 빠진다(광고·쿠폰·공지에도 보임). **시연 전 꼭 연결.**
 2. `PopupChoiceFlow(..., rememberStore = RepositoryRememberedPopupStore(...))`.
    이미 있는 C 어댑터(`RememberedPopupStore.kt`)에 D의 `RuleStorage.fingerprintProvider`·`RuleStorage.repository`를 넘긴다.
-3. 다음에 같은 팝업이 오면 묻지 않고 닫기: D의 `findExact` → B 정책(`REMEMBER_EXACT_POPUP` 규칙) → A 관문. 앱별 자동 닫기 설정이 켜져 있어야 한다(기존 규칙 그대로).
+3. 다음에 같은 팝업이 오면 묻지 않고 닫기: D의 `findExact` → B 정책(`REMEMBER_EXACT_POPUP` 규칙) → A 관문. 시연 모드에는 앱별 자동 닫기 스위치가 없다(`PerAppAutoCloseGateFeature.enabled = false`, 10/30 재호 결정): 도와줄 앱이면 어느 앱이든 반복하고, 기억 직후 안내도 "똑같은 팝업이 다시 뜨면 안전 확인을 한 뒤 닫아요"로 말한다(`RememberChoiceSpeech.afterRememberRes`).
 4. 사기 의심은 기본으로 B 규칙을 그대로 읽는다(`plan(suspicious = ...)` 기본값). B가 판정 함수를 바꾸면 컴파일 오류로 드러난다.

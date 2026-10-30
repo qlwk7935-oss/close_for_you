@@ -105,12 +105,15 @@ data class AppCatalog(
 object HelpAppsCatalog {
     private val collator: Collator = Collator.getInstance(Locale.KOREAN)
 
-    /** Several launcher activities of one package become one row; our own app is never listed. */
-    fun build(apps: List<InstalledApp>, ownPackage: String): AppCatalog {
+    /**
+     * Several launcher activities of one package become one row; our own app is never listed.
+     * A blank name becomes [unknownLabel], never the package name (10/30).
+     */
+    fun build(apps: List<InstalledApp>, ownPackage: String, unknownLabel: String = UNKNOWN_FALLBACK): AppCatalog {
         val all = apps
             .filter { it.packageName != ownPackage && it.packageName.isNotBlank() }
             .distinctBy { it.packageName }
-            .map { if (it.label.isBlank()) it.copy(label = it.packageName) else it.copy(label = it.label.trim()) }
+            .map { if (it.label.isBlank()) it.copy(label = unknownLabel) else it.copy(label = it.label.trim()) }
             .sortedWith { a, b -> collator.compare(a.label, b.label).takeIf { it != 0 } ?: a.packageName.compareTo(b.packageName) }
         val sensitive = all.filter(SensitiveAppRules::looksSensitive).mapTo(LinkedHashSet()) { it.packageName }
         val byPackage = all.associateBy { it.packageName }
@@ -131,6 +134,9 @@ object HelpAppsCatalog {
     }
 
     private fun normalize(text: String) = text.filterNot { it.isWhitespace() }.lowercase(Locale.KOREAN)
+
+    /** Same words as R.string.ui_app_unknown, for JVM callers without resources. */
+    const val UNKNOWN_FALLBACK = "알 수 없는 앱"
 }
 
 /**
@@ -244,4 +250,44 @@ object HelpAppsApplier {
     /** The saved pending additions, retried (e.g. right after A's consent). */
     fun applyPending(pending: Set<String>, target: AllowedAppsTarget): Result =
         apply(HelpAppsChange(add = pending, remove = emptySet()), target)
+}
+
+/**
+ * Settings' "도와줄 앱" block as one line (10/30: "38개 돕는 중" and "35개 넣었어요" side by side, with
+ * the per-app auto-close switches below, read as "every app is off"). One number at most:
+ * - [HelpAppsMode.ALL]: "모든 앱을 돕고 있어요" and how many apps are left out ([excludedCount],
+ *   null while the app list loads);
+ * - [HelpAppsMode.CHOSEN] (or no way saved but A already allows apps): how many apps are helped;
+ * - [waiting]: some chosen apps still wait for A's collection consent ("준비 중", no number).
+ */
+data class HelpAppsStatusLine(val mode: HelpAppsMode?, val helpedCount: Int, val excludedCount: Int?, val waiting: Boolean)
+
+object HelpAppsStatusPlan {
+    fun line(
+        mode: HelpAppsMode?,
+        allowed: Set<String>,
+        pending: Set<String>,
+        userExcluded: Set<String>,
+        catalog: AppCatalog?,
+        consentGranted: Boolean,
+    ): HelpAppsStatusLine {
+        val waiting = !consentGranted && (pending - allowed).isNotEmpty()
+        val shownMode = mode ?: HelpAppsMode.CHOSEN.takeIf { allowed.isNotEmpty() || pending.isNotEmpty() }
+        val excluded = if (shownMode == HelpAppsMode.ALL) {
+            catalog?.let { it.excluded.size + (userExcluded intersect it.helpablePackages).size }
+        } else {
+            null
+        }
+        return HelpAppsStatusLine(shownMode, (allowed + pending).size, excluded, waiting)
+    }
+}
+
+/**
+ * "앞으로 항상 닫기를 허용할 앱": only apps where a switch can matter — apps with an "앞으로 항상 닫기"
+ * popup remembered, plus apps already switched on — and only apps A still allows. Not every helped
+ * app (that list read as "everything is off", 10/30).
+ */
+object AutoCloseApps {
+    fun candidates(rememberedPackages: Collection<String>, autoClosePackages: Set<String>, allowed: Set<String>): Set<String> =
+        (rememberedPackages.toSet() + autoClosePackages) intersect allowed
 }

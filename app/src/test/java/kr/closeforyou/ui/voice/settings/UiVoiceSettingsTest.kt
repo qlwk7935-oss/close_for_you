@@ -12,7 +12,7 @@ class UiVoiceSettingsTest {
     @Test fun defaultsAreSafe() {
         val settings = UiVoiceSettings()
         assertTrue(settings.autoClosePackages.isEmpty())
-        assertFalse(settings.autoCloseAllowed(shop, setOf(shop)))
+        assertFalse(settings.autoCloseAllowed(shop, setOf(shop), perAppGate = true))
         assertEquals(AnnouncementDetail.SHORT, settings.detail)
         assertEquals(PromptAnnounceMode.PANE_TITLE_AND_TTS, settings.promptAnnounceMode)
         // [말하기] is shown by default; it still listens only when pressed.
@@ -24,14 +24,14 @@ class UiVoiceSettingsTest {
 
     @Test fun autoCloseIsPerAppAndCanBeTurnedOff() {
         val on = UiVoiceSettings().withAutoClose(shop, true)
-        assertTrue(on.autoCloseAllowed(shop, setOf(shop, "kr.example.news")))
-        assertFalse(on.autoCloseAllowed("kr.example.news", setOf(shop, "kr.example.news")))
-        assertFalse(on.withAutoClose(shop, false).autoCloseAllowed(shop, setOf(shop)))
+        assertTrue(on.autoCloseAllowed(shop, setOf(shop, "kr.example.news"), perAppGate = true))
+        assertFalse(on.autoCloseAllowed("kr.example.news", setOf(shop, "kr.example.news"), perAppGate = true))
+        assertFalse(on.withAutoClose(shop, false).autoCloseAllowed(shop, setOf(shop), perAppGate = true))
     }
 
     @Test fun autoCloseNeedsTheAppToStillBeAllowedByCore() {
         val on = UiVoiceSettings().withAutoClose(shop, true)
-        assertFalse(on.autoCloseAllowed(shop, coreAllowedPackages = emptySet()))
+        assertFalse(on.autoCloseAllowed(shop, coreAllowedPackages = emptySet(), perAppGate = true))
     }
 
     @Test fun unknownStoredEnumFallsBackToDefault() {
