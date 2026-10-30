@@ -326,6 +326,7 @@ private fun ServiceStep(serviceOn: Boolean) {
             stringResource(R.string.ui_setup_step, OnboardingStep.COUNT, OnboardingStep.SERVICE.number),
             stringResource(R.string.ui_onboarding_next),
         ),
+        focusTargetText = stringResource(R.string.ui_onboarding_next),
     )
     val appName = stringResource(R.string.app_name)
     StepTitle(stringResource(R.string.ui_setup_service_title))

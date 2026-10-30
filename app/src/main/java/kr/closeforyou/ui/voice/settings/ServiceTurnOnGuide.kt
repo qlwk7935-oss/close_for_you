@@ -1,5 +1,8 @@
 package kr.closeforyou.ui.voice.settings
 
+import android.content.Context
+import android.content.pm.ApplicationInfo
+import android.util.Log
 import android.view.View
 import android.view.ViewGroup
 import android.view.accessibility.AccessibilityEvent
@@ -44,6 +47,15 @@ import kr.closeforyou.ui.voice.AndroidTtsEngine
 import kr.closeforyou.ui.voice.SpeechEngine
 import kr.closeforyou.ui.voice.SpeechReadiness
 import kr.closeforyou.ui.voice.overlay.TalkBackTakeoverFeature
+
+/** One step while keeping TalkBack's focus on [다음] ([ServiceGuidePolicy.placeStep]). */
+enum class PlaceStep { WAIT, MOVE, STOP }
+
+/**
+ * What C's focus moves did, for debug logs only (enum names, never screen text or package names):
+ * the next device run can line them up with TalkBack's own log.
+ */
+enum class FocusTrace { GUIDE_MOVE, PLACE_ALREADY, PLACE_MOVE, PLACE_LOST, PLACE_PERSON, PLACE_DONE, TURNED_ON_SPOKEN }
 
 /** When the guide or "켜졌어요" is also spoken by our TTS (pure, JVM-tested). */
 enum class GuideSpeech { NOW, AFTER_TALKBACK, NONE }
@@ -94,15 +106,23 @@ object ServiceGuidePolicy {
     /** First move this long after the screen shows, so TalkBack's own "back to this window" focus is done. */
     const val PLACE_DELAY_MILLIS = 1_500L
 
-    /** Then checked this often until this deadline; moved again whenever [다음] lost the focus. */
+    /**
+     * Then watched this often until this deadline. LG 10/30 (4a366f6): moving on a timer, with input
+     * focus and accessibility focus together, made TalkBack log 3 focus actions twice and read
+     * "다음" again. So: one ACTION_ACCESSIBILITY_FOCUS, and another only after TalkBack's own focus
+     * event shows it went elsewhere ([PlaceStep.MOVE]), at most [PLACE_MAX_MOVES] in all.
+     */
     const val PLACE_CHECK_MILLIS = 500L
     const val PLACE_DEADLINE_MILLIS = 6_000L
+    const val PLACE_MAX_MOVES = 3
 
-    /** Done once [다음] held the focus on this many checks in a row. */
-    const val PLACE_STABLE_CHECKS = 2
-
-    /** One check: the new count of checks in a row that [다음] held the focus. */
-    fun nextStable(targetFocused: Boolean, stable: Int): Int = if (targetFocused) stable + 1 else 0
+    /** One watch step of placing the focus on [다음]. */
+    fun placeStep(personInteracted: Boolean, lostSinceMove: Boolean, moves: Int): PlaceStep = when {
+        personInteracted -> PlaceStep.STOP
+        !lostSinceMove -> PlaceStep.WAIT
+        moves >= PLACE_MAX_MOVES -> PlaceStep.STOP
+        else -> PlaceStep.MOVE
+    }
 
     /** Move (again) only when [다음] does not hold the focus and the person did not take over. */
     fun shouldMoveAgain(targetFocused: Boolean, personInteracted: Boolean): Boolean = !targetFocused && !personInteracted
@@ -151,6 +171,8 @@ fun rememberServiceTurnOn(
      * label): focus landing there while we place [focusWhenServiceOnTag] is not the person.
      */
     returnSelfFocusTexts: List<String> = emptyList(),
+    /** The target's visible label; TalkBack focus landing on anything else means [다음] lost it. */
+    focusTargetText: String? = null,
 ): () -> Unit {
     val context = LocalContext.current
     var showGuide by rememberSaveable { mutableStateOf(false) }
@@ -165,6 +187,7 @@ fun rememberServiceTurnOn(
     }
     val currentOpenFailed by rememberUpdatedState(onOpenFailed)
     val focus = remember { OwnWindowFocus { engineHolder[0]?.stop() } }
+    val debugLog = remember { DebugFocusLog(context) }
     // The screen's own window, for placing [다음].
     val screenFocus = remember { OwnWindowFocus { engineHolder[0]?.stop() } }
     // Counts resumes, so placing runs again whenever the screen comes back (from settings or elsewhere).
@@ -197,7 +220,10 @@ fun rememberServiceTurnOn(
             focus.startWatching()
             val completed = speakWhenReady(engine(), lines.joinToString("\n"))
             val touched = focus.stopWatching()
-            if (ServiceGuidePolicy.moveFocusToOpen(mode, completed, touched)) focus.moveTo(OwnWindowFocus.OPEN_TAG)
+            if (ServiceGuidePolicy.moveFocusToOpen(mode, completed, touched)) {
+                debugLog.trace(FocusTrace.GUIDE_MOVE)
+                focus.moveTo(OwnWindowFocus.OPEN_TAG)
+            }
         }
         AlertDialog(
             onDismissRequest = {
@@ -236,9 +262,11 @@ fun rememberServiceTurnOn(
     }
 
     LaunchedEffect(serviceOn, shown) {
-        if (!serviceOn) return@LaunchedEffect
+        // Only once the screen is resumed (shown > 0): an Activity recreated on return first composes
+        // before it resumes, and that run would be cancelled half-way.
+        if (!serviceOn || shown == 0) return@LaunchedEffect
+        // Kept (saved state) until the line is really spoken, so a recreated screen says it once.
         val returned = awaitingReturn
-        awaitingReturn = false
         val tag = focusWhenServiceOnTag
         val place = ServiceGuidePolicy.placeOnShow(serviceOn, talkBackOn(), tag != null)
         val speech = if (returned) {
@@ -248,11 +276,11 @@ fun rememberServiceTurnOn(
         }
         if (!place && speech == GuideSpeech.NONE) return@LaunchedEffect
         val firstPlaced = CompletableDeferred<Unit>()
-        screenFocus.startWatching(selfFocusTexts = returnSelfFocusTexts)
+        screenFocus.startWatching(selfFocusTexts = returnSelfFocusTexts, targetText = focusTargetText)
         try {
             coroutineScope {
                 if (place && tag != null) launch {
-                    placeFocus(screenFocus, tag) { firstPlaced.complete(Unit) }
+                    placeFocus(screenFocus, tag, debugLog::trace) { firstPlaced.complete(Unit) }
                     firstPlaced.complete(Unit)
                 }
                 if (speech != GuideSpeech.NONE) launch {
@@ -262,7 +290,11 @@ fun rememberServiceTurnOn(
                     } else if (speech == GuideSpeech.AFTER_TALKBACK) {
                         delay(ServiceGuidePolicy.AFTER_TALKBACK_MILLIS)
                     }
-                    if (!screenFocus.personInteracted) speakWhenReady(engine(), turnedOnLine)
+                    if (!screenFocus.personInteracted) {
+                        awaitingReturn = false
+                        debugLog.trace(FocusTrace.TURNED_ON_SPOKEN)
+                        speakWhenReady(engine(), turnedOnLine)
+                    }
                 }
             }
         } finally {
@@ -274,30 +306,51 @@ fun rememberServiceTurnOn(
 }
 
 /**
- * Puts TalkBack's focus on [tag] and keeps it there for a few seconds ([ServiceGuidePolicy]):
- * waits for TalkBack's own focus on the returning window, then checks every [PLACE_CHECK_MILLIS]
- * and moves again while the node does not hold it, until it held it twice in a row, the deadline,
- * or the person took over. [onFirstMove] runs after the first move.
+ * Puts TalkBack's focus on [tag] once, after TalkBack's own focus on the returning window
+ * ([ServiceGuidePolicy.PLACE_DELAY_MILLIS]); skipped when it is already there. Moves again only after
+ * TalkBack's focus event shows it went elsewhere ([ServiceGuidePolicy.placeStep]), until the
+ * deadline or the person took over. [onFirstMove] runs after the first move (or the skip).
  */
-private suspend fun placeFocus(focus: OwnWindowFocus, tag: String, onFirstMove: () -> Unit) {
+private suspend fun placeFocus(focus: OwnWindowFocus, tag: String, trace: (FocusTrace) -> Unit, onFirstMove: () -> Unit) {
     delay(ServiceGuidePolicy.PLACE_DELAY_MILLIS)
-    var stable = 0
-    var moved = false
+    if (focus.personInteracted) return trace(FocusTrace.PLACE_PERSON)
+    var moves = 0
+    if (focus.isFocused(tag)) {
+        trace(FocusTrace.PLACE_ALREADY)
+    } else {
+        focus.moveTo(tag)
+        moves++
+        trace(FocusTrace.PLACE_MOVE)
+    }
+    onFirstMove()
     var waited = 0L
-    while (waited <= ServiceGuidePolicy.PLACE_DEADLINE_MILLIS) {
-        if (focus.personInteracted) return
-        val focused = focus.isFocused(tag)
-        stable = ServiceGuidePolicy.nextStable(focused, stable)
-        if (stable >= ServiceGuidePolicy.PLACE_STABLE_CHECKS) return
-        if (ServiceGuidePolicy.shouldMoveAgain(focused, focus.personInteracted)) {
-            focus.moveTo(tag)
-            if (!moved) {
-                moved = true
-                onFirstMove()
-            }
-        }
+    while (waited < ServiceGuidePolicy.PLACE_DEADLINE_MILLIS) {
         delay(ServiceGuidePolicy.PLACE_CHECK_MILLIS)
         waited += ServiceGuidePolicy.PLACE_CHECK_MILLIS
+        when (ServiceGuidePolicy.placeStep(focus.personInteracted, focus.lostSinceMove, moves)) {
+            PlaceStep.WAIT -> Unit
+            PlaceStep.STOP -> return trace(if (focus.personInteracted) FocusTrace.PLACE_PERSON else FocusTrace.PLACE_DONE)
+            PlaceStep.MOVE -> {
+                trace(FocusTrace.PLACE_LOST)
+                focus.moveTo(tag)
+                moves++
+                trace(FocusTrace.PLACE_MOVE)
+            }
+        }
+    }
+    trace(FocusTrace.PLACE_DONE)
+}
+
+/** Debug builds only: one enum name per focus step (no text, no ids, no packages). */
+private class DebugFocusLog(context: Context) {
+    private val enabled = context.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0
+
+    fun trace(step: FocusTrace) {
+        if (enabled) Log.d(TAG, step.name)
+    }
+
+    private companion object {
+        const val TAG = "CfyFocus"
     }
 }
 
@@ -326,6 +379,8 @@ internal class OwnWindowFocus(private val onPersonInteracted: () -> Unit) {
     private var previousDelegate: View.AccessibilityDelegate? = null
     private var title: String? = null
     private var watchTexts: List<String>? = null
+    private var targetText: String? = null
+    private var lost = false
     private var watching = false
     private var touched = false
     private var ownMove = false
@@ -340,7 +395,12 @@ internal class OwnWindowFocus(private val onPersonInteracted: () -> Unit) {
         previousDelegate = previous
         parent.accessibilityDelegate = object : View.AccessibilityDelegate() {
             override fun onRequestSendAccessibilityEvent(host: ViewGroup, child: View, event: AccessibilityEvent): Boolean {
-                if (watching && !ownMove && ServiceGuidePolicy.isPersonEvent(event.eventType, event.text.joinToString(" "), watchTexts)) {
+                val text = event.text.joinToString(" ")
+                if (watching && !ownMove && event.eventType == AccessibilityEvent.TYPE_VIEW_ACCESSIBILITY_FOCUSED) {
+                    val target = targetText
+                    if (target == null || !text.contains(target)) lost = true
+                }
+                if (watching && !ownMove && ServiceGuidePolicy.isPersonEvent(event.eventType, text, watchTexts)) {
                     watching = false
                     touched = true
                     onPersonInteracted()
@@ -360,11 +420,16 @@ internal class OwnWindowFocus(private val onPersonInteracted: () -> Unit) {
     }
 
     /** [selfFocusTexts] null = the text given to [attach] (or every focus move when that was null). */
-    fun startWatching(selfFocusTexts: List<String>? = null) {
+    fun startWatching(selfFocusTexts: List<String>? = null, targetText: String? = null) {
         watchTexts = selfFocusTexts ?: title?.let(::listOf)
+        this.targetText = targetText
         touched = false
+        lost = false
         watching = true
     }
+
+    /** TalkBack's focus went somewhere other than the target since the last [moveTo]. */
+    val lostSinceMove: Boolean get() = lost
 
     /** The person touched or swiped since [startWatching]. */
     val personInteracted: Boolean get() = touched
@@ -388,10 +453,10 @@ internal class OwnWindowFocus(private val onPersonInteracted: () -> Unit) {
         val root = (dialogView as? RootForTest)?.semanticsOwner?.unmergedRootSemanticsNode ?: return false
         val id = findTagged(root, tag) ?: return false
         val provider = dialogView.accessibilityNodeProvider ?: return false
+        lost = false
         ownMove = true
         return try {
-            // Input focus too (no effect in touch mode on some devices); TalkBack may follow it.
-            provider.performAction(id, AccessibilityNodeInfo.ACTION_FOCUS, null)
+            // Accessibility focus only: adding input focus made TalkBack record extra focus actions (LG 10/30).
             provider.performAction(id, AccessibilityNodeInfo.ACTION_ACCESSIBILITY_FOCUS, null)
         } finally {
             ownMove = false

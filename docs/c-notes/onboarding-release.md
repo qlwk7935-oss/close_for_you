@@ -47,6 +47,11 @@ TalkBack 사용자가 접근성 목록에서 우리 앱을 찾기 힘들어서, 
 4. **돌아오면** (켜졌을 때): TalkBack 꺼짐 → 우리 TTS "접근성 서비스가 켜졌어요. 다음을 눌러 계속해 주세요."
    TalkBack 켜짐 + 안내 맡기기 켜짐 → 1초 뒤(TalkBack이 화면 제목 "5단계 중 2단계"를 읽을 시간) 같은 문장을 TTS로, 끝까지 읽으면 포커스를 처음 설정의 **[다음]**(testTag `ui_setup_service_next`)으로. 설정 화면에는 [다음]이 없어 말만 함.
    **10/30 재호 결정으로 바꿈 (최신)**: 포커스 이동은 "켜졌어요" 낭독과 묶지 않는다. 2/5가 보일 때마다(처음 들어올 때·설정에서 돌아올 때·3/5에서 뒤로) 서비스 켜짐 + TalkBack 켜짐이면 1.5초 뒤 [다음]으로 포커스(입력 포커스 `ACTION_FOCUS` + `ACTION_ACCESSIBILITY_FOCUS`), 0.5초마다 확인해 잃었으면 다시 옮기기를 6초까지, 2번 연속 잡혀 있으면 끝. "켜졌어요" TTS는 첫 이동 1초 뒤(최대 3초 대기)에 말해 TalkBack의 "다음, 버튼"과 겹치지 않게. 만지거나 다른 항목으로 쓸면 둘 다 멈춤. 안내 맡기기 설정과 무관(재호 결정).
+   **10/30 2차 (LG 로그 반영)**: 4a366f6은 [다음]에 갔지만 TalkBack 로그에 포커스 동작이 3개씩 두 번 → "다음"을 여러 번 읽었을 수 있음. 이제
+   - 접근성 포커스(`ACTION_ACCESSIBILITY_FOCUS`) 하나만 보낸다(입력 포커스 `ACTION_FOCUS` 제거).
+   - 처음 1번 옮기고(이미 [다음]에 있으면 안 옮김), 그 뒤엔 **TalkBack 포커스 이벤트가 다른 항목으로 갔다고 알려 줄 때만** 다시 옮긴다(시간마다 다시 옮기지 않음). 모두 합쳐 최대 3번, 6초까지.
+   - 설정에서 돌아올 때 Activity가 다시 만들어져도(LG: relaunch 로그) 단계·고른 값은 saved state로 유지되고, "켜졌어요"는 실제로 말할 때 저장된 "돌아오는 중" 표시를 지워 한 번만 말한다. 화면이 resume된 뒤에만 시작한다.
+   - debug 빌드에서만 logcat 태그 `CfyFocus`로 단계 이름(enum: `PLACE_MOVE`, `PLACE_LOST`, `PLACE_ALREADY`, `PLACE_PERSON`, `PLACE_DONE`, `TURNED_ON_SPOKEN`, `GUIDE_MOVE`)만 남긴다. 화면 글자·id·패키지 없음.
    이전 시도(아래)는 기록용:
    LG 10/30: TTS는 들렸지만 포커스가 "5단계 중 2단계"에 남음(설정에서 돌아온 뒤 TalkBack이 첫 항목을 다시 잡음). 그래서 이동 뒤 [다음]이 실제로 접근성 포커스를 가졌는지(`isAccessibilityFocused`) 400ms 간격으로 5번 확인하고, 잃었으면 다시 옮긴다. 이 동안 TalkBack이 단계 줄·[다음]에 스스로 포커스를 두는 것은 사람 조작으로 보지 않고, 손가락 터치나 다른 항목으로 쓸기는 사람 조작으로 보아 멈춘다.
    live region만으로는 LG에서 화면 제목 알림에 묻혀 안 들렸다(10/30). 안내 맡기기 꺼짐이면 TalkBack만(상태 상자 "켜짐").
@@ -125,6 +130,11 @@ Android 11+ 패키지 공개 범위 때문에, main 매니페스트의 `<queries
 ```
 
 없으면 release 4단계에서 "앱 목록을 불러오지 못했어요"가 뜨고 [나중에 고르기]로만 넘어갈 수 있다.
+
+### 4-6. (A 요청) 설정에서 돌아올 때 Activity 재생성
+
+LG 로그(10/30): 접근성 설정에서 돌아올 때 미리보기 Activity가 relaunch됨(`Window went away`, `finishDrawing of relaunch`, `Letterbox`) → TalkBack이 새 창처럼 처음부터 읽는다. C 화면은 재생성돼도 상태를 유지하고 중복으로 말하지 않게 했지만, 다시 읽히는 것 자체는 Activity 재생성 때문이다.
+실제 앱 `MainActivity`(A 매니페스트)에 Compose 앱에서 흔히 쓰는 `android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden|density|uiMode"` 같은 설정을 넣을지 A가 판단해 주세요(어떤 구성 변경인지는 실기기에서 `adb shell dumpsys activity` 등으로 확인 필요, 미확인).
 
 ### 4-5. 수집 동의·분석 시작
 

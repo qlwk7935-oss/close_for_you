@@ -295,14 +295,23 @@ class ServiceTurnOnGuideTest {
         assertFalse(ServiceGuidePolicy.placeOnShow(serviceOn = true, talkBackOn = true, hasTarget = false))
     }
 
-    @Test fun placingWaitsForTalkBackAndChecksLongerThanBefore() {
+    @Test fun placingWaitsForTalkBackAndWatchesForSeveralSeconds() {
         assertTrue(ServiceGuidePolicy.PLACE_DELAY_MILLIS in 1_500L..2_000L)
         assertTrue(ServiceGuidePolicy.PLACE_DEADLINE_MILLIS >= 5_000L)
-        assertEquals(1, ServiceGuidePolicy.nextStable(targetFocused = true, stable = 0))
-        assertEquals(2, ServiceGuidePolicy.nextStable(targetFocused = true, stable = 1))
-        // Lost it again: start counting over.
-        assertEquals(0, ServiceGuidePolicy.nextStable(targetFocused = false, stable = 1))
-        assertTrue(ServiceGuidePolicy.PLACE_STABLE_CHECKS >= 2)
+    }
+
+    /** LG 10/30: moves came in bundles on a timer. Move again only after TalkBack's focus went elsewhere. */
+    @Test fun focusMovesAgainOnlyAfterItWasLost() {
+        assertEquals(PlaceStep.WAIT, ServiceGuidePolicy.placeStep(personInteracted = false, lostSinceMove = false, moves = 1))
+        assertEquals(PlaceStep.MOVE, ServiceGuidePolicy.placeStep(personInteracted = false, lostSinceMove = true, moves = 1))
+        assertEquals(PlaceStep.STOP, ServiceGuidePolicy.placeStep(personInteracted = true, lostSinceMove = true, moves = 1))
+        // Never more than a few moves in all, however often TalkBack takes it back.
+        assertEquals(PlaceStep.STOP, ServiceGuidePolicy.placeStep(false, true, ServiceGuidePolicy.PLACE_MAX_MOVES))
+        assertTrue(ServiceGuidePolicy.PLACE_MAX_MOVES <= 3)
+    }
+
+    @Test fun debugTraceNamesCarryNoScreenText() {
+        FocusTrace.entries.forEach { assertTrue(it.name, it.name.matches(Regex("[A-Z_]+"))) }
     }
 
     @Test fun focusToNextIsCheckedAndRepeatedUntilItHoldsUnlessThePersonTookOver() {
