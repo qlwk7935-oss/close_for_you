@@ -9,6 +9,7 @@ internal object ManualPromptLog {
         Log.i("A_ManualPrompt", "A_MANUAL_ACTION;ATTEMPT=$attempt;STEP=${code.step.name};STATE=${code.state.name}" +
             ";REASON=${code.reason.name};SAFETY=${code.safety?.name ?: "NONE"};F9=${code.block?.name ?: "NONE"}" +
             ";MISMATCH=${code.mismatch?.name ?: "NONE"};OUTCOME=${code.outcome?.name ?: "NONE"};NEXT=${code.next?.name ?: "NONE"}" +
+            (code.screenMatch?.let { ";SCREEN_MATCH=${it.name}" } ?: "") +
             (code.eligibility?.let { ";MODE=${it.mode.name};CHECK=${it.check.name};DETAIL=${it.detail.name}" } ?: ""))
     }, ownershipSink = { attempt, c ->
         Log.i("A_ManualPrompt", "A_MANUAL_OWNERSHIP;ATTEMPT=$attempt;RESULT=${c.result.name};CHECK=${c.check.name}" +

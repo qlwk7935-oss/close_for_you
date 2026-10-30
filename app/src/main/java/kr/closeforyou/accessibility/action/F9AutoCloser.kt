@@ -123,9 +123,10 @@ internal class F9AutoCloser(
         // Callbacks run on the same dispatcher as B's session state. A throwing receiver is never retried.
         val delivered = java.util.concurrent.atomic.AtomicBoolean()
         var policyConsulted = false
+        var matchFailure: F9MatchFailure? = null
         fun complete(result: F9Result): F9Result {
             if (delivered.compareAndSet(false, true)) {
-                if (!result.attempted) trace?.record(ManualActionStep.F9_VALIDATION, ManualActionState.REJECTED, block = result.block)
+                if (!result.attempted) trace?.record(ManualActionStep.F9_VALIDATION, ManualActionState.REJECTED, block = result.block, screenMatch = matchFailure)
                 trace?.record(ManualActionStep.CLICK_ATTEMPT,
                     if (result.attempted) ManualActionState.ATTEMPTED else ManualActionState.NOT_ATTEMPTED)
                 trace?.record(ManualActionStep.CLICK_RESULT,
@@ -141,7 +142,10 @@ internal class F9AutoCloser(
         }
         return try {
             withContext(dispatcher) {
-                executeOnMain(reference, ::complete, requestPolicy, trace) { scene ->
+                executeOnMain(reference, ::complete, requestPolicy, trace, { failure ->
+                    // Fixed code only; no diagnostic I/O in the final acceptance/press boundary.
+                    if (trace != null && matchFailure == null) matchFailure = failure
+                }) { scene ->
                     policyConsulted = true
                     requestPolicy.authorize(reference, scene)
                 }
@@ -157,7 +161,8 @@ internal class F9AutoCloser(
     }
 
     private suspend fun executeOnMain(reference: F9Reference, complete: (F9Result) -> F9Result, requestPolicy: F9PolicyBridge,
-        trace: ManualActionTrace?, authorize: suspend (F9Scene) -> F9Approval?): F9Result {
+        trace: ManualActionTrace?, matchRejected: (F9MatchFailure) -> Unit,
+        authorize: suspend (F9Scene) -> F9Approval?): F9Result {
         val token = reference.snapshot.token
         fun blocked(reason: F9Block) = complete(F9Result(token, false, block = reason))
         val jobContext = currentCoroutineContext()
@@ -197,7 +202,7 @@ internal class F9AutoCloser(
         return try {
             checkpoint()
             val initial = screen.readFor(F9ReadPurpose.PRE_CLICK, ::checkpoint) ?: return blocked(F9Block.SCREEN_UNVERIFIED)
-            if (!matches(reference, initial)) return blocked(F9Block.SCREEN_UNVERIFIED)
+            if (!matches(reference, initial, matchRejected)) return blocked(F9Block.SCREEN_UNVERIFIED)
             val approval = authorize(initial) ?: return blocked(F9Block.POLICY_DENIED)
             checkpoint()
             if (!approved(reference, approval)) return blocked(F9Block.POLICY_DENIED)
@@ -207,7 +212,7 @@ internal class F9AutoCloser(
                 // Synchronous on Main. No queued callback/coroutine can split this check and invocation.
                 checkpoint()
                 finalBlock = stateBlock(reference)
-                (finalBlock == null && approved(reference, approval) && fresh == initial && matches(reference, fresh))
+                (finalBlock == null && approved(reference, approval) && fresh == initial && matches(reference, fresh, matchRejected))
                     .also { finalAccepted = it } // No diagnostic I/O between validation and ACTION_CLICK.
             }
             if (finalAccepted) trace?.record(ManualActionStep.F9_VALIDATION, ManualActionState.PASSED)
@@ -263,34 +268,63 @@ internal class F9AutoCloser(
         }
     }
 
-    private fun matches(r: F9Reference, scene: F9Scene): Boolean {
+    private fun matches(r: F9Reference, scene: F9Scene, rejected: (F9MatchFailure) -> Unit): Boolean {
+        fun reject(reason: F9MatchFailure): Boolean { rejected(reason); return false }
         val s = r.snapshot; val c = r.candidate
-        if (!scene.complete || s.completeness != SnapshotCompleteness.COMPLETE || scene.packageName != s.token.packageName ||
-            F9ContentSafety.protectedPackage(scene.packageName) || scene.windowId != s.token.windowId ||
-            scene.pageDigest == null || scene.screen != s.screenBounds ||
-            scene.nodes != s.nodes || scene.windows != s.windows || scene.nodes.size !in 1..1_200 ||
-            scene.nodes.any { listOfNotNull(it.text, it.contentDescription).any(F9ContentSafety::blocked) }) return false
-        val window = scene.windows.singleOrNull { it.id == scene.windowId } ?: return false
-        if (window.type != WindowType.APPLICATION || !window.active || !window.focused || !contains(scene.screen, window.bounds)) return false
-        // Some Android versions hide the page window behind a modal. No page is invented from
-        // the popup: require an independently F0-read page observed BEFORE this popup, still within
-        // the original five-second evidence horizon. Fullscreen/unscoped transitions stay blocked.
+        // Preserve the original left-to-right short circuit and the original lazy clock read.
+        if (!scene.complete) return reject(F9MatchFailure.SCENE_INCOMPLETE)
+        if (s.completeness != SnapshotCompleteness.COMPLETE) return reject(F9MatchFailure.SNAPSHOT_INCOMPLETE)
+        if (scene.packageName != s.token.packageName) return reject(F9MatchFailure.PACKAGE_MISMATCH)
+        if (F9ContentSafety.protectedPackage(scene.packageName)) return reject(F9MatchFailure.PROTECTED_PACKAGE)
+        if (scene.windowId != s.token.windowId) return reject(F9MatchFailure.WINDOW_ID_MISMATCH)
+        if (scene.pageDigest == null) return reject(F9MatchFailure.PAGE_DIGEST_UNAVAILABLE)
+        if (scene.screen != s.screenBounds) return reject(F9MatchFailure.SCREEN_BOUNDS_MISMATCH)
+        if (scene.nodes != s.nodes) return reject(F9MatchFailure.NODES_MISMATCH)
+        if (scene.windows != s.windows) return reject(F9MatchFailure.WINDOWS_MISMATCH)
+        if (scene.nodes.size !in 1..1_200) return reject(F9MatchFailure.NODE_COUNT_INVALID)
+        if (scene.nodes.any { listOfNotNull(it.text, it.contentDescription).any(F9ContentSafety::blocked) })
+            return reject(F9MatchFailure.PROTECTED_TEXT)
+        val window = scene.windows.singleOrNull { it.id == scene.windowId }
+            ?: return reject(F9MatchFailure.TARGET_WINDOW_UNAVAILABLE)
+        if (window.type != WindowType.APPLICATION) return reject(F9MatchFailure.TARGET_WINDOW_TYPE)
+        if (!window.active) return reject(F9MatchFailure.TARGET_WINDOW_INACTIVE)
+        if (!window.focused) return reject(F9MatchFailure.TARGET_WINDOW_UNFOCUSED)
+        if (!contains(scene.screen, window.bounds)) return reject(F9MatchFailure.TARGET_WINDOW_OUTSIDE_FRAME)
+        // Keep the independent pre-popup page's ORIGINAL five-second horizon. The new manual
+        // popup capture does not renew this separate background proof.
         if (scene.pageWindowId == scene.windowId) {
-            val page = r.pageBeforePopup ?: return false
+            val page = r.pageBeforePopup ?: return reject(F9MatchFailure.PAGE_PROOF_UNAVAILABLE)
             val now = clock.nowMillis()
-            if (page.packageName != scene.packageName || page.windowId == scene.windowId || page.digest.isBlank() ||
-                page.capturedAtUptimeMillis < 0 || page.capturedAtUptimeMillis > s.capturedAtUptimeMillis ||
-                now < page.capturedAtUptimeMillis || now - page.capturedAtUptimeMillis >= 5_000L || window.bounds == scene.screen) return false
+            if (page.packageName != scene.packageName) return reject(F9MatchFailure.PAGE_PACKAGE_MISMATCH)
+            if (page.windowId == scene.windowId) return reject(F9MatchFailure.PAGE_WINDOW_EQUALS_POPUP)
+            if (page.digest.isBlank()) return reject(F9MatchFailure.PAGE_DIGEST_BLANK)
+            if (page.capturedAtUptimeMillis < 0) return reject(F9MatchFailure.PAGE_TIMESTAMP_NEGATIVE)
+            if (page.capturedAtUptimeMillis > s.capturedAtUptimeMillis) return reject(F9MatchFailure.PAGE_TIMESTAMP_AFTER_CAPTURE)
+            if (now < page.capturedAtUptimeMillis) return reject(F9MatchFailure.PAGE_TIMESTAMP_IN_FUTURE)
+            if (now - page.capturedAtUptimeMillis >= 5_000L) return reject(F9MatchFailure.PAGE_PROOF_EXPIRED)
+            if (window.bounds == scene.screen) return reject(F9MatchFailure.FULLSCREEN_WITH_HIDDEN_PAGE)
         }
-        val node = scene.nodes.singleOrNull { it.path == c.nodePath } ?: return false
+        val node = scene.nodes.singleOrNull { it.path == c.nodePath }
+            ?: return reject(F9MatchFailure.TARGET_NODE_UNAVAILABLE)
         val closeNodes = scene.nodes.filter { n -> listOfNotNull(n.text, n.contentDescription).any { role(it) != null } && n.clickable }
-        return closeNodes.size == 1 && closeNodes.single() == node && c.evidence == EvidenceLevel.E2_LABELED_NODE &&
-            c.role == ButtonRole.CLOSE && role(c.label) == ButtonRole.CLOSE && c.viewId == node.viewId &&
-            c.bounds == node.bounds && node.enabled && node.clickable && supportedCloseWidget(node.className, r.userChoice != null) &&
-            node.path in scene.visiblePaths && NodeAction.CLICK in node.actions && contains(window.bounds, node.bounds) &&
-            listOfNotNull(node.text, node.contentDescription).filter { it.isNotBlank() }.let { labels ->
-                labels.isNotEmpty() && c.label in labels && labels.all { role(it) == ButtonRole.CLOSE }
-            }
+        if (closeNodes.size != 1) return reject(F9MatchFailure.CLOSE_NODE_COUNT)
+        if (closeNodes.single() != node) return reject(F9MatchFailure.CLOSE_NODE_MISMATCH)
+        if (c.evidence != EvidenceLevel.E2_LABELED_NODE) return reject(F9MatchFailure.CANDIDATE_EVIDENCE)
+        if (c.role != ButtonRole.CLOSE) return reject(F9MatchFailure.CANDIDATE_ROLE)
+        if (role(c.label) != ButtonRole.CLOSE) return reject(F9MatchFailure.CANDIDATE_LABEL)
+        if (c.viewId != node.viewId) return reject(F9MatchFailure.CANDIDATE_VIEW_ID)
+        if (c.bounds != node.bounds) return reject(F9MatchFailure.CANDIDATE_BOUNDS)
+        if (!node.enabled) return reject(F9MatchFailure.NODE_DISABLED)
+        if (!node.clickable) return reject(F9MatchFailure.NODE_NOT_CLICKABLE)
+        if (!supportedCloseWidget(node.className, r.userChoice != null)) return reject(F9MatchFailure.WIDGET_UNSUPPORTED)
+        if (node.path !in scene.visiblePaths) return reject(F9MatchFailure.NODE_NOT_VISIBLE)
+        if (NodeAction.CLICK !in node.actions) return reject(F9MatchFailure.CLICK_ACTION_UNAVAILABLE)
+        if (!contains(window.bounds, node.bounds)) return reject(F9MatchFailure.NODE_OUTSIDE_WINDOW)
+        val labels = listOfNotNull(node.text, node.contentDescription).filter { it.isNotBlank() }
+        if (labels.isEmpty()) return reject(F9MatchFailure.LABELS_EMPTY)
+        if (c.label !in labels) return reject(F9MatchFailure.LABEL_NOT_PRESENT)
+        if (!labels.all { role(it) == ButtonRole.CLOSE }) return reject(F9MatchFailure.LABELS_NOT_ALL_CLOSE)
+        return true
     }
 
     private fun observedOutcome(before: F9Scene, after: F9Scene?, pageBeforePopup: F9PageProof?): ClickOutcome {

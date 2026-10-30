@@ -1,6 +1,7 @@
 package kr.closeforyou.accessibility.integration
 
 import kr.closeforyou.accessibility.EvidenceMismatch
+import kr.closeforyou.accessibility.action.F9MatchFailure
 import kr.closeforyou.accessibility.action.F9Block
 import kr.closeforyou.accessibility.diagnosticWrite
 import kr.closeforyou.core.model.*
@@ -25,7 +26,7 @@ internal data class ManualActionCode(val step: ManualActionStep, val state: Manu
     val reason: ManualActionReason = ManualActionReason.NONE, val safety: SafetyReason? = null,
     val block: F9Block? = null, val mismatch: EvidenceMismatch? = null,
     val outcome: ClickOutcome? = null, val next: NextStep? = null,
-    val eligibility: F9EligibilityCode? = null)
+    val eligibility: F9EligibilityCode? = null, val screenMatch: F9MatchFailure? = null)
 
 /** Immutable attempt binding: a later offer cannot relabel an earlier suspended action.
  * The bounded code set de-duplicates repeated boundaries; diagnostics never authorize actions. */
@@ -38,8 +39,8 @@ internal class ManualActionTrace(private val sink: (ManualActionCode) -> Unit) {
     fun record(step: ManualActionStep, state: ManualActionState,
         reason: ManualActionReason = ManualActionReason.NONE, safety: SafetyReason? = null,
         block: F9Block? = null, mismatch: EvidenceMismatch? = null,
-        outcome: ClickOutcome? = null, next: NextStep? = null) {
-        val code = ManualActionCode(step, state, reason, safety, block, mismatch, outcome, next)
+        outcome: ClickOutcome? = null, next: NextStep? = null, screenMatch: F9MatchFailure? = null) {
+        val code = ManualActionCode(step, state, reason, safety, block, mismatch, outcome, next, screenMatch = screenMatch)
         if (recorded.add(code)) diagnosticWrite { sink(code) }
     }
     override fun toString() = "ManualActionTrace(redacted)"
