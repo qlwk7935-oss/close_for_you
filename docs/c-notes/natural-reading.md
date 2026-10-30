@@ -1,6 +1,6 @@
 # 자연스러운 낭독·버튼 이름 (C, 2026-10-30)
 
-브랜치 `c/natural-reading` (← `c/onboarding-release` #62 ← `c/talkback-takeover` #61). 병합 순서: **#61 → #62 → 이 PR**.
+브랜치 `c/natural-reading` (origin/main 365a784까지 최신화). **#61·#62 병합됨, main 기준 단독 PR.**
 
 > Mock·JVM 시험 기준. 실기기 TTS로 실제로 어떻게 들리는지는 **미검증**(LG 확인 요청 중).
 
