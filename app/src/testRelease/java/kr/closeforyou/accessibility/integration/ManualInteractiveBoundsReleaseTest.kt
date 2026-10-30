@@ -8,8 +8,8 @@ class ManualInteractiveBoundsReleaseTest {
     @Test fun releaseVariantDoesNotClassifyEvenIfADiagnosticProbeIsExplicitlyRequested() {
         val r = ManualDemoBoundsRejectionTest.Rig(); r.expand(reflow = true)
         assertNull(ManualInteractiveBoundsDiagnostics.unknown())
-        assertNull(ManualInteractiveBoundsDiagnostics.describe(r.source, r.fresh, r.analysis!!.closeCandidates, 7, NativeActionPresence.PRESENT))
-        r.probe.recordInteractiveBounds(r.source, r.fresh, r.analysis!!.closeCandidates, 7, NativeActionPresence.PRESENT)
+        assertNull(ManualInteractiveBoundsDiagnostics.describe(r.source, r.withFreshProof(), r.analysis!!.closeCandidates, 7, NativeActionPresence.PRESENT, r.originalProof()))
+        r.probe.recordInteractiveBounds(r.source, r.withFreshProof(), r.analysis!!.closeCandidates, 7, NativeActionPresence.PRESENT, r.originalProof())
         assertNull(r.probe.interactiveBounds)
     }
     @Test fun productionReleaseKeepsStrictPolicyAndHasNoTraceOrDisplayException() {

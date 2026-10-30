@@ -22,6 +22,9 @@ internal fun nativeActionPresence(count: Int): NativeActionPresence = when (coun
 internal class NativeActionSummary private constructor(val presence: NativeActionPresence,
     private val ids: List<Int>?) {
     val hasExactKnownSet: Boolean get() = ids != null
+    /** Read-only diagnostic questions; neither exposes IDs nor replaces exact equality. */
+    fun containsOnly(allowed: Set<Int>): Boolean = ids != null && ids.all { it in allowed }
+    fun containsAnyOf(group: Set<Int>): Boolean = ids?.any { it in group } == true
     val displayRootSafe: Boolean get() = ids != null && ids.all { it in navigationIds }
     /** Capability facet only, NOT a ROOT role/identity or execution certificate. Android View
      * supplies SELECT/CLEAR_SELECTION even on ordinary containers. We never invoke these.
@@ -70,6 +73,14 @@ internal class NativeNodeActions private constructor(private val owner: Any,
     private val descriptors: List<NodeSnapshot>, private val rows: List<NativeActionSummary>) {
     private var invalidated = false // A reads this ephemeral evidence on the service main thread.
     fun state(owner: Any, count: Int, index: Int): NativeActionPresence = summary(owner, count, index).presence
+    /** Diagnostics must not poison the policy's existing invalidation latch on a bad lookup. */
+    fun observedSummary(owner: Any, count: Int, index: Int): NativeActionSummary {
+        if (this.owner !== owner || invalidated) return NativeActionSummary.UNKNOWN
+        val current = when (owner) { is PopupSnapshot -> owner.nodes; is List<*> -> owner; else -> null }
+        if (rows.size != count || descriptors.size != count || current == null || current.size != count ||
+            index !in rows.indices || current[index] !== descriptors[index]) return NativeActionSummary.UNKNOWN
+        return rows[index]
+    }
     fun summary(owner: Any, count: Int, index: Int): NativeActionSummary {
         if (this.owner !== owner) return NativeActionSummary.UNKNOWN
         val current = when (owner) { is PopupSnapshot -> owner.nodes; is List<*> -> owner; else -> null }

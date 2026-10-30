@@ -104,24 +104,25 @@ class ManualInteractiveBoundsDiagnosticsTest {
     @Test fun uncertainOrContradictoryDiagnosticInputsRemainUnknown() {
         val r = rig(); move(r, 7)
         fun describe(i: Int, p: NativeActionPresence = NativeActionPresence.PRESENT, candidates: List<CloseCandidate> = r.analysis!!.closeCandidates) =
-            ManualInteractiveBoundsDiagnostics.describe(r.source, r.fresh, candidates, i, p)
+            ManualInteractiveBoundsDiagnostics.describe(r.source, r.withFreshProof(), candidates, i, p, r.originalProof())
         for (code in listOf(describe(-1), describe(0), describe(99), describe(7, NativeActionPresence.UNKNOWN),
             describe(7, NativeActionPresence.NONE), describe(7, candidates = emptyList()),
             describe(7, candidates = listOf(r.analysis!!.closeCandidates.single().copy(viewId = "SYNTHETIC_WRONG")))))
             assertEquals(ManualInteractiveBoundsDiagnostics.unknown(), code)
         val unchanged = rig()
         assertEquals(ManualInteractiveBoundsDiagnostics.unknown(), ManualInteractiveBoundsDiagnostics.describe(
-            unchanged.source, unchanged.fresh, unchanged.analysis!!.closeCandidates, 7, NativeActionPresence.PRESENT))
+            unchanged.source, unchanged.withFreshProof(), unchanged.analysis!!.closeCandidates, 7, NativeActionPresence.PRESENT, unchanged.originalProof()))
     }
     @Test fun probePreservesFirstCodeAndOnlyEnumsEscapeTheComparison() {
         val r = rig(); move(r, 6); move(r, 7)
-        r.probe.recordInteractiveBounds(r.source, r.fresh, r.analysis!!.closeCandidates, 6, NativeActionPresence.PRESENT)
+        r.probe.recordInteractiveBounds(r.source, r.withFreshProof(), r.analysis!!.closeCandidates, 6, NativeActionPresence.PRESENT, r.originalProof())
         val first = r.probe.interactiveBounds
-        r.probe.recordInteractiveBounds(r.source, r.fresh, r.analysis!!.closeCandidates, 7, NativeActionPresence.PRESENT)
+        r.probe.recordInteractiveBounds(r.source, r.withFreshProof(), r.analysis!!.closeCandidates, 7, NativeActionPresence.PRESENT, r.originalProof())
         assertSame(first, r.probe.interactiveBounds)
         assertTrue(ManualInteractiveBoundsCode::class.java.declaredFields.filterNot { java.lang.reflect.Modifier.isStatic(it.modifiers) }
             .all { it.type.isEnum })
-        assertEquals(";INTERACTIVE_NODE=OTHER_CLICKABLE;INTERACTIVE_CAUSES=CLICKABLE_DTO_ACTION_NATIVE_ACTION", first!!.fields())
+        assertEquals(";INTERACTIVE_NODE=OTHER_CLICKABLE;INTERACTIVE_CAUSES=CLICKABLE_DTO_ACTION_NATIVE_ACTION" +
+            ";REJECTED_ROLE=OTHER;CAPABILITY_PROFILE=OTHER_STANDARD;CLOSE_GEOMETRY=CHANGED;OTHER_OPERABLE_GEOMETRY=NO_TARGETS", first!!.fields())
     }
     @Test fun diagnosticOffAndOnHaveIdenticalAcceptRejectRemovalAndEvidenceResults() {
         for (changed in listOf(false, true)) {
@@ -143,7 +144,8 @@ class ManualInteractiveBoundsDiagnosticsTest {
         val code = reject(r)
         assertFalse(code.fields().contains(marker)); assertFalse(code.toString().contains(marker))
         assertFalse(code.fields().contains(r.source.nodes[5].path))
-        assertEquals(";INTERACTIVE_NODE=NONCLICK_NATIVE_CAPABILITY;INTERACTIVE_CAUSES=NATIVE_ACTION", code.fields())
+        assertEquals(";INTERACTIVE_NODE=NONCLICK_NATIVE_CAPABILITY;INTERACTIVE_CAUSES=NATIVE_ACTION" +
+            ";REJECTED_ROLE=TEXTVIEW_LEAF;CAPABILITY_PROFILE=SELECTION_STATE;CLOSE_GEOMETRY=UNCHANGED;OTHER_OPERABLE_GEOMETRY=UNCHANGED", code.fields())
     }
     @Test fun observerExceptionOrDiagnosticCancellationCannotAlterTheOriginalRejection() {
         for (cancel in listOf(false, true)) {

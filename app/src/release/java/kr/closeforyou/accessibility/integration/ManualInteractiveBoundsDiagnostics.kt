@@ -11,5 +11,5 @@ internal object ManualInteractiveBoundsDiagnostics {
     fun unknown(): ManualInteractiveBoundsCode? = null
     @Suppress("UNUSED_PARAMETER")
     fun describe(original: PopupSnapshot, fresh: F9Scene, candidates: List<CloseCandidate>, index: Int,
-        native: NativeActionPresence): ManualInteractiveBoundsCode? = null
+        native: NativeActionPresence, originalActions: kr.closeforyou.accessibility.NativeNodeActions? = null): ManualInteractiveBoundsCode? = null
 }

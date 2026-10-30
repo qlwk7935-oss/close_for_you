@@ -50,11 +50,12 @@ internal fun firstManualNodeMismatch(original: List<NodeSnapshot>, fresh: List<N
 internal class ManualDisplayProbe(private val nodeDiagnostics: Boolean = false) {
     var interactiveBounds: ManualInteractiveBoundsCode? = null; private set
     fun recordInteractiveBounds(original: PopupSnapshot, fresh: F9Scene,
-        candidates: List<CloseCandidate>, index: Int, native: kr.closeforyou.accessibility.NativeActionPresence) {
+        candidates: List<CloseCandidate>, index: Int, native: kr.closeforyou.accessibility.NativeActionPresence,
+        originalActions: kr.closeforyou.accessibility.NativeNodeActions? = null) {
         if (!nodeDiagnostics || interactiveBounds != null) return
         interactiveBounds = ManualInteractiveBoundsDiagnostics.unknown()
         kr.closeforyou.accessibility.diagnosticWrite {
-            interactiveBounds = ManualInteractiveBoundsDiagnostics.describe(original, fresh, candidates, index, native)
+            interactiveBounds = ManualInteractiveBoundsDiagnostics.describe(original, fresh, candidates, index, native, originalActions)
         }
     }
     var demoBounds = ManualDemoBoundsReason.NOT_CHECKED; private set
@@ -281,7 +282,7 @@ internal object ManualDisplayContinuity {
         if (fresh.nodes != original.nodes) {
             if (demoBoundsCandidates != null && ManualDemoBoundsPolicy.retains(original, fresh, nativeOverlayId, listing,
                     demoBoundsCandidates, originalActions, probe?.let { it::recordDemoBounds },
-                    probe?.let { p -> { index, native -> p.recordInteractiveBounds(original, fresh, demoBoundsCandidates, index, native) } }))
+                    probe?.let { p -> { index, native -> p.recordInteractiveBounds(original, fresh, demoBoundsCandidates, index, native, originalActions) } }))
                 return ManualDisplayVerdict.BOUNDS_RETAINED
             probe?.nodesChanged(original, fresh)
             return reject(ManualDisplayDetail.NODES_CHANGED, ManualDisplayVerdict.CHANGED)
