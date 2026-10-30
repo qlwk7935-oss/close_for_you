@@ -237,7 +237,7 @@ fun UiVoiceOnboardingScreen(
                 OnboardingStep.WELCOME -> BrandButton(stringResource(R.string.ui_onboarding_start), next)
                 OnboardingStep.SERVICE -> {
                     if (serviceOn) {
-                        // Where "켜졌어요" leaves TalkBack's focus ([rememberServiceTurnOn]).
+                        // Where TalkBack's focus goes whenever 2/5 shows with the service on ([rememberServiceTurnOn]).
                         BrandButton(stringResource(R.string.ui_onboarding_next), next, modifier = Modifier.testTag(SERVICE_NEXT_TAG))
                     } else {
                         SecondaryButton(stringResource(R.string.ui_setup_service_later), next)
@@ -321,7 +321,7 @@ private fun ServiceStep(serviceOn: Boolean) {
     val turnOn = rememberServiceTurnOn(
         serviceOn,
         onOpenFailed = { openFailed = true },
-        focusAfterTurnedOnTag = SERVICE_NEXT_TAG,
+        focusWhenServiceOnTag = SERVICE_NEXT_TAG,
         returnSelfFocusTexts = listOf(
             stringResource(R.string.ui_setup_step, OnboardingStep.COUNT, OnboardingStep.SERVICE.number),
             stringResource(R.string.ui_onboarding_next),

@@ -285,18 +285,27 @@ class ServiceTurnOnGuideTest {
         assertEquals(GuideSpeech.NONE, ServiceGuidePolicy.turnedOn(touchExplorationOn = true, takeoverOn = false))
     }
 
-    @Test fun afterTurnedOnFocusGoesToNextOnlyWithATarget() {
-        assertTrue(ServiceGuidePolicy.moveFocusAfterTurnedOn(GuideSpeech.AFTER_TALKBACK, completed = true, personInteracted = false, hasTarget = true))
+    /** 재호 10/30: 2/5 shown with the service on and TalkBack on → [다음], whatever was spoken. */
+    @Test fun nextGetsFocusWheneverTheServiceStepShowsWithTheServiceOn() {
+        assertTrue(ServiceGuidePolicy.placeOnShow(serviceOn = true, talkBackOn = true, hasTarget = true))
+        assertFalse(ServiceGuidePolicy.placeOnShow(serviceOn = false, talkBackOn = true, hasTarget = true))
+        // Without TalkBack there is no TalkBack focus.
+        assertFalse(ServiceGuidePolicy.placeOnShow(serviceOn = true, talkBackOn = false, hasTarget = true))
         // Settings has no [다음].
-        assertFalse(ServiceGuidePolicy.moveFocusAfterTurnedOn(GuideSpeech.AFTER_TALKBACK, completed = true, personInteracted = false, hasTarget = false))
-        assertFalse(ServiceGuidePolicy.moveFocusAfterTurnedOn(GuideSpeech.AFTER_TALKBACK, completed = false, personInteracted = false, hasTarget = true))
-        assertFalse(ServiceGuidePolicy.moveFocusAfterTurnedOn(GuideSpeech.AFTER_TALKBACK, completed = true, personInteracted = true, hasTarget = true))
-        assertFalse(ServiceGuidePolicy.moveFocusAfterTurnedOn(GuideSpeech.NOW, completed = true, personInteracted = false, hasTarget = true))
+        assertFalse(ServiceGuidePolicy.placeOnShow(serviceOn = true, talkBackOn = true, hasTarget = false))
+    }
+
+    @Test fun placingWaitsForTalkBackAndChecksLongerThanBefore() {
+        assertTrue(ServiceGuidePolicy.PLACE_DELAY_MILLIS in 1_500L..2_000L)
+        assertTrue(ServiceGuidePolicy.PLACE_DEADLINE_MILLIS >= 5_000L)
+        assertEquals(1, ServiceGuidePolicy.nextStable(targetFocused = true, stable = 0))
+        assertEquals(2, ServiceGuidePolicy.nextStable(targetFocused = true, stable = 1))
+        // Lost it again: start counting over.
+        assertEquals(0, ServiceGuidePolicy.nextStable(targetFocused = false, stable = 1))
+        assertTrue(ServiceGuidePolicy.PLACE_STABLE_CHECKS >= 2)
     }
 
     @Test fun focusToNextIsCheckedAndRepeatedUntilItHoldsUnlessThePersonTookOver() {
-        assertTrue(ServiceGuidePolicy.FOCUS_ATTEMPTS >= 3)
-        assertTrue(ServiceGuidePolicy.FOCUS_RETRY_MILLIS in 300L..500L)
         assertTrue(ServiceGuidePolicy.shouldMoveAgain(targetFocused = false, personInteracted = false))
         assertFalse(ServiceGuidePolicy.shouldMoveAgain(targetFocused = true, personInteracted = false))
         assertFalse(ServiceGuidePolicy.shouldMoveAgain(targetFocused = false, personInteracted = true))
