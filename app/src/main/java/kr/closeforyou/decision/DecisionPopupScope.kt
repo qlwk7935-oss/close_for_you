@@ -7,13 +7,17 @@ import kr.closeforyou.core.model.LabelRejectReason
 import kr.closeforyou.core.model.PopupDetection
 import kr.closeforyou.core.model.PopupSignal
 import kr.closeforyou.core.model.PopupSnapshot
+import kr.closeforyou.core.model.ScreenBounds
 import kr.closeforyou.core.model.TextSource
 
 /**
  * B: which texts belong to the popup, for a same-window overlay that shares its window with the
  * page behind (P13, AUTO_CLOSE.md 5절). Warnings are read widely and reasons to close narrowly:
  * a page text is dropped only when it is provably outside the popup AND carries no warning
- * (decision, scam or uncertain wording), so scoping can never remove a reason to ask.
+ * (decision, scam or uncertain wording), so scoping can never remove a reason to ask that the
+ * person could see. A page warning nobody can see (zero size or off screen, such as a web page's
+ * footer links "로그인" or "[당첨자공지]" behind a Chrome bottom sheet) is dropped too
+ * (WEB_OVERLAY.md 3-1).
  *
  * A new window holds only the popup (A collects the active window's tree), so its texts stay as
  * they are, as do the texts of a screen without one unambiguous popup scope (no candidates there).
@@ -25,7 +29,7 @@ internal object DecisionPopupScope {
         if (scope.rootPath == null) return texts
         val popupNodes = snapshot.nodes.filter(scope::contains)
         return texts.filter { text ->
-            isWarning(text.text) || when (text.source) {
+            (isWarning(text.text) && visible(text.bounds, snapshot.screenBounds)) || when (text.source) {
                 // A tree text is the popup's only when one of the popup's own nodes carries it there.
                 TextSource.ACCESSIBILITY_TREE -> popupNodes.any { node ->
                     node.bounds == text.bounds && (node.text == text.text || node.contentDescription == text.text)
@@ -67,6 +71,11 @@ internal object DecisionPopupScope {
         val folded = ButtonLabelRules.normalize(text)
         return "님" in folded || folded.count { it.isDigit() } >= 7 || '@' in folded || webAddress.containsMatchIn(folded)
     }
+
+    /** Some part of the text lies on the screen with a non-zero size. */
+    private fun visible(bounds: ScreenBounds, screen: ScreenBounds): Boolean =
+        bounds.width > 0 && bounds.height > 0 &&
+            bounds.right > screen.left && bounds.left < screen.right && bounds.bottom > screen.top && bounds.top < screen.bottom
 
     private val webAddress = Regex("""https?://|www\.|\.(com|net|org|kr|co)(?![a-z])""")
 

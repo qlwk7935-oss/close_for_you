@@ -198,7 +198,11 @@ internal object DecisionKeywords {
     private val extraAdKo = Regex(
         // Not "출시" ("새로운 버전이 출시되었습니다", 82-sample no-06) and not bare "신상" ("신상정보 변경").
         "세일|사전\\s?예약|입점|신상품|신제품|신상\\s?(입고|출시|컬렉션)|오픈\\s?기념|" +
-            "([0-9]+\\s?(%|퍼센트|원)|최대|전\\s?메뉴|특별)\\s?할인|할인\\s?(이벤트|행사|중)",
+            "([0-9]+\\s?(%|퍼센트|원)|최대|전\\s?메뉴|특별)\\s?할인|할인\\s?(이벤트|행사|중)|" +
+            // Getting the person into the shop's app (WEB_OVERLAY.md 3-2): "앱 열기", "앱으로 보기",
+            // "앱 설치", "앱에서만 제공되는 혜택", "앱 한정 혜택". Not bare "앱에서 확인": "주문 내역은 앱에서
+            // 확인해 주세요" is a notice. Buttons with these words stay unpressable (grades P and O).
+            "앱\\s?(에서|으로)?\\s?(열기|보기)|앱\\s?(설치|다운로드)|앱\\s?(에서만|전용|한정)",
     )
     private val extraAdEn = en("sale|limited time offer|[0-9]+% off|free shipping")
 
