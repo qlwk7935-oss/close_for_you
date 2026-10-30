@@ -153,6 +153,24 @@ class SpeakableTextTest {
 
     @Test fun onlyDecorationIsBlank() = assertEquals("", say("★ ♥ 🎉"))
 
+    // ---- the debug reading-test fixtures (ReadingTestFixtures): what the LG check should hear ----
+
+    @Test fun readingNoticeFixture() = assertEquals(
+        "서비스 점검 안내.\n일시, 10월 28일 수요일 오전 2시부터 오전 4시까지.\n" +
+            "기간, 10월 28일 수요일부터 11월 3일 화요일까지.\n내용, 주문 기능 일시 중단",
+        say("서비스 점검 안내\n일시: 10/28(수) 02:00~04:00\n기간: 10/28(수)~11/3(화)\n내용: 주문 기능 일시 중단"),
+    )
+
+    @Test fun readingAdFixture() = assertEquals(
+        "오늘만 특가 원 플러스 원 최대 70퍼센트 할인.\n안심직구 베스트, 디지털, 패션, 잡화.\n특가 그리고 4천원 할인 쿠폰.\n자세히, 웹 주소",
+        say("★오늘만 특가★ 1+1 최대 70% 할인\n안심직구 베스트 #디지털 #패션 #잡화\n특가 & 4천원 할인 쿠폰\n자세히: https://example.com"),
+    )
+
+    @Test fun readingLongCloseNameFixture() = assertEquals(
+        "앱에서만 제공되는 혜택을 놓치고 계신 건 아닌가요?\n앱으로 보기",
+        say("앱에서만 제공되는 혜택을 놓치고 계신 건 아닌가요?\n앱으로 보기"),
+    )
+
     @Test fun inlineJoinsLinesWithASpace() = assertEquals("봄 세일 70퍼센트", SpeakableText.inline("봄\n세일 70%"))
 
     @Test fun withPauseAddsOnce() {

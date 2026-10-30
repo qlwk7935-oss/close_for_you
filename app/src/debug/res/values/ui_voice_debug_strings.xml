@@ -16,6 +16,9 @@
     <string name="ui_debug_scenario_unlabeled">라벨 없는 버튼</string>
     <string name="ui_debug_scenario_video">영상 (광고 여부 미확인)</string>
     <string name="ui_debug_scenario_close_and_skip">광고 (닫기·건너뛰기 버튼 둘 다)</string>
+    <string name="ui_debug_scenario_reading_notice">공지 (낭독 시험)</string>
+    <string name="ui_debug_scenario_reading_ad">광고 (기호 시험)</string>
+    <string name="ui_debug_scenario_reading_long_close">앱 설치 안내 (긴 닫기 이름)</string>
 
     <!-- 누르기 결과 흉내 (가짜 ActionResult). 실제로는 아무것도 누르지 않는다. -->
     <string name="ui_debug_section_simulate">누르기 결과 흉내</string>
