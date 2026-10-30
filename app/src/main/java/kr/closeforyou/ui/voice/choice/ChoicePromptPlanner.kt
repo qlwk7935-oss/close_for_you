@@ -15,6 +15,7 @@ import kr.closeforyou.ui.voice.PressFailure
 import kr.closeforyou.ui.voice.PressResultSpeech
 import kr.closeforyou.ui.voice.overlay.PromptSpeech
 import kr.closeforyou.ui.voice.settings.HandlingPreset
+import kr.closeforyou.ui.voice.settings.PerAppAutoCloseGateFeature
 
 /** Hedged summary: a display classification can be wrong, so the sentence never asserts it. */
 enum class PromptSummary { LIKELY_AD, LIKELY_VIDEO_AD, LIKELY_NOTICE, LIKELY_COUPON, NEEDS_REVIEW, UNKNOWN }
@@ -266,7 +267,11 @@ object ChoicePromptPlanner {
 
 /** C: what to say right after [앞으로 항상 닫기]. Saving is D's (Mock today); this is wording only. */
 object RememberChoiceSpeech {
-    /** [autoCloseEnabledForApp]: C's per-app setting (default off). Off means "we will ask again". */
-    fun afterRememberRes(autoCloseEnabledForApp: Boolean): Int =
-        if (autoCloseEnabledForApp) R.string.ui_remember_auto_close_on else R.string.ui_remember_auto_close_off
+    /**
+     * [autoCloseEnabledForApp]: C's per-app setting (default off). Off means "we will ask again".
+     * Demo mode has no per-app setting ([PerAppAutoCloseGateFeature], 10/30): every helped app
+     * repeats its remembered popups, so "꺼져 있어서… 설정에서 켤 수 있어요" would be untrue there.
+     */
+    fun afterRememberRes(autoCloseEnabledForApp: Boolean, perAppGate: Boolean = PerAppAutoCloseGateFeature.enabled): Int =
+        if (autoCloseEnabledForApp || !perAppGate) R.string.ui_remember_auto_close_on else R.string.ui_remember_auto_close_off
 }
