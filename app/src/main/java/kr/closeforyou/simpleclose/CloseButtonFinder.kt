@@ -52,8 +52,8 @@ object CloseButtonFinder {
         for (node in inside) {
             if (!node.clickable || !node.enabled) continue
             val label = nameOf(node, inside)
-            if (SimpleLabelRules.isRisky(label)) {
-                risk++
+            if (SimpleLabelRules.isRisky(label)) risk++
+            if (SimpleLabelRules.isDecision(label)) {
                 riskButtons += CloseCandidate("node:${node.path}", node.path, node.viewId, label, node.bounds, EvidenceLevel.E2_LABELED_NODE, ButtonRole.USER_DECISION)
             }
             if ((label == null || SimpleLabelRules.isXMark(label)) && looksLikeX(node, root)) xShaped += node

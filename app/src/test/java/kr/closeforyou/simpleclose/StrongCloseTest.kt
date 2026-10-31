@@ -275,7 +275,10 @@ class StrongCloseTest {
     }
 
     @Test fun riskyAndXMarkLabels() {
-        listOf("구매하기", "지금 구독하기", "주문하기", "동의", "허용", "결제", "Buy now", "Place order", "회원가입").forEach { assertTrue(it, SimpleLabelRules.isRisky(it)) }
+        listOf("구매하기", "지금 구독하기", "주문하기", "동의", "허용", "결제", "Buy now", "Place order", "회원가입").forEach { assertTrue(it, SimpleLabelRules.isDecision(it)) }
+        // F23: buy/order alone do not keep a popup asked (answer key L04~L06); payment, consent, subscribe, permission… do.
+        listOf("지금 구독하기", "동의", "허용", "결제", "회원가입", "로그인", "Pay now", "Allow").forEach { assertTrue(it, SimpleLabelRules.isRisky(it)) }
+        listOf("구매하기", "주문하기", "Buy now", "Place order").forEach { assertFalse(it, SimpleLabelRules.isRisky(it)) }
         listOf("앱에서 열기", "쿠폰 받기", "닫기", "오늘 하루 보지 않기", "자세히 보기", null).forEach { assertFalse("$it", SimpleLabelRules.isRisky(it)) }
         listOf("×", "X", "✕", "[x]").forEach { assertTrue(it, SimpleLabelRules.isXMark(it)) }
         assertFalse(SimpleLabelRules.isXMark("닫기"))

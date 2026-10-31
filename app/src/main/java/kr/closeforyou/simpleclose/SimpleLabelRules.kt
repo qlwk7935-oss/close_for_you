@@ -119,15 +119,37 @@ object SimpleLabelRules {
     }
 
     /**
-     * F16: a button with a decision word (결제·구매·주문·동의·허용·권한·구독·삭제·가입·로그인…: the shared
-     * contract's decision grade, plus 주문/order). Any one in a popup keeps it asked in every preset.
+     * F16/F20: a button with a decision word (결제·구매·주문·동의·허용·권한·구독·삭제·가입·로그인…: the shared
+     * contract's decision grade, plus 주문/order). Never pressed; offered to the person as [버튼으로 이동] only.
      */
-    fun isRisky(label: String?): Boolean {
+    fun isDecision(label: String?): Boolean {
         if (label.isNullOrBlank()) return false
         val normalized = ButtonLabelRules.normalize(label)
         if (ButtonLabelRules.judge(normalized).reason == LabelRejectReason.DECISION_WORD) return true
         return "주문" in normalized || normalized.split(NON_TOKEN).any { it == "order" }
     }
+
+    /**
+     * F16 "결제·동의·구독·삭제·권한 버튼이 같이 있는 팝업은 묻는다" (재호 11/1), plus 허용·가입·로그인·계정·개인정보·
+     * 승인·송금·이체·해지·탈퇴·체험: any one in a popup keeps it asked in every preset. F23 (D's answer key L04~L06,
+     * L13: an event popup with a "구매" button is CLOSE_OK): a buy or order button alone does not keep it asked; it is
+     * still never pressed ([isDecision]), and B may still call the popup a decision (L03, L17 → asked).
+     */
+    fun isRisky(label: String?): Boolean {
+        if (!isDecision(label)) return false
+        val normalized = ButtonLabelRules.normalize(label!!)
+        val tokens = normalized.split(NON_TOKEN).filter { it.isNotEmpty() }
+        return ASK_KO.any { it in normalized } || ASK_EN.any { phrase ->
+            val words = phrase.split(' ')
+            (0..tokens.size - words.size).any { start -> words.indices.all { tokens[start + it] == words[it] } }
+        }
+    }
+
+    private val ASK_KO = listOf("결제", "동의", "구독", "삭제", "권한", "허용", "가입", "로그인", "계정", "개인정보", "승인", "송금", "이체", "해지", "탈퇴", "체험")
+    private val ASK_EN = listOf(
+        "pay", "payment", "subscribe", "subscription", "consent", "agree", "accept", "permission", "allow", "delete",
+        "login", "log in", "sign in", "sign up", "account", "personal information", "personal data", "trial",
+    )
 
     /** F16: a label made of X marks only ("×", "X", "✕"): the shape, not a name (AGENTS 6-3). */
     fun isXMark(label: String?): Boolean =
