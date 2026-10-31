@@ -91,6 +91,12 @@
 - 원인: 자동 닫기가 **검사(inspection) 코루틴 안에서** 실행됐고, 클릭 200ms 뒤 들어온 다른 패키지 이벤트가 그 코루틴을 취소(`pending?.cancel()`)해 확인 폴링이 중간에 죽음. 사용자 선택 경로는 별도 `launch`라 멀쩡했음.
 - 고친 것: `EngineJobs`(순수) — 검사 작업과 실행 작업을 분리. 이벤트는 검사만 교체하고 실행 작업은 절대 취소하지 않으며, 실행 중에는 이벤트를 무시한다. 자동·사용자 누르기 모두 `runAction`. JVM 시험 4개(`EngineJobsTest`: 다른 패키지 이벤트 뒤에도 확인·RESULT 1회 등).
 
+## 5-6. LG 3acd2ae 결과 (10/31 20:02~20:06) → 수정
+
+- 11번가 새 시크릿 탭에서 4분간 `NO_POPUP_ROOT`만, 선택 창 안 뜸. 코드상 감지 경로는 3e47eee와 같음. **유력 원인: 크롬 시크릿 탭은 모두 닫을 때까지 세션(쿠키)을 공유** — 19:53에 "모바일 웹으로 볼래요"로 닫은 뒤 쿠키가 남아 시트 자체가 안 떴을 가능성. 확인: 시크릿 탭 전부 닫고 다시, 또는 시트가 보이는 상태에서 `uiautomator dump`에 AlertDialog 노드가 있는지.
+- 재확인 체인이 크롬 content-changed마다 리셋돼 1~2초마다 트리를 읽음 → ① 체인은 WINDOW_STATE/WINDOWS 이벤트에서만, content-changed는 1.5초에 1회 단독 읽기(`CONTENT_CHANGE_READ_MILLIS`, 로그 `CONTENT_READ_THROTTLED`).
+- 옥션 두 번째 방문: 이미지만 있는 배너라 B UNKNOWN → 묻기(규칙상 정상). ② 엔진 힌트 `ImageDialogAdHint`(`IMAGE_DIALOG_AD_HINT`): Dialog 루트 + 루트 40% 이상의 클릭 가능 이미지 + 검증된 닫기 버튼 + 비클릭 글자 80자 이하 + B UNKNOWN + 사기 아님 → 광고로 취급(로그 `AD_HINT_IMAGE_DIALOG`). **B 코드가 아닌 엔진 규칙(시연 모드 완화)**: 이미지로 그린 공지도 광고로 닫힐 수 있음. JVM 시험 5개.
+
 ## 6. 남은 위험·미확인
 
 - 크롬이 실기기에서 `AlertDialog` 노드를 주는지(10/30 LG 확인됨), 두 번째 서비스에서도 주는지.

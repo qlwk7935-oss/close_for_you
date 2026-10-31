@@ -31,6 +31,20 @@ object SimpleCloseEngineFeature {
     val RECHECK_DELAYS_MILLIS = listOf(500L, 1_000L, 2_000L, 3_000L)
 
     /**
+     * A content change (Chrome repaints constantly) gets one read, at most this often, and never
+     * restarts the re-check chain; only a window-state or windows change does (LG 10/31: the chain
+     * restarted on every repaint and read the tree every 1~2 s for minutes).
+     */
+    const val CONTENT_CHANGE_READ_MILLIS = 1_500L
+
+    /**
+     * Demo hint for an image-only dialog (옥션: one big clickable image with little text, a 닫기
+     * button): when B says UNKNOWN and nothing is suspicious, the engine treats it as an advertisement.
+     * The engine's own rule, not B's classifier; a notice drawn as an image would be closed too.
+     */
+    const val IMAGE_DIALOG_AD_HINT = true
+
+    /**
      * After a confirmed close, TalkBack's focus is moved to the first item of the page's web content
      * (demo mode 6-0): a closed web popup can stay in the DOM and TalkBack kept reading it (LG 10/31).
      */

@@ -134,6 +134,19 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
         // While the prompt is up only a rare re-read is needed (to notice the popup went away): the
         // full tree read is what made swiping through our window sluggish (LG 10/31).
         if (prompted != null && SystemClock.uptimeMillis() - lastInspectAt < SimpleCloseEngineFeature.PROMPT_RECHECK_MILLIS) return
+        if (event.eventType == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED) {
+            // Chrome repaints constantly: one throttled read, and never a restart of the chain (which
+            // kept the tree being read every 1~2 s for minutes, LG 10/31).
+            if (SystemClock.uptimeMillis() - lastInspectAt < SimpleCloseEngineFeature.CONTENT_CHANGE_READ_MILLIS) {
+                log.trace(SimpleTrace.CONTENT_READ_THROTTLED)
+                return
+            }
+            jobs.scheduleInspection {
+                delay(SimpleCloseEngineFeature.DEBOUNCE_MILLIS)
+                if (!jobs.busy && prompted == null) inspect()
+            }
+            return
+        }
         jobs.scheduleInspection {
             delay(SimpleCloseEngineFeature.DEBOUNCE_MILLIS)
             // A popup still animating is missed by the first read, and Chrome may send nothing more
@@ -191,8 +204,12 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
             PopupRootKind.DIM_OVERLAY -> SimpleTrace.DETECTED_DIM_OVERLAY
         })
 
-        val classification = classifier.classify(popup.analysis)
+        val byB = classifier.classify(popup.analysis)
         val suspicious = RememberChoiceRules.suspiciousByB(popup.analysis)
+        // Demo hint: an image-only dialog with a close button that B cannot judge from words (옥션).
+        val hinted = SimpleCloseEngineFeature.IMAGE_DIALOG_AD_HINT && ImageDialogAdHint.applies(popup, byB, suspicious)
+        if (hinted) log.trace(SimpleTrace.AD_HINT_IMAGE_DIALOG)
+        val classification = if (hinted) PopupClassification.ADVERTISEMENT else byB
         log.trace(when {
             suspicious -> SimpleTrace.CLASSIFIED_SUSPICIOUS
             classification == PopupClassification.ADVERTISEMENT -> SimpleTrace.CLASSIFIED_AD
