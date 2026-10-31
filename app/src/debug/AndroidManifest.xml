@@ -46,5 +46,20 @@
                 android:name="android.accessibilityservice"
                 android:resource="@xml/ui_voice_overlay_test_service" />
         </service>
+        <!-- C(simpleclose): plan-B simple close engine (AGENTS 6-0 demo mode). Debug only; turn on this OR A's
+             "닫아줄게", never both. Reads the active app's tree, classifies with B, clicks one verified close
+             button or asks through C's prompt. No gestures, no screenshots, no screen text in logs. -->
+        <service
+            android:name="kr.closeforyou.simpleclose.SimpleCloseAccessibilityService"
+            android:exported="true"
+            android:label="@string/ui_simple_close_service_label"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/ui_simple_close_service" />
+        </service>
     </application>
 </manifest>
