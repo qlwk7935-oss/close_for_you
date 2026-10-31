@@ -120,6 +120,11 @@ enum class SimpleTrace {
     RESULT_BANNER_FOCUS_FAILED,
     /** F17: the reclaim watch got its first target right when the page moved the focus (none was set yet). */
     FOCUS_RECLAIM_TARGET_TAKEN,
+    /** F18: a video ad's named skip button ([VideoAdSkip]): found and pressed / waiting for it to appear. */
+    VIDEO_SKIP_FOUND,
+    VIDEO_SKIP_WAITING,
+    VIDEO_SKIPPED,
+    VIDEO_SKIP_NOT_IN_PRESET,
 
     // F6: why the image-dialog ad hint did not apply ([AdHintMiss]).
     AD_HINT_MISS_SCAM,

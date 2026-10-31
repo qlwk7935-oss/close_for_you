@@ -58,6 +58,7 @@ import kr.closeforyou.ui.voice.overlay.PromptShowResult
 import kr.closeforyou.ui.voice.overlay.PromptSpeech
 import kr.closeforyou.ui.voice.overlay.TalkBackTakeoverPlan
 import kr.closeforyou.ui.voice.settings.UiVoicePreferences
+import kr.closeforyou.ui.voice.settings.autoCloseKinds
 
 /**
  * C's simple close engine (plan B; see [SimpleCloseEngineFeature]). Declared in the main manifest as
@@ -114,6 +115,8 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
     private var preClickTarget: AccessibilityNodeInfo? = null
     /** F17: the popup the focused result card is about, so the card's removal moves the focus to the page, not back there. */
     private var lastClosedMemory: PopupMemory? = null
+    /** F18: skip buttons already pressed (window + path), not pressed again for [SimpleCloseEngineFeature.SAME_POPUP_COOLDOWN_MILLIS]. */
+    private val skippedAt = LinkedHashMap<String, Long>()
     private var inputMethods: Set<String> = emptySet()
 
     /** The popup the prompt on screen is about, when each popup key was last seen, and keys already explained. */
@@ -239,13 +242,26 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
             log.trace(SimpleTrace.TREE_UNAVAILABLE)
             return false
         }
+        // F18: a video ad's own skip button comes first (it is not a popup); a countdown waits for the next read.
+        var videoAdWaiting = false
+        if (SimpleCloseEngineFeature.VIDEO_AD_SKIP) {
+            when (val video = VideoAdSkip.find(read.nodes, read.screen)) {
+                is VideoAdSkipResult.Found -> {
+                    endSearch()
+                    skipVideoAd(read, video.candidate)
+                    return true
+                }
+                VideoAdSkipResult.Waiting -> videoAdWaiting = true
+                null -> Unit
+            }
+        }
         // F16: an app popup window's tree has its own window for the live look-ups.
         val root = PopupRootFinder.find(read.nodes, read.screen, read.activeWindowBounded)?.let { found ->
             val windowId = read.popupWindowId ?: return@let found
             found.copy(windowId = windowId, kind = if (found.kind == PopupRootKind.DIALOG_WINDOW) PopupRootKind.APP_WINDOW else found.kind)
         }
         if (root == null) {
-            log.trace(SimpleTrace.NO_POPUP_ROOT)
+            log.trace(if (videoAdWaiting) SimpleTrace.VIDEO_SKIP_WAITING else SimpleTrace.NO_POPUP_ROOT)
             lastNoRootAt = SystemClock.uptimeMillis()
             return false
         }
@@ -703,6 +719,62 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
         }
     }
 
+    /**
+     * F18: a video ad's skip button ([VideoAdSkip]), only in a preset that closes ads (the person's live
+     * consent), re-checked right before one click on that very node (no ancestor, nothing else on the
+     * player), then "광고를 건너뛰었어요" once when the button went away. Not pressed again for a while.
+     */
+    private fun skipVideoAd(read: TreeRead, candidate: CloseCandidate) {
+        if (PopupClassification.ADVERTISEMENT !in preferences.current().autoCloseKinds(live = true)) {
+            log.trace(SimpleTrace.VIDEO_SKIP_NOT_IN_PRESET)
+            return
+        }
+        val key = "${read.windowId}:${candidate.nodePath}"
+        val now = SystemClock.uptimeMillis()
+        val last = skippedAt[key]
+        if (last != null && now - last < SimpleCloseEngineFeature.SAME_POPUP_COOLDOWN_MILLIS) return
+        skippedAt[key] = now
+        if (skippedAt.size > 16) skippedAt.remove(skippedAt.keys.first())
+        log.trace(SimpleTrace.VIDEO_SKIP_FOUND)
+        jobs.runAction {
+            val windowId = read.popupWindowId
+            val path = candidate.nodePath ?: return@runAction
+            val stillThere = withContext(Dispatchers.Default) {
+                collector.foregroundPackage() == read.packageName && collector.targetMatches(candidate, windowId)
+            }
+            if (!stillThere) {
+                log.trace(SimpleTrace.RECHECK_TARGET_GONE)
+                return@runAction
+            }
+            // The skip node itself only: rootPath = its own path, so no ancestor (the player) is clicked.
+            when (clickOnce(path, path, windowId)) {
+                null -> { log.trace(SimpleTrace.CLICK_TARGET_NOT_CLICKABLE); return@runAction }
+                false -> { log.trace(SimpleTrace.CLICK_REJECTED); return@runAction }
+                true -> log.trace(SimpleTrace.CLICKED)
+            }
+            val deadline = SystemClock.uptimeMillis() + SimpleCloseEngineFeature.CONFIRM_DELAY_MILLIS
+            var gone = false
+            while (!gone && SystemClock.uptimeMillis() < deadline) {
+                delay(SimpleCloseEngineFeature.CONFIRM_POLL_MILLIS)
+                gone = withContext(Dispatchers.Default) { !collector.targetMatches(candidate, windowId) }
+            }
+            if (!gone) {
+                log.trace(SimpleTrace.NOT_CLOSED)
+                return@runAction
+            }
+            log.trace(SimpleTrace.VIDEO_SKIPPED)
+            val sentence = getString(R.string.ui_video_ad_skipped)
+            // The person is watching: the card speaks through TalkBack's queue, the focus stays on the player.
+            val banner = resultBanner
+            if (banner != null && banner.talkBackOn() && banner.show(sentence) { _, _ -> }) {
+                log.trace(SimpleTrace.RESULT_VIA_TALKBACK)
+            } else {
+                log.trace(SimpleTrace.RESULT_VIA_TTS)
+                tts?.let { announcer -> scope.launch { announcer.announce(AnnouncementRequest(null, AnnouncementKind.ACTION_RESULT, sentence)) } }
+            }
+        }
+    }
+
     /** True/false = performAction result; null = no clickable node between the target and the popup root. */
     private fun clickOnce(targetPath: String, rootPath: String, windowId: Int? = null): Boolean? {
         var path = targetPath
@@ -745,6 +817,7 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
         reclaim = null
         preClickTarget = null
         lastClosedMemory = null
+        skippedAt.clear()
         prompted = null
         resultBanner?.dismiss()
         resultBanner = null

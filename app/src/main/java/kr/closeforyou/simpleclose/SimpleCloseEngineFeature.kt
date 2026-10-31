@@ -53,6 +53,12 @@ object SimpleCloseEngineFeature {
     const val FOCUS_RECLAIM_TOUCH_GRACE_MILLIS = 800L
 
     /**
+     * F18 (F5 video ads): a video ad's named skip button is pressed in a preset that closes ads ([VideoAdSkip]).
+     * Device unverified (YouTube app and web).
+     */
+    const val VIDEO_AD_SKIP: Boolean = true
+
+    /**
      * Window events settle before the tree is read (Chrome paints web nodes a little late). 300 → 200 ms
      * (F5, LG 10/31 21:00: TalkBack read the 11번가 sheet twice before our window came); a read that comes
      * too early is caught by the first re-check.
