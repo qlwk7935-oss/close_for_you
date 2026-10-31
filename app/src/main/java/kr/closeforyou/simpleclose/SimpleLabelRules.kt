@@ -130,16 +130,19 @@ object SimpleLabelRules {
         !label.isNullOrBlank() && ButtonLabelRules.judge(label).reason == LabelRejectReason.SYMBOL_ONLY
 
     /**
-     * F16 "전부 닫기": how plainly a close label says close, lower is plainer. The plain contract close
-     * ("닫기", "Close") first, then "○○ 닫기", then hiding for a while or staying on the web, then a polite no.
+     * F16 "전부 닫기": how plainly a close label says close, lower is plainer. F20 (LG 11/1 11번가): the same
+     * order the person sees in C's prompt, where ties keep reading order: a close of the popup itself ("닫기",
+     * "Close", "앱설치 안내 레이어 닫기") first, then the dim background ("배경을 눌러 닫기") or hiding for a
+     * while / staying on the web ("모바일 웹으로 볼래요"), then a polite no ("괜찮아요").
      */
     fun clarity(label: String?): Int {
         val normalized = label?.let(ButtonLabelRules::normalize).orEmpty()
         return when {
             ButtonLabelRules.roleOf(normalized) == ButtonRole.CLOSE -> 0
-            normalized in DIM_CLOSE || ENDS_WITH_CLOSE.matches(normalized) && normalized !in HIDE_FOR_A_WHILE -> 1
-            normalized in HIDE_FOR_A_WHILE || DAYS_HIDE.matches(normalized) || normalized in WEB_STAY || normalized in STAY_ON_WEB -> 2
-            else -> 3
+            normalized !in DIM_CLOSE && normalized !in HIDE_FOR_A_WHILE && ENDS_WITH_CLOSE.matches(normalized) -> 0
+            normalized in DIM_CLOSE || normalized in HIDE_FOR_A_WHILE || DAYS_HIDE.matches(normalized) ||
+                normalized in WEB_STAY || normalized in STAY_ON_WEB -> 1
+            else -> 2
         }
     }
 

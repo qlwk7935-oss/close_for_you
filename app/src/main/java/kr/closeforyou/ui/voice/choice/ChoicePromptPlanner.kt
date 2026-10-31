@@ -18,7 +18,8 @@ import kr.closeforyou.ui.voice.settings.HandlingPreset
 import kr.closeforyou.ui.voice.settings.PerAppAutoCloseGateFeature
 
 /** Hedged summary: a display classification can be wrong, so the sentence never asserts it. */
-enum class PromptSummary { LIKELY_AD, LIKELY_VIDEO_AD, LIKELY_NOTICE, LIKELY_COUPON, NEEDS_REVIEW, UNKNOWN }
+/** [AUTO_CLOSE_FAILED] (F20): the engine pressed a close for the person and the popup stayed; asked right after. */
+enum class PromptSummary { LIKELY_AD, LIKELY_VIDEO_AD, LIKELY_NOTICE, LIKELY_COUPON, NEEDS_REVIEW, UNKNOWN, AUTO_CLOSE_FAILED }
 
 /**
  * MOVE_TO_BUTTON appears only while [MoveToButtonFeature.enabled]; it never presses anything.

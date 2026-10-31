@@ -1,6 +1,7 @@
 package kr.closeforyou.simpleclose
 
 import kotlinx.collections.immutable.ImmutableList
+import kotlinx.collections.immutable.persistentListOf
 import kotlinx.collections.immutable.toPersistentList
 import kr.closeforyou.core.model.ButtonRole
 import kr.closeforyou.core.model.CloseCandidate
@@ -20,6 +21,11 @@ data class ButtonScan(
      * "X 모양 닫기" and pressed only on their tap (AGENTS 6-3); never in [candidates], never automatic.
      */
     val xButton: CloseCandidate? = null,
+    /**
+     * F20: the risky buttons themselves (role USER_DECISION), for [버튼으로 이동] only: the person is told where
+     * they are; they are never pressed and never in [candidates].
+     */
+    val riskButtons: ImmutableList<CloseCandidate> = persistentListOf(),
 ) {
     val closeCandidates: List<CloseCandidate> get() = candidates.filter { it.role == ButtonRole.CLOSE }
 }
@@ -41,11 +47,15 @@ object CloseButtonFinder {
         var unlabeled = 0
         var other = 0
         var risk = 0
+        val riskButtons = mutableListOf<CloseCandidate>()
         val xShaped = mutableListOf<NodeSnapshot>()
         for (node in inside) {
             if (!node.clickable || !node.enabled) continue
             val label = nameOf(node, inside)
-            if (SimpleLabelRules.isRisky(label)) risk++
+            if (SimpleLabelRules.isRisky(label)) {
+                risk++
+                riskButtons += CloseCandidate("node:${node.path}", node.path, node.viewId, label, node.bounds, EvidenceLevel.E2_LABELED_NODE, ButtonRole.USER_DECISION)
+            }
             if ((label == null || SimpleLabelRules.isXMark(label)) && looksLikeX(node, root)) xShaped += node
             val verdict = SimpleLabelRules.judge(label)
             val role = verdict.role
@@ -71,7 +81,10 @@ object CloseButtonFinder {
         val x = xShaped.singleOrNull()?.let {
             CloseCandidate("node:${it.path}", it.path, it.viewId, nameOf(it, inside), it.bounds, EvidenceLevel.E4_VISUAL_ONLY, ButtonRole.CLOSE)
         }
-        return ButtonScan(candidates.toPersistentList(), forbidden, unlabeled, other, risk, x)
+        // F20: plainest close first, reading order on a tie ([SimpleLabelRules.clarity]), so C's prompt offers first
+        // exactly the button 강력 모드 presses ([StrongCloseRules]).
+        val ordered = candidates.sortedBy { if (it.role == ButtonRole.CLOSE) SimpleLabelRules.clarity(it.label) else CLARITY_SKIP }
+        return ButtonScan(ordered.toPersistentList(), forbidden, unlabeled, other, risk, x, riskButtons.toPersistentList())
     }
 
     /** Small and about square, inside the popup: the shape of an X icon (a big unnamed box is an image or the dim). */
@@ -83,6 +96,7 @@ object CloseButtonFinder {
         return b.width <= maxSide && b.height <= maxSide && aspect in 0.5..2.0
     }
 
+    private const val CLARITY_SKIP = 9
     private const val X_MAX_SIDE_PX = 120
     private const val X_MAX_SIDE_RATIO = 0.2
 

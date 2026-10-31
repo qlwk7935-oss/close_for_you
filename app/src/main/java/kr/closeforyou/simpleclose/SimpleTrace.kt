@@ -126,6 +126,40 @@ enum class SimpleTrace {
     VIDEO_SKIPPED,
     VIDEO_SKIP_NOT_IN_PRESET,
 
+    /** F20: what the F15 probe did for a read that found a popup ([ProbeOutcome]). */
+    PROBE_HIT_DIALOG,
+    PROBE_HIT_DIM_PARENT,
+    PROBE_HIT_LAYER,
+    PROBE_MISS_CAPPED,
+    PROBE_MISS,
+    /** F20: after a close looked confirmed, the same popup was there again (strict check): not a close. */
+    CLOSE_REAPPEARED,
+    /** F20: an automatic close did not close; no result card, no focus move, the prompt asks at once. */
+    AUTO_CLOSE_FAILED_ASKED,
+    /** F20: this popup failed an automatic close before: asked instead of pressing again (AGENTS 6-6). */
+    AUTO_CLOSE_SKIPPED_AFTER_FAIL,
+    /** F20: a decision popup is asked (no press option) instead of only explained. */
+    DECISION_ASKED,
+    /** F20: [버튼으로 이동]: TalkBack's focus put on the button / not taken / its place said by TTS (TalkBack off). */
+    USER_CHOSE_MOVE,
+    MOVED_TO_BUTTON,
+    MOVE_TO_BUTTON_FAILED,
+    MOVE_POSITION_SPOKEN,
+    /** F20: the person chose to leave this popup: not asked or closed again while it stays. */
+    SAME_POPUP_KEPT,
+    /** F20 video diagnostics: YouTube app events arrive / the app is outside 도와줄 앱; ad mark seen or not. */
+    VIDEO_EVENT_SEEN,
+    VIDEO_APP_NOT_ALLOWED,
+    VIDEO_AD_MARKER_FOUND,
+    VIDEO_AD_MARKER_MISSING,
+    /** F20: why no skip was pressed ([VideoAdDiag]). */
+    VIDEO_SKIP_NO_CANDIDATE,
+    VIDEO_SKIP_LABEL_UNNAMED,
+    VIDEO_SKIP_NOT_CLICKABLE,
+    VIDEO_SKIP_OFFSCREEN,
+    VIDEO_SKIP_NO_AD_MARKER,
+    VIDEO_SKIP_SEVERAL,
+
     // F6: why the image-dialog ad hint did not apply ([AdHintMiss]).
     AD_HINT_MISS_SCAM,
     AD_HINT_MISS_NOT_UNKNOWN,

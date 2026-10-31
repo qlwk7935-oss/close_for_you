@@ -31,6 +31,9 @@ enum class ProbeHitKind { DIALOG, DIM_PARENT, LAYER }
  */
 class ProbeResult(val path: String?, val kind: ProbeHitKind?, val visited: Int, val capped: Boolean, val context: String? = null)
 
+/** F20: what the probe of a read did (debug log `PROBE_*`): hit by kind, or missed (capped or not). */
+enum class ProbeOutcome { NOT_RUN, HIT_DIALOG, HIT_DIM_PARENT, HIT_LAYER, MISS_CAPPED, MISS }
+
 /**
  * F15 (LG 11/1 02:53: an 11번가 read took 2.0 s for 1,424 nodes, about 1.4 ms per node; the popup's
  * own subtree is a few dozen): before reading the whole page, look for the popup root cheaply and read
@@ -71,15 +74,18 @@ object PopupProbe {
         var hit: ProbeResult? = null
 
         // [above]: later siblings already seen that are layer-sized. Sets [hit] when the probe can stop.
-        fun visit(node: N, path: String, depth: Int, above: List<Pair<Int, ScreenBounds>>): ScreenBounds? {
-            if (visited >= maxVisited) {
+        // F20: [deferZero] = a zero-size node is not entered now (it returns its empty bounds); its parent comes
+        // back to it after its sized siblings ([revisit]: already counted).
+        fun visit(node: N, path: String, depth: Int, above: List<Pair<Int, ScreenBounds>>, deferZero: Boolean = false, revisit: Boolean = false): ScreenBounds? {
+            if (!revisit && visited >= maxVisited) {
                 capped = true
                 return null
             }
-            visited += 1
+            if (!revisit) visited += 1
             val info = tree.info(node)
             val b = info.bounds
             val sized = b.width > 0 && b.height > 0
+            if (!sized && deferZero) return b
             val onScreen = b.left < screen.right && screen.left < b.right && b.top < screen.bottom && screen.top < b.bottom
             if (sized && !onScreen) return null
             if (sized && info.className?.contains("dialog", ignoreCase = true) == true) {
@@ -102,13 +108,26 @@ object PopupProbe {
             }
             if (depth >= maxDepth) return b
             val layers = mutableListOf<Pair<Int, ScreenBounds>>()
+            val zeroSize = mutableListOf<Int>()
             for (index in tree.childCount(node) - 1 downTo 0) {
                 val child = tree.child(node, index) ?: continue
-                val childBounds = try { visit(child, "$path/$index", depth + 1, layers) } finally { tree.release(child) }
+                val childBounds = try { visit(child, "$path/$index", depth + 1, layers, deferZero = true) } finally { tree.release(child) }
                 if (hit != null || capped) return b
+                if (childBounds != null && (childBounds.width <= 0 || childBounds.height <= 0)) {
+                    zeroSize += index
+                    continue
+                }
                 if (frontLayers && childBounds != null && childBounds.width > 0 && childBounds.height > 0 && PopupRootFinder.layerSized(childBounds, screen)) {
                     layers += index to childBounds
                 }
+            }
+            // F20 (LG 11/1 11번가: READ_FULL_AFTER_PROBE): a zero-height footer after the sheet held hundreds of
+            // zero-size links and used up the probe before the sheet. Zero-size subtrees (portal wrappers may hold a
+            // modal) are walked only after their sized siblings.
+            for (index in zeroSize) {
+                val child = tree.child(node, index) ?: continue
+                try { visit(child, "$path/$index", depth + 1, emptyList(), revisit = true) } finally { tree.release(child) }
+                if (hit != null || capped) return b
             }
             return b
         }

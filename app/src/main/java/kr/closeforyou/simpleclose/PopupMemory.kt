@@ -1,5 +1,6 @@
 package kr.closeforyou.simpleclose
 
+import kr.closeforyou.core.model.NodeSnapshot
 import kr.closeforyou.core.model.ScreenBounds
 
 /**
@@ -25,6 +26,19 @@ class PopupMemory(
         (text != null && text in texts) || (description != null && description in texts) || nodeBounds in bounds
 
     fun overlapsArea(nodeBounds: ScreenBounds): Boolean = area != null && overlaps(area, nodeBounds)
+
+    /**
+     * F20 (LG 11/1 11번가: "closed" 0.27 s after the click, the same sheet found again 0.4 s later): a popup root
+     * found after the close is this popup again when it is in the same place (its area, when known) and one of
+     * its named nodes has the same words or exactly the same place as one of ours.
+     */
+    fun reappeared(root: PopupRoot, nodes: List<NodeSnapshot>): Boolean {
+        if (area != null && !overlaps(area, root.bounds)) return false
+        return nodes.any { node ->
+            root.contains(node) && (!node.text.isNullOrBlank() || !node.contentDescription.isNullOrBlank()) &&
+                sameTextOrPlace(node.text, node.contentDescription, node.bounds)
+        }
+    }
 
     /** Wholly above the popup's area (F9 fallback ①); false when the area is unknown. */
     fun above(nodeBounds: ScreenBounds): Boolean = area != null && nodeBounds.bottom <= area.top

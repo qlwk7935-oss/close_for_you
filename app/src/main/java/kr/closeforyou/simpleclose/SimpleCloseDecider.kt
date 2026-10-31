@@ -97,8 +97,9 @@ object DemoUnknownAutoClose {
  * F16 강력 모드 ("전부 닫기" + "자동 닫기", demo mode 6-0, F7 extended; [SimpleCloseEngineFeature.STRONG_CLOSE_ALL]):
  * whatever B says the popup is (광고·쿠폰·공지·판단 불가), it is closed without asking when it has no risky
  * button ([SimpleLabelRules.isRisky]), is neither a decision nor scam-like, and has at least one named
- * close button; of several, the plainest ([SimpleLabelRules.clarity]: "닫기" before "○○ 닫기" before
- * "오늘 하루 보지 않기" before "괜찮아요"), the first in reading order on a tie. A button with a navigation
+ * close button; of several, the plainest ([SimpleLabelRules.clarity]: "닫기"/"○○ 닫기" before
+ * "오늘 하루 보지 않기"·"모바일 웹으로 볼래요" before "괜찮아요"), the first in reading order on a tie: the
+ * same button C's prompt offers first (F20). A button with a navigation
  * word ("앱에서 열기", "설치", "쿠폰 받기") is never pressed but does not keep the popup asked. An unnamed X
  * is never picked (6-3). The target is still re-checked right before the press. Other presets are unchanged.
  */

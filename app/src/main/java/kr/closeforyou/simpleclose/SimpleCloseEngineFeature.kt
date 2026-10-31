@@ -59,6 +59,14 @@ object SimpleCloseEngineFeature {
     const val VIDEO_AD_SKIP: Boolean = true
 
     /**
+     * F20 (LG 11/1 11번가: "closed" 0.27 s after the click, then the same sheet again): a close counts only when,
+     * [CLOSE_RECHECK_MILLIS] after the root went away, a fresh read does not show the same popup again
+     * ([PopupMemory.reappeared]). Before that no result card, focus move or reclaim end happens.
+     */
+    const val STRICT_CLOSE_CHECK: Boolean = true
+    const val CLOSE_RECHECK_MILLIS = 600L
+
+    /**
      * Window events settle before the tree is read (Chrome paints web nodes a little late). 300 → 200 ms
      * (F5, LG 10/31 21:00: TalkBack read the 11번가 sheet twice before our window came); a read that comes
      * too early is caught by the first re-check.

@@ -269,6 +269,24 @@ A 서비스(`CloseForYouAccessibilityService`)·`accessibility_service_config.xm
 - **시연 모드(6-0) 완화 범위 정리 (최종 발표 뒤 배포 시 모두 끔):** F4·F13 누르기 전 포커스 이동, F6 이미지 대화상자 광고 힌트, F7 판단 불가 자동 닫기, F9·F14 닫힌 뒤 포커스 이동, F15 되찾기, **F16 강력 모드·앞 레이어/시트/앱 창 찾기·닫기 이름 v3·X 모양 버튼 묻기**, **F17 결과 카드 포커스·첫 포커스 빠르게**, **F18 영상 광고 자동 건너뛰기**, TalkBack 안내 맡기기(`TalkBackTakeoverFeature.DEFAULT_ON`). 스위치는 모두 `SimpleCloseEngineFeature` 상수 한 줄. 끝까지 지키는 것: 결제·구매·동의·권한·구독·삭제 버튼 안 누름, 사기 의심 경고만, 화면 글자·패키지 로그 금지, 확인 안 된 동작 보고 금지.
 - 검증(F16~F19): 5개 Gradle 작업 통과, 단위 시험 debug 1143개·release 1128개 실패 0, lintDebug 오류 0(경고 14, 새 2개는 결과 카드 포커스 `AccessibilityFocus` = F17 의도), INTERNET 0·새 권한·새 라이브러리 없음. 시험 추가: `StrongCloseTest`, `VideoAdSkipTest`, 결정·라벨 시험 갱신, `HelpAppsStatusPlanTest` 1.
 
+### 8-10. F20 — F16~F19 실측(11/1 06:22~06:29, `6d797fe`) 뒤 (JVM 시험만, 실기기 미검증)
+
+실측: 옥션·올리브영 앱 시트(`DETECTED_BOTTOM_SHEET` 0.46초 → `DECIDED_AUTO_CLOSE_STRONG` → 닫힘, TalkBack 흐름 완벽)·크롬 링크 안 대화상자는 정상(회귀 시험 `F20RegressionTest`로 고정). 문제 셋.
+
+- **11번가 시트 — 거짓 "닫힘"과 다시 누르기 (문제 1):**
+  - 분석: `CLICKED` 0.27초 뒤 `CLOSED_CONFIRMED`는 시트 노드가 그 경로·크기에서 잠깐 사라진 것(움직임·다시 그림)이었다. 0.4초 뒤 같은 시트가 **다른 경로·크기**로 다시 잡혔고, 쿨다운 키(`coarseKey` = 경로+크기)가 달라 쿨다운을 그대로 지나 **한 번 더 눌렀다**(사실상 재시도). 그 사이 결과 카드가 포커스를 가져가고 되찾기도 했다. 이어서 `NOT_CLOSED` 안내(`CfySpeech RESULT len=22`)가 나왔다. 그 뒤 3초마다 `SAME_POPUP_COOLDOWN`만 찍혔다(그때 우리는 포커스·낭독을 건드리지 않았다). TalkBack 반복 낭독은 시트가 그대로 남은 상태에서 거짓 성공 뒤 카드·되찾기·두 번째 누름이 포커스를 흔든 결과로 본다.
+  - (a) 강력 모드 선택 = 선택 창이 맨 먼저 보여 주는 버튼. 후보를 명확한 순서(`clarity`: "닫기"·"○○ 닫기"(레이어/시트 자체 닫기) → 배경·"오늘 하루 보지 않기"·"모바일 웹으로 볼래요" → "괜찮아요")로, 같으면 읽는 순서로 정렬해(`CloseButtonFinder`) 선택 창과 강력 모드가 같은 1번을 쓴다. 11번가는 "앱설치 안내 레이어 닫기"(시트 안, 앱 열기 버튼은 후보 아님). 실측에서 이 버튼이 실제로 안 닫는 것으로 나오면 (c)로 묻게 된다.
+  - (b) 엄격한 닫힘 확인(`STRICT_CLOSE_CHECK`): 루트가 사라져도 0.6초 뒤 다시 읽어 **같은 팝업**(옛 자리와 겹치고 같은 글자/자리 노드: `PopupMemory.reappeared`)이 있으면 `CLOSE_REAPPEARED` → 닫힘 아님. 결과 카드·카드 포커스·되찾기 마무리는 진짜 닫혔을 때만.
+  - (c) 실패 처리: 자동으로 누른 뒤 안 닫히면(`NOT_CLOSED`·재출현) 다시 누르지 않고, 카드·포커스 이동·되찾기 없이 **바로 선택 창**(`AUTO_CLOSE_FAILED_ASKED`): 첫 줄 "대신 닫지 못했어요."(`ui_choice_summary_auto_failed`), 실패한 버튼은 누르기 선택지에서 빼고 [버튼으로 이동]으로만, 다른 닫기 버튼·[내용 다시 읽기]·[그대로 두기]. 그 팝업(글자 지문 기준, 경로·크기와 무관)은 이번 실행 동안 자동으로 다시 누르지 않는다(`AUTO_CLOSE_SKIPPED_AFTER_FAIL` → 묻기). 자동 누르기가 진행 중인 같은 팝업이 다시 잡혀도 아무것도 안 한다(`pressing`). [그대로 두기]를 고른 팝업은 남아 있는 동안 다시 묻거나 누르지 않는다(`SAME_POPUP_KEPT`).
+  - (d) 탐색이 시트를 못 찾은 이유: 시트 **뒤**(마지막 자식 쪽)에 높이 0 바닥글이 있고 그 안에 높이 0 링크 수백 개가 있었다(10/30 덤프의 높이 0 "로그인"·"당첨자공지"). 탐색은 끝 자식부터 들어가므로 바닥글을 다 돌다 200노드 상한에 걸렸다(`READ_FULL_AFTER_PROBE`, 2.3초). 보완: 크기 0인 하위 트리는 크기 있는 형제를 다 본 뒤에 들어간다(크기 0 포장 안의 모달도 여전히 찾음). 로그 `PROBE_HIT_DIALOG`/`_LAYER`/`_DIM_PARENT`/`PROBE_MISS_CAPPED`/`PROBE_MISS`로 왜 전체를 읽었는지 바로 보인다.
+- **결정 팝업도 묻기 (문제 2, 재호 "못 닫으면 반드시 묻기"):** `DECIDED_DENY_DECISION` → 안내만 하던 것을 선택 창으로(`DECISION_ASKED`). 대신 누르기 선택지 없음. 결제·동의·권한 등 위험 버튼은 [버튼으로 이동]만(최대 3개, `ButtonScan.riskButtons`), [내용 다시 읽기], [그대로 두기]. [버튼으로 이동]: TalkBack 켜짐 → 그 버튼에 접근성 포커스만(`MOVED_TO_BUTTON`, 누르지 않음), 꺼짐 → TTS "'허용' 버튼은 화면 아래쪽에 있어요."(`MOVE_POSITION_SPOKEN`). 위험 버튼이 있어 묻는 일반 팝업에도 같은 [버튼으로 이동]이 붙는다. TalkBack이 꺼져 있으면 설정과 상관없이 선택 창을 우리 TTS로 읽는다. 사기 의심은 그대로 경고만.
+- **유튜브 진단 (문제 3, 실기기 미검증):**
+  - 이벤트: 유튜브 앱 이벤트가 오면 5초에 1번 `VIDEO_EVENT_SEEN`, 도와줄 앱 범위 밖이면 `VIDEO_APP_NOT_ALLOWED`(패키지 원값은 안 남김).
+  - 읽을 때(광고 표시·건너뛰기 비슷한 노드가 있거나 유튜브 앱일 때만): `VIDEO_AD_MARKER_FOUND`/`_MISSING`, 그리고 `VIDEO_SKIP_FOUND` / `VIDEO_SKIP_WAITING` / `VIDEO_SKIP_NO_CANDIDATE`(광고는 있는데 건너뛰기 노드 없음) / `VIDEO_SKIP_LABEL_UNNAMED`(skip_ad 뷰 id만 있고 이름·클릭 없음) / `VIDEO_SKIP_NOT_CLICKABLE` / `VIDEO_SKIP_OFFSCREEN` / `VIDEO_SKIP_NO_AD_MARKER` / `VIDEO_SKIP_SEVERAL` / `VIDEO_SKIP_NOT_IN_PRESET`.
+  - 찾기 보강: 글자 대신 contentDescription이나 **뷰 id만**(`skip_ad_button` 등, `FLAG_REPORT_VIEW_IDS` 켜짐)으로 나오는 클릭 가능한 건너뛰기도 후보. 유튜브 앱은 F15 하위 트리 탐색 없이 항상 전체를 읽는다(건너뛰기가 팝업 밖에 있어 하위 트리만 읽으면 못 봄). 유튜브 웹(크롬)도 같은 경로.
+  - 점검: 이벤트 필터(`WINDOW_EVENTS`)와 `SimpleAppAllowance`에 유튜브를 막는 규칙은 없다(민감 앱·시스템 목록 아님). 도와줄 앱이 "고른 앱"이고 유튜브가 빠져 있으면 `VIDEO_APP_NOT_ALLOWED`로 보인다.
+- 검증(F20): 5개 Gradle 작업 통과, 단위 시험 debug 1154개·release 1139개 실패 0, lintDebug 오류 0(경고 14, F19와 같음), INTERNET 0·새 권한·새 라이브러리 없음. 시험 추가 `F20RegressionTest` 11.
+
 - 잔여 노드 쪽 이벤트 무시: TalkBack이 무엇을 읽을지는 앱이 막을 수 없다. 대신 포커스를 잔여 노드 밖으로 옮기는 것(F9)이 할 수 있는 전부. 웹 페이지가 닫힌 팝업을 DOM에 `aria-hidden` 없이 남기는 한, 사용자가 스와이프로 다시 만날 수 있다(한계로 기록).
 - 선택 창 PROMPT도 TalkBack 큐로? 가능은 하다: 선택 창 자체(이미 접근성 오버레이)에 paneTitle이 있고 TalkBack이 창을 읽으므로, "안내 맡기기" ON이면 우리 TTS PROMPT를 끄고 paneTitle/첫 버튼 포커스 낭독에 맡기는 방식. 단, 지금 PROMPT는 TalkBack이 팝업을 읽는 도중 끊고 들어가야 시연이 빠르므로 polite로 바꾸면 늦어질 수 있다. F11 배너가 LG에서 잘 읽히면 같은 방식으로 옮길지 정하자(의견, 미구현).
 - 검증(F1~F11 한 빌드): 5개 Gradle 작업 통과, 단위 시험 debug 1028개·release 1013개 실패 0, lintDebug 오류 0(경고 12), 병합 매니페스트 INTERNET 0·새 권한 없음.

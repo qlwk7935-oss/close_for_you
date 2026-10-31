@@ -27,6 +27,8 @@ class TreeRead(
     val probeVisited: Int = 0,
     /** F16: the nodes are the tree of this app popup window (not the active window); its id for the live look-ups. */
     val popupWindowId: Int? = null,
+    /** F20: what the probe did (why a read was full). */
+    val probeOutcome: ProbeOutcome = ProbeOutcome.NOT_RUN,
 )
 
 /** F15: how a read went (debug log `READ_*`). F16: [APP_WINDOW], an app's own popup window above its main window. */
@@ -61,7 +63,8 @@ class PageFocus(val kind: FocusTargetKind, val node: AccessibilityNodeInfo?) {
 }
 
 class SimpleTreeCollector(private val service: AccessibilityService) {
-    fun read(expectedPackage: String, packageAllowed: (String) -> Boolean): TreeRead? =
+    /** [probe] false (F20: the YouTube app, whose skip button sits outside any popup): always the whole tree. */
+    fun read(expectedPackage: String, packageAllowed: (String) -> Boolean, probe: Boolean = true): TreeRead? =
         SimpleCollectionGuard.read(expectedPackage, { service.rootInActiveWindow },
             { it.packageName?.toString() }, packageAllowed, collect = collect@{ root, packageName ->
                 val windows = mutableListOf<AccessibilityWindowInfo>()
@@ -87,20 +90,27 @@ class SimpleTreeCollector(private val service: AccessibilityService) {
                     }
                     var mode = TreeReadMode.FULL
                     var probeVisited = 0
-                    if (SimpleCloseEngineFeature.READ_POPUP_SUBTREE_FIRST && !bounded) {
-                        val probe = PopupProbe.find(root, liveTree, screen, SimpleCloseEngineFeature.PROBE_MAX_VISITED, SimpleCloseEngineFeature.MAX_DEPTH)
-                        probeVisited = probe.visited
-                        probe.path?.takeIf { it != "0" }?.let { path ->
+                    var outcome = ProbeOutcome.NOT_RUN
+                    if (probe && SimpleCloseEngineFeature.READ_POPUP_SUBTREE_FIRST && !bounded) {
+                        val found = PopupProbe.find(root, liveTree, screen, SimpleCloseEngineFeature.PROBE_MAX_VISITED, SimpleCloseEngineFeature.MAX_DEPTH)
+                        probeVisited = found.visited
+                        outcome = when (found.kind) {
+                            ProbeHitKind.DIALOG -> ProbeOutcome.HIT_DIALOG
+                            ProbeHitKind.DIM_PARENT -> ProbeOutcome.HIT_DIM_PARENT
+                            ProbeHitKind.LAYER -> ProbeOutcome.HIT_LAYER
+                            null -> if (found.capped) ProbeOutcome.MISS_CAPPED else ProbeOutcome.MISS
+                        }
+                        found.path?.takeIf { it != "0" }?.let { path ->
                             val count = WalkCount()
                             // F16: a front layer brings the one page node under it, so the finder sees it is over the page.
                             val nodes = subtree(root, path, screen, count)?.let { sub ->
-                                val context = probe.context ?: return@let sub
+                                val context = found.context ?: return@let sub
                                 single(root, context, screen, count)?.let { listOf(it) + sub }
                             }
                             // The subtree must give a popup root by itself; otherwise the whole tree, as before.
                             if (nodes != null && PopupRootFinder.find(nodes, screen) != null) {
                                 return@collect TreeRead(packageName, root.windowId, nodes, screen, false,
-                                    probeVisited + count.visited, count.skipped, TreeReadMode.POPUP_SUBTREE, probeVisited)
+                                    probeVisited + count.visited, count.skipped, TreeReadMode.POPUP_SUBTREE, probeVisited, probeOutcome = outcome)
                             }
                         }
                         mode = TreeReadMode.FULL_AFTER_PROBE
@@ -108,7 +118,7 @@ class SimpleTreeCollector(private val service: AccessibilityService) {
                     val nodes = ArrayList<NodeSnapshot>(256)
                     val count = WalkCount()
                     walk(root, "0", 0, nodes, screen, count)
-                    TreeRead(packageName, root.windowId, nodes, screen, bounded, probeVisited + count.visited, count.skipped, mode, probeVisited)
+                    TreeRead(packageName, root.windowId, nodes, screen, bounded, probeVisited + count.visited, count.skipped, mode, probeVisited, probeOutcome = outcome)
                 } finally {
                     windows.forEach(::release)
                 }
