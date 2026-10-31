@@ -2,7 +2,7 @@
 
 - 만든 사람: C(재호) + Claude, 2026-10-31. 기준: origin/main `365a784`(#62까지).
 - 근거: AGENTS.md 6-0 시연 모드, 9장(“A가 닫기를 성공시키면 C가 모든 기술을 합치고 직접 테스트”).
-- 상태: **빌드·JVM 시험 통과(아래 5장). 이 브랜치 APK의 실기기 확인은 아직 안 함(메인 세션 LG 확인 예정).**
+- 상태: 빌드·JVM 시험 통과(5장). `0b15105` LG 벨벳 실측 10/31 21:00(5-1장), origin에 push됨. 수정 목록(8장)은 아직 안 고침.
 
 ## 1. 목적
 
@@ -62,7 +62,22 @@ A 서비스(`CloseForYouAccessibilityService`)·`accessibility_service_config.xm
 |---|---|
 | `:app:assembleDebug :app:assembleRelease :app:testDebugUnitTest :app:testReleaseUnitTest :app:lintDebug` | **BUILD SUCCESSFUL**. 단위 시험 debug 1006개·release 991개 실패 0. lintDebug 오류 0(경고 12). 첫 실행에서 `OnboardingTextTest.appNameIsPopupHelperEverywhereInCStrings` 1개 실패 — 새로 넣은 C 문장에 “닫아줄게”를 써서(C 문장엔 그 이름 금지 규칙). 문장을 “A 엔진”·“다른 팝업 엔진 서비스”로 고쳐 통과 |
 | 병합 매니페스트(debug·release) | INTERNET 없음(0건). 권한: release = `DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION`(androidx 기본, 기존과 같음)뿐, debug = 그것 + `RECORD_AUDIO`(기존 debug 전용). **새 권한 없음.** release 서비스: `CloseForYouAccessibilityService`(label 닫아줄게) + `SimpleCloseAccessibilityService`(label 팝업처리도우미). 아이콘 `@mipmap/ui_ic_launcher`. debug에는 기존 시험 서비스 `ChoiceOverlayTestService`와 “닫을까요? 미리보기” 런처 아이콘이 더 있음 |
-| 실기기 | **미검증.** 단순 엔진의 11번가·옥션 성공은 `c/simple-close-engine` debug APK(a946e25 이전·이후) 기준 실측. 이 브랜치 APK(release 소스셋 이동·앱 진입 화면 변경)는 아직 기기에서 안 돌림 |
+| 실기기 | 5-1장 (`0b15105` debug APK, LG 벨벳 Android 12, 메인 세션 실측). release APK는 기기에서 안 돌림 |
+
+### 5-1. 실측 10/31 21:00 (`0b15105` debug APK, LG 벨벳)
+
+| # | 항목 | 결과 |
+|---|---|---|
+| 1 | 홈 아이콘·이름 "팝업처리도우미" | ✅ |
+| 2 | 아이콘 누르면 처음 설정이 바로 뜸 | ✅ |
+| 3 | 2단계 [설정 열기] 갔다 오면 [다음]에 포커스 | ✅ (설명 문구는 F1) |
+| 4 | 3단계 자동 닫기 스위치 | ⚠️ 켜면 포커스가 맨 위로 튐 (F2) |
+| 5 | [사용 시작] → 메인 설정, 다시 열면 메인 바로 | ✅ |
+| 6 | 크롬 11번가 선택 창 → 닫힘 | ⚠️ 닫힘은 됨. 버튼 2개가 둘 다 "'닫기' 버튼 눌러 주기"(F3, 회귀), 닫힌 뒤 재낭독(F4), 우리 창 전에 TalkBack이 팝업 2번 낭독(F5) |
+| 7 | 옥션 | ⚠️ 자동 닫기 안 됨: `CLASSIFIED_UNKNOWN → ASK`, `AD_HINT_IMAGE_DIALOG` 없음(F6). 사용자 선택으로는 닫힘(`CLICKED` → 0.69초 뒤 `CLOSED_CONFIRMED`) |
+| 8 | 메인 설정 맨 아래 [개발자 화면 열기] → A 화면 → 뒤로 가기 | ✅ |
+
+11번가 로그(F4): `CLICKED` 02.371 → `CLOSED_CONFIRMED` .643 → `FOCUS_MOVED_TO_PAGE` .670 → RESULT .677 — 순서·속도는 목표대로인데, 체감은 "TalkBack이 말하다 '닫았어요'가 끼고 → TalkBack이 팝업 내용을 다시 읽음".
 
 ## 6. 이 브랜치에서 일하는 규칙 (초안 — 재호·우진 합의 필요)
 
@@ -83,3 +98,14 @@ A 서비스(`CloseForYouAccessibilityService`)·`accessibility_service_config.xm
 - debug 빌드에는 “닫을까요? 미리보기” 아이콘과 시험 접근성 서비스가 하나씩 더 있다(debug 전용, release엔 없음).
 - release APK는 서명 안 됨(`app-release-unsigned.apk`) — 시연 설치는 debug APK.
 - release 빌드에서는 단순 엔진 로그가 안 찍힌다(debuggable 아닐 때 꺼짐) — 현장 문제 추적은 debug APK로.
+
+## 8. 수정 목록 (10/31 21:00 실측에서, 아직 안 고침 — 사용자 시작 지시 후)
+
+| # | 크기 | 내용 | 고칠 방향 |
+|---|---|---|---|
+| F1 | 작음 | 처음 설정 2단계 [서비스 켜기] 위 설명 문구가 중복 | 문구 삭제(버튼 누르면 새 안내 창이 설명함) |
+| F2 | 작음 | 처음 설정 3단계 "자동 닫기" 스위치를 켜면 TalkBack 포커스가 맨 위 "5단계 중 3단계"로 튐 | 2·5단계처럼 포커스를 자동 닫기 스위치에 유지/복귀 |
+| F3 | **큼, 회귀** | 11번가 선택 창 버튼 2개가 모두 "'닫기' 버튼 눌러 주기". 3446d36 단독 빌드에선 "앱설치 안내 레이어 닫기"·"모바일 웹으로 볼래요"로 구분됨 → `c/natural-reading`의 `ButtonNameDisplay`(긴 닫기 이름 → "닫기")가 병합되며 같은 이름이 됨 | 닫기 후보가 2개 이상이거나 줄인 이름이 겹치면 줄이지 않고 원래 이름(또는 구분되는 이름). 단위 시험 추가 |
+| F4 | 중 | 11번가 닫은 뒤 TalkBack 재낭독 여전(로그 순서·속도는 목표대로) | 원인 구분용 debug 로그: 포커스 대상 종류 enum(팝업 노드와 겹침 여부 / WebView 루트 / 헤더 등, 글자 없음). 포커스 대상이 팝업 잔여 DOM인지, TalkBack의 창 변화 자체 낭독인지 |
+| F5 | 중 | 11번가: 우리 창이 뜨기 전에 TalkBack이 팝업을 2번 읽음(감지 20:57:59.175) | debug 로그: 첫 창 이벤트 수신 → `DETECTED` 차이 ms. TalkBack 낭독 시작 시각과 비교 |
+| F6 | 중, 시연 후보 | 옥션 `CLASSIFIED_UNKNOWN → ASK`, 이미지 광고 힌트 미충족. 사용자: "옥션은 TalkBack이 말을 많이 안 하고 딱 좋음, 인식만 되면 시연 예시" | 힌트 조건 중 어디서 빠졌는지 enum 로그 추가 → 조건 조정 |
