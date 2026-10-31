@@ -78,6 +78,11 @@ data class ChoicePrompt(
      * them with the summary ([TalkBackTakeoverPlan.excerpt]). Never logged or stored; null = none.
      */
     val shownExcerpt: String? = null,
+    /**
+     * F14: TalkBack has just read the popup itself, so the one-voice first item ends with the short
+     * question ("닫을까요?") instead of the long one, with no excerpt.
+     */
+    val briefQuestion: Boolean = false,
 ) {
     override fun toString(): String =
         "ChoicePrompt(summary=$summary, options=${options.size}, failure=$pressFailure, videoAd=$videoAd, redacted)"

@@ -45,6 +45,7 @@ import kr.closeforyou.ui.voice.SpeechHandlingListener
 import kr.closeforyou.ui.voice.TtsPopupAnnouncer
 import kr.closeforyou.ui.voice.UiFormat
 import kr.closeforyou.ui.voice.choice.ChoicePromptPlanner
+import kr.closeforyou.ui.voice.choice.PromptOptionKind
 import kr.closeforyou.ui.voice.choice.RememberChoiceRules
 import kr.closeforyou.ui.voice.overlay.AccessibilityChoiceOverlay
 import kr.closeforyou.ui.voice.overlay.PromptAnnouncementListener
@@ -93,6 +94,13 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
     private var searchUnavailable = 0
     /** F13: the person's press already moved TalkBack's focus off the popup before our window went. */
     private var focusedBeforeClose = false
+    /**
+     * F14: TalkBack focus moves in the app during a press that we did not make (the page or Chrome
+     * restoring its own focus after the popup closed); debug number only. [lastOwnFocusAt]: our own
+     * last move, whose echo event is not counted.
+     */
+    private var focusMovesByOthers = 0
+    private var lastOwnFocusAt = 0L
     private var inputMethods: Set<String> = emptySet()
 
     /** The popup the prompt on screen is about, when each popup key was last seen, and keys already explained. */
@@ -166,6 +174,10 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
         val eventPackage = event.packageName?.toString()
         // Our own prompt window and TTS: never a popup to handle (not logged: it would drown the rest).
         if (eventPackage == packageName) return
+        if (event.eventType == AccessibilityEvent.TYPE_VIEW_ACCESSIBILITY_FOCUSED && jobs.busy &&
+            SystemClock.uptimeMillis() - lastOwnFocusAt > OWN_FOCUS_ECHO_MILLIS) {
+            focusMovesByOthers += 1
+        }
         val kind = when (event.eventType) {
             AccessibilityEvent.TYPE_VIEW_ACCESSIBILITY_FOCUSED -> SimpleInspectionEvent.TALKBACK_FOCUS
             AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED -> SimpleInspectionEvent.CONTENT
@@ -232,6 +244,8 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
         log.latency("DETECT_READS", searchReads.toLong())
         log.latency("DETECT_TREE_UNAVAILABLE", searchUnavailable.toLong())
         log.latency("TREE_READ_MS", readMillis)
+        log.latency("TREE_VISITED", read.visited.toLong())
+        log.latency("TREE_SKIPPED_OFFSCREEN", read.skippedSubtrees.toLong())
         endSearch()
 
         val byB = classifier.classify(popup.analysis)
@@ -294,7 +308,14 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
             }
             SimpleDecision.Ask -> {
                 log.trace(SimpleTrace.DECIDED_ASK)
-                ask(classified, classification)
+                // F14: TalkBack is on the popup (it has been reading it): our first item stays short.
+                val inside = withContext(Dispatchers.Default) { collector.accessibilityFocusInside(classified.root.bounds) }
+                log.trace(when (inside) {
+                    true -> SimpleTrace.FOCUS_WAS_IN_POPUP
+                    false -> SimpleTrace.FOCUS_WAS_OUTSIDE
+                    null -> SimpleTrace.FOCUS_WAS_UNKNOWN
+                })
+                ask(classified, classification, talkBackReadIt = inside == true)
             }
         }
         return true
@@ -315,6 +336,11 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
         announcer.stop()
         var movedNow = false
         if (SimpleCloseEngineFeature.FOCUS_PAGE_AFTER_CLOSE && moveFocus) {
+            // F14 (LG 11/1: focus put on the toolbar before the press, yet back in the old popup after the
+            // close): the page may restore its own focus as the popup closes, and TalkBack follows it. Let
+            // that happen first, so our one move is the last one.
+            delay(SimpleCloseEngineFeature.FOCUS_SETTLE_MILLIS)
+            log.latency("FOCUS_MOVES_BY_OTHERS", focusMovesByOthers.toLong())
             val inside = withContext(Dispatchers.Default) { collector.accessibilityFocusInside(popup.root.bounds) }
             log.trace(when (inside) {
                 false -> SimpleTrace.FOCUS_KEPT_ON_PAGE
@@ -322,6 +348,7 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
                 null -> SimpleTrace.FOCUS_AFTER_CLOSE_LOST
             })
             if (inside != false) {
+                lastOwnFocusAt = SystemClock.uptimeMillis()
                 val focus = withContext(Dispatchers.Default) { collector.focusPageItem(PopupMemory.of(popup)) }
                 log.trace(SimpleTrace.focusTarget(focus.first))
                 log.trace(if (focus.second) SimpleTrace.FOCUS_MOVED_TO_PAGE else SimpleTrace.FOCUS_MOVE_FAILED)
@@ -350,7 +377,7 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
         return true
     }
 
-    private fun ask(popup: SimplePopup, classification: PopupClassification) {
+    private fun ask(popup: SimplePopup, classification: PopupClassification, talkBackReadIt: Boolean) {
         val presenter = overlay ?: return
         val planned = ChoicePromptPlanner.plan(
             popup.analysis, classification, labelPolicy = SimpleLabelPolicy,
@@ -358,10 +385,13 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
         )
         // Short by default: the kind sentence, then focus on the button. The full text stays behind [내용 다시 읽기].
         // F13: a notice's first words go into the prompt's first item, read by TalkBack (one voice).
+        // F14: not when TalkBack has just read the popup itself; then only "닫을까요?" (with a press button).
+        val brief = talkBackReadIt && planned.options.any { it.kind == PromptOptionKind.PRESS_CANDIDATE }
         val prompt = if (SimpleCloseEngineFeature.READ_POPUP_TEXT_ON_PROMPT) planned else planned.copy(
             popupText = null,
-            shownExcerpt = planned.popupText?.takeIf { classification == PopupClassification.NOTICE }
+            shownExcerpt = planned.popupText?.takeIf { classification == PopupClassification.NOTICE && !talkBackReadIt }
                 ?.let { TalkBackTakeoverPlan.excerpt(it, SimpleCloseEngineFeature.PROMPT_EXCERPT_CHARS) },
+            briefQuestion = brief,
         )
         prompted = popup
         focusedBeforeClose = false
@@ -416,6 +446,7 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
         if (kind != ChoiceKind.CLOSE_ONCE && kind != ChoiceKind.SKIP_ONCE) return
         val popup = prompted ?: return
         if (!SimpleCloseEngineFeature.FOCUS_PAGE_BEFORE_CLICK) return
+        lastOwnFocusAt = SystemClock.uptimeMillis()
         val (target, moved) = collector.focusPageItem(PopupMemory.of(popup), beforeClick = true)
         log.trace(SimpleTrace.preClickTarget(target))
         log.trace(if (moved) SimpleTrace.FOCUS_PRE_CLICK_MOVED else SimpleTrace.FOCUS_PRE_CLICK_FAILED)
@@ -442,6 +473,7 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
             if (SimpleCloseEngineFeature.FOCUS_PAGE_BEFORE_CLICK && moveFocus) {
                 // Before the re-check, so nothing sits between the re-check and the click. F12/F13: straight to
                 // a place that survives the close (the toolbar, above the popup), never beside it or the WebView.
+                lastOwnFocusAt = SystemClock.uptimeMillis()
                 val (kind, moved) = withContext(Dispatchers.Default) { collector.focusPageItem(PopupMemory.of(popup), beforeClick = true) }
                 log.trace(SimpleTrace.preClickTarget(kind))
                 log.trace(if (moved) SimpleTrace.FOCUS_PRE_CLICK_MOVED else SimpleTrace.FOCUS_PRE_CLICK_FAILED)
@@ -463,6 +495,7 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
                 return ActionResult(token, ActionStatus.ATTEMPT_FAILED, SafetyReason.UNVERIFIED_TARGET, attempted = true, outcome = ClickOutcome.UNKNOWN)
             }
             log.trace(SimpleTrace.CLICKED)
+            focusMovesByOthers = 0
             val deadline = SystemClock.uptimeMillis() + SimpleCloseEngineFeature.CONFIRM_DELAY_MILLIS
             var outcome = ClickOutcome.STILL_PRESENT
             while (true) {
@@ -548,6 +581,8 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
     }
 
     private companion object {
+        /** Our own focus action comes back as an event within this; it is not someone else's move. */
+        const val OWN_FOCUS_ECHO_MILLIS = 250L
         val WINDOW_EVENTS = setOf(
             AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED, AccessibilityEvent.TYPE_WINDOWS_CHANGED,
             AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED, AccessibilityEvent.TYPE_VIEW_ACCESSIBILITY_FOCUSED,

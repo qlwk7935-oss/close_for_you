@@ -74,6 +74,12 @@ object SimpleCloseEngineFeature {
      */
     const val RESULT_AFTER_FOCUS_MILLIS = 600L
 
+    /**
+     * F14: after a confirmed close with the focus to look after, wait this long before checking where
+     * TalkBack's focus is, so a focus the page restores on its own comes first and ours is the last move.
+     */
+    const val FOCUS_SETTLE_MILLIS = 300L
+
     /** F10: TalkBack focusing something in a helped app starts a read at once, at most this often. */
     const val FOCUS_EVENT_READ_MILLIS = 300L
 

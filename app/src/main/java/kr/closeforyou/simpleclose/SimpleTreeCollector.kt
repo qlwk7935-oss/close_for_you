@@ -19,7 +19,27 @@ class TreeRead(
     val screen: ScreenBounds,
     /** The active window is a bounded dialog window over a larger window of the same app. */
     val activeWindowBounded: Boolean,
+    /** F14: live nodes fetched for this read (debug number only), and subtrees skipped as off screen. */
+    val visited: Int = 0,
+    val skippedSubtrees: Int = 0,
 )
+
+/**
+ * F14 (LG 11/1: one read of an 11번가 page took 1.75 s, TalkBack read the popup meanwhile): every child
+ * is one binder call, and a long shopping page has most of its nodes below the screen. A subtree whose
+ * root is not visible to the user **and** lies wholly outside the screen is not walked. Only visible
+ * nodes were ever collected, so no node the popup analysis used before is lost, except a visible node
+ * under an off-screen ancestor (a fixed-position element nested in a scrolled-away container; modal
+ * libraries put dialogs at the body level). A zero-size node (a portal wrapper) is still walked.
+ * Pure; JVM tested.
+ */
+object TreeWalkRules {
+    fun descend(visibleToUser: Boolean, bounds: ScreenBounds, screen: ScreenBounds): Boolean {
+        if (visibleToUser) return true
+        if (bounds.width <= 0 || bounds.height <= 0) return true
+        return bounds.left < screen.right && screen.left < bounds.right && bounds.top < screen.bottom && screen.top < bounds.bottom
+    }
+}
 
 /**
  * Reads `rootInActiveWindow` into [NodeSnapshot]s with B's path form ("0/i/j"), visible nodes only
@@ -36,8 +56,9 @@ class SimpleTreeCollector(private val service: AccessibilityService) {
                     val screen = screenBounds()
                     windows += service.windows.orEmpty()
                     val nodes = ArrayList<NodeSnapshot>(256)
-                    walk(root, "0", 0, nodes)
-                    TreeRead(packageName, root.windowId, nodes, screen, activeWindowBounded(windows, root.windowId, packageName, screen))
+                    val count = WalkCount()
+                    walk(root, "0", 0, nodes, screen, count)
+                    TreeRead(packageName, root.windowId, nodes, screen, activeWindowBounded(windows, root.windowId, packageName, screen), count.visited, count.skipped)
                 } finally {
                     windows.forEach(::release)
                 }
@@ -248,10 +269,19 @@ class SimpleTreeCollector(private val service: AccessibilityService) {
         return node
     }
 
-    private fun walk(node: AccessibilityNodeInfo, path: String, depth: Int, out: MutableList<NodeSnapshot>) {
+    private class WalkCount(var visited: Int = 0, var skipped: Int = 0)
+
+    private fun walk(node: AccessibilityNodeInfo, path: String, depth: Int, out: MutableList<NodeSnapshot>, screen: ScreenBounds, count: WalkCount) {
         if (out.size >= SimpleCloseEngineFeature.MAX_NODES || depth > SimpleCloseEngineFeature.MAX_DEPTH) return
-        if (node.isVisibleToUser) {
-            val bounds = Rect().also(node::getBoundsInScreen)
+        count.visited += 1
+        val visible = node.isVisibleToUser
+        val bounds = Rect().also(node::getBoundsInScreen)
+        val box = ScreenBounds(bounds.left, bounds.top, maxOf(bounds.right, bounds.left), maxOf(bounds.bottom, bounds.top))
+        if (!TreeWalkRules.descend(visible, box, screen)) {
+            count.skipped += 1
+            return
+        }
+        if (visible) {
             val ids = node.actionList.map { it.id }
             out += NodeSnapshot(
                 path = path,
@@ -261,7 +291,7 @@ class SimpleTreeCollector(private val service: AccessibilityService) {
                 contentDescription = node.contentDescription?.toString(),
                 clickable = node.isClickable,
                 enabled = node.isEnabled,
-                bounds = ScreenBounds(bounds.left, bounds.top, maxOf(bounds.right, bounds.left), maxOf(bounds.bottom, bounds.top)),
+                bounds = box,
                 actions = buildSet {
                     if (AccessibilityNodeInfo.ACTION_CLICK in ids) add(NodeAction.CLICK)
                     if (AccessibilityNodeInfo.ACTION_DISMISS in ids) add(NodeAction.DISMISS)
@@ -271,7 +301,7 @@ class SimpleTreeCollector(private val service: AccessibilityService) {
         for (index in 0 until node.childCount) {
             val child = node.getChild(index) ?: continue
             try {
-                walk(child, "$path/$index", depth + 1, out)
+                walk(child, "$path/$index", depth + 1, out, screen, count)
             } finally {
                 release(child)
             }

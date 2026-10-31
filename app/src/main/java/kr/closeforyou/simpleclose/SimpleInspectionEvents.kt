@@ -13,7 +13,13 @@ internal enum class SimpleInspectionEvent { WINDOW, CONTENT, TALKBACK_FOCUS }
  * ran once the page went quiet. A first read already waiting for the same app is now kept: a content
  * event never replaces it, and a window event re-arms it only up to
  * [SimpleCloseEngineFeature.FIRST_READ_MAX_WAIT_MILLIS] after it was first armed. Only waits change;
- * every read still passes [appInScope] here and the worker's full check. */
+ * every read still passes [appInScope] here and the worker's full check.
+ *
+ * F14 (LG 11/1 01:37: one read of 11번가 took 1.75 s, longer than the 1.5 s content throttle): a content
+ * event 1.5 s after a read started cancelled that read while its walk was still running, and the next
+ * read started next to it. A read in flight for the same app is now never cancelled by an event: the
+ * event is folded in ([EVENT_COALESCED]) and, when the read found nothing, one more read follows (a
+ * window event during it turns that into the re-check chain). Another app's event still replaces it. */
 internal class SimpleInspectionEvents(
     private val jobs: () -> EngineJobs,
     private val promptShowing: () -> Boolean,
@@ -31,9 +37,15 @@ internal class SimpleInspectionEvents(
     private var pendingSince = NOT_PENDING
     private var pendingPackage: String? = null
 
+    /** F14: the app a read is running for now (null = none), and the strongest event folded in meanwhile. */
+    private var inFlightPackage: String? = null
+    private var foldedIn: SimpleInspectionEvent? = null
+
     fun resetConnection() {
         lastFocusEventReadAt = 0L
         pendingSince = NOT_PENDING
+        inFlightPackage = null
+        foldedIn = null
     }
 
     fun onEvent(eventPackage: String?, kind: SimpleInspectionEvent) {
@@ -60,13 +72,19 @@ internal class SimpleInspectionEvents(
             pendingSince = NOT_PENDING
             activeJobs.scheduleInspection {
                 // Immediate scheduling, no debounce. Full authorization still runs in the worker.
-                if (!activeJobs.busy && !promptShowing() && !inspect(expectedPackage, DetectTrigger.TALKBACK_FOCUS)) {
+                if (!activeJobs.busy && !promptShowing() && !read(expectedPackage, DetectTrigger.TALKBACK_FOCUS)) {
                     onSearchExhausted()
                 }
             }
             return
         }
         val at = now()
+        // F14: a read running for this app is never cut short; it is followed up when it finds nothing.
+        if (activeJobs.inspecting && inFlightPackage == expectedPackage) {
+            if (foldedIn != SimpleInspectionEvent.WINDOW) foldedIn = kind
+            log.trace(SimpleTrace.EVENT_COALESCED)
+            return
+        }
         val pending = activeJobs.inspecting && pendingSince != NOT_PENDING && pendingPackage == expectedPackage
         // F13: the read already waiting will see this change too.
         if (pending && kind == SimpleInspectionEvent.CONTENT) {
@@ -77,28 +95,49 @@ internal class SimpleInspectionEvents(
         val firstWait = minOf(SimpleCloseEngineFeature.DEBOUNCE_MILLIS, since + SimpleCloseEngineFeature.FIRST_READ_MAX_WAIT_MILLIS - at).coerceAtLeast(0L)
         pendingSince = since
         pendingPackage = expectedPackage
-        if (kind == SimpleInspectionEvent.CONTENT) {
-            activeJobs.scheduleInspection {
-                delay(firstWait)
-                pendingSince = NOT_PENDING
-                if (!activeJobs.busy && !promptShowing() && !inspect(expectedPackage, DetectTrigger.CONTENT_EVENT)) {
-                    onSearchExhausted()
-                }
-            }
-            return
-        }
         activeJobs.scheduleInspection {
             delay(firstWait)
             pendingSince = NOT_PENDING
+            var chain = kind != SimpleInspectionEvent.CONTENT
+            if (!chain) {
+                // One read per repaint burst; repaints during it bring one more, a window event the chain.
+                while (true) {
+                    if (activeJobs.busy || promptShowing()) return@scheduleInspection
+                    if (read(expectedPackage, DetectTrigger.CONTENT_EVENT)) return@scheduleInspection
+                    val more = foldedIn.also { foldedIn = null } ?: break
+                    if (more == SimpleInspectionEvent.WINDOW) {
+                        chain = true
+                        break
+                    }
+                    delay(SimpleCloseEngineFeature.DEBOUNCE_MILLIS)
+                }
+                if (!chain) {
+                    onSearchExhausted()
+                    return@scheduleInspection
+                }
+            }
             for (wait in listOf(0L) + SimpleCloseEngineFeature.RECHECK_DELAYS_MILLIS) {
                 if (wait > 0) {
                     log.trace(SimpleTrace.RECHECK_SCHEDULED)
                     delay(wait)
                 }
                 if (activeJobs.busy || promptShowing()) return@scheduleInspection
-                if (inspect(expectedPackage, if (wait == 0L) DetectTrigger.WINDOW_EVENT else DetectTrigger.RECHECK)) return@scheduleInspection
+                if (read(expectedPackage, if (wait == 0L) DetectTrigger.WINDOW_EVENT else DetectTrigger.RECHECK)) return@scheduleInspection
+                // The chain's next read covers whatever came in during this one.
+                foldedIn = null
             }
             onSearchExhausted()
+        }
+    }
+
+    /** One read, marked in flight for [expectedPackage] so events for the same app do not cancel it (F14). */
+    private suspend fun read(expectedPackage: String, trigger: DetectTrigger): Boolean {
+        inFlightPackage = expectedPackage
+        foldedIn = null
+        try {
+            return inspect(expectedPackage, trigger)
+        } finally {
+            if (inFlightPackage == expectedPackage) inFlightPackage = null
         }
     }
 

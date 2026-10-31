@@ -102,7 +102,9 @@ fun ChoicePromptContent(
                         modifier = if (takeover && !oneVoice) Modifier.testTag(TakeoverFocusTarget.FIRST_ITEM.tag) else Modifier,
                     )
                     prompt.shownExcerpt?.let { Text(text = it) }
-                    if (oneVoice) Text(text = stringResource(R.string.ui_choice_takeover_question))
+                    if (oneVoice) {
+                        Text(text = stringResource(if (prompt.briefQuestion) R.string.ui_choice_takeover_question_short else R.string.ui_choice_takeover_question))
+                    }
                 }
                 val countdown = prompt.countdownSeconds
                 if (countdown != null) {

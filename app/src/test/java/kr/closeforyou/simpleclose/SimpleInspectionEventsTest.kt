@@ -415,4 +415,44 @@ class SimpleInspectionEventsTest {
         advanceUntilIdle()
         assertEquals(listOf(100L + SimpleCloseEngineFeature.DEBOUNCE_MILLIS to other), r.reads)
     }
+
+    // ---- F14 (LG 11/1 01:37: a 1.75 s read was cancelled by a repaint 1.5 s after it started) ----
+
+    private val DEBOUNCE = SimpleCloseEngineFeature.DEBOUNCE_MILLIS
+    private val DELAYS = SimpleCloseEngineFeature.RECHECK_DELAYS_MILLIS
+
+    @Test fun aRepaintDuringASlowReadDoesNotCancelItAndBringsOneMoreRead() = runTest {
+        val r = Rig(this).apply { popupFound = false; readDelay = 1_750 }
+        r.event(content = true)
+        advanceTimeBy(DEBOUNCE + 1_600)
+        r.event(content = true)
+        advanceUntilIdle()
+        val first = DEBOUNCE + 1_750
+        assertEquals(listOf(first, first + DEBOUNCE + 1_750), r.reads.map { it.first })
+        assertEquals(2, r.walks)
+        assertEquals(List(2) { DetectTrigger.CONTENT_EVENT }, r.triggers)
+        assertTrue(r.traces.contains(SimpleTrace.EVENT_COALESCED))
+        assertEquals(1, r.exhausted)
+    }
+
+    @Test fun aWindowEventDuringAReadTurnsTheFollowUpIntoTheChain() = runTest {
+        val r = Rig(this).apply { popupFound = false; readDelay = 1_000 }
+        r.event(content = true)
+        advanceTimeBy(DEBOUNCE + 500)
+        r.event()
+        advanceUntilIdle()
+        assertEquals(listOf(DetectTrigger.CONTENT_EVENT, DetectTrigger.WINDOW_EVENT) + List(DELAYS.size) { DetectTrigger.RECHECK }, r.triggers)
+        assertEquals(1, r.exhausted)
+    }
+
+    @Test fun aReadThatFindsThePopupEndsTheSearchWhateverCameIn() = runTest {
+        val r = Rig(this).apply { popupFound = true; readDelay = 1_000 }
+        r.event()
+        advanceTimeBy(DEBOUNCE + 500)
+        r.event(content = true)
+        r.event()
+        advanceUntilIdle()
+        assertEquals(1, r.reads.size)
+        assertEquals(0, r.exhausted)
+    }
 }
