@@ -180,6 +180,13 @@ internal class AndroidScreenshotManager(
                         }
                     }
                     try {
+                        // Recheck immediately before issuing an uncancellable Android call. The
+                        // service's connected/current callbacks include the engine exclusion gate.
+                        if (!continuation.isActive || denialIgnoringBudget(snapshot.token) != null) {
+                            permit.close()
+                            if (continuation.isActive) continuation.resumeWithException(EvidenceFailure(EvidenceIssue.STALE_SCREEN))
+                            return@suspendCancellableCoroutine
+                        }
                         trace.api(if (windowCapture) CaptureApi.WINDOW else CaptureApi.DISPLAY)
                         trace.stage(CaptureStage.CAPTURE_API)
                         if (Build.VERSION.SDK_INT >= 34) {

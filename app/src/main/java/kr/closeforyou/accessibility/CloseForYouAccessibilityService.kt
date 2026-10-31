@@ -34,6 +34,12 @@ class CloseForYouAccessibilityService : AccessibilityService() {
     private var connected = false
     private var inputMethodPackages: Set<String> = emptySet()
     private val preferences by lazy { CorePreferences.get(this) }
+    private val engineExclusion by lazy {
+        AEngineExclusion(AndroidEnabledEngineSource(contentResolver), Dispatchers.IO) {
+            collector.resetGeometry()
+            invalidate(clearBaseline = true)
+        }
+    }
 
     override fun onCreate() {
         super.onCreate()
@@ -56,6 +62,7 @@ class CloseForYouAccessibilityService : AccessibilityService() {
     }
 
     private fun initializeConnectedService() {
+        engineExclusion.stop()
         collector.resetGeometry()
         serviceScope.cancel()
         serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
@@ -68,7 +75,7 @@ class CloseForYouAccessibilityService : AccessibilityService() {
         touching = false
         inputMethodPackages = (getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager)
             .inputMethodList.mapTo(mutableSetOf()) { it.packageName }
-        val screenshots = AndroidScreenshotManager(this, preferences, ::isCurrent) { connected && !touching }
+        val screenshots = AndroidScreenshotManager(this, preferences, ::isCurrent) { collectionAllowed() }
         AccessibilityRuntime.attachCaptureCapability(screenshots)
         pipeline = CaptureOcrPipeline(screenshots, KoreanMlKitOcr(), ::isCurrent, { verifyScreen(it) })
         AccessibilityRuntime.connect()
@@ -80,12 +87,22 @@ class CloseForYouAccessibilityService : AccessibilityService() {
                 else if (it.paused) AccessibilityRuntime.block(PrivacyBlockReason.PAUSED, freshness.version)
             }
         }
+        // Register before the first asynchronous read. Until it confirms C OFF, A stays closed.
+        engineExclusion.start(serviceScope)
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         if (!connected || event == null || event.eventType !in OBSERVED_EVENTS) return
         // Copy only primitive enums/IDs, never keep the event or request event.source.
         val eventType = event.eventType
+        if (!engineExclusion.engineAvailable) {
+            // Keep touch state accurate across C OFF without reading an app or scheduling work.
+            if (eventType == AccessibilityEvent.TYPE_TOUCH_INTERACTION_START ||
+                eventType == AccessibilityEvent.TYPE_TOUCH_EXPLORATION_GESTURE_START) touching = true
+            if (eventType == AccessibilityEvent.TYPE_TOUCH_INTERACTION_END ||
+                eventType == AccessibilityEvent.TYPE_TOUCH_EXPLORATION_GESTURE_END) touching = false
+            return
+        }
         val epoch = invalidate(clearBaseline = false)
         if (eventType == AccessibilityEvent.TYPE_TOUCH_INTERACTION_START ||
             eventType == AccessibilityEvent.TYPE_TOUCH_EXPLORATION_GESTURE_START) {
@@ -123,20 +140,23 @@ class CloseForYouAccessibilityService : AccessibilityService() {
         val eventWindowId = event.windowId
         pendingCapture = serviceScope.launch {
             delay(DEBOUNCE_MILLIS)
-            if (!freshness.isCurrent(epoch) || touching) return@launch
+            if (!collectionAllowed() || !freshness.isCurrent(epoch)) return@launch
             capture(epoch, trigger, eventWindowId)
         }
     }
 
     private fun capture(epoch: Long, trigger: PopupTrigger, eventWindowId: Int) {
+        if (!collectionAllowed() || !freshness.isCurrent(epoch)) return
         val trace = CaptureDiagnostics.trace(eventWindowId, epoch)
-        when (val result = collector.capture(this, epoch, trigger, ::packageBlock, trace = trace)) {
+        val result = collector.capture(this, epoch, trigger, ::packageBlock, trace = trace)
+        if (!collectionAllowed() || !freshness.isCurrent(epoch)) return
+        when (result) {
             is CollectionResult.Blocked -> {
                 detector.clear()
                 AccessibilityRuntime.block(result.reason, epoch)
             }
             is CollectionResult.Ready -> {
-                if (!freshness.isCurrent(epoch) || touching) return
+                if (!collectionAllowed() || !freshness.isCurrent(epoch)) return
                 val signals = detector.detect(result.frame)
                 if (signals.isEmpty()) {
                     trace.detail(CaptureDetail.NO_POPUP_SIGNAL)
@@ -183,7 +203,10 @@ class CloseForYouAccessibilityService : AccessibilityService() {
         }
     }
 
-    private fun isCurrent(token: SnapshotToken): Boolean = connected && !touching &&
+    private fun collectionAllowed(): Boolean = connected && !touching &&
+        engineExclusion.allowsCollection(preferences.currentSettings())
+
+    private fun isCurrent(token: SnapshotToken): Boolean = collectionAllowed() &&
         freshness.isCurrent(token.screenVersion) && AccessibilityRuntime.currentToken() == token
 
     /** F0-A again before/after capture and after async OCR, using fresh framework nodes. */
@@ -195,6 +218,7 @@ class CloseForYouAccessibilityService : AccessibilityService() {
             ::packageBlock, requireCaptureIsolation = isolation, trace = trace)) {
             is CollectionResult.Blocked -> fresh.reason
             is CollectionResult.Ready -> {
+                if (!isCurrent(snapshot.token)) return PrivacyBlockReason.UNREADABLE_TREE
                 val a = snapshot.token
                 val b = fresh.snapshot.token
                 if (a.packageName != b.packageName || a.windowId != b.windowId ||
@@ -209,7 +233,8 @@ class CloseForYouAccessibilityService : AccessibilityService() {
     }
 
     private fun packageBlock(targetPackage: String): PrivacyBlockReason? = preferences.currentSettings().let {
-        PrivacyPolicy.packageBlock(targetPackage, packageName, it.consentGranted, it.paused,
+        if (!connected || !engineExclusion.engineAvailable) PrivacyBlockReason.PAUSED
+        else PrivacyPolicy.packageBlock(targetPackage, packageName, it.consentGranted, it.paused,
             it.allowedPackages, inputMethodPackages)
     }
 
@@ -246,6 +271,7 @@ class CloseForYouAccessibilityService : AccessibilityService() {
     private fun disconnect() {
         AccessibilityRuntime.serviceLifecycle.phase(ServiceLifecyclePhase.UNBOUND)
         connected = false
+        engineExclusion.stop()
         touching = false
         settingsObserver?.cancel()
         invalidate(clearBaseline = true)
