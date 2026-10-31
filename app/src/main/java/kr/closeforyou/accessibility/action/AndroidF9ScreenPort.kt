@@ -44,6 +44,19 @@ internal class AndroidF9ScreenPort(
     override fun readFor(purpose: F9ReadPurpose, checkpoint: () -> Unit): F9Scene? =
         scan(checkpoint, null, purpose = purpose) { scene, _ -> scene }.takeIf { healthy }
 
+    /** Instrumentation-only read, using the SAME scan/protection/endpoint/release implementation.
+     * No targetPath/press callback. Before C, windowRoot contrasts the root getter while keeping
+     * normal window checks. After C, a caller must supply actual native ownership evidence.
+     * Release returns without reading Android. Returned descriptors never grant execution. */
+    internal fun readForComparison(checkpoint: () -> Unit, windowRoot: Boolean,
+        source: PopupSnapshot? = null, identity: ManualDisplayIdentity? = null): F9Scene? {
+        if (!P01ReaderComparisonFeature.enabled) return null
+        require((source == null) == (identity == null))
+        val display = if (source != null && identity != null) DisplayRead(source, identity, null, true) else null
+        return scan(checkpoint, null, display, F9ReadPurpose.DISPLAY_REVIEW,
+            comparisonActions = true, comparisonWindowRoot = windowRoot) { scene, _ -> scene }.takeIf { healthy }
+    }
+
     private class DisplayRead(val source: PopupSnapshot, val identity: ManualDisplayIdentity, val probe: ManualDisplayProbe?,
         val nativeNeeded: Boolean) {
         val overlayId get() = identity.window
@@ -86,7 +99,8 @@ internal class AndroidF9ScreenPort(
 
     @Suppress("DEPRECATION")
     private fun <T> scan(checkpoint: () -> Unit, targetPath: String?, display: DisplayRead? = null,
-        purpose: F9ReadPurpose = F9ReadPurpose.UNSCOPED, consume: (F9Scene, AccessibilityNodeInfo?) -> T): T? {
+        purpose: F9ReadPurpose = F9ReadPurpose.UNSCOPED,
+        comparisonActions: Boolean = false, comparisonWindowRoot: Boolean = false, consume: (F9Scene, AccessibilityNodeInfo?) -> T): T? {
         val readTrace = F9ReadObservation(purpose, onScanReport)
         if (Looper.myLooper() != Looper.getMainLooper()) {
             readTrace.reject(F9ReadDetail.MAIN_THREAD_REQUIRED); readTrace.report()
@@ -155,7 +169,7 @@ internal class AndroidF9ScreenPort(
                         { probe -> passiveSystemBar(other, frame, ::own, readTrace, probe) }, readTrace::occluding)
                 }) return reject(F9ReadDetail.OCCLUDING_WINDOW)
             readTrace.stage = F9ReadStage.ROOT
-            val root = own((if (display == null) activeRoot() else active.root) ?: return reject(F9ReadDetail.ROOT_UNAVAILABLE))
+            val root = own((if (display == null && !comparisonWindowRoot) activeRoot() else active.root) ?: return reject(F9ReadDetail.ROOT_UNAVAILABLE))
             val packageName = root.packageName?.toString() ?: return reject(F9ReadDetail.ROOT_PACKAGE_UNAVAILABLE)
             if (root.windowId != active.id) return reject(F9ReadDetail.ROOT_WINDOW_MISMATCH)
             if (display != null && packageName != display.source.token.packageName) return reject(F9ReadDetail.ROOT_PACKAGE_MISMATCH)
@@ -175,7 +189,7 @@ internal class AndroidF9ScreenPort(
             fun tree(start: AccessibilityNodeInfo, captureTarget: Boolean): Pair<List<NodeSnapshot>, Set<String>> {
                 val result = mutableListOf<NodeSnapshot>()
                 val visible = mutableSetOf<String>()
-                val nativeRows = if (captureTarget && display?.nativeNeeded == true && kr.closeforyou.accessibility.integration.ManualDemoBoundsFeature.enabled)
+                val nativeRows = if (captureTarget && (display?.nativeNeeded == true || comparisonActions) && kr.closeforyou.accessibility.integration.ManualDemoBoundsFeature.enabled)
                     mutableListOf<kr.closeforyou.accessibility.NativeActionSummary>() else null
                 fun visit(node: AccessibilityNodeInfo, path: String, depth: Int) {
                     tick()
@@ -250,7 +264,7 @@ internal class AndroidF9ScreenPort(
             if (currentWindows.map { window(it, readTrace) } != dtos) return reject(F9ReadDetail.END_WINDOWS_CHANGED)
             val endFrame = geometry.read().frame
             if (endFrame != frame) return reject(if (endFrame == null) F9ReadDetail.END_FRAME_UNAVAILABLE else F9ReadDetail.END_FRAME_CHANGED)
-            val endRoot = (if (display == null) activeRoot() else active.root) ?: return reject(F9ReadDetail.END_ROOT_UNAVAILABLE)
+            val endRoot = (if (display == null && !comparisonWindowRoot) activeRoot() else active.root) ?: return reject(F9ReadDetail.END_ROOT_UNAVAILABLE)
             if (identities[endRoot] == null) own(endRoot)
             if (endRoot.windowId != active.id) return reject(F9ReadDetail.END_ROOT_WINDOW_MISMATCH)
             if (endRoot.packageName?.toString() != packageName) return reject(F9ReadDetail.END_ROOT_PACKAGE_MISMATCH)
