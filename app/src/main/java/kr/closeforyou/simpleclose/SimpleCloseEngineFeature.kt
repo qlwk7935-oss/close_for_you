@@ -23,8 +23,18 @@ object SimpleCloseEngineFeature {
     /** Window events settle before the tree is read (Chrome paints web nodes a little late). */
     const val DEBOUNCE_MILLIS = 300L
 
-    /** After the click: the popup root must be gone within this to count as closed. */
+    /** After the click: the popup root must be gone within this to count as closed, checked every [CONFIRM_POLL_MILLIS]. */
     const val CONFIRM_DELAY_MILLIS = 1_500L
+    const val CONFIRM_POLL_MILLIS = 250L
+
+    /** While C's prompt is up the tree is re-read at most this often (only to notice the popup went away). */
+    const val PROMPT_RECHECK_MILLIS = 2_000L
+
+    /**
+     * Whether the prompt's own TTS reads the popup text in full (TalkBack takeover). LG 10/31: too much
+     * talking; false = the short kind sentence only, and [내용 다시 읽기] reads the full text on request.
+     */
+    const val READ_POPUP_TEXT_ON_PROMPT = false
 
     /** The same popup (same fingerprint in the same window) is not handled again for this long. */
     const val SAME_POPUP_COOLDOWN_MILLIS = 10_000L

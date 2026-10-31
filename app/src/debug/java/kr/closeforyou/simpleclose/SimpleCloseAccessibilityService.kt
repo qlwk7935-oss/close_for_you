@@ -17,9 +17,12 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kr.closeforyou.app.CorePreferences
 import kr.closeforyou.core.contract.AnnouncementKind
+import kr.closeforyou.core.contract.AnnouncementReceipt
 import kr.closeforyou.core.contract.AnnouncementRequest
+import kr.closeforyou.core.contract.PopupAnnouncer
 import kr.closeforyou.core.model.ActionAuthorization
 import kr.closeforyou.core.model.ActionDecision
 import kr.closeforyou.core.model.ActionResult
@@ -54,30 +57,33 @@ import kr.closeforyou.ui.voice.settings.UiVoicePreferences
  * C's simple close engine (plan B; see [SimpleCloseEngineFeature]). Debug builds only, declared in the
  * debug manifest. Turn on either this service or A's "닫아줄게", never both.
  *
- * Flow per window event of a helped app: debounce → [SimpleTreeCollector] → [PopupRootFinder] →
- * [SimplePopupAnalysis] → B's [DecisionPopupClassifier] → [SimpleCloseDecider] → one ACTION_CLICK
- * (preset) or C's prompt ([AccessibilityChoiceOverlay]) → re-read after 1.5 s → C's sentences
- * ([SpeechHandlingListener] for preset/deny, [PressResultSpeech] for the person's own press).
+ * Flow per window event of a helped app: debounce → [SimpleTreeCollector] (off the main thread) →
+ * [PopupRootFinder] → [SimplePopupAnalysis] → B's [DecisionPopupClassifier] → [SimpleCloseDecider] →
+ * one ACTION_CLICK (preset) or C's prompt ([AccessibilityChoiceOverlay]) → the popup root is polled
+ * for up to 1.5 s → C's sentences ([SpeechHandlingListener] for preset/deny, [PressResultSpeech] for
+ * the person's own press).
  *
  * Safety kept whatever the demo switches say: the click target is looked up again right before the
- * press and must still carry the same name and role inside the same popup root; one press, no retry,
- * no coordinate tap; decision and scam popups are only explained; no screen text or package in logs.
+ * press and must still carry the same name inside the same, still-present popup root; one press, no
+ * retry, no coordinate tap; decision and scam popups are only explained; no screen text or package in logs.
  */
 class SimpleCloseAccessibilityService : AccessibilityService() {
     private var scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val collector = SimpleTreeCollector(this)
     private val classifier = DecisionPopupClassifier()
     private lateinit var log: DebugSimpleLog
-    private var tts: TtsPopupAnnouncer? = null
+    private var tts: PopupAnnouncer? = null
+    private var ttsEngine: TtsPopupAnnouncer? = null
     private var overlay: AccessibilityChoiceOverlay? = null
     private var batcher: AnnouncementBatcher? = null
     private var handlingListener: SpeechHandlingListener? = null
     private var pending: Job? = null
     private var busy = false
     private var screenVersion = 0L
+    private var lastInspectAt = 0L
     private var inputMethods: Set<String> = emptySet()
 
-    /** The popup the prompt on screen is about, and when each popup key was last seen on screen. */
+    /** The popup the prompt on screen is about, when each popup key was last seen, and keys already explained. */
     private var prompted: SimplePopup? = null
     private val seenAt = LinkedHashMap<String, Long>()
     private val denied = LinkedHashSet<String>()
@@ -98,7 +104,8 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
             flags = flags or AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS or AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS
         }
         inputMethods = (getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager).inputMethodList.mapTo(mutableSetOf()) { it.packageName }
-        val announcer = TtsPopupAnnouncer.create(this).also { tts = it }
+        val engine = TtsPopupAnnouncer.create(this).also { ttsEngine = it }
+        val announcer: PopupAnnouncer = SpeechKindLoggingAnnouncer(engine, log).also { tts = it }
         val format = UiFormat { id, args -> getString(id, *args) }
         val batch = AnnouncementBatcher(scope, SpeechHandlingListener.batchFlush(announcer, format)).also { batcher = it }
         handlingListener = SpeechHandlingListener(announcer, batch, format)
@@ -120,6 +127,9 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
             return
         }
         screenVersion += 1
+        // While the prompt is up only a rare re-read is needed (to notice the popup went away): the
+        // full tree read is what made swiping through our window sluggish (LG 10/31).
+        if (prompted != null && SystemClock.uptimeMillis() - lastInspectAt < SimpleCloseEngineFeature.PROMPT_RECHECK_MILLIS) return
         pending?.cancel()
         pending = scope.launch {
             delay(SimpleCloseEngineFeature.DEBOUNCE_MILLIS)
@@ -127,9 +137,19 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
         }
     }
 
-    /** Reads the screen once and acts on what it finds. Main thread. */
+    /** Reads the screen once (off the main thread) and acts on what it finds. Main thread. */
     private suspend fun inspect() {
-        val read = collector.read()
+        lastInspectAt = SystemClock.uptimeMillis()
+        val shownBefore = prompted
+        if (shownBefore != null) {
+            // Cheap check first: is the prompted popup still there? No full read unless it is gone.
+            when (withContext(Dispatchers.Default) { collector.rootStillPresent(shownBefore.root) }) {
+                true -> return
+                false -> promptGone()
+                null -> return
+            }
+        }
+        val read = withContext(Dispatchers.Default) { collector.read() }
         if (read == null) {
             log.trace(SimpleTrace.TREE_UNAVAILABLE)
             return
@@ -137,16 +157,11 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
         val root = PopupRootFinder.find(read.nodes, read.screen, read.activeWindowBounded)
         if (root == null) {
             log.trace(SimpleTrace.NO_POPUP_ROOT)
-            promptGone()
             return
         }
         val popup = SimplePopupAnalysis.build(read.nodes, root, read.packageName, read.windowId, read.screen, screenVersion, SystemClock.uptimeMillis())
         val key = popup.coarseKey
         val now = SystemClock.uptimeMillis()
-        // The popup the prompt is about is still there: nothing to do, quietly.
-        val shown = prompted
-        if (shown != null && shown.coarseKey == key && overlay?.isShowing == true) return
-        if (shown != null && shown.coarseKey != key) promptGone()
         // Seen within the cooldown (it stayed on screen, or was just handled): once is enough, quietly.
         val last = seenAt[key]
         seenAt[key] = now
@@ -182,6 +197,7 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
                 log.trace(SimpleTrace.DECIDED_AUTO_CLOSE)
                 val approval = ActionDecision(analysis.token, ActionAuthorization.ALLOW_ONCE, persistentSetOf(), decision.candidate.id, DecisionSource.PRESET, NextStep.EXECUTE)
                 val result = pressAndConfirm(classified, decision.candidate)
+                tts?.stop()
                 handlingListener?.onHandled(HandlingReport(analysis.token, classification, approval, result))
             }
             SimpleDecision.DenyDecision -> {
@@ -212,10 +228,12 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
 
     private fun ask(popup: SimplePopup, classification: PopupClassification) {
         val presenter = overlay ?: return
-        val prompt = ChoicePromptPlanner.plan(
+        val planned = ChoicePromptPlanner.plan(
             popup.analysis, classification, labelPolicy = SimpleLabelPolicy,
             rememberChoicesEnabled = false, preset = preferences.current().handlingPreset,
         )
+        // Short by default: the kind sentence, then focus on the button. The full text stays behind [내용 다시 읽기].
+        val prompt = if (SimpleCloseEngineFeature.READ_POPUP_TEXT_ON_PROMPT) planned else planned.copy(popupText = null)
         prompted = popup
         val result = presenter.present(prompt) { answer -> onAnswer(popup, answer) }
         if (result != PromptShowResult.SHOWN) {
@@ -239,14 +257,11 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
                 log.trace(SimpleTrace.USER_CHOSE_PRESS)
                 prompted = null
                 val candidate = popup.scan.candidates.firstOrNull { it.id == choice.candidateId } ?: return
+                // Nothing waits for the prompt's speech: stop it and press right away.
+                tts?.stop()
                 scope.launch {
-                    busy = true
-                    try {
-                        val result = pressAndConfirm(popup, candidate)
-                        speakOwnPress(result, choice.kind)
-                    } finally {
-                        busy = false
-                    }
+                    val result = pressAndConfirm(popup, candidate)
+                    speakOwnPress(result, choice.kind)
                 }
             }
             else -> {
@@ -259,6 +274,7 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
     /** The person's own press: "닫았어요" is batched; anything else is said at once, no follow-up press. */
     private suspend fun speakOwnPress(result: ActionResult, kind: ChoiceKind) {
         val announcer = tts ?: return
+        announcer.stop()
         if (PressSuccess.isConfirmed(result)) {
             AnnouncementBatcher.outcomeOf(result, kind)?.let { batcher?.add(it) }
             return
@@ -268,22 +284,19 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
     }
 
     /**
-     * Re-reads the target right before the press (same path, same name, same role, inside the same
-     * popup root), clicks it or its nearest clickable ancestor within the root exactly once, then
-     * reads the screen again after [SimpleCloseEngineFeature.CONFIRM_DELAY_MILLIS].
+     * Re-checks the live target right before the press (same popup root still on screen, same node
+     * name), clicks it or its nearest clickable ancestor within the root exactly once, then polls the
+     * root every [SimpleCloseEngineFeature.CONFIRM_POLL_MILLIS] for up to
+     * [SimpleCloseEngineFeature.CONFIRM_DELAY_MILLIS]: gone = closed, another app = left app.
      */
     private suspend fun pressAndConfirm(popup: SimplePopup, candidate: CloseCandidate): ActionResult {
         val token = popup.analysis.token
         busy = true
         try {
-            val fresh = collector.read()
-            val freshRoot = fresh?.let { PopupRootFinder.find(it.nodes, it.screen, it.activeWindowBounded) }
-            // Same popup (window, root kind and place); its content may have repainted meanwhile.
-            val same = fresh != null && freshRoot != null && fresh.packageName == token.packageName &&
-                "${fresh.windowId}:${freshRoot.key}" == popup.coarseKey
-            val target = fresh?.nodes?.firstOrNull { it.path == candidate.nodePath }
-            val sameName = target != null && CloseButtonFinder.nameOf(target, fresh.nodes) == candidate.label && SimpleLabelRules.roleOf(candidate.label) == candidate.role
-            if (!same || target == null || !sameName) {
+            val stillThere = withContext(Dispatchers.Default) {
+                collector.foregroundPackage() == token.packageName && collector.rootStillPresent(popup.root) == true && collector.targetMatches(candidate)
+            }
+            if (!stillThere) {
                 log.trace(SimpleTrace.RECHECK_TARGET_GONE)
                 return ActionResult(token, ActionStatus.STALE, SafetyReason.STALE_SCREEN, attempted = false)
             }
@@ -297,16 +310,24 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
                 return ActionResult(token, ActionStatus.ATTEMPT_FAILED, SafetyReason.UNVERIFIED_TARGET, attempted = true, outcome = ClickOutcome.UNKNOWN)
             }
             log.trace(SimpleTrace.CLICKED)
-            delay(SimpleCloseEngineFeature.CONFIRM_DELAY_MILLIS)
-            val after = collector.read()
-            val outcome = when {
-                after == null -> ClickOutcome.UNKNOWN
-                after.packageName != token.packageName -> ClickOutcome.LEFT_APP
-                else -> {
-                    val root = PopupRootFinder.find(after.nodes, after.screen, after.activeWindowBounded)
-                    val still = root != null && "${after.windowId}:${root.key}" == popup.coarseKey
-                    if (still) ClickOutcome.STILL_PRESENT else ClickOutcome.CLOSED_CONFIRMED
+            val deadline = SystemClock.uptimeMillis() + SimpleCloseEngineFeature.CONFIRM_DELAY_MILLIS
+            var outcome = ClickOutcome.STILL_PRESENT
+            while (true) {
+                delay(SimpleCloseEngineFeature.CONFIRM_POLL_MILLIS)
+                val observed = withContext(Dispatchers.Default) {
+                    val front = collector.foregroundPackage()
+                    when {
+                        front == null -> ClickOutcome.UNKNOWN
+                        front != token.packageName -> ClickOutcome.LEFT_APP
+                        collector.rootStillPresent(popup.root) == false -> ClickOutcome.CLOSED_CONFIRMED
+                        else -> ClickOutcome.STILL_PRESENT
+                    }
                 }
+                if (observed != ClickOutcome.STILL_PRESENT) {
+                    outcome = observed
+                    break
+                }
+                if (SystemClock.uptimeMillis() >= deadline) break
             }
             log.trace(when (outcome) {
                 ClickOutcome.CLOSED_CONFIRMED -> SimpleTrace.CLOSED_CONFIRMED
@@ -366,8 +387,9 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
         batcher = null
         handlingListener?.clear()
         handlingListener = null
-        tts?.close()
         tts = null
+        ttsEngine?.close()
+        ttsEngine = null
         seenAt.clear()
         denied.clear()
         scope.cancel()
@@ -381,9 +403,41 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
     }
 }
 
+/** What kind of sentence our TTS spoke; logged with its length only, never the words (LG 10/31: "말한 내용 리스트"). */
+private enum class SpeechKind { PROMPT_OR_DENY_NOTE, CONTENT_FULL, RESULT, PROTECTED_SCREEN, PARTIAL, REPEAT, STOP }
+
+/**
+ * Wraps C's TTS so every sentence of this engine leaves one debug line under `CfySpeech`:
+ * the kind (from the contract's [AnnouncementKind]) and the character count. No text.
+ */
+private class SpeechKindLoggingAnnouncer(private val delegate: PopupAnnouncer, private val log: DebugSimpleLog) : PopupAnnouncer {
+    override suspend fun announce(request: AnnouncementRequest): AnnouncementReceipt {
+        val kind = when (request.kind) {
+            AnnouncementKind.POPUP_FOUND -> SpeechKind.PROMPT_OR_DENY_NOTE
+            AnnouncementKind.CONTENT -> SpeechKind.CONTENT_FULL
+            AnnouncementKind.ACTION_RESULT -> SpeechKind.RESULT
+            AnnouncementKind.PROTECTED_SCREEN -> SpeechKind.PROTECTED_SCREEN
+            AnnouncementKind.PARTIAL_INFORMATION -> SpeechKind.PARTIAL
+        }
+        log.speech(kind, request.text.length)
+        return delegate.announce(request)
+    }
+
+    override suspend fun repeatLast(): AnnouncementReceipt {
+        log.speech(SpeechKind.REPEAT, 0)
+        return delegate.repeatLast()
+    }
+
+    override fun stop() {
+        log.speech(SpeechKind.STOP, 0)
+        delegate.stop()
+    }
+}
+
 /**
  * Debug builds only: one enum name per step under `CfySimple` (no text, no ids, no packages). The
  * same code in a row is written once (Chrome sends dozens of own-window and not-allowed events).
+ * Speech goes under `CfySpeech` as kind + length, every time.
  */
 private class DebugSimpleLog(service: AccessibilityService) : SimpleTraceSink {
     private val enabled = service.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0
@@ -395,7 +449,12 @@ private class DebugSimpleLog(service: AccessibilityService) : SimpleTraceSink {
         Log.d(TAG, code.name)
     }
 
+    fun speech(kind: SpeechKind, length: Int) {
+        if (enabled) Log.d(SPEECH_TAG, "${kind.name} len=$length")
+    }
+
     private companion object {
         const val TAG = "CfySimple"
+        const val SPEECH_TAG = "CfySpeech"
     }
 }

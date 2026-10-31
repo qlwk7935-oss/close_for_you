@@ -66,6 +66,12 @@
 - ✅ 크롬 시크릿 11번가: `DETECTED_ALERTDIALOG` → 선택 창 → 두 번 탭 → `USER_CHOSE_PRESS` → `CLICKED` → `CLOSED_CONFIRMED`, 실제 팝업 닫힘.
 - ❌ 고친 것(다음 커밋): ① 팝업 없는 본 화면을 덮개로 오감지해 2초마다 `DECIDED_DENY_DECISION` → 덮개 판정 강화(글자 없는 클릭 가능 배경이 leaf이거나 "닫기"류 설명 + 카드 안에 닫기/건너뛰기 버튼 필수). ② 같은 팝업(창 + 루트 종류·path·bounds 키)은 화면에 남아 있는 동안 한 번만 처리·안내, 반복 감지는 조용히(`SAME_POPUP_COOLDOWN`). ③ 연속 같은 로그 코드는 한 번만, 우리 창 이벤트는 로그 안 함. ④ 결정·사기 DENY 문장은 같은 팝업 키에 세션당 1회(`denied`). TTS는 원래 QUEUE_FLUSH라 새 문장이 이전 문장을 대체(큐 안 쌓임); 문장은 "확인이 필요한 팝업이에요. 직접 확인해 주세요." 한 줄.
 
+## 5-2. LG 2차 결과 (10/31 19:06, c79158d) → 3차 수정
+
+- ✅ 반복 안내 사라짐(닫힌 뒤 `NO_POPUP_ROOT`만), 11번가 닫힘 재확인.
+- ❌ 말이 많음(원문 전체 낭독), 우리 창 스와이프 느림, 선택 → 클릭 2.3초, 클릭 → 닫힘 확인 5.7초.
+- 고친 것: ① 선택 창 TTS는 종류 한 문장만(`READ_POPUP_TEXT_ON_PROMPT = false`; 원문은 [내용 다시 읽기]). ② 트리 읽기를 메인 스레드 밖(`Dispatchers.Default`)으로, 선택 창이 떠 있는 동안은 2초에 한 번 루트 노드만 확인(`PROMPT_RECHECK_MILLIS`). ③ 클릭 직전 재확인은 전체 트리 대신 라이브 노드 몇 개(`rootStillPresent`·`targetMatches`), 선택 즉시 TTS 끊고 클릭. ④ 닫힘 확인은 250ms마다 루트 노드만 폴링, 사라지는 즉시 `CLOSED_CONFIRMED`(최대 1.5초). ⑤ 결과 문장 전에 진행 중 TTS 중지. ⑥ `CfySpeech` 태그: 우리 TTS 문장마다 종류(PROMPT_OR_DENY_NOTE / CONTENT_FULL / RESULT / REPEAT / STOP) + 글자 수만.
+
 ## 6. 남은 위험·미확인
 
 - 크롬이 실기기에서 `AlertDialog` 노드를 주는지(10/30 LG 확인됨), 두 번째 서비스에서도 주는지.

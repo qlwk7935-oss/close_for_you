@@ -6,6 +6,7 @@ import android.view.WindowManager
 import android.view.accessibility.AccessibilityNodeInfo
 import android.view.accessibility.AccessibilityWindowInfo
 import kotlinx.collections.immutable.toPersistentSet
+import kr.closeforyou.core.model.CloseCandidate
 import kr.closeforyou.core.model.NodeAction
 import kr.closeforyou.core.model.NodeSnapshot
 import kr.closeforyou.core.model.ScreenBounds
@@ -44,6 +45,76 @@ class SimpleTreeCollector(private val service: AccessibilityService) {
             windows.forEach(::release)
             release(root)
         }
+    }
+
+    /** The package of the active window right now, or null when there is none. */
+    fun foregroundPackage(): String? {
+        val root = service.rootInActiveWindow ?: return null
+        try {
+            return root.packageName?.toString()
+        } finally {
+            release(root)
+        }
+    }
+
+    /**
+     * Whether [root] is still on screen: the live node at its path has the same bounds, is visible and
+     * (for a Dialog root) still a Dialog class. A few binder calls instead of a full tree read, so the
+     * click re-check and the closed check stay fast. Null when the tree is unavailable.
+     */
+    fun rootStillPresent(root: PopupRoot): Boolean? {
+        val active = service.rootInActiveWindow ?: return null
+        release(active)
+        val node = nodeAt(root.path) ?: return false
+        try {
+            if (!node.isVisibleToUser) return false
+            val bounds = Rect().also(node::getBoundsInScreen)
+            if (ScreenBounds(bounds.left, bounds.top, bounds.right, bounds.bottom) != root.bounds) return false
+            if (root.kind == PopupRootKind.ALERT_DIALOG && node.className?.contains("dialog", ignoreCase = true) != true) return false
+            return true
+        } catch (e: RuntimeException) {
+            return null
+        } finally {
+            release(node)
+        }
+    }
+
+    /** The live node at [candidate]'s path still carries the same name (own text/description or its subtree's). */
+    fun targetMatches(candidate: CloseCandidate): Boolean {
+        val path = candidate.nodePath ?: return false
+        val node = nodeAt(path) ?: return false
+        try {
+            return node.isVisibleToUser && node.isEnabled && liveName(node) == candidate.label
+        } catch (e: RuntimeException) {
+            return false
+        } finally {
+            release(node)
+        }
+    }
+
+    /** Same naming as [CloseButtonFinder.nameOf], on live nodes, with a small cap on the subtree walk. */
+    private fun liveName(node: AccessibilityNodeInfo): String? {
+        node.text?.toString()?.takeIf { it.isNotBlank() }?.let { return it }
+        node.contentDescription?.toString()?.takeIf { it.isNotBlank() }?.let { return it }
+        val parts = mutableListOf<String>()
+        var visited = 0
+        fun visit(n: AccessibilityNodeInfo) {
+            for (i in 0 until n.childCount) {
+                if (visited++ >= LIVE_NAME_MAX_NODES) return
+                val child = n.getChild(i) ?: continue
+                try {
+                    if (!child.isClickable) {
+                        val own = child.text?.toString()?.takeIf { it.isNotBlank() } ?: child.contentDescription?.toString()?.takeIf { it.isNotBlank() }
+                        if (own != null) parts += own
+                    }
+                    visit(child)
+                } finally {
+                    release(child)
+                }
+            }
+        }
+        visit(node)
+        return parts.joinToString(" ").ifBlank { null }
     }
 
     /** Follows a path from the active root to the live node, or null when the tree changed. Caller releases. */
@@ -110,6 +181,10 @@ class SimpleTreeCollector(private val service: AccessibilityService) {
 
     @Suppress("DEPRECATION")
     private fun release(node: AccessibilityNodeInfo) { node.recycle() }
+
+    private companion object {
+        const val LIVE_NAME_MAX_NODES = 60
+    }
 
     @Suppress("DEPRECATION")
     private fun release(window: AccessibilityWindowInfo) { window.recycle() }
