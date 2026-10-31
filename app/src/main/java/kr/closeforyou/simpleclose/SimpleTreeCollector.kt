@@ -28,24 +28,20 @@ class TreeRead(
  * node is a child of the WebView near the top of its subtree. Nothing is logged here.
  */
 class SimpleTreeCollector(private val service: AccessibilityService) {
-    fun read(): TreeRead? {
-        val root = service.rootInActiveWindow ?: return null
-        val windows = mutableListOf<AccessibilityWindowInfo>()
-        try {
-            val packageName = root.packageName?.toString() ?: return null
-            val screen = screenBounds()
-            windows += service.windows.orEmpty()
-            val nodes = ArrayList<NodeSnapshot>(256)
-            walk(root, "0", 0, nodes)
-            return TreeRead(packageName, root.windowId, nodes, screen, activeWindowBounded(windows, root.windowId, packageName, screen))
-        } catch (e: RuntimeException) {
-            // A stale node or a binder failure: this read is simply unavailable.
-            return null
-        } finally {
-            windows.forEach(::release)
-            release(root)
-        }
-    }
+    fun read(expectedPackage: String, packageAllowed: (String) -> Boolean): TreeRead? =
+        SimpleCollectionGuard.read(expectedPackage, { service.rootInActiveWindow },
+            { it.packageName?.toString() }, packageAllowed, collect = { root, packageName ->
+                val windows = mutableListOf<AccessibilityWindowInfo>()
+                try {
+                    val screen = screenBounds()
+                    windows += service.windows.orEmpty()
+                    val nodes = ArrayList<NodeSnapshot>(256)
+                    walk(root, "0", 0, nodes)
+                    TreeRead(packageName, root.windowId, nodes, screen, activeWindowBounded(windows, root.windowId, packageName, screen))
+                } finally {
+                    windows.forEach(::release)
+                }
+            }, release = ::release)
 
     /** The package of the active window right now, or null when there is none. */
     fun foregroundPackage(): String? {

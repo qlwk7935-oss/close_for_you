@@ -87,7 +87,8 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
     private var firstEventAt = 0L
     /** F10: the last read that found no popup (0 = none yet); the popup appeared after it. */
     private var lastNoRootAt = 0L
-    private var lastFocusEventReadAt = 0L
+    /** F10: which kind of read [inspect] is running now (set by [SimpleInspectionEvents] right before it). */
+    private var pendingTrigger = DetectTrigger.WINDOW_EVENT
     private var inputMethods: Set<String> = emptySet()
 
     /** The popup the prompt on screen is about, when each popup key was last seen, and keys already explained. */
@@ -97,6 +98,29 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
 
     private val preferences by lazy { UiVoicePreferences.get(this) }
     private val corePreferences by lazy { CorePreferences.get(this) }
+    private val installedApps by lazy { AndroidSimpleAppLookup(packageManager) }
+
+    private fun allowsApp(pkg: String?): Boolean = SimpleAppAllowance.allows(
+        pkg, packageName, preferences.current(), corePreferences.currentSettings().allowedPackages,
+        inputMethods, lookup = installedApps::find,
+    )
+
+    private fun eventIsInScope(pkg: String?): Boolean = SimpleAppAllowance.isInScope(
+        pkg, packageName, preferences.current(), corePreferences.currentSettings().allowedPackages, inputMethods,
+    )
+
+    private val inspectionEvents = SimpleInspectionEvents(
+        jobs = { jobs }, promptShowing = { prompted != null }, lastInspection = { lastInspectAt },
+        now = SystemClock::uptimeMillis, appInScope = ::eventIsInScope,
+        onAccepted = {
+            screenVersion += 1
+            if (prompted == null && firstEventAt == 0L) firstEventAt = SystemClock.uptimeMillis()
+        },
+        inspect = ::inspect,
+        log = SimpleTraceSink { log.trace(it) },
+        onTrigger = { pendingTrigger = it },
+        onSearchEnded = { firstEventAt = 0L },
+    )
 
     override fun onServiceConnected() {
         super.onServiceConnected()
@@ -131,64 +155,19 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
         val eventPackage = event.packageName?.toString()
         // Our own prompt window and TTS: never a popup to handle (not logged: it would drown the rest).
         if (eventPackage == packageName) return
-        if (!SimpleAppAllowance.allows(eventPackage, packageName, preferences.current(), corePreferences.currentSettings().allowedPackages, inputMethods)) {
-            log.trace(SimpleTrace.SKIPPED_NOT_ALLOWED_APP)
-            return
-        }
-        screenVersion += 1
-        // A press in progress: its confirmation must not be disturbed (LG 10/31 옥션: no CLOSED_CONFIRMED).
-        if (jobs.busy) return
-        // While the prompt is up only a rare re-read is needed (to notice the popup went away): the
-        // full tree read is what made swiping through our window sluggish (LG 10/31).
-        if (prompted != null && SystemClock.uptimeMillis() - lastInspectAt < SimpleCloseEngineFeature.PROMPT_RECHECK_MILLIS) return
-        if (prompted == null && firstEventAt == 0L) firstEventAt = SystemClock.uptimeMillis()
         if (event.eventType == AccessibilityEvent.TYPE_VIEW_ACCESSIBILITY_FOCUSED) {
-            // F10: TalkBack just put its focus on something in the helped app, often the popup it is
-            // about to read (LG 10/31: it read the 11번가 sheet twice before our window). Read at once,
-            // without the debounce; never cuts a running re-check chain short (that one catches it too).
-            if (prompted != null || jobs.inspecting) return
-            val now = SystemClock.uptimeMillis()
-            if (now - lastFocusEventReadAt < SimpleCloseEngineFeature.FOCUS_EVENT_READ_MILLIS) return
-            lastFocusEventReadAt = now
-            jobs.scheduleInspection {
-                if (!jobs.busy && prompted == null && !inspect(DetectTrigger.TALKBACK_FOCUS)) firstEventAt = 0L
-            }
+            // F10: TalkBack focused something in the app, often the popup it is about to read.
+            inspectionEvents.onTalkBackFocus(eventPackage)
             return
         }
-        if (event.eventType == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED) {
-            // Chrome repaints constantly: one throttled read, and never a restart of the chain (which
-            // kept the tree being read every 1~2 s for minutes, LG 10/31).
-            if (SystemClock.uptimeMillis() - lastInspectAt < SimpleCloseEngineFeature.CONTENT_CHANGE_READ_MILLIS) {
-                log.trace(SimpleTrace.CONTENT_READ_THROTTLED)
-                return
-            }
-            jobs.scheduleInspection {
-                delay(SimpleCloseEngineFeature.DEBOUNCE_MILLIS)
-                if (!jobs.busy && prompted == null && !inspect(DetectTrigger.CONTENT_EVENT)) firstEventAt = 0L
-            }
-            return
-        }
-        jobs.scheduleInspection {
-            delay(SimpleCloseEngineFeature.DEBOUNCE_MILLIS)
-            // A popup still animating is missed by the first read, and Chrome may send nothing more
-            // (LG 10/31: 40 s late): read again a few times, until something is found or handled.
-            for (wait in listOf(0L) + SimpleCloseEngineFeature.RECHECK_DELAYS_MILLIS) {
-                if (wait > 0) {
-                    log.trace(SimpleTrace.RECHECK_SCHEDULED)
-                    delay(wait)
-                }
-                if (jobs.busy || prompted != null) return@scheduleInspection
-                if (inspect(if (wait == 0L) DetectTrigger.WINDOW_EVENT else DetectTrigger.RECHECK)) return@scheduleInspection
-            }
-            firstEventAt = 0L
-        }
+        inspectionEvents.onEvent(eventPackage, event.eventType == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED)
     }
 
     /**
      * Reads the screen once (off the main thread) and acts on what it finds. Main thread. Returns
      * false only when nothing was there to act on (no tree, no popup root), so the caller may read again.
      */
-    private suspend fun inspect(trigger: DetectTrigger = DetectTrigger.WINDOW_EVENT): Boolean {
+    private suspend fun inspect(expectedPackage: String): Boolean {
         lastInspectAt = SystemClock.uptimeMillis()
         val shownBefore = prompted
         if (shownBefore != null) {
@@ -199,7 +178,9 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
                 null -> return true
             }
         }
-        val read = withContext(Dispatchers.Default) { collector.read() }
+        // Full package/label authorization stays off main and is repeated for the actual root
+        // before traversal. Event scope admission is not collection permission.
+        val read = withContext(Dispatchers.Default) { collector.read(expectedPackage, ::allowsApp) }
         if (read == null) {
             log.trace(SimpleTrace.TREE_UNAVAILABLE)
             return false
@@ -229,7 +210,7 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
         })
         // F10: first event -> here overstates when the page itself loaded first; the gap since the last
         // read that saw no popup bounds when the popup really appeared. Which trigger caught it, too.
-        log.trace(trigger.trace)
+        log.trace(pendingTrigger.trace)
         if (firstEventAt != 0L) log.latency("DETECT_LATENCY_MS", now - firstEventAt)
         if (lastNoRootAt != 0L) log.latency("DETECT_GAP_MS", now - lastNoRootAt)
         firstEventAt = 0L

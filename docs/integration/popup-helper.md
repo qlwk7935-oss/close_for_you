@@ -154,6 +154,17 @@ A 서비스(`CloseForYouAccessibilityService`)·`accessibility_service_config.xm
 
 - 검증(F1~F12 한 빌드): 5개 Gradle 작업 통과, 단위 시험 debug 1031개·release 1016개 실패 0, lintDebug 오류 0(경고 12), INTERNET 0·새 권한 없음.
 
+### 8-4. 우진 PR #65 병합 (`origin/integration/a-safety-guards` 0261fe2·f50d21f, 병합 커밋, 리베이스 X)
+
+- 가져온 것(A 안전 장치, **동작 그대로**): 민감 앱(은행·결제 등) 트리 수집 전 차단(`SimpleAppAllowance.isInScope`·`SensitiveAppRules`), 실제 활성 창 패키지가 이벤트 패키지와 같을 때만 수집(`SimpleCollectionGuard`), 앱 정보 조회 실패·라벨 없음이면 차단(`AndroidSimpleAppLookup`, 백그라운드에서), 이벤트 스케줄링 분리(`SimpleInspectionEvents`), `helpAllAppsWhenUnset` 제거(도와줄 앱을 안 골랐으면 A 허용 목록만).
+- 병합 기준: PR 브랜치는 0b15105 기준이라 3-way 병합. 충돌은 `SimpleCloseAccessibilityService.kt` 2곳뿐.
+  - 이벤트 처리: 우진의 `inspectionEvents.onEvent(...)` 구조를 그대로 쓰고, F10의 TalkBack 포커스 즉시 읽기는 `SimpleInspectionEvents.onTalkBackFocus`로 옮김(같은 `appInScope` 검사, 이미 읽는 중·누르는 중·선택 창이면 안 함, 300ms 스로틀). F5/F10 로그(`DETECTED_BY_*`, `DETECT_LATENCY_MS`)는 선택 매개변수 `onTrigger`·`onSearchEnded`로 연결(기본값은 아무것도 안 함).
+  - `inspect(expectedPackage)`: 우진 서명 그대로, 트리거는 서비스 필드로 받음.
+  - F9~F12 포커스·결과 카드 순서는 충돌 없이 그대로 남음.
+- 우진 시험 `SimpleInspectionEventsTest`의 시간 값(300ms 디바운스, 0.5/1/2/3초)은 F5에서 200ms·0.2/0.5/1/2/3초로 바뀐 상태라, 숫자를 `SimpleCloseEngineFeature` 상수에서 계산하도록만 바꿈(검사하는 안전 조건은 그대로). F10 시험 3개 추가(포커스 즉시 읽기, 스로틀·체인 안 끊음, 민감 앱·선택 창이면 안 읽음).
+- ⚠️ 동작 변화: 도와줄 앱을 고르지 않은 상태(처음 설정에서 [나중에 고르기])면 이제 크롬도 `SKIPPED_NOT_ALLOWED_APP`. 시연 기기는 처음 설정에서 "모든 앱" 또는 크롬을 골라 둘 것.
+- 검증(F1~F12 + #65): 5개 Gradle 작업 통과, 단위 시험 debug 1066개·release 1051개 실패 0, lintDebug 오류 0(경고 12), INTERNET 0·새 권한 없음.
+
 - 잔여 노드 쪽 이벤트 무시: TalkBack이 무엇을 읽을지는 앱이 막을 수 없다. 대신 포커스를 잔여 노드 밖으로 옮기는 것(F9)이 할 수 있는 전부. 웹 페이지가 닫힌 팝업을 DOM에 `aria-hidden` 없이 남기는 한, 사용자가 스와이프로 다시 만날 수 있다(한계로 기록).
 - 선택 창 PROMPT도 TalkBack 큐로? 가능은 하다: 선택 창 자체(이미 접근성 오버레이)에 paneTitle이 있고 TalkBack이 창을 읽으므로, "안내 맡기기" ON이면 우리 TTS PROMPT를 끄고 paneTitle/첫 버튼 포커스 낭독에 맡기는 방식. 단, 지금 PROMPT는 TalkBack이 팝업을 읽는 도중 끊고 들어가야 시연이 빠르므로 polite로 바꾸면 늦어질 수 있다. F11 배너가 LG에서 잘 읽히면 같은 방식으로 옮길지 정하자(의견, 미구현).
 - 검증(F1~F11 한 빌드): 5개 Gradle 작업 통과, 단위 시험 debug 1028개·release 1013개 실패 0, lintDebug 오류 0(경고 12), 병합 매니페스트 INTERNET 0·새 권한 없음.
