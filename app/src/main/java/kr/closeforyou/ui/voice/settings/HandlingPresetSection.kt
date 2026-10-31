@@ -14,8 +14,8 @@ import kr.closeforyou.simpleclose.DemoUnknownAutoClose
  * The three presets as one radio group (first-run screen and settings). Each row is one large card
  * and one TalkBack node: name, what it does to ads / notices / coupons, then "선택됨" / "선택 안 됨"
  * (explicit stateDescription). Selecting never moves focus.
- * The fixed lines follow the group: important popups are always asked, and (while
- * [PresetAutoCloseFeature.live] is false) nothing is closed automatically yet. [notLiveLine] false
+ * The fixed lines follow the group: important popups are always asked, and (only while
+ * [PresetAutoCloseFeature.live] is false, i.e. the plan-B engine is off) nothing is closed automatically yet. [notLiveLine] false
  * when the caller shows that line itself (after the "자동 닫기" switch, [HandlingPresetWithConsent]).
  * [selected] null = none chosen yet (first-run screen, A #34 10/25): every row reads "선택 안 됨".
  */

@@ -4,6 +4,7 @@ import kotlinx.collections.immutable.ImmutableSet
 import kotlinx.collections.immutable.persistentSetOf
 import kotlinx.collections.immutable.toImmutableSet
 import kr.closeforyou.core.model.PopupClassification
+import kr.closeforyou.simpleclose.SimpleCloseEngineFeature
 
 /** What the person would like done with a kind of popup. A preference only, never an action permission. */
 enum class PopupHandlingPreference { CLOSE, ANNOUNCE, ASK }
@@ -56,12 +57,14 @@ enum class HandlingPreset(
 }
 
 /**
- * Real clicks (F9) are not connected yet (A gate NOT_EXECUTED), so choosing a preset changes nothing
- * today. While false, the screens add one honest line that the app still asks before closing.
- * Turn on together with A's gate and B's policy; then the line disappears.
+ * Whether a consented preset really closes popups. While false, the screens add one honest line that
+ * the app still asks before closing. On integration/popup-helper the plan-B engine does close
+ * ([kr.closeforyou.simpleclose.SimpleCloseDecider] reads the same consent with `live = true`), so this
+ * follows [SimpleCloseEngineFeature.enabled]: the screens, the consent dialog and the engine agree
+ * (pinned by SimpleCloseDeciderTest). With the plan-B engine off it is false again (A's F9 not connected).
  */
 object PresetAutoCloseFeature {
-    const val live: Boolean = false
+    val live: Boolean get() = SimpleCloseEngineFeature.enabled
 }
 
 /**

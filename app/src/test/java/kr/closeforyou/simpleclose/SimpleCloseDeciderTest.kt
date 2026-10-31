@@ -14,6 +14,8 @@ import kr.closeforyou.ui.voice.choice.PromptOptionKind
 import kr.closeforyou.ui.voice.choice.RememberChoiceRules
 import kr.closeforyou.ui.voice.settings.HandlingPreset
 import kr.closeforyou.ui.voice.settings.UiVoiceSettings
+import kr.closeforyou.ui.voice.settings.autoCloseKinds
+import kr.closeforyou.ui.voice.settings.withAutoCloseConsent
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -96,6 +98,30 @@ class SimpleCloseDeciderTest {
         assertTrue(popup.scan.forbiddenCount > 0)
         val all = HandlingPreset.CLOSE_ALL.autoCloseKinds()
         assertEquals(SimpleDecision.Ask, SimpleCloseDecider.decide(PopupClassification.UNKNOWN, false, popup.scan.candidates, all, popup.scan.forbiddenCount, unknownEnabled = true))
+    }
+
+    // ---- The screens say what the engine does (integration/popup-helper, 10/31) ----
+
+    @Test fun screensAndEngineAgreeOnWhatClosesWithoutAsking() {
+        assertTrue(kr.closeforyou.ui.voice.settings.PresetAutoCloseFeature.live)
+        val kinds = listOf(PopupClassification.ADVERTISEMENT, PopupClassification.COUPON, PopupClassification.NOTICE)
+        HandlingPreset.entries.forEach { preset ->
+            // No "곧 켜질 예정이에요 / 지금은 닫기 전에 물어봐요" in the dialog the person agrees to.
+            val body = kr.closeforyou.ui.voice.settings.ConsentText.bodyRes(preset, kr.closeforyou.ui.voice.settings.PresetAutoCloseFeature.live)
+            assertFalse(preset.name, kr.closeforyou.R.string.ui_preset_consent_not_live in body)
+            listOf(true, false).forEach { switchOn ->
+                val settings = UiVoiceSettings(handlingPreset = preset, onboardingDone = true).withAutoCloseConsent(switchOn, 1L)
+                // What the screens/A export (default live) is exactly what the engine closes.
+                val shown = settings.autoCloseKinds()
+                kinds.forEach { kind ->
+                    val decision = SimpleCloseDecider.decide(kind, false, listOf(close("node:1")), settings)
+                    val closes = decision is SimpleDecision.AutoClose
+                    assertEquals("$preset switch=$switchOn $kind", kind in shown, closes)
+                    // Switch on: the preset's own line ("광고는 닫기 …") is the engine's rule.
+                    assertEquals("$preset switch=$switchOn $kind", switchOn && kind in preset.autoCloseKinds(), closes)
+                }
+            }
+        }
     }
 
     @Test fun noOrSeveralCloseButtonsAsk() {

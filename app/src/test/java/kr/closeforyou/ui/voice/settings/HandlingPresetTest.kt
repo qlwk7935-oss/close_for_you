@@ -68,8 +68,9 @@ class HandlingPresetTest {
 
     @Test fun defaultIsTheNarrowestPreset() = assertEquals(HandlingPreset.CLOSE_ADS_ONLY, HandlingPreset.DEFAULT)
 
-    /** Real clicks are not connected; the honest "지금은 닫기 전에 물어봐요" line must stay on. */
-    @Test fun autoCloseIsNotLiveYet() = assertFalse(PresetAutoCloseFeature.live)
+    /** Live exactly when the plan-B engine closes (integration/popup-helper); else "지금은 닫기 전에 물어봐요" stays. */
+    @Test fun autoCloseIsLiveExactlyWhenTheSimpleEngineIs() =
+        assertEquals(kr.closeforyou.simpleclose.SimpleCloseEngineFeature.enabled, PresetAutoCloseFeature.live)
 
     @Test fun everyPresetHasItsTexts() {
         assertEquals(3, HandlingPreset.entries.map(PresetText::labelRes).toSet().size)
@@ -106,11 +107,11 @@ class HandlingPresetTest {
         assertEquals(preset.autoCloseKinds(), consented.autoCloseKinds(live = true))
     }
 
-    /** While the screens say "지금은 닫기 전에 물어봐요", nothing is exported (default today). */
+    /** While the screens say "지금은 닫기 전에 물어봐요" (not live), nothing is exported. */
     @Test fun notLiveExportsNothing() = HandlingPreset.entries.forEach { preset ->
-        assertTrue(UiVoiceSettings(handlingPreset = preset, onboardingDone = true).autoCloseKinds().isEmpty())
+        assertTrue(UiVoiceSettings(handlingPreset = preset, onboardingDone = true).autoCloseKinds(live = false).isEmpty())
         val consented = UiVoiceSettings(handlingPreset = preset, onboardingDone = true).withAutoCloseConsent(true, 1L)
-        assertTrue(consented.autoCloseKinds().isEmpty())
+        assertTrue(consented.autoCloseKinds(live = false).isEmpty())
     }
 
     @Test fun firstRunGate() {
