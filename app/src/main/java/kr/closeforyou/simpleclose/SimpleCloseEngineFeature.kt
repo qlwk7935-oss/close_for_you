@@ -61,6 +61,12 @@ object SimpleCloseEngineFeature {
      */
     const val FOCUS_PAGE_BEFORE_CLICK = true
 
+    /** F9: a close whose first focus try found only popup leftovers tries again (with fallbacks) after this. */
+    const val FOCUS_RETRY_MILLIS = 300L
+
+    /** F10: TalkBack focusing something in a helped app starts a read at once, at most this often. */
+    const val FOCUS_EVENT_READ_MILLIS = 300L
+
     /** After the click: the popup root must be gone within this to count as closed, checked every [CONFIRM_POLL_MILLIS]. */
     const val CONFIRM_DELAY_MILLIS = 1_500L
     const val CONFIRM_POLL_MILLIS = 250L

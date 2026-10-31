@@ -132,4 +132,17 @@ A 서비스(`CloseForYouAccessibilityService`)·`accessibility_service_config.xm
 - **F8 — 화면 설명과 실제 동작 맞추기 (10/31).** `PresetAutoCloseFeature.live`(C)가 false라 자동 닫기 스위치 아래·확인 창에 "자동 닫기는 곧 켜질 예정이에요. 지금은 닫기 전에 물어봐요"가 보였는데, 단순 엔진은 실제로 바로 닫았다. → `live`를 `SimpleCloseEngineFeature.enabled`를 따르게 바꿈(지금 true). 단순 엔진을 끄면 다시 false(그 문구가 돌아옴).
   - 같이 바뀌는 것: ① 그 두 문구가 사라짐 ② `UiVoicePreferences.autoCloseConsentSource`(A F9용 동의 내보내기)가 스위치·프리셋대로 종류를 내보냄 — main 코드에서 읽는 곳 없음(A 엔진은 아직 안 읽음). 바뀌지 않는 것: A 수집 동의 대기, 처음 설정 완료 문구, 프리셋 선택만으로는 아무것도 안 닫힘(처음 설정 완료 + 스위치 필요).
   - 시험: `SimpleCloseDeciderTest.screensAndEngineAgreeOnWhatClosesWithoutAsking` — 세 프리셋 × 스위치 켬/끔 × 광고·쿠폰·공지에서 "화면이 내보내는 종류 = 엔진이 묻지 않고 닫는 종류 = 스위치 켬 + 프리셋 줄" 고정, 확인 창에 "준비 중" 줄 없음. 기존 "아직 live 아님" 시험 3곳은 `live = false`를 명시하거나 "live = 단순 엔진 켜짐"으로 바꿈.
-- 위험: F7로 "전부 자동 닫기"에서는 B가 판단하지 못한 팝업도 닫힌다(닫기 버튼 1개·금지어 0개일 때). F6 완화로 이미지로 그린 공지·안내도 광고로 닫힐 수 있다(엔진 규칙, B 판단 아님). F4 누르기 전 포커스 이동이 TalkBack 낭독을 한 번 더 부를 수 있다 — 체감 나쁘면 `FOCUS_PAGE_BEFORE_CLICK = false`.
+- **실측 10/31 22:30 (697d6b3, LG, 메인 세션) → origin push됨.** 통과: F1, F2, F3, F6·F7(옥션 `AD_HINT_IMAGE_DIALOG → CLASSIFIED_AD →` 자동 닫기 → "광고를 닫았어요"), F8, 서비스 켜기 복귀 포커스. 남음: F9~F11.
+
+### 8-2. F9~F11 (10/31 밤, JVM 시험만, 실기기 미검증)
+
+| # | 증상(LG) | 고친 것 | 시험 |
+|---|---|---|---|
+| F9 | 11번가 닫은 뒤 `FOCUS_TARGET_OVERLAPS_OLD_POPUP → FOCUS_MOVE_FAILED`, TalkBack이 팝업 잔여 노드를 다시 읽음 | 닫힌 직후 1차(페이지 항목만) → 실패하면 0.3초 뒤(`FOCUS_RETRY`, DOM이 돌아올 시간) 대체 단계로 **반드시 어딘가로**: ① 예전 팝업 영역 **위쪽** 첫 항목(`ABOVE_OLD_POPUP`) ② WebView 자체(이름 없어도, `WEBVIEW_ROOT`) ③ WebView 밖 첫 이름 있는 항목 = 크롬 툴바(`TOOLBAR_ITEM`, 주소 입력칸 제외, 예전 팝업 영역 제외). `PageFocusRules`·`SimpleTreeCollector.focusPageItem` | `PopupMemoryTest` 5개(모두 겹칠 때 위쪽 → WebView → 툴바, 1차는 이유만, 좋은 항목이 항상 우선, 위쪽 판정) |
+| F10 | `DETECT_LATENCY_MS` 11번가 43296·옥션 5309, 우리 창 전에 TalkBack이 팝업을 두 번 읽음 | ① 서비스 설정에 `typeViewAccessibilityFocused` 추가: TalkBack이 도와줄 앱 안 노드에 포커스하면 디바운스 없이 즉시 1회 읽기(300ms 스로틀, 재확인 체인이 돌고 있으면 끊지 않음). ② 로그 분리: `DETECTED_BY_{WINDOW_EVENT,CONTENT_EVENT,RECHECK,TALKBACK_FOCUS}` + `DETECT_GAP_MS`(팝업 없음을 본 마지막 읽기 → 감지; 팝업이 실제로 뜬 뒤 걸린 시간의 상한) + 기존 `DETECT_LATENCY_MS`(첫 이벤트 → 감지, 페이지 로드부터라 과대) | 실기기 |
+| F11 | 옥션 자동 닫기 뒤 "광고를 닫았어요"(우리 TTS)가 TalkBack 낭독과 겹쳐 안 들림 | ① TalkBack 켜짐이면 결과 문장을 **TalkBack 큐로**: 작은 접근성 오버레이 카드(`TalkBackResultBanner`, 위쪽, 4초, 포커스 안 받음)에 polite live region으로 문장을 넣어 TalkBack이 자기 순서대로 읽게 함(`RESULT_VIA_TALKBACK`). 창을 못 띄우거나 TalkBack 꺼짐이면 기존 TTS(`RESULT_VIA_TTS`). `announceForAccessibility` 안 씀. 화면에도 글자가 보임(저시력). ② 자동 닫기: 누르기 전에 TalkBack 포커스가 팝업 안이었을 때만(`FOCUS_WAS_IN_POPUP`) 누르기 전·후 포커스 이동, 밖이면(`FOCUS_WAS_OUTSIDE/UNKNOWN`) 안 옮김 → 페이지 제목 낭독이 줄어듦. 사용자 선택 경로는 우리 창이 사라지므로 항상 옮김. 순서: 포커스 이동 → 결과 문장(polite라 TalkBack이 포커스 항목을 읽은 뒤 말함; 결과를 먼저 내고 포커스를 옮기면 포커스 낭독이 결과를 끊음) | 실기기(live region이 접근성 오버레이 창에서 TalkBack에 읽히는지가 핵심) |
+
+- 잔여 노드 쪽 이벤트 무시: TalkBack이 무엇을 읽을지는 앱이 막을 수 없다. 대신 포커스를 잔여 노드 밖으로 옮기는 것(F9)이 할 수 있는 전부. 웹 페이지가 닫힌 팝업을 DOM에 `aria-hidden` 없이 남기는 한, 사용자가 스와이프로 다시 만날 수 있다(한계로 기록).
+- 선택 창 PROMPT도 TalkBack 큐로? 가능은 하다: 선택 창 자체(이미 접근성 오버레이)에 paneTitle이 있고 TalkBack이 창을 읽으므로, "안내 맡기기" ON이면 우리 TTS PROMPT를 끄고 paneTitle/첫 버튼 포커스 낭독에 맡기는 방식. 단, 지금 PROMPT는 TalkBack이 팝업을 읽는 도중 끊고 들어가야 시연이 빠르므로 polite로 바꾸면 늦어질 수 있다. F11 배너가 LG에서 잘 읽히면 같은 방식으로 옮길지 정하자(의견, 미구현).
+- 검증(F1~F11 한 빌드): 5개 Gradle 작업 통과, 단위 시험 debug 1028개·release 1013개 실패 0, lintDebug 오류 0(경고 12), 병합 매니페스트 INTERNET 0·새 권한 없음.
+- 위험: F10 포커스 이벤트로 TalkBack 사용자가 페이지를 스와이프할 때마다 0.3초에 최대 1회 트리를 읽는다(메인 스레드 밖). F11 배너 창이 TalkBack에 안 읽히면 결과 문장이 안 들림 → 로그 `RESULT_VIA_TALKBACK`인데 안 들리면 그 한계(다음 수정: TTS로 되돌리고 TalkBack이 조용해질 때까지 대기). F7로 "전부 자동 닫기"에서는 B가 판단하지 못한 팝업도 닫힌다(닫기 버튼 1개·금지어 0개일 때). F6 완화로 이미지로 그린 공지·안내도 광고로 닫힐 수 있다(엔진 규칙, B 판단 아님). F4 누르기 전 포커스 이동이 TalkBack 낭독을 한 번 더 부를 수 있다 — 체감 나쁘면 `FOCUS_PAGE_BEFORE_CLICK = false`.

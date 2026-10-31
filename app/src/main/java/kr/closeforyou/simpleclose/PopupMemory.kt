@@ -18,8 +18,16 @@ class PopupMemory(
     private val area: ScreenBounds? = null,
 ) {
     fun matches(text: String?, description: String?, nodeBounds: ScreenBounds): Boolean =
-        (text != null && text in texts) || (description != null && description in texts) || nodeBounds in bounds ||
-            (area != null && overlaps(area, nodeBounds))
+        sameTextOrPlace(text, description, nodeBounds) || overlapsArea(nodeBounds)
+
+    /** Same words or exactly the same place as one of the popup's nodes. */
+    fun sameTextOrPlace(text: String?, description: String?, nodeBounds: ScreenBounds): Boolean =
+        (text != null && text in texts) || (description != null && description in texts) || nodeBounds in bounds
+
+    fun overlapsArea(nodeBounds: ScreenBounds): Boolean = area != null && overlaps(area, nodeBounds)
+
+    /** Wholly above the popup's area (F9 fallback ①); false when the area is unknown. */
+    fun above(nodeBounds: ScreenBounds): Boolean = area != null && nodeBounds.bottom <= area.top
 
     companion object {
         /** A root covering at least this share of the screen is not used as an area to avoid. */
@@ -44,27 +52,37 @@ class PopupMemory(
 }
 
 /** What the engine put TalkBack's focus on after a close (debug log `FOCUS_TARGET_*`, no text). */
-enum class FocusTargetKind { OVERLAPS_OLD_POPUP, WEBVIEW_ROOT, PAGE_HEADING, PAGE_ITEM, NONE }
-
-/** One visible, named node that could take the focus, in tree order. No live node, no text kept. */
-data class FocusCandidate(val bounds: ScreenBounds, val leftover: Boolean, val heading: Boolean)
+enum class FocusTargetKind { OVERLAPS_OLD_POPUP, WEBVIEW_ROOT, PAGE_HEADING, PAGE_ITEM, ABOVE_OLD_POPUP, TOOLBAR_ITEM, NONE }
 
 /**
- * Where TalkBack's focus goes after a close (F4, LG 10/31 21:00: it still read the popup again).
- * Popup leftovers ([PopupMemory.matches]) are skipped; among the rest the one highest on the screen
- * wins (tree order breaks ties), so the focus lands above or beside the old popup, not inside it.
- * With no page item, the WebView itself when it has a name. Pure; JVM tested.
+ * One visible, named node that could take the focus, in tree order. No live node, no text kept.
+ * [leftover]: part of the closed popup by words, place or area ([PopupMemory.matches]); [above]:
+ * wholly above the popup's area ([PopupMemory.above]).
+ */
+data class FocusCandidate(val bounds: ScreenBounds, val leftover: Boolean, val heading: Boolean, val above: Boolean = false)
+
+/**
+ * Where TalkBack's focus goes after a close (F4/F9, LG 10/31: it read the closed popup again; at
+ * 22:29 every candidate overlapped the old popup, so nothing moved). In order:
+ * 1. a page item that is not a popup leftover, the highest on the screen (tree order breaks ties);
+ * 2. ([fallback]) an item wholly above the old popup, even if it shares words with it ([FocusTargetKind.ABOVE_OLD_POPUP]);
+ * 3. ([fallback]) the WebView itself, named or not;
+ * 4. ([fallback]) the first named item outside the WebView: Chrome's toolbar ([Pick.toolbar], the caller searches).
+ * Without [fallback] (the first try, right after the close) only 1 is used, and the caller tries again
+ * a moment later with it (the page's DOM may not be back yet). Pure; JVM tested.
  */
 object PageFocusRules {
-    data class Pick(val index: Int?, val kind: FocusTargetKind, val webViewRoot: Boolean = false)
+    data class Pick(val index: Int?, val kind: FocusTargetKind, val webViewRoot: Boolean = false, val toolbar: Boolean = false)
 
-    fun pick(candidates: List<FocusCandidate>, webViewNamed: Boolean): Pick {
+    fun pick(candidates: List<FocusCandidate>, webViewPresent: Boolean, fallback: Boolean = true): Pick {
         val best = candidates.withIndex().filter { !it.value.leftover }.minByOrNull { it.value.bounds.top }
+        if (best != null) return Pick(best.index, if (best.value.heading) FocusTargetKind.PAGE_HEADING else FocusTargetKind.PAGE_ITEM)
+        if (!fallback) return Pick(null, if (candidates.isEmpty()) FocusTargetKind.NONE else FocusTargetKind.OVERLAPS_OLD_POPUP)
+        val above = candidates.withIndex().firstOrNull { it.value.above }
         return when {
-            best != null -> Pick(best.index, if (best.value.heading) FocusTargetKind.PAGE_HEADING else FocusTargetKind.PAGE_ITEM)
-            webViewNamed -> Pick(null, FocusTargetKind.WEBVIEW_ROOT, webViewRoot = true)
-            candidates.isNotEmpty() -> Pick(null, FocusTargetKind.OVERLAPS_OLD_POPUP)
-            else -> Pick(null, FocusTargetKind.NONE)
+            above != null -> Pick(above.index, FocusTargetKind.ABOVE_OLD_POPUP)
+            webViewPresent -> Pick(null, FocusTargetKind.WEBVIEW_ROOT, webViewRoot = true)
+            else -> Pick(null, FocusTargetKind.TOOLBAR_ITEM, toolbar = true)
         }
     }
 }

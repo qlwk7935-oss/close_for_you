@@ -20,6 +20,9 @@ class EngineJobs(private val scope: CoroutineScope) {
     /** An action is running: events are ignored and no inspection starts. */
     val busy: Boolean get() = action?.isActive == true
 
+    /** An inspection (a read, or a re-check chain) is in flight. */
+    val inspecting: Boolean get() = inspection?.isActive == true
+
     /** Replaces the inspection in flight. Does nothing while an action runs. */
     fun scheduleInspection(block: suspend () -> Unit) {
         if (busy) return

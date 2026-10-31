@@ -4,7 +4,7 @@
      크롬 웹 노드: 접근성 서비스가 canRetrieveWindowContent로 켜져 있으면 크롬이 웹 내용을 노드로 내보낸다(LG 확인).
      flagRequestEnhancedWebAccessibility는 API 26부터 효과 없음(공식 문서 deprecated)이라 넣지 않는다. -->
 <accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
-    android:accessibilityEventTypes="typeWindowStateChanged|typeWindowsChanged|typeWindowContentChanged"
+    android:accessibilityEventTypes="typeWindowStateChanged|typeWindowsChanged|typeWindowContentChanged|typeViewAccessibilityFocused"
     android:accessibilityFeedbackType="feedbackGeneric"
     android:accessibilityFlags="flagReportViewIds|flagRetrieveInteractiveWindows"
     android:canPerformGestures="false"

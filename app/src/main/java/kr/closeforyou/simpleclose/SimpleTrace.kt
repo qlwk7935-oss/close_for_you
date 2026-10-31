@@ -56,6 +56,22 @@ enum class SimpleTrace {
     FOCUS_TARGET_PAGE_HEADING,
     FOCUS_TARGET_PAGE_ITEM,
     FOCUS_TARGET_NONE,
+    FOCUS_TARGET_ABOVE_OLD_POPUP,
+    FOCUS_TARGET_TOOLBAR_ITEM,
+    /** F9: the strict first try found nothing; tried again with fallbacks. */
+    FOCUS_RETRY,
+    /** F11: where TalkBack's focus was before an automatic close (moved after it only when in the popup). */
+    FOCUS_WAS_IN_POPUP,
+    FOCUS_WAS_OUTSIDE,
+    FOCUS_WAS_UNKNOWN,
+    /** F11: the result sentence went through TalkBack's queue (live region) or our TTS. */
+    RESULT_VIA_TALKBACK,
+    RESULT_VIA_TTS,
+    // F10: which read found the popup.
+    DETECTED_BY_WINDOW_EVENT,
+    DETECTED_BY_CONTENT_EVENT,
+    DETECTED_BY_RECHECK,
+    DETECTED_BY_TALKBACK_FOCUS,
     /** Focus put on a page item right before the press ([SimpleCloseEngineFeature.FOCUS_PAGE_BEFORE_CLICK]). */
     FOCUS_PRE_CLICK_MOVED,
     FOCUS_PRE_CLICK_FAILED,
