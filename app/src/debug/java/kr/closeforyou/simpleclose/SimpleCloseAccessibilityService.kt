@@ -260,21 +260,23 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
     }
 
     /**
-     * A confirmed close, whoever asked: the one sentence the person expects ("광고를 닫았어요", said at once
-     * and to the end), then — demo mode — TalkBack's focus goes to the page's first item that was not part
-     * of the popup, so what TalkBack reads next is the page, not a popup left in the DOM, and never over
-     * our sentence (LG 10/31 order problem).
+     * A confirmed close, whoever asked. First — demo mode, at once — TalkBack's focus goes to the page's
+     * first item that was not part of the popup: when our window went away TalkBack's focus fell back to
+     * Chrome's last spot, the popup text still in the DOM, and it started reading it (LG 10/31). Then
+     * the one sentence the person expects ("광고를 닫았어요"), without waiting for it to finish: the
+     * TTS-done callback can come seconds late while TalkBack is talking, and nothing may wait on it.
      */
     private suspend fun speakClosedThenFocusPage(popup: SimplePopup) {
         val announcer = tts ?: return
         announcer.stop()
+        if (SimpleCloseEngineFeature.FOCUS_PAGE_AFTER_CLOSE) {
+            val memory = PopupMemory.of(popup)
+            val moved = withContext(Dispatchers.Default) { collector.focusFirstPageItem(memory) }
+            log.trace(if (moved) SimpleTrace.FOCUS_MOVED_TO_PAGE else SimpleTrace.FOCUS_MOVE_FAILED)
+        }
         val kind = AutoDecisionSpeech.kindOf(popup.analysis.classification)
         val sentence = getString(R.string.ui_auto_closed_one, getString(AutoDecisionSpeech.objectRes(kind)))
-        announcer.announce(AnnouncementRequest(null, AnnouncementKind.ACTION_RESULT, sentence))
-        if (!SimpleCloseEngineFeature.FOCUS_PAGE_AFTER_CLOSE) return
-        val memory = PopupMemory.of(popup)
-        val moved = withContext(Dispatchers.Default) { collector.focusFirstPageItem(memory) }
-        log.trace(if (moved) SimpleTrace.FOCUS_MOVED_TO_PAGE else SimpleTrace.FOCUS_MOVE_FAILED)
+        scope.launch { announcer.announce(AnnouncementRequest(null, AnnouncementKind.ACTION_RESULT, sentence)) }
     }
 
     /** A deny sentence ("확인이 필요한 팝업이에요", the scam warning) is said once per popup key per session (LG 10/31: it looped). */
