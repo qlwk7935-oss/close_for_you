@@ -48,7 +48,7 @@ class VideoAdScan(val result: VideoAdSkipResult?, val diag: VideoAdDiag, val adM
  * description) counts as named by that id: the developer's own name for it, never a guess from looks.
  *
  * Nothing else on a video screen is a candidate: 구독, 구매, links and every risky name are refused
- * ([SimpleLabelRules.isRisky]), and two skip buttons at once are a guess, so none. Waiting is event-driven:
+ * ([SimpleLabelRules.isDecision]), and two skip buttons at once are a guess, so none. Waiting is event-driven:
  * the engine reads again on the player's own changes and its re-check chain, no polling of its own.
  * Pure Kotlin; JVM tested. Device unverified.
  */
@@ -74,13 +74,15 @@ object VideoAdSkip {
      */
     fun isVideoContext(packageName: String, nodes: List<NodeSnapshot>): Boolean =
         packageName == YOUTUBE_APP || nodes.any { isSkipAdId(it.viewId) } ||
-            nodes.any { node -> node.viewId?.endsWith(":id/url_bar") == true && node.text?.contains("youtube.com", ignoreCase = true) == true }
+            nodes.any { node -> node.viewId?.endsWith(":id/url_bar") == true && node.text?.contains("youtube.com", ignoreCase = true) == true } ||
+            // F23 (m.youtube.com with the address bar scrolled away): a clickable skip whose own name says ad ("광고 건너뛰기", "Skip ad").
+            nodes.any { node -> node.clickable && CloseButtonFinder.nameOf(node, nodes).let { isSkip(it) && isAdSkipName(it) } }
 
     fun scan(nodes: List<NodeSnapshot>, screen: ScreenBounds): VideoAdScan {
         val visible = nodes.filter { PopupRootFinder.isVisible(it, screen) }
         val names = visible.associateWith { CloseButtonFinder.nameOf(it, visible) }
         val adOnScreen = visible.any { node -> listOfNotNull(node.text, node.contentDescription).any(::isAdMark) || isSkipAdId(node.viewId) }
-        val skipLike = visible.filter { it.clickable && it.enabled && (isSkip(names[it]) || isSkipAdId(it.viewId) && !SimpleLabelRules.isRisky(names[it])) }
+        val skipLike = visible.filter { it.clickable && it.enabled && (isSkip(names[it]) || isSkipAdId(it.viewId) && !SimpleLabelRules.isDecision(names[it])) }
         val skips = skipLike.filter { adOnScreen || isAdSkipName(names[it]) || isSkipAdId(it.viewId) }
         if (skips.size == 1) {
             val node = skips.single()
@@ -107,7 +109,7 @@ object VideoAdSkip {
 
     /** A skip name and nothing risky in it. */
     fun isSkip(name: String?): Boolean {
-        if (name.isNullOrBlank() || SimpleLabelRules.isRisky(name)) return false
+        if (name.isNullOrBlank() || SimpleLabelRules.isDecision(name)) return false
         return SimpleLabelRules.roleOf(name) == ButtonRole.SKIP || ButtonLabelRules.normalize(name) in EXTRA_SKIP
     }
 

@@ -98,6 +98,12 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
     /** F13: reads in the current search (debug numbers only): all, and those the collection guard refused. */
     private var searchReads = 0
     private var searchUnavailable = 0
+    /** F23: when this search's first read started (0 = none yet), and how many of its reads walked the whole tree. */
+    private var searchFirstReadAt = 0L
+    private var searchWholeReads = 0
+    /** F23: a browser showing YouTube (seen in a whole read): its reads stay whole for a while (skip button outside popups). */
+    private var videoWebPackage: String? = null
+    private var videoWebUntil = 0L
     /** F13: the person's press already moved TalkBack's focus off the popup before our window went. */
     private var focusedBeforeClose = false
     /**
@@ -175,6 +181,8 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
         firstEventAt = 0L
         searchReads = 0
         searchUnavailable = 0
+        searchFirstReadAt = 0L
+        searchWholeReads = 0
     }
 
     override fun onServiceConnected() {
@@ -271,13 +279,20 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
         val readStart = SystemClock.uptimeMillis()
         // F20: the YouTube app's skip button sits outside any popup: its tree is always read whole.
         // F22-2: a re-check or repaint read that the probe finds nothing in stops there (cheap), except every few reads.
-        val whole = trigger == DetectTrigger.WINDOW_EVENT || trigger == DetectTrigger.TALKBACK_FOCUS ||
+        val videoWeb = expectedPackage == videoWebPackage && readStart < videoWebUntil
+        val whole = trigger == DetectTrigger.WINDOW_EVENT || trigger == DetectTrigger.TALKBACK_FOCUS || videoWeb ||
             searchReads % SimpleCloseEngineFeature.WHOLE_READ_EVERY == SimpleCloseEngineFeature.WHOLE_READ_EVERY - 1
         val read = withContext(Dispatchers.Default) {
-            collector.read(expectedPackage, ::allowsApp, probe = expectedPackage != VideoAdSkip.YOUTUBE_APP, wholeIfProbeMisses = whole)
+            collector.read(expectedPackage, ::allowsApp, probe = expectedPackage != VideoAdSkip.YOUTUBE_APP && !videoWeb, wholeIfProbeMisses = whole)
         }
         val readMillis = SystemClock.uptimeMillis() - readStart
         searchReads += 1
+        // F23 (LG 11/1 옥션 웹: DETECT_LATENCY_MS 1689 once, 4058 the next time): each read of a search, as numbers:
+        // when it started after the first event, what it cost, and whether it walked the whole tree.
+        if (searchFirstReadAt == 0L) searchFirstReadAt = readStart
+        if (whole) searchWholeReads += 1
+        if (firstEventAt != 0L) log.latency("READ_AT_MS", readStart - firstEventAt)
+        log.latency(if (whole) "READ_WHOLE_COST_MS" else "READ_PROBE_COST_MS", readMillis)
         if (read == null) {
             searchUnavailable += 1
             log.trace(SimpleTrace.TREE_UNAVAILABLE)
@@ -303,6 +318,11 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
         if (read.appWindowIgnored) log.trace(SimpleTrace.APP_WINDOW_IGNORED)
         // F22 (LG 11/1: VIDEO_AD_MARKER_FOUND ×64 in a shopping app, a banner's "AD"): video ads only in YouTube.
         val videoContext = VideoAdSkip.isVideoContext(read.packageName, read.nodes)
+        // F23: YouTube in a browser: keep its reads whole for a minute (the address bar scrolls away, the skip is no popup).
+        if (videoContext && read.packageName != VideoAdSkip.YOUTUBE_APP && read.nodes.isNotEmpty()) {
+            videoWebPackage = read.packageName
+            videoWebUntil = SystemClock.uptimeMillis() + VIDEO_WEB_STICKY_MILLIS
+        }
         if (SimpleCloseEngineFeature.VIDEO_AD_SKIP && videoContext) {
             val video = VideoAdSkip.scan(read.nodes, read.screen)
             // F20: why or why not, as codes (only on a screen with an ad mark, a skip-like node, or in YouTube).
@@ -358,6 +378,9 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
         if (lastNoRootAt != 0L) log.latency("DETECT_GAP_MS", now - lastNoRootAt)
         // F13: where the time went: reads this search took, how many the guard refused, the last read's cost.
         log.latency("DETECT_READS", searchReads.toLong())
+        // F23: from the first event to the first read, and how many reads walked the whole page.
+        if (firstEventAt != 0L && searchFirstReadAt != 0L) log.latency("DETECT_FIRST_READ_MS", searchFirstReadAt - firstEventAt)
+        log.latency("DETECT_WHOLE_READS", searchWholeReads.toLong())
         log.latency("DETECT_TREE_UNAVAILABLE", searchUnavailable.toLong())
         log.latency("TREE_READ_MS", readMillis)
         log.latency("TREE_VISITED", read.visited.toLong())
@@ -1075,6 +1098,7 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
         /** Our own focus action comes back as an event within this; it is not someone else's move. */
         const val OWN_FOCUS_ECHO_MILLIS = 250L
         const val VIDEO_EVENT_LOG_MILLIS = 5_000L
+        const val VIDEO_WEB_STICKY_MILLIS = 60_000L
         val WINDOW_EVENTS = setOf(
             AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED, AccessibilityEvent.TYPE_WINDOWS_CHANGED,
             AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED, AccessibilityEvent.TYPE_VIEW_ACCESSIBILITY_FOCUSED,
