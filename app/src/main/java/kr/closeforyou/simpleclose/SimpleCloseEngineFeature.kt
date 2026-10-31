@@ -60,11 +60,12 @@ object SimpleCloseEngineFeature {
 
     /**
      * F20 (LG 11/1 11번가: "closed" 0.27 s after the click, then the same sheet again): a close counts only when,
-     * [CLOSE_RECHECK_MILLIS] after the root went away, a fresh read does not show the same popup again
+     * [CLOSE_RECHECK_MILLIS] after the root went away, a fresh probe-only read (F21: 600 → 350 ms, no whole-page
+     * walk, so the result follows within about 0.7 s) does not show the same popup again
      * ([PopupMemory.reappeared]). Before that no result card, focus move or reclaim end happens.
      */
     const val STRICT_CLOSE_CHECK: Boolean = true
-    const val CLOSE_RECHECK_MILLIS = 600L
+    const val CLOSE_RECHECK_MILLIS = 350L
 
     /**
      * Window events settle before the tree is read (Chrome paints web nodes a little late). 300 → 200 ms

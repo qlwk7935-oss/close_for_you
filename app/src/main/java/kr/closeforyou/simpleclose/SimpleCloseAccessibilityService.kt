@@ -27,6 +27,7 @@ import kr.closeforyou.core.model.ActionAuthorization
 import kr.closeforyou.core.model.ActionDecision
 import kr.closeforyou.core.model.ActionResult
 import kr.closeforyou.core.model.ActionStatus
+import kr.closeforyou.core.model.ButtonLabelRules
 import kr.closeforyou.core.model.ButtonRole
 import kr.closeforyou.core.model.ChoiceKind
 import kr.closeforyou.core.model.ClickOutcome
@@ -125,6 +126,8 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
      * pressed again while they stay), and the popup an automatic press is working on right now.
      */
     private val autoFailed = LinkedHashSet<String>()
+    /** F21: per popup (same key), the normalized names of buttons pressed there that did not close it: never offered again. */
+    private val failedButtons = LinkedHashMap<String, MutableSet<String>>()
     private val kept = LinkedHashSet<String>()
     private var pressing: String? = null
     /** F20: YouTube app events seen / refused by 도와줄 앱 (debug log at most every few seconds). */
@@ -410,10 +413,9 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
                         // person is asked right away, without the button that failed.
                         endReclaim(null)
                         tts?.stop()
-                        autoFailed += words
-                        if (autoFailed.size > 32) autoFailed.remove(autoFailed.first())
+                        rememberFailed(classified, decision.candidate)
                         log.trace(SimpleTrace.AUTO_CLOSE_FAILED_ASKED)
-                        if (prompted == null) ask(classified, classification, talkBackReadIt = false, failedCandidateId = decision.candidate.id)
+                        if (prompted == null) ask(classified, classification, talkBackReadIt = false, failedNow = true)
                     } else {
                         tts?.stop()
                         handlingListener?.onHandled(HandlingReport(analysis.token, classification, approval, result))
@@ -552,11 +554,11 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
     }
 
     /**
-     * C's prompt for [popup]. F20: [failedCandidateId] = an automatic press of that button did not close it:
-     * the first line says so ("대신 닫지 못했어요."), that button is not offered again (AGENTS 6-6), the others are.
+     * C's prompt for [popup]. F20: [failedNow] = a press just did not close it: the first line says so ("대신 닫지
+     * 못했어요."). F21: buttons that failed on this popup are never offered again (AGENTS 6-6), the next one is.
      * The popup's risky buttons (결제·동의·권한…) are offered as [버튼으로 이동] only, never as a press.
      */
-    private fun ask(popup: SimplePopup, classification: PopupClassification, talkBackReadIt: Boolean, failedCandidateId: String? = null) {
+    private fun ask(popup: SimplePopup, classification: PopupClassification, talkBackReadIt: Boolean, failedNow: Boolean = false) {
         val presenter = overlay ?: return
         val planned = ChoicePromptPlanner.plan(
             popup.analysis, classification, labelPolicy = SimpleLabelPolicy,
@@ -582,8 +584,7 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
             options = (listOf(PromptOption(PromptOptionKind.PRESS_CANDIDATE, candidateId = x.id, candidateRole = ButtonRole.CLOSE, buttonLabel = getString(R.string.ui_simple_x_button))) + prompt.options).toImmutableList(),
         )
         if (x != null) log.trace(SimpleTrace.X_BUTTON_OFFERED)
-        val shown = SimplePromptOptions.adjust(withX, popup.scan.riskButtons, failedCandidateId,
-            failedCandidateId?.let { id -> popup.scan.candidates.firstOrNull { it.id == id } })
+        val shown = SimplePromptOptions.adjust(withX, popup.scan.riskButtons, failedButtons[keyOf(popup)].orEmpty(), failedNow)
         prompted = popup
         focusedBeforeClose = false
         val result = presenter.present(shown) { answer -> onAnswer(popup, answer) }
@@ -621,7 +622,18 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
                 jobs.runAction {
                     // Our window goes away under TalkBack's focus: it must land on the page, not the popup's leftovers.
                     val result = pressAndConfirm(popup, candidate, moveFocus = !focusedAlready, watchFocus = true)
-                    if (PressSuccess.isConfirmed(result)) speakClosedThenFocusPage(popup, moveFocus = true) else speakOwnPress(result)
+                    when {
+                        PressSuccess.isConfirmed(result) -> speakClosedThenFocusPage(popup, moveFocus = true)
+                        // F21: the person's own press did not close it either: asked again at once, without that button.
+                        result.attempted && result.outcome != ClickOutcome.LEFT_APP -> {
+                            endReclaim(null)
+                            tts?.stop()
+                            rememberFailed(popup, candidate)
+                            log.trace(SimpleTrace.USER_PRESS_FAILED_ASKED)
+                            if (prompted == null) ask(popup, popup.analysis.classification, talkBackReadIt = false, failedNow = true)
+                        }
+                        else -> speakOwnPress(result)
+                    }
                 }
             }
             else -> {
@@ -667,6 +679,19 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
         val sentence = getString(R.string.ui_move_button_position, candidate.label?.trim().orEmpty(), place)
         log.trace(SimpleTrace.MOVE_POSITION_SPOKEN)
         scope.launch { announcer.announce(AnnouncementRequest(null, AnnouncementKind.POPUP_FOUND, sentence)) }
+    }
+
+    /** F20/F21: the popup's key by its words (stable when it moves), as [inspect] uses it. */
+    private fun keyOf(popup: SimplePopup): String = "${popup.snapshot.token.windowId}:${popup.analysis.token.contentDigest}"
+
+    /** F21: this button did not close this popup: not pressed automatically again, and not offered again. */
+    private fun rememberFailed(popup: SimplePopup, candidate: CloseCandidate) {
+        val key = keyOf(popup)
+        autoFailed += key
+        if (autoFailed.size > 32) autoFailed.remove(autoFailed.first())
+        val name = ButtonLabelRules.normalize(candidate.label ?: getString(R.string.ui_simple_x_button))
+        failedButtons.getOrPut(key) { mutableSetOf() } += name
+        if (failedButtons.size > 32) failedButtons.remove(failedButtons.keys.first())
     }
 
     private fun videoTrace(diag: VideoAdDiag): SimpleTrace? = when (diag) {
@@ -839,13 +864,17 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
                 // F20 (LG 11/1 11번가: "closed" 0.27 s after the click, the same sheet found again right after): the root
                 // node going away is not enough. A moment later the screen is read again; the same popup there (same
                 // place, same words: [PopupMemory.reappeared]) means it did not close.
+                // F21 (LG 11/1: the result came 1.9~2.9 s after CLOSED_CONFIRMED: this re-read walked the whole page
+                // when the popup was gone): the probe alone; no popup found by it = closed. Nothing is spoken meanwhile.
                 log.trace(SimpleTrace.CLOSED_CONFIRMED)
+                val recheckStart = SystemClock.uptimeMillis()
                 delay(SimpleCloseEngineFeature.CLOSE_RECHECK_MILLIS)
                 val back = withContext(Dispatchers.Default) {
-                    val again = collector.read(token.packageName, ::allowsApp) ?: return@withContext false
+                    val again = collector.read(token.packageName, ::allowsApp, wholeIfProbeMisses = false) ?: return@withContext false
                     val root = PopupRootFinder.find(again.nodes, again.screen, again.activeWindowBounded) ?: return@withContext false
                     PopupMemory.of(popup).reappeared(root, again.nodes)
                 }
+                log.latency("CLOSE_RECHECK_MS", SystemClock.uptimeMillis() - recheckStart)
                 if (back) {
                     log.trace(SimpleTrace.CLOSE_REAPPEARED)
                     outcome = ClickOutcome.STILL_PRESENT
@@ -961,6 +990,7 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
         lastClosedMemory = null
         skippedAt.clear()
         autoFailed.clear()
+        failedButtons.clear()
         kept.clear()
         pressing = null
         prompted = null

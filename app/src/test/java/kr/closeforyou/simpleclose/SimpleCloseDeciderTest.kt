@@ -100,7 +100,7 @@ class SimpleCloseDeciderTest {
         val all = HandlingPreset.CLOSE_ALL.autoCloseKinds()
         assertEquals(SimpleDecision.Ask, SimpleCloseDecider.decide(PopupClassification.UNKNOWN, false, popup.scan.candidates, all, popup.scan.forbiddenCount, unknownEnabled = true, strongEnabled = false))
         val strong = SimpleCloseDecider.decide(PopupClassification.NOTICE, false, popup.scan.candidates, all, popup.scan.forbiddenCount, riskCount = popup.scan.riskCount, strongEnabled = true)
-        assertEquals("node:0/1/4/0", (strong as SimpleDecision.AutoClose).candidate.id) // "앱설치 안내 레이어 닫기" before "모바일 웹으로 볼래요"
+        assertEquals("node:0/1/4/3", (strong as SimpleDecision.AutoClose).candidate.id) // F21: "모바일 웹으로 볼래요" (the one that closed it on the LG)
         assertTrue(strong.strong)
     }
 
@@ -163,7 +163,7 @@ class SimpleCloseDeciderTest {
         val decision = SimpleCloseDecider.decide(classification, false, popup.scan.candidates, consented)
         assertEquals(SimpleDecision.Ask, decision)
         val prompt = ChoicePromptPlanner.plan(popup.analysis, classification, labelPolicy = SimpleLabelPolicy, rememberChoicesEnabled = false)
-        assertEquals(listOf("앱설치 안내 레이어 닫기", "모바일 웹으로 볼래요"), prompt.options.filter { it.kind == PromptOptionKind.PRESS_CANDIDATE }.map { it.buttonLabel })
+        assertEquals(listOf("모바일 웹으로 볼래요", "앱설치 안내 레이어 닫기"), prompt.options.filter { it.kind == PromptOptionKind.PRESS_CANDIDATE }.map { it.buttonLabel })
         assertFalse(prompt.cannotPressForUser)
     }
 

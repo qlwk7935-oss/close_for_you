@@ -14,9 +14,9 @@ class CloseButtonFinderTest {
 
     @Test fun elevenStreetOffersBothCloseLabelsAndRefusesTheAppLink() {
         val scan = scan(SimpleNodes.elevenStreet())
-        assertEquals(listOf("앱설치 안내 레이어 닫기", "모바일 웹으로 볼래요"), scan.candidates.map { it.label })
+        assertEquals(listOf("모바일 웹으로 볼래요", "앱설치 안내 레이어 닫기"), scan.candidates.map { it.label }) // F21 order
         assertTrue(scan.candidates.all { it.role == ButtonRole.CLOSE })
-        assertEquals(listOf("node:0/1/4/0", "node:0/1/4/3"), scan.candidates.map { it.id })
+        assertEquals(listOf("node:0/1/4/3", "node:0/1/4/0"), scan.candidates.map { it.id })
         // "11번가 앱에서 확인" holds a forbidden word; the page's own 닫기 banner is outside the root.
         assertEquals(1, scan.forbiddenCount)
         assertEquals(0, scan.unlabeledCount)

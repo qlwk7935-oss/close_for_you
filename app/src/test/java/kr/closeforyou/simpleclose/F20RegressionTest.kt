@@ -71,13 +71,13 @@ class F20RegressionTest {
             val prompt = ChoicePromptPlanner.plan(popup.analysis, PopupClassification.UNKNOWN, labelPolicy = SimpleLabelPolicy, rememberChoicesEnabled = false)
             assertEquals(pick.id, prompt.options.first { it.kind == PromptOptionKind.PRESS_CANDIDATE }.candidateId)
         }
-        assertEquals("앱설치 안내 레이어 닫기", StrongCloseRules.pick(popupOf(SimpleNodes.elevenStreet()).scan.candidates)!!.label)
+        assertEquals("모바일 웹으로 볼래요", StrongCloseRules.pick(popupOf(SimpleNodes.elevenStreet()).scan.candidates)!!.label)
         assertEquals("닫기", StrongCloseRules.pick(popupOf(SimpleNodes.oliveYoung()).scan.candidates)!!.label)
     }
 
     @Test fun theSheetsOwnCloseBeatsStayingOnTheWebAndNeverTheAppButton() {
         val popup = popupOf(elevenStreetWithFooter())
-        assertEquals(listOf("앱설치 안내 레이어 닫기", "모바일 웹으로 볼래요"), popup.scan.candidates.map { it.label })
+        assertEquals(listOf("모바일 웹으로 볼래요", "앱설치 안내 레이어 닫기"), popup.scan.candidates.map { it.label })
         assertTrue(popup.scan.candidates.none { it.label == "11번가 앱에서 확인" })
     }
 
@@ -102,11 +102,12 @@ class F20RegressionTest {
         val popup = popupOf(SimpleNodes.elevenStreet())
         val planned = ChoicePromptPlanner.plan(popup.analysis, PopupClassification.NOTICE, labelPolicy = SimpleLabelPolicy, rememberChoicesEnabled = false)
         val failed = popup.scan.candidates.first()
-        val prompt = SimplePromptOptions.adjust(planned, popup.scan.riskButtons, failed.id, failed)
+        val prompt = SimplePromptOptions.adjust(planned, popup.scan.riskButtons, setOf(kr.closeforyou.core.model.ButtonLabelRules.normalize(failed.label!!)), failedNow = true)
         assertEquals(PromptSummary.AUTO_CLOSE_FAILED, prompt.summary)
         val presses = prompt.options.filter { it.kind == PromptOptionKind.PRESS_CANDIDATE }
-        assertEquals(listOf("모바일 웹으로 볼래요"), presses.map { it.buttonLabel })
-        assertTrue(prompt.options.any { it.kind == PromptOptionKind.MOVE_TO_BUTTON && it.candidateId == failed.id })
+        // F21: the failed button is gone altogether (no move either); the next one is the press.
+        assertEquals(listOf("앱설치 안내 레이어 닫기"), presses.map { it.buttonLabel })
+        assertTrue(prompt.options.none { it.candidateId == failed.id })
         assertTrue(prompt.options.any { it.kind == PromptOptionKind.KEEP_OPEN })
         assertFalse(prompt.briefQuestion)
     }
@@ -119,7 +120,7 @@ class F20RegressionTest {
         assertTrue(popup.scan.riskButtons.all { it.role == ButtonRole.USER_DECISION })
         assertTrue(popup.scan.candidates.none { it.label == "허용" })
         val planned = ChoicePromptPlanner.plan(popup.analysis, PopupClassification.USER_DECISION, labelPolicy = SimpleLabelPolicy, rememberChoicesEnabled = false)
-        val prompt = SimplePromptOptions.adjust(planned, popup.scan.riskButtons, null)
+        val prompt = SimplePromptOptions.adjust(planned, popup.scan.riskButtons)
         assertTrue(prompt.options.none { it.kind == PromptOptionKind.PRESS_CANDIDATE || it.kind == PromptOptionKind.REMEMBER_ALWAYS })
         assertEquals(listOf("허용"), prompt.options.filter { it.kind == PromptOptionKind.MOVE_TO_BUTTON }.map { it.buttonLabel })
         assertTrue(prompt.options.any { it.kind == PromptOptionKind.READ_CONTENT })

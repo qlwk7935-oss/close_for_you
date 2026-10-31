@@ -60,6 +60,7 @@ object SimpleLabelRules {
     private val DIM_CLOSE = listOf("배경을 눌러 닫기", "배경을 눌러서 닫기", "배경 눌러 닫기")
 
     private val NON_TOKEN = Regex("[^a-z0-9']+")
+    private val INSTALL_ACTION = Regex("""(설치|다운로드)\s*(하|해|후|및)""")
 
     /** F16 v3: whole labels only (normalized). Each one closes the popup and changes nothing else that matters. */
     private val HIDE_FOR_A_WHILE = setOf(
@@ -93,6 +94,8 @@ object SimpleLabelRules {
         // tolerates the install word, and only when nothing else forbidden is in front.
         val closeTail = v2 && ENDS_WITH_CLOSE.matches(normalized) && normalized !in DIM_CLOSE
         if (isForbidden(normalized, allowInstallWord = closeTail)) return reject(SimpleLabelReject.FORBIDDEN)
+        // F21: "설치"/"다운로드" may only name what is closed ("앱설치 안내 레이어 닫기"), never be done ("설치하고 닫기", "설치 후 닫기").
+        if (closeTail && INSTALL_ACTION.containsMatchIn(normalized)) return reject(SimpleLabelReject.FORBIDDEN)
         ButtonLabelRules.roleOf(normalized)?.let { return SimpleLabelVerdict(it, null) }
         if (!v2) return reject(SimpleLabelReject.NOT_CLOSE)
         return when {
@@ -105,7 +108,8 @@ object SimpleLabelRules {
 
     /** True when the normalized label holds a word the engine never presses. */
     fun isForbidden(normalized: String, allowInstallWord: Boolean = false): Boolean {
-        val korean = if (allowInstallWord) FORBIDDEN_KO - "설치" else FORBIDDEN_KO
+        // F21: in "○○ 닫기" the install/download word only names what is closed ("다운로드 안내 닫기").
+        val korean = if (allowInstallWord) FORBIDDEN_KO - "설치" - "다운로드" else FORBIDDEN_KO
         if (korean.any { it in normalized }) return true
         val tokens = normalized.split(NON_TOKEN).filter { it.isNotEmpty() }
         return FORBIDDEN_EN.any { phrase ->
@@ -130,19 +134,20 @@ object SimpleLabelRules {
         !label.isNullOrBlank() && ButtonLabelRules.judge(label).reason == LabelRejectReason.SYMBOL_ONLY
 
     /**
-     * F16 "전부 닫기": how plainly a close label says close, lower is plainer. F20 (LG 11/1 11번가): the same
-     * order the person sees in C's prompt, where ties keep reading order: a close of the popup itself ("닫기",
-     * "Close", "앱설치 안내 레이어 닫기") first, then the dim background ("배경을 눌러 닫기") or hiding for a
-     * while / staying on the web ("모바일 웹으로 볼래요"), then a polite no ("괜찮아요").
+     * F16 "전부 닫기": how plainly a close label says close, lower is plainer; the same order C's prompt
+     * offers (F20), reading order on a tie. F21 (LG 11/1 06:49~53 11번가: the sheet's own "앱설치 안내 레이어
+     * 닫기" was pressed and the sheet stayed; "모바일 웹으로 볼래요" closed it): an app-install sheet's own
+     * "stay on the web" answer first, then a close of the popup ("닫기", "Close", "○○ 레이어 닫기"), then the
+     * dim background or hiding for a while ("오늘 하루 보지 않기"), then a polite no ("괜찮아요").
      */
     fun clarity(label: String?): Int {
         val normalized = label?.let(ButtonLabelRules::normalize).orEmpty()
         return when {
-            ButtonLabelRules.roleOf(normalized) == ButtonRole.CLOSE -> 0
-            normalized !in DIM_CLOSE && normalized !in HIDE_FOR_A_WHILE && ENDS_WITH_CLOSE.matches(normalized) -> 0
-            normalized in DIM_CLOSE || normalized in HIDE_FOR_A_WHILE || DAYS_HIDE.matches(normalized) ||
-                normalized in WEB_STAY || normalized in STAY_ON_WEB -> 1
-            else -> 2
+            normalized in WEB_STAY || normalized in STAY_ON_WEB -> 0
+            ButtonLabelRules.roleOf(normalized) == ButtonRole.CLOSE -> 1
+            normalized !in DIM_CLOSE && normalized !in HIDE_FOR_A_WHILE && ENDS_WITH_CLOSE.matches(normalized) -> 1
+            normalized in DIM_CLOSE || normalized in HIDE_FOR_A_WHILE || DAYS_HIDE.matches(normalized) -> 2
+            else -> 3
         }
     }
 

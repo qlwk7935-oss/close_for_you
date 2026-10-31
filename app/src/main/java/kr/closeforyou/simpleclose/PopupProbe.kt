@@ -72,6 +72,7 @@ object PopupProbe {
         var capped = false
         var dimParent: String? = null
         var hit: ProbeResult? = null
+        var layerHit: ProbeResult? = null
 
         // [above]: later siblings already seen that are layer-sized. Sets [hit] when the probe can stop.
         // F20: [deferZero] = a zero-size node is not entered now (it returns its empty bounds); its parent comes
@@ -101,9 +102,13 @@ object PopupProbe {
             if (frontLayers && sized) {
                 above.firstOrNull { (_, layer) -> PopupRootFinder.coversHalf(b, layer) }?.let { (index, _) ->
                     val parent = path.substringBeforeLast('/')
-                    hit = if (parent == dimParent) ProbeResult(parent, ProbeHitKind.DIM_PARENT, 0, false)
-                    else ProbeResult("$parent/$index", ProbeHitKind.LAYER, 0, false, context = path)
-                    return b
+                    if (parent == dimParent) {
+                        hit = ProbeResult(parent, ProbeHitKind.DIM_PARENT, 0, false)
+                        return b
+                    }
+                    // F21 (LG 11/1 06:49 11번가: PROBE_HIT_LAYER, then the whole tree, and the sheet was a Dialog): a
+                    // layer is only kept; the probe goes on (within its cap) and a Dialog found later wins.
+                    if (layerHit == null) layerHit = ProbeResult("$parent/$index", ProbeHitKind.LAYER, 0, false, context = path)
                 }
             }
             if (depth >= maxDepth) return b
@@ -134,8 +139,10 @@ object PopupProbe {
 
         visit(root, ROOT, 0, emptyList())
         hit?.let { return ProbeResult(it.path, it.kind, visited, capped, it.context) }
+        val layer = layerHit
         return when {
             dimParent != null && !capped -> ProbeResult(dimParent, ProbeHitKind.DIM_PARENT, visited, capped)
+            layer != null -> ProbeResult(layer.path, layer.kind, visited, capped, layer.context)
             else -> ProbeResult(null, null, visited, capped)
         }
     }

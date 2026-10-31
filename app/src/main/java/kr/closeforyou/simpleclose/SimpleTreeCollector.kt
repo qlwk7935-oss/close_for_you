@@ -64,7 +64,11 @@ class PageFocus(val kind: FocusTargetKind, val node: AccessibilityNodeInfo?) {
 
 class SimpleTreeCollector(private val service: AccessibilityService) {
     /** [probe] false (F20: the YouTube app, whose skip button sits outside any popup): always the whole tree. */
-    fun read(expectedPackage: String, packageAllowed: (String) -> Boolean, probe: Boolean = true): TreeRead? =
+    /**
+     * [wholeIfProbeMisses] false (F21, the strict close re-check): when the probe finds no popup, no whole-tree read
+     * (2 s on 11번가): the read comes back with no nodes, which means "no popup there".
+     */
+    fun read(expectedPackage: String, packageAllowed: (String) -> Boolean, probe: Boolean = true, wholeIfProbeMisses: Boolean = true): TreeRead? =
         SimpleCollectionGuard.read(expectedPackage, { service.rootInActiveWindow },
             { it.packageName?.toString() }, packageAllowed, collect = collect@{ root, packageName ->
                 val windows = mutableListOf<AccessibilityWindowInfo>()
@@ -114,6 +118,9 @@ class SimpleTreeCollector(private val service: AccessibilityService) {
                             }
                         }
                         mode = TreeReadMode.FULL_AFTER_PROBE
+                        if (!wholeIfProbeMisses) {
+                            return@collect TreeRead(packageName, root.windowId, emptyList(), screen, false, probeVisited, 0, mode, probeVisited, probeOutcome = outcome)
+                        }
                     }
                     val nodes = ArrayList<NodeSnapshot>(256)
                     val count = WalkCount()

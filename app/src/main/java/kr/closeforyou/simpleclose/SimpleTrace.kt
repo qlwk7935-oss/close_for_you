@@ -136,6 +136,8 @@ enum class SimpleTrace {
     CLOSE_REAPPEARED,
     /** F20: an automatic close did not close; no result card, no focus move, the prompt asks at once. */
     AUTO_CLOSE_FAILED_ASKED,
+    /** F21: the person's own press did not close it: asked again at once without that button. */
+    USER_PRESS_FAILED_ASKED,
     /** F20: this popup failed an automatic close before: asked instead of pressing again (AGENTS 6-6). */
     AUTO_CLOSE_SKIPPED_AFTER_FAIL,
     /** F20: a decision popup is asked (no press option) instead of only explained. */

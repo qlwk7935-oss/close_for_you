@@ -118,7 +118,10 @@ fun ChoicePromptContent(
             }
             val enabled = !revalidating
             // Two or more press buttons keep their own names, so they are never both "'닫기' 버튼".
+            // F21 (LG 11/1: after a failed close, the lone "모바일 웹으로 볼래요" read "'닫기' 버튼 눌러 주기" and
+            // sounded like the button that had just failed): the failure prompt always says each button's own name.
             val pressButtonCount = prompt.options.count { it.kind == PromptOptionKind.PRESS_CANDIDATE }
+                .let { if (prompt.summary == PromptSummary.AUTO_CLOSE_FAILED) maxOf(it, 2) else it }
             prompt.options.forEachIndexed { index, option ->
                 val label = option.label(pressButtonCount)
                 val buttonModifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).then(
