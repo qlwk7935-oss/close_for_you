@@ -432,7 +432,7 @@ class SimpleInspectionEventsTest {
         advanceUntilIdle()
         val first = DEBOUNCE + 1_750
         // F24: the follow-up read waits the read budget's next gap, not the debounce.
-        assertEquals(listOf(first, first + ReadBudget.contentGap(1) + 1_750), r.reads.map { it.first })
+        assertEquals(listOf(first, first + ReadBudget.contentGap(1, lastCost = 1_750) + 1_750), r.reads.map { it.first })
         assertEquals(2, r.walks)
         assertEquals(List(2) { DetectTrigger.CONTENT_EVENT }, r.triggers)
         assertTrue(r.traces.contains(SimpleTrace.EVENT_COALESCED))

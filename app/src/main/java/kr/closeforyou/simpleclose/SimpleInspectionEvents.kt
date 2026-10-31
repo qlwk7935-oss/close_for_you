@@ -2,7 +2,14 @@ package kr.closeforyou.simpleclose
 
 import kotlinx.coroutines.delay
 
-internal enum class SimpleInspectionEvent { WINDOW, CONTENT, TALKBACK_FOCUS }
+/**
+ * [CONTENT_LIKELY_POPUP] (F26): a repaint that likely added a popup (a large non-list container's subtree changed,
+ * as when an app adds a dim overlay): read like a repaint, but the read budget starts again (LG 11/1 올리브영 앱:
+ * the popup waited 3.2 s for a budgeted read).
+ */
+internal enum class SimpleInspectionEvent { WINDOW, CONTENT, TALKBACK_FOCUS, CONTENT_LIKELY_POPUP;
+    val repaint: Boolean get() = this == CONTENT || this == CONTENT_LIKELY_POPUP
+}
 
 /** The service's event scheduling boundary, shared with JVM regressions. No Android event is kept.
  * appInScope is a cheap scheduling filter; full authorization belongs to the collector's worker.
@@ -42,6 +49,9 @@ internal class SimpleInspectionEvents(
      */
     private var quiet = 0
 
+    /** F26: what the last read cost (ms); a repaint gap is never shorter than [ReadBudget.COST_FACTOR] times it. */
+    private var lastReadCost = 0L
+
     /** F24: the app whose window re-check chain is running now (null = none). */
     private var chainPackage: String? = null
 
@@ -71,7 +81,7 @@ internal class SimpleInspectionEvents(
         val activeJobs = jobs()
         if (activeJobs.busy) return
         if (promptShowing() && now() - lastInspection() < SimpleCloseEngineFeature.PROMPT_RECHECK_MILLIS) return
-        if (kind == SimpleInspectionEvent.CONTENT && now() - lastInspection() < ReadBudget.contentGap(quiet)) {
+        if (kind == SimpleInspectionEvent.CONTENT && now() - lastInspection() < ReadBudget.contentGap(quiet, lastReadCost)) {
             log.trace(SimpleTrace.CONTENT_READ_THROTTLED)
             return
         }
@@ -101,7 +111,7 @@ internal class SimpleInspectionEvents(
         }
         val at = now()
         // F24: a window change's re-check chain is running for this app: its next read covers a repaint.
-        if (kind == SimpleInspectionEvent.CONTENT && chainPackage == expectedPackage && activeJobs.inspecting) {
+        if (kind.repaint && chainPackage == expectedPackage && activeJobs.inspecting) {
             log.trace(SimpleTrace.EVENT_COALESCED)
             return
         }
@@ -113,7 +123,7 @@ internal class SimpleInspectionEvents(
         }
         val pending = activeJobs.inspecting && pendingSince != NOT_PENDING && pendingPackage == expectedPackage
         // F13: the read already waiting will see this change too.
-        if (pending && kind == SimpleInspectionEvent.CONTENT) {
+        if (pending && kind.repaint) {
             log.trace(SimpleTrace.EVENT_COALESCED)
             return
         }
@@ -124,7 +134,7 @@ internal class SimpleInspectionEvents(
         activeJobs.scheduleInspection {
             delay(firstWait)
             pendingSince = NOT_PENDING
-            var chain = kind != SimpleInspectionEvent.CONTENT
+            var chain = !kind.repaint
             if (!chain) {
                 // One read per repaint burst; repaints during it bring one more, a window event the chain.
                 while (true) {
@@ -138,7 +148,7 @@ internal class SimpleInspectionEvents(
                     // F24 (LG 11/1 G마켓: a carousel repaints during every read, so this loop read every 0.2 s for
                     // good): each further repaint read waits the budget, longer every time nothing is found.
                     quiet = minOf(quiet + 1, ReadBudget.MAX_LEVEL)
-                    delay(ReadBudget.contentGap(quiet))
+                    delay(ReadBudget.contentGap(quiet, lastReadCost))
                 }
                 if (!chain) {
                     exhausted()
@@ -174,9 +184,11 @@ internal class SimpleInspectionEvents(
     private suspend fun read(expectedPackage: String, trigger: DetectTrigger): Boolean {
         inFlightPackage = expectedPackage
         foldedIn = null
+        val start = now()
         try {
             return inspect(expectedPackage, trigger).also { found -> if (found) quiet = 0 }
         } finally {
+            lastReadCost = (now() - start).coerceAtLeast(0)
             if (inFlightPackage == expectedPackage) inFlightPackage = null
         }
     }
@@ -198,9 +210,32 @@ object ReadBudget {
     const val SLOW_WHOLE_MILLIS = 1_000L
     const val SLOW_WHOLE_EVERY = 9
     private const val FIRST_GAP_MILLIS = 200L
-    const val MAX_GAP_MILLIS = 3_000L
+    /** F26 (LG 11/1 올리브영 앱: a popup waited 3.2 s for a budgeted read): 3 → 1 s. */
+    const val MAX_GAP_MILLIS = 1_000L
 
-    fun contentGap(quiet: Int): Long = minOf(FIRST_GAP_MILLIS shl quiet.coerceIn(0, MAX_LEVEL), MAX_GAP_MILLIS)
+    /**
+     * F26: a repaint gap is at least this many times the last read's cost, so reading stays near 1/(1+factor) of the
+     * time (a 0.3 s read waits 1.8 s: 14%; a 0.1 s read waits the 1 s cap: 9%).
+     */
+    const val COST_FACTOR = 6L
+
+    fun contentGap(quiet: Int, lastCost: Long = 0L): Long {
+        val budget = minOf(FIRST_GAP_MILLIS shl quiet.coerceIn(0, MAX_LEVEL), MAX_GAP_MILLIS)
+        return if (quiet == 0) budget else maxOf(budget, minOf(lastCost * COST_FACTOR, COST_GAP_CAP_MILLIS))
+    }
+
+    /** F26: the cost stretch stops here (a 1.75 s whole read would otherwise wait 10 s); F24's old cap. */
+    const val COST_GAP_CAP_MILLIS = 3_000L
+
+    /**
+     * F26: a repaint that likely added a popup: a subtree change of a large (60% of the screen) container that is
+     * not a list, pager, scroll view or web view (those repaint on every scroll and carousel turn).
+     */
+    fun likelyPopup(subtreeChanged: Boolean, className: String?, areaRatio: Double): Boolean =
+        subtreeChanged && areaRatio >= LIKELY_POPUP_AREA && className != null && NOT_POPUP_CONTAINERS.none { className.contains(it, ignoreCase = true) }
+
+    private const val LIKELY_POPUP_AREA = 0.6
+    private val NOT_POPUP_CONTAINERS = listOf("WebView", "RecyclerView", "ListView", "ScrollView", "ViewPager", "GridView", "AbsListView")
 
     /**
      * [sinceAbortedWhole] (F25): ms since a whole read of this page stopped at [WholeReadCap] (null = none lately);

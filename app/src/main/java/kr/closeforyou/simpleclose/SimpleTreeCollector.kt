@@ -73,10 +73,23 @@ class SimpleTreeCollector(private val service: AccessibilityService) {
      * [wholeIfProbeMisses] false (F21, the strict close re-check): when the probe finds no popup, no whole-tree read
      * (2 s on 11번가): the read comes back with no nodes, which means "no popup there".
      */
-    fun read(expectedPackage: String, packageAllowed: (String) -> Boolean, probe: Boolean = true, wholeIfProbeMisses: Boolean = true): TreeRead? =
+    /**
+     * [capMillis] (F26): one deadline for every walk of this read (app windows, the popup subtree, the whole tree),
+     * counted from the start of the read, probe included (LG 11/1: G마켓 1044 ms past a 600 ms walk cap, an app read
+     * of 2193 ms not capped at all). The strict close re-check passes a shorter one.
+     */
+    fun read(
+        expectedPackage: String,
+        packageAllowed: (String) -> Boolean,
+        probe: Boolean = true,
+        wholeIfProbeMisses: Boolean = true,
+        capMillis: Long = WholeReadCap.MAX_MILLIS,
+    ): TreeRead? =
         SimpleCollectionGuard.read(expectedPackage, { service.rootInActiveWindow },
             { it.packageName?.toString() }, packageAllowed, collect = collect@{ root, packageName ->
                 val windows = mutableListOf<AccessibilityWindowInfo>()
+                val deadline = SystemClock.uptimeMillis() + capMillis
+                var aborted = false
                 try {
                     val screen = screenBounds()
                     windows += service.windows.orEmpty()
@@ -91,9 +104,10 @@ class SimpleTreeCollector(private val service: AccessibilityService) {
                             try {
                                 if (popupRoot.packageName?.toString() != packageName) continue
                                 val nodes = ArrayList<NodeSnapshot>(64)
-                                val count = WalkCount()
+                                val count = WalkCount(maxVisited = WholeReadCap.MAX_NODES, deadline = deadline)
                                 walk(popupRoot, "0", 0, nodes, screen, count)
-                                if (AppWindowRules.isPopup(nodes, screen)) {
+                                aborted = aborted || count.aborted
+                                if (!count.aborted && AppWindowRules.isPopup(nodes, screen)) {
                                     return@collect TreeRead(packageName, window.id, nodes, screen, true, count.visited, count.skipped,
                                         TreeReadMode.APP_WINDOW, popupWindowId = window.id)
                                 }
@@ -116,27 +130,30 @@ class SimpleTreeCollector(private val service: AccessibilityService) {
                             null -> if (found.capped) ProbeOutcome.MISS_CAPPED else ProbeOutcome.MISS
                         }
                         found.path?.takeIf { it != "0" }?.let { path ->
-                            val count = WalkCount()
+                            // A "popup" subtree that runs past the deadline is the page, not a popup: whole tree below.
+                            val count = WalkCount(maxVisited = WholeReadCap.MAX_NODES, deadline = deadline)
                             // F16: a front layer brings the one page node under it, so the finder sees it is over the page.
                             val nodes = subtree(root, path, screen, count)?.let { sub ->
                                 val context = found.context ?: return@let sub
                                 single(root, context, screen, count)?.let { listOf(it) + sub }
                             }
                             // The subtree must give a popup root by itself; otherwise the whole tree, as before.
-                            if (nodes != null && PopupRootFinder.find(nodes, screen) != null) {
+                            aborted = aborted || count.aborted
+                            if (nodes != null && !count.aborted && PopupRootFinder.find(nodes, screen) != null) {
                                 return@collect TreeRead(packageName, root.windowId, nodes, screen, false,
                                     probeVisited + count.visited, count.skipped, TreeReadMode.POPUP_SUBTREE, probeVisited, probeOutcome = outcome, appWindowIgnored = appWindowIgnored)
                             }
                         }
                         mode = TreeReadMode.FULL_AFTER_PROBE
                         if (!wholeIfProbeMisses) {
-                            return@collect TreeRead(packageName, root.windowId, emptyList(), screen, false, probeVisited, 0, mode, probeVisited, probeOutcome = outcome, appWindowIgnored = appWindowIgnored)
+                            return@collect TreeRead(packageName, root.windowId, emptyList(), screen, false, probeVisited, 0, mode, probeVisited,
+                                probeOutcome = outcome, appWindowIgnored = appWindowIgnored, wholeAborted = aborted)
                         }
                     }
                     val nodes = ArrayList<NodeSnapshot>(256)
                     // F25 (LG 11/1 G마켓: one whole read took 6.1 s): the walk stops at [WholeReadCap]; the probe above
                     // already looked at the end of the page (last child first), this walk covers its beginning.
-                    val count = WalkCount(maxVisited = WholeReadCap.MAX_NODES, deadline = SystemClock.uptimeMillis() + WholeReadCap.MAX_MILLIS)
+                    val count = WalkCount(maxVisited = WholeReadCap.MAX_NODES, deadline = deadline)
                     walk(root, "0", 0, nodes, screen, count)
                     // F25 (safety): a popup cut by the cap could be missing a 결제·동의 button that must keep it asked:
                     // the popup found in the part read is read again whole, its own subtree only.
@@ -145,7 +162,7 @@ class SimpleTreeCollector(private val service: AccessibilityService) {
                         subtree(root, path, screen, popupCount).also { count.visited += popupCount.visited }
                     }
                     TreeRead(packageName, root.windowId, complete, screen, bounded, probeVisited + count.visited, count.skipped, mode, probeVisited,
-                        probeOutcome = outcome, appWindowIgnored = appWindowIgnored, wholeAborted = count.aborted)
+                        probeOutcome = outcome, appWindowIgnored = appWindowIgnored, wholeAborted = aborted || count.aborted)
                 } finally {
                     windows.forEach(::release)
                 }
@@ -308,6 +325,22 @@ class SimpleTreeCollector(private val service: AccessibilityService) {
         }
     }
 
+    /** F26: the share of the screen an event's source covers (one binder call), or null when there is none. */
+    fun sourceAreaRatio(event: android.view.accessibility.AccessibilityEvent): Double? = try {
+        event.source?.let { node ->
+            try {
+                val b = boundsOf(node)
+                val screen = screenBounds()
+                val screenArea = screen.width.toLong() * screen.height
+                if (screenArea <= 0) null else b.width.toLong() * b.height / screenArea.toDouble()
+            } finally {
+                release(node)
+            }
+        }
+    } catch (e: RuntimeException) {
+        null
+    }
+
     /** F15: the node an accessibility-focus event names, as [FocusReclaimRules] needs it; null when there is none. */
     fun focusedNode(event: android.view.accessibility.AccessibilityEvent): Pair<FocusedNode, AccessibilityNodeInfo>? = try {
         event.source?.let { FocusedNode(it.text?.toString(), it.contentDescription?.toString(), boundsOf(it), it.isVisibleToUser) to it }
@@ -459,7 +492,8 @@ class SimpleTreeCollector(private val service: AccessibilityService) {
 
     private fun walk(node: AccessibilityNodeInfo, path: String, depth: Int, out: MutableList<NodeSnapshot>, screen: ScreenBounds, count: WalkCount) {
         if (out.size >= SimpleCloseEngineFeature.MAX_NODES || depth > SimpleCloseEngineFeature.MAX_DEPTH || count.aborted) return
-        if (count.visited >= count.maxVisited || (count.visited and 15) == 0 && SystemClock.uptimeMillis() > count.deadline) {
+        // F26: the clock every 4 nodes (G마켓 went 444 ms past the cap with every 16th).
+        if (count.visited >= count.maxVisited || (count.visited and 3) == 0 && SystemClock.uptimeMillis() > count.deadline) {
             count.aborted = true
             return
         }

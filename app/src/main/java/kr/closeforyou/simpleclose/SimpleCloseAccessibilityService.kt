@@ -112,6 +112,8 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
     private var abortedAt = 0L
     /** F24: share of time spent reading, per 10 s window (debug `READ_DUTY_PCT`). */
     private var dutyWindowStart = 0L
+    /** F26: when a repaint's source was last looked up for [contentKind]. */
+    private var likelyPopupCheckAt = 0L
     private var dutyBusy = 0L
     /** F13: the person's press already moved TalkBack's focus off the popup before our window went. */
     private var focusedBeforeClose = false
@@ -262,7 +264,7 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
         if (event.eventType == AccessibilityEvent.TYPE_VIEW_ACCESSIBILITY_FOCUSED) reclaim?.let { focusMovedDuringReclaim(it, event) }
         val kind = when (event.eventType) {
             AccessibilityEvent.TYPE_VIEW_ACCESSIBILITY_FOCUSED -> SimpleInspectionEvent.TALKBACK_FOCUS
-            AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED -> SimpleInspectionEvent.CONTENT
+            AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED -> contentKind(event)
             else -> SimpleInspectionEvent.WINDOW
         }
         inspectionEvents.onEvent(eventPackage, kind)
@@ -789,6 +791,25 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
         scope.launch { announcer.announce(AnnouncementRequest(null, AnnouncementKind.POPUP_FOUND, sentence)) }
     }
 
+    /**
+     * F26: a pane appearing is a new window part (budget and re-check chain start again). A subtree change of a large
+     * container that is not a list or web view ([ReadBudget.likelyPopup]) likely added a popup: its source bounds are
+     * looked up (one binder call), at most every [LIKELY_POPUP_CHECK_MILLIS]. Everything else is a plain repaint.
+     */
+    private fun contentKind(event: AccessibilityEvent): SimpleInspectionEvent {
+        val types = event.contentChangeTypes
+        if (types and AccessibilityEvent.CONTENT_CHANGE_TYPE_PANE_APPEARED != 0) return SimpleInspectionEvent.WINDOW
+        val subtree = types and AccessibilityEvent.CONTENT_CHANGE_TYPE_SUBTREE != 0
+        val className = event.className?.toString()
+        val now = SystemClock.uptimeMillis()
+        if (!subtree || !ReadBudget.likelyPopup(true, className, 1.0) || now - likelyPopupCheckAt < LIKELY_POPUP_CHECK_MILLIS) {
+            return SimpleInspectionEvent.CONTENT
+        }
+        likelyPopupCheckAt = now
+        val ratio = collector.sourceAreaRatio(event) ?: return SimpleInspectionEvent.CONTENT
+        return if (ReadBudget.likelyPopup(true, className, ratio)) SimpleInspectionEvent.CONTENT_LIKELY_POPUP else SimpleInspectionEvent.CONTENT
+    }
+
     /** F24: adds one read to the current 10 s window and logs the share of time reading when the window is over. */
     private fun countDuty(start: Long, cost: Long) {
         if (dutyWindowStart == 0L) dutyWindowStart = start
@@ -990,7 +1011,8 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
                 val recheckStart = SystemClock.uptimeMillis()
                 delay(SimpleCloseEngineFeature.CLOSE_RECHECK_MILLIS)
                 val back = withContext(Dispatchers.Default) {
-                    val again = collector.read(token.packageName, ::allowsApp, wholeIfProbeMisses = false) ?: return@withContext false
+                    val again = collector.read(token.packageName, ::allowsApp, wholeIfProbeMisses = false, capMillis = RECHECK_CAP_MILLIS)
+                        ?: return@withContext false
                     val root = PopupRootFinder.find(again.nodes, again.screen, again.activeWindowBounded) ?: return@withContext false
                     PopupMemory.of(popup).reappeared(root, again.nodes)
                 }
@@ -1137,6 +1159,9 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
         const val VIDEO_WEB_STICKY_MILLIS = 60_000L
         const val SLOW_PAGE_MILLIS = 60_000L
         const val DUTY_WINDOW_MILLIS = 10_000L
+        const val LIKELY_POPUP_CHECK_MILLIS = 300L
+        /** F26 (LG 11/1 올리브영 앱: CLOSE_RECHECK_MS 905): the strict re-check's read has this much, probe included. */
+        const val RECHECK_CAP_MILLIS = 250L
         val WINDOW_EVENTS = setOf(
             AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED, AccessibilityEvent.TYPE_WINDOWS_CHANGED,
             AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED, AccessibilityEvent.TYPE_VIEW_ACCESSIBILITY_FOCUSED,
