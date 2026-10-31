@@ -7,6 +7,7 @@ import kr.closeforyou.core.contract.VoiceEvent
 import kr.closeforyou.core.model.SnapshotToken
 import kr.closeforyou.ui.voice.choice.ChoicePrompt
 import kr.closeforyou.ui.voice.choice.PromptOption
+import kr.closeforyou.ui.voice.choice.PromptOptionKind
 
 /**
  * C-only result of one speak-button session. The contract's [VoiceEvent] has a single Cancelled
@@ -32,9 +33,19 @@ sealed interface VoiceUtterance {
     /** The recognizer itself cannot run now (busy, language missing, permission revoked). */
     data object Unavailable : VoiceUtterance
 
+    /**
+     * F23: "○○ 버튼으로 이동" ("결제 버튼 어디야" too): only TalkBack's focus or the button's place, never a press,
+     * so a payment or permission button may be named (CLAUDE.local 3-1: 위치 안내까지). [spoken] is the normalized
+     * sentence, kept in memory for this one match against the prompt's own button names; never logged or shown.
+     */
+    class MoveTo(val spoken: String) : VoiceUtterance {
+        override fun toString(): String = "MoveTo(redacted)"
+    }
+
     /** What the contract's [VoiceEvent] stream reports for this result. */
     fun toEvent(token: SnapshotToken): VoiceEvent = when (this) {
         is Command -> VoiceEvent.Recognized(command, token)
+        is MoveTo -> VoiceEvent.Recognized(VoiceCommand.MOVE_TO_BUTTON, token)
         Unavailable -> VoiceEvent.Unavailable
         NeedsTapConfirm, Refused, NotUnderstood, Silent -> VoiceEvent.Cancelled
     }
@@ -71,5 +82,22 @@ object VoicePolicy {
         VoiceUtterance.NotUnderstood -> VoiceOutcome.Say(R.string.ui_voice_not_understood)
         VoiceUtterance.Unavailable -> VoiceOutcome.Say(R.string.ui_voice_unavailable)
         VoiceUtterance.Silent -> VoiceOutcome.Quiet
+        is VoiceUtterance.MoveTo -> moveTo(utterance.spoken, prompt)
+    }
+
+    /**
+     * F23: the [버튼으로 이동] option whose button name was said ("허용 버튼으로 가", spaces ignored); with only one
+     * such option, that one. Several and none named: the person picks on screen. Only [PromptOptionKind.MOVE_TO_BUTTON]
+     * is ever chosen here: a move presses nothing.
+     */
+    fun moveTo(spoken: String, prompt: ChoicePrompt): VoiceOutcome {
+        val moves = prompt.options.filter { it.kind == PromptOptionKind.MOVE_TO_BUTTON }
+        if (moves.isEmpty()) return VoiceOutcome.Say(R.string.ui_voice_not_here)
+        val named = moves.filter { option ->
+            val name = option.buttonLabel?.let(KoreanVoiceCommandMatcher::normalize).orEmpty()
+            name.isNotEmpty() && (name in spoken || spoken.substringBefore("버튼").let { it.length >= 2 && it in name })
+        }
+        val pick = named.singleOrNull() ?: moves.singleOrNull()?.takeIf { named.isEmpty() }
+        return pick?.let { VoiceOutcome.Choose(it) } ?: VoiceOutcome.Say(R.string.ui_voice_pick_on_screen)
     }
 }

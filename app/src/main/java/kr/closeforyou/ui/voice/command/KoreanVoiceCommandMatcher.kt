@@ -51,6 +51,9 @@ object KoreanVoiceCommandMatcher {
         "결제", "구매", "구입", "주문", "구독", "삭제", "지워", "지우", "권한", "허용", "동의", "로그인", "가입",
     )
 
+    // F23: "○○ 버튼으로 이동/가/찾아", "○○ 버튼 어디(야)", "○○ 버튼 위치".
+    private val movePhrases = listOf("버튼으로이동", "버튼으로가", "버튼찾아", "버튼위치", "버튼어디", "버튼이어디")
+
     // "앞으로 항상" choices need the button's name read out and a tap (CLAUDE.md 3-1, 3-6).
     private val tapConfirmWords = listOf("항상", "앞으로", "매번", "다시묻지", "묻지마", "묻지말", "그만물어")
 
@@ -61,6 +64,8 @@ object KoreanVoiceCommandMatcher {
     fun classify(recognized: String?): VoiceUtterance {
         val text = normalize(recognized ?: return VoiceUtterance.NotUnderstood)
         if (text.isEmpty() || text.length > MAX_COMMAND_LENGTH) return VoiceUtterance.NotUnderstood
+        // F23: a move only points at a button (focus or its place), so it may name even a payment button.
+        if (movePhrases.any { it in text } && negations.none { it in text }) return VoiceUtterance.MoveTo(text)
         if (refusedWords.any { it in text }) return VoiceUtterance.Refused
         if (tapConfirmWords.any { it in text }) return VoiceUtterance.NeedsTapConfirm
         return match(text)?.let { VoiceUtterance.Command(it) } ?: VoiceUtterance.NotUnderstood
