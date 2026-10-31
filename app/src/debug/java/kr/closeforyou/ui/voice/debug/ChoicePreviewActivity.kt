@@ -227,6 +227,10 @@ private val scenarios = listOf(
     Scenario(R.string.ui_debug_scenario_unlabeled, MockPopupFixtures.unlabeledButton()),
     Scenario(R.string.ui_debug_scenario_video, MockPopupFixtures.videoWithoutAdEvidence()),
     Scenario(R.string.ui_debug_scenario_close_and_skip, closeAndSkipFixture()),
+    // Reading tests (SpeakableText); appended so the overlay indices above stay the same.
+    Scenario(R.string.ui_debug_scenario_reading_notice, ReadingTestFixtures.notice()),
+    Scenario(R.string.ui_debug_scenario_reading_ad, ReadingTestFixtures.advertisement()),
+    Scenario(R.string.ui_debug_scenario_reading_long_close, ReadingTestFixtures.longCloseName()),
 )
 
 /** C-local synthetic variant (debug only): the ad fixture with both a close and a skip button. */

@@ -46,6 +46,11 @@
     <string name="ui_label_reject_not_in_list">닫기 버튼인지 확인할 수 없어서 대신 누르지 않아요.</string>
     <string name="ui_label_reject_label_conflict">버튼 이름이 서로 달라서 대신 누르지 않아요.</string>
     <string name="ui_choice_press_candidate">\'%1$s\' 버튼 눌러 주기</string>
+    <!-- 버튼 이름이 길거나 역할을 말하지 않을 때(예: "앱설치 안내 레이어 닫기", "웹으로 볼래요") 역할 이름으로 보여 준다 (ButtonNameDisplay). -->
+    <string name="ui_choice_role_close">닫기</string>
+    <string name="ui_choice_role_skip">건너뛰기</string>
+    <!-- [내용 다시 읽기] 끝: 역할 이름으로 줄여 보인 버튼의 원래 이름. 팝업 글에 이미 있으면 말하지 않는다. -->
+    <string name="ui_content_button_real_name">\'%1$s\' 버튼은 화면에 \'%2$s\'라고 쓰여 있어요.</string>
     <!-- [버튼으로 이동]: 포커스만 옮긴다. 누르지 않는다 (계약 전이라 기능 플래그로 꺼 둠). -->
     <string name="ui_choice_move_to_button">\'%1$s\' 버튼으로 이동</string>
     <!-- [앞으로 항상 닫기]·[다시 묻지 않기] (기능 플래그로 꺼 둠). 항상 닫기는 누를 버튼 이름을 읽어 준다. -->

@@ -12,6 +12,8 @@ import kr.closeforyou.core.contract.AnnouncementState
 import kr.closeforyou.core.contract.PopupAnnouncer
 import kr.closeforyou.core.model.PopupAnalysis
 import kr.closeforyou.ui.voice.PressResultSpeech
+import kr.closeforyou.ui.voice.SpeakableText
+import kr.closeforyou.ui.voice.choice.ButtonNameDisplay
 import kr.closeforyou.ui.voice.choice.ChoicePrompt
 import kr.closeforyou.ui.voice.choice.PromptOptionKind
 import kr.closeforyou.ui.voice.settings.AnnouncementDetail
@@ -195,18 +197,31 @@ object PromptSpeech {
         add(SpeechPart(R.string.ui_choice_where))
     }
 
-    /** Button names joined in on-screen order; null when there are none of that kind. */
+    /** Real button names (not shortened) joined in on-screen order; null when there are none of that kind. */
     private fun ChoicePrompt.labelsOf(kind: PromptOptionKind): String? =
-        options.filter { it.kind == kind }.mapNotNull { it.buttonLabel?.takeIf(String::isNotBlank) }
+        options.filter { it.kind == kind }.mapNotNull { it.buttonLabel?.let(SpeakableText::of)?.takeIf(String::isNotBlank) }
             .joinToString(LABEL_SEPARATOR) { "'$it'" }.ifEmpty { null }
 
     private fun ChoicePrompt.hasMoveOption() = options.any { it.kind == PromptOptionKind.MOVE_TO_BUTTON }
 
     private const val LABEL_SEPARATOR = ", "
 
-    /** [내용 다시 읽기]: the popup's extracted text in reading order, or a "nothing to read" line. */
+    /**
+     * [내용 다시 읽기]: the popup's extracted text in reading order, made speakable ([SpeakableText]),
+     * then the real name of each button shown by its role ([ButtonNameDisplay.realNames]);
+     * or a "nothing to read" line.
+     */
     fun content(context: Context, analysis: PopupAnalysis): String =
-        contentOrNull(analysis) ?: context.getString(R.string.ui_content_none)
+        content(analysis) { res, args -> context.getString(res, *args.toTypedArray()) }
+
+    internal fun content(analysis: PopupAnalysis, text: (Int, List<Any>) -> String): String {
+        val body = contentOrNull(analysis)?.let(SpeakableText::of)?.takeIf(String::isNotBlank)
+        val names = ButtonNameDisplay.realNames(analysis).map {
+            text(R.string.ui_content_button_real_name, listOf(text(it.roleRes, emptyList()), SpeakableText.of(it.label)))
+        }
+        if (body == null && names.isEmpty()) return text(R.string.ui_content_none, emptyList())
+        return (listOfNotNull(body?.let { if (names.isEmpty()) it else SpeakableText.withPause(it) }) + names).joinToString("\n")
+    }
 
     internal fun contentOrNull(analysis: PopupAnalysis): String? =
         analysis.texts.map { it.text.trim() }.filter { it.isNotEmpty() }.joinToString("\n").ifEmpty { null }

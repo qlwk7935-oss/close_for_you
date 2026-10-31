@@ -3,6 +3,7 @@ package kr.closeforyou.ui.voice.overlay
 import android.content.Context
 import android.view.accessibility.AccessibilityManager
 import kr.closeforyou.R
+import kr.closeforyou.ui.voice.SpeakableText
 import kr.closeforyou.ui.voice.choice.ChoicePrompt
 import kr.closeforyou.ui.voice.choice.PromptOptionKind
 import kr.closeforyou.ui.voice.settings.UiVoicePreferences
@@ -96,13 +97,14 @@ object TalkBackTakeoverPlan {
      */
     fun speech(prompt: ChoicePrompt, text: (Int, List<Any>) -> String, fallback: () -> String): String? {
         if (prompt.pressFailure != null) return null
-        val popupText = prompt.popupText?.takeIf { it.isNotBlank() } ?: return fallback()
+        // Same words, only symbols and formats made readable ("02:00~04:00" → "오전 2시부터 오전 4시까지").
+        val popupText = prompt.popupText?.let(SpeakableText::of)?.takeIf { it.isNotBlank() } ?: return fallback()
         val countdown = prompt.countdownSeconds
         val extra = when {
             countdown != null -> text(R.string.ui_choice_video_ad_wait, listOf(countdown))
             prompt.cannotPressForUser -> text(R.string.ui_choice_cannot_press, emptyList())
             else -> null
         }
-        return if (extra == null) popupText else "$popupText\n$extra"
+        return if (extra == null) popupText else "${SpeakableText.withPause(popupText)}\n$extra"
     }
 }

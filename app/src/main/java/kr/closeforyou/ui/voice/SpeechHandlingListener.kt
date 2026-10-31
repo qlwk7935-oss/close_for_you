@@ -101,7 +101,7 @@ class SpeechHandlingListener(
             )
             is AutoSpeech.Announce -> {
                 val kindLine = format.get(speech.summary.textRes())
-                val content = contentOf(report)?.takeIf { it.isNotBlank() }
+                val content = contentOf(report)?.let(SpeakableText::of)?.takeIf { it.isNotBlank() }
                 if (content == null) {
                     say(report.token, AnnouncementKind.POPUP_FOUND, kindLine)
                 } else {
@@ -148,7 +148,7 @@ class SpeechHandlingListener(
          * long number (phone, card, account), so personal numbers are never read out by C.
          */
         fun spokenTitle(raw: String?): String? {
-            val short = AutoDecisionSpeech.shortTitle(raw) ?: return null
+            val short = AutoDecisionSpeech.shortTitle(raw?.let(SpeakableText::inline)) ?: return null
             if (LONG_NUMBER.containsMatchIn(raw.orEmpty())) return null
             return short
         }
