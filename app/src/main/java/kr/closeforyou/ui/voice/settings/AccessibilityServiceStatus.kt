@@ -8,6 +8,7 @@ import android.os.Bundle
 import android.provider.Settings
 import android.view.accessibility.AccessibilityManager
 import kr.closeforyou.app.CorePreferences
+import kr.closeforyou.simpleclose.SimpleCloseEngineFeature
 
 /**
  * What C's first-run and settings screens read from A, read only. C never turns the service on,
@@ -16,10 +17,10 @@ import kr.closeforyou.app.CorePreferences
  * Android: [AndroidCoreSetupStatus]. How A wires its own source: docs/c-notes/onboarding-release.md.
  */
 interface CoreSetupStatus {
-    /** A's accessibility service is turned on in system settings. Re-read on every resume. */
+    /** The app's engine service ([AndroidCoreSetupStatus.ENGINE_SERVICE_CLASS]) is on in system settings. Re-read on every resume. */
     fun serviceEnabled(): Boolean
 
-    /** A's "화면 정보 수집" consent; "도와줄 앱" additions wait for it ([HelpAppsSync]). */
+    /** A's "화면 정보 수집" consent; "도와줄 앱" additions wait for it ([HelpAppsSync]). Always true with the plan-B engine. */
     fun collectionConsentGranted(): Boolean
 
     companion object {
@@ -43,7 +44,7 @@ class AndroidCoreSetupStatus(context: Context) : CoreSetupStatus {
     private val core = CorePreferences.get(app)
 
     override fun serviceEnabled(): Boolean {
-        val service = ServiceComponent(app.packageName, A_SERVICE_CLASS)
+        val service = ServiceComponent(app.packageName, ENGINE_SERVICE_CLASS)
         val manager = app.getSystemService(AccessibilityManager::class.java)
         val listed = manager?.getEnabledAccessibilityServiceList(AccessibilityServiceInfo.FEEDBACK_ALL_MASK)
             .orEmpty()
@@ -52,11 +53,20 @@ class AndroidCoreSetupStatus(context: Context) : CoreSetupStatus {
         return AccessibilityServiceRules.isEnabled(service, listed, secure)
     }
 
-    override fun collectionConsentGranted(): Boolean = core.currentSettings().consentGranted
+    /** The plan-B engine reads the pending "도와줄 앱" list itself ([kr.closeforyou.simpleclose.SimpleAppAllowance]), so nothing waits for A's consent. */
+    override fun collectionConsentGranted(): Boolean =
+        SimpleCloseEngineFeature.enabled || core.currentSettings().consentGranted
 
     companion object {
         /** A's service (manifest `android:name`). A string, so C does not depend on A's class. */
         const val A_SERVICE_CLASS = "kr.closeforyou.accessibility.CloseForYouAccessibilityService"
+
+        /** The plan-B engine (integration/popup-helper): the service the first-run and settings screens check and open. */
+        const val SIMPLE_SERVICE_CLASS = "kr.closeforyou.simpleclose.SimpleCloseAccessibilityService"
+
+        /** Which service "켜짐/꺼짐" and [설정 열기] mean: plan B while [SimpleCloseEngineFeature.enabled], else A's. */
+        val ENGINE_SERVICE_CLASS: String
+            get() = if (SimpleCloseEngineFeature.enabled) SIMPLE_SERVICE_CLASS else A_SERVICE_CLASS
 
         /**
          * The system's accessibility settings, asking the Settings app to scroll to and highlight
@@ -65,7 +75,7 @@ class AndroidCoreSetupStatus(context: Context) : CoreSetupStatus {
          */
         fun openServiceSettings(context: Context): Boolean = try {
             val intent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
-            val key = ServiceSettingsHighlight.key(ServiceComponent(context.packageName, A_SERVICE_CLASS))
+            val key = ServiceSettingsHighlight.key(ServiceComponent(context.packageName, ENGINE_SERVICE_CLASS))
             intent.putExtra(ServiceSettingsHighlight.EXTRA_FRAGMENT_ARG_KEY, key)
             intent.putExtra(ServiceSettingsHighlight.EXTRA_SHOW_FRAGMENT_ARGS, Bundle().apply {
                 putString(ServiceSettingsHighlight.EXTRA_FRAGMENT_ARG_KEY, key)

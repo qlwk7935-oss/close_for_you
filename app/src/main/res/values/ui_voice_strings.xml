@@ -332,9 +332,13 @@
     <string name="ui_help_apps_exclude_button">제외할 앱 고르기</string>
     <string name="ui_settings_rules_help">\'앞으로 항상 닫기\'로 기억한 팝업은 도와줄 앱이라면 어느 앱에서든 똑같은 팝업이 다시 뜰 때 묻지 않고 닫아요. 해제하면 다시 물어봐요.</string>
     <string name="ui_settings_section_service">접근성 서비스</string>
-    <string name="ui_settings_open_core">기본 설정 열기</string>
-    <string name="ui_settings_open_core_help">화면 정보 수집 동의, 팝업 살펴보기 시작·일시정지, 이미지 글자 읽기는 기본 설정에서 정해요.</string>
+    <string name="ui_settings_open_core">개발자 화면 열기</string>
+    <string name="ui_settings_section_developer">개발자 화면</string>
+    <string name="ui_settings_open_core_help">A 엔진의 개발용 화면이에요. 화면 정보 수집 동의, 살펴보기 시작·일시정지, 이미지 글자 읽기를 정해요. 팝업처리도우미를 쓸 때는 필요 없어요.</string>
     <string name="ui_settings_section_setup">처음 설정</string>
     <string name="ui_settings_restart_setup">처음 설정 다시 하기</string>
     <string name="ui_settings_restart_setup_help">처음 설정 화면을 다시 보여 줘요. 사용 시작을 누를 때까지 자동 닫기는 쉬어요.</string>
+
+    <!-- 통합 브랜치 integration/popup-helper: 단순 닫기 엔진(플랜 B)이 앱의 접근성 서비스. 이름은 app_name("팝업처리도우미") -->
+    <string name="ui_simple_close_service_description">도와줄 앱의 팝업을 찾아 광고는 설정대로 닫고, 그 밖에는 선택 창으로 물어봅니다. 결제·동의·권한 같은 중요한 버튼은 대신 누르지 않습니다. 다른 팝업 엔진 서비스와 함께 켜지 마세요.</string>
 </resources>

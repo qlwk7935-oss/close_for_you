@@ -60,6 +60,7 @@ import kr.closeforyou.core.contract.PopupRuleRepository
 import kr.closeforyou.core.model.ChoiceKind
 import kr.closeforyou.core.model.PopupRule
 import kr.closeforyou.core.model.RuleKey
+import kr.closeforyou.simpleclose.SimpleCloseEngineFeature
 import kr.closeforyou.ui.voice.command.AndroidMicrophoneAccess
 import kr.closeforyou.ui.voice.command.SpeakButtonPolicy
 import kr.closeforyou.ui.voice.command.SpeakButtonState
@@ -87,7 +88,7 @@ fun UiVoiceSettingsRoute(
     deleteAll: suspend () -> Unit = repository::deleteAll,
     clock: Clock = Clock.systemDefaultZone(),
     onOpenCleanUp: suspend () -> Unit = {},
-    /** A's "기본 설정" (consent, start/pause, OCR); null hides [기본 설정 열기]. See [UiVoiceAppRoot]. */
+    /** A's own screen (consent, start/pause, OCR), "개발자 화면" at the bottom; null hides it. See [UiVoiceAppRoot]. */
     onOpenCoreSettings: (() -> Unit)? = null,
     status: CoreSetupStatus? = null,
 ) {
@@ -133,7 +134,7 @@ fun UiVoiceSettingsRoute(
         pending = settings.pendingHelpPackages,
         userExcluded = settings.helpAppsExcluded,
         catalog = catalog,
-        consentGranted = coreSettings.consentGranted,
+        consentGranted = setupStatus.collectionConsentGranted(),
     )
     // Microphone: asked only here inside the Activity, never from the service's overlay.
     val microphone = remember { AndroidMicrophoneAccess(context) }
@@ -160,7 +161,8 @@ fun UiVoiceSettingsRoute(
     UiVoiceSettingsScreen(
         settings = settings,
         coreAllowedPackages = coreSettings.allowedPackages,
-        collectionEnabled = coreSettings.collectionEnabled,
+        // Plan-B engine: it works whenever its service is on (A's start/pause is in the developer screen).
+        collectionEnabled = if (SimpleCloseEngineFeature.enabled) serviceOn else coreSettings.collectionEnabled,
         rules = rules,
         appName = { appNames[it] ?: unknownApp },
         onAutoCloseChange = preferences::setAutoClose,
@@ -241,7 +243,7 @@ fun UiVoiceSettingsScreen(
     serviceOn: Boolean? = null,
     serviceOpenFailed: Boolean = false,
     onOpenServiceSettings: () -> Unit = {},
-    /** A's "기본 설정"; null hides [기본 설정 열기]. */
+    /** A's own screen ("개발자 화면", last on the page); null hides it. */
     onOpenCoreSettings: (() -> Unit)? = null,
     /** [처음 설정 다시 하기]; null hides it. */
     onRestartSetup: (() -> Unit)? = null,
@@ -290,14 +292,7 @@ fun UiVoiceSettingsScreen(
                 if (collectionEnabled) R.string.ui_settings_status_running else R.string.ui_settings_status_paused,
             ),
         )
-        if (onOpenCoreSettings != null) {
-            HelpText(stringResource(R.string.ui_settings_open_core_help))
-            OutlinedButton(onClick = onOpenCoreSettings, modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp)) {
-                Text(stringResource(R.string.ui_settings_open_core), fontSize = UiType.body)
-            }
-        } else {
-            HelpText(stringResource(R.string.ui_settings_status_where))
-        }
+        if (onOpenCoreSettings == null) HelpText(stringResource(R.string.ui_settings_status_where))
 
         // Demo mode (10/30): no per-app switch; every helped app follows the preset and its remembered popups.
         if (PerAppAutoCloseGateFeature.enabled) {
@@ -401,6 +396,16 @@ fun UiVoiceSettingsScreen(
             HelpText(stringResource(R.string.ui_settings_restart_setup_help))
             OutlinedButton(onClick = onRestartSetup, modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp)) {
                 Text(stringResource(R.string.ui_settings_restart_setup), fontSize = UiType.body)
+            }
+        }
+
+        // Last on the page: A's own screen (its engine's consent, start/pause, OCR), kept for development.
+        if (onOpenCoreSettings != null) {
+            HorizontalDivider()
+            Heading(R.string.ui_settings_section_developer)
+            HelpText(stringResource(R.string.ui_settings_open_core_help))
+            OutlinedButton(onClick = onOpenCoreSettings, modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp)) {
+                Text(stringResource(R.string.ui_settings_open_core), fontSize = UiType.body)
             }
         }
     }

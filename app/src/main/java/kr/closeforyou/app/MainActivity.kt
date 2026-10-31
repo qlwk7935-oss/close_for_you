@@ -47,14 +47,19 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kr.closeforyou.accessibility.AccessibilityRuntime
+import kr.closeforyou.ui.voice.settings.UiVoiceAppRoot
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val preferences = CorePreferences.get(this)
+        // integration/popup-helper: C's first-run setup, then C's settings as the home screen.
+        // This screen (A's engine setup) opens from "개발자 화면" at the bottom of the settings.
         setContent {
-            MaterialTheme {
-                CoreSetupScreen(this, preferences)
+            UiVoiceAppRoot {
+                MaterialTheme {
+                    CoreSetupScreen(this, preferences)
+                }
             }
         }
     }

@@ -16,8 +16,8 @@ import kr.closeforyou.ui.voice.UiVoiceTheme
  * docs/c-notes/onboarding-release.md):
  * 1. first run not finished → the five-step setup ([UiVoiceOnboardingGate]);
  * 2. then C's settings as the home screen ("팝업처리도우미 설정", D's real Room rules);
- * 3. [기본 설정 열기] there opens [coreSettings] (A's screen: collection consent, start/pause, OCR),
- *    and system back returns to the home screen.
+ * 3. [개발자 화면 열기] at the bottom there opens [coreSettings] (A's screen: collection consent,
+ *    start/pause, OCR for A's engine), and system back returns to the home screen.
  * C's screens use [UiVoiceTheme] (follows the system dark mode). [coreSettings] keeps A's own theme
  * and Scaffold. Focus is never moved.
  */

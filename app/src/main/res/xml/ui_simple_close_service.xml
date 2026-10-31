@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- C 단순 닫기 엔진(플랜 B, debug 전용). A의 "닫아줄게" 서비스와 둘 중 하나만 켠다.
+<!-- C 단순 닫기 엔진(플랜 B, main 소스셋 — integration/popup-helper). A의 "닫아줄게" 서비스와 둘 중 하나만 켠다.
      창 이벤트만 받고, 활성 창의 트리를 읽어 팝업 루트를 찾는다. 제스처·스크린샷 권한은 쓰지 않는다.
      크롬 웹 노드: 접근성 서비스가 canRetrieveWindowContent로 켜져 있으면 크롬이 웹 내용을 노드로 내보낸다(LG 확인).
      flagRequestEnhancedWebAccessibility는 API 26부터 효과 없음(공식 문서 deprecated)이라 넣지 않는다. -->

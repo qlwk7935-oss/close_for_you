@@ -55,8 +55,8 @@ import kr.closeforyou.ui.voice.overlay.PromptSpeech
 import kr.closeforyou.ui.voice.settings.UiVoicePreferences
 
 /**
- * C's simple close engine (plan B; see [SimpleCloseEngineFeature]). Debug builds only, declared in the
- * debug manifest. Turn on either this service or A's "닫아줄게", never both.
+ * C's simple close engine (plan B; see [SimpleCloseEngineFeature]). Declared in the main manifest as
+ * "팝업처리도우미" (integration/popup-helper). Turn on either this service or A's "닫아줄게", never both.
  *
  * Flow per window event of a helped app: debounce → [SimpleTreeCollector] (off the main thread) →
  * [PopupRootFinder] → [SimplePopupAnalysis] → B's [DecisionPopupClassifier] → [SimpleCloseDecider] →
