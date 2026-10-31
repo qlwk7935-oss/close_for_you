@@ -206,6 +206,32 @@ A 서비스(`CloseForYouAccessibilityService`)·`accessibility_service_config.xm
   - 대기 합치기(F13)는 이번 수정의 바탕이라 유지한다.
 - 검증: 5개 Gradle 작업 통과, 단위 시험 debug 1084개·release 1069개 실패 0, lintDebug 오류 0(경고 12), INTERNET 0·새 권한 없음. 시험 추가: 읽는 중 보호 3, 순회 규칙 4.
 
+### 8-7. 우진 PR #66 병합 (`origin/integration/a-mutual-exclusion` 82313c3, 병합 커밋, 리베이스 X)
+
+- A 영역만 바뀜(`accessibility/AEngineExclusion`·`AndroidEnabledEngineSource`·`EnabledEnginePolicy`, A 서비스·캡처 관문, 시험 3개, `docs/A_ENGINE_MUTUAL_EXCLUSION_2026-11-01.md`). 충돌 없음. C 파일은 건드리지 않았다.
+- 동작: C(`SimpleCloseAccessibilityService`)가 시스템 설정에서 켜져 있으면 A는 수집·분석·캡처를 멈춘다. C를 끄면 다음 새 이벤트부터 A가 다시 수집한다(자동 재시작 없음). 설정 조회 실패는 A 차단 쪽. **A는 이 동작에 logcat을 새로 남기지 않는다**(우진 문서: "새 로그 추가 없음") → 실기기 확인은 A 상태 화면과 A가 팝업을 잡는지로 본다.
+
+### 8-8. F15 — F14 실측(11/1 02:53, `01f0f7d`) 뒤 (JVM 시험만, 실기기 미검증)
+
+실측: 11번가 `DETECT_LATENCY_MS=2305`(6.1초에서), `TREE_READ_MS=2043`, `TREE_VISITED=1424`, **`TREE_SKIPPED_OFFSCREEN=0`**. 닫은 뒤 `FOCUS_MOVES_BY_OTHERS=2` → `FOCUS_AFTER_CLOSE_LOST` → 툴바. 들린 것: 우리 창 전에 TalkBack이 팝업 2번, 닫힌 뒤 팝업 또. 결론: 닫힌 뒤 재낭독은 페이지(크롬)가 스스로 포커스를 옮긴 것. 옥션(`TREE_READ_MS=716`, 지연 987)은 정상.
+
+- **`TREE_SKIPPED_OFFSCREEN=0`인 이유(추정):** 크롬은 화면 밖 웹 노드도 `isVisibleToUser=true`로 보고하는 것으로 보인다(10/30 덤프의 높이 0 푸터 링크가 "보임"으로 수집된 것이 근거). F14 규칙은 "안 보임 **그리고** 화면 밖"일 때만 건너뛰므로 크롬에서는 한 번도 해당하지 않았다. 크롬 내부 동작이라 공식 문서로는 확정 못 함.
+- **F15-1 팝업 하위 트리만 읽기 (`PopupProbe`, `READ_POPUP_SUBTREE_FIRST`):**
+  - 먼저 작은 탐색: **마지막 자식부터**(웹 모달은 보통 페이지 끝에 붙고 위에 그려짐) 내려가며 Dialog 노드(크롬은 `role="dialog"`를 AlertDialog로 내보냄)를 찾으면 즉시 멈춘다. 크기가 있고 화면 밖에 완전히 있는 노드는 들어가지 않는다(보임 여부와 무관, 탐색 실패는 시간만 듦). 최대 `PROBE_MAX_VISITED`=200노드(LG 크롬 1노드 약 1.4ms).
+  - Dialog가 없으면 dim 덮개(클릭 가능·글자 없음·화면 85% 이상·루트 아님)의 부모를 쓰되, 탐색이 상한 없이 끝까지 돈 경우만(Dialog가 이기므로).
+  - 찾은 경로의 하위 트리만 예전과 같은 방식으로 수집하고, **그 하위 트리만으로 `PopupRootFinder`가 루트를 내야** 쓴다. 못 내거나 탐색이 못 찾으면 예전처럼 전체를 읽는다(`READ_FULL_AFTER_PROBE`). 활성 창이 대화상자 창이면 탐색 없이 전체(작음).
+  - 안전 판단: 버튼 찾기(`CloseButtonFinder`)·B 분류에 넘기는 글(`SimplePopupAnalysis`)·이미지 광고 힌트·기억(`PopupMemory`)은 원래도 **팝업 루트 안 노드만** 썼다. 그래서 하위 트리만 읽어도 결과가 같다. 시험(`PopupProbeTest`)으로 6개 덤프(11번가·옥션·올리브영·유튜브·크롬 권한·"팝업 밖에 결제·닫기 버튼이 있는 페이지")에서 루트·후보·금지 수·글·지문·B 분류·사기 판단·힌트가 전체 읽기와 같음을 확인. #65 패키지·민감 앱 검사는 `SimpleCollectionGuard`에서 읽기 전에 그대로 돈다.
+  - 로그: `READ_POPUP_SUBTREE`/`READ_FULL`/`READ_FULL_AFTER_PROBE`, `TREE_PROBE_VISITED`, `TREE_VISITED`(탐색+수집 합), `TREE_READ_MS`.
+  - 한계: 모달이 페이지 앞쪽에 있으면(앞쪽 형제가 화면 안에 많으면) 200노드 안에 못 찾고 전체를 읽어 **오히려 약 0.3초 늘어난다**. 팝업 없는 페이지의 읽기(재확인 체인)도 탐색분만큼 늘어난다. 실측에서 `READ_FULL_AFTER_PROBE`가 많으면 상한·순서를 조정.
+- **F15-2 닫힌 뒤 포커스 되찾기 (시연 모드 6-0, 스위치 `FOCUS_RECLAIM_AFTER_CLOSE`):**
+  - 누른 순간(`CLICKED`)부터 닫힘 확인 뒤 `FOCUS_RECLAIM_WINDOW_MILLIS`(1.5초)까지 TalkBack 포커스 이벤트를 지켜본다. 페이지가 포커스를 **옛 팝업 영역·글자·자리 안**이나 **사라진 노드**(노드 없음·안 보임·크기 0)로 옮기면 그 자리에서(지연 없이) 우리가 정한 페이지 대상(누르기 전 옮긴 툴바/맨 위, 닫힌 뒤 옮긴 대상)으로 되돌린다. 그 밖의 페이지 항목으로 옮긴 것은 그대로 둔다(`FocusReclaimRules`).
+  - 상한 `FOCUS_RECLAIM_MAX`=3회. 사용자 터치·제스처 시작 이벤트(`typeTouchInteractionStart`·`typeGestureDetectionStart`·`typeTouchExplorationGestureStart`, 서비스 설정 xml에 추가, 좌표·내용은 안 읽음)가 오면 즉시 멈춘다.
+  - 0.3초 대기(F14)는 스위치가 켜져 있으면 쓰지 않는다. 결과 문장은 마지막 되찾기 뒤 0.6초 조용해지면(`FOCUS_RECLAIM_QUIET_MILLIS`) TalkBack 큐(결과 카드)로 보낸다.
+  - 대상 노드는 우리가 포커스를 준 노드의 복사본을 서비스 안에서만 최대 몇 초 들고 있다가 버린다(다른 모듈로 넘기지 않음).
+  - 로그: `FOCUS_RECLAIMED=n`(끝날 때), `FOCUS_RECLAIM_STOPPED_BY_USER`, `FOCUS_RECLAIM_LIMIT`, `FOCUS_RECLAIM_NO_TARGET`.
+  - 한계: TalkBack이 이미 말하기 시작한 한두 음절은 들릴 수 있다. 1.5초 뒤 페이지가 옮기면 못 잡는다. 결과 카드 뒤에 되찾기가 일어나면 카드 낭독이 끊길 수 있다. 끄려면 스위치 한 줄.
+- 검증(F13~F15 + #66): 5개 Gradle 작업 통과, 단위 시험 debug 1115개·release 1100개 실패 0, lintDebug 오류 0(경고 12), INTERNET 0·새 권한 없음. 시험 추가: 탐색·하위 트리 안전 동일성 8(`PopupProbeTest`), 되찾기 규칙 3(`PopupMemoryTest`).
+
 - 잔여 노드 쪽 이벤트 무시: TalkBack이 무엇을 읽을지는 앱이 막을 수 없다. 대신 포커스를 잔여 노드 밖으로 옮기는 것(F9)이 할 수 있는 전부. 웹 페이지가 닫힌 팝업을 DOM에 `aria-hidden` 없이 남기는 한, 사용자가 스와이프로 다시 만날 수 있다(한계로 기록).
 - 선택 창 PROMPT도 TalkBack 큐로? 가능은 하다: 선택 창 자체(이미 접근성 오버레이)에 paneTitle이 있고 TalkBack이 창을 읽으므로, "안내 맡기기" ON이면 우리 TTS PROMPT를 끄고 paneTitle/첫 버튼 포커스 낭독에 맡기는 방식. 단, 지금 PROMPT는 TalkBack이 팝업을 읽는 도중 끊고 들어가야 시연이 빠르므로 polite로 바꾸면 늦어질 수 있다. F11 배너가 LG에서 잘 읽히면 같은 방식으로 옮길지 정하자(의견, 미구현).
 - 검증(F1~F11 한 빌드): 5개 Gradle 작업 통과, 단위 시험 debug 1028개·release 1013개 실패 0, lintDebug 오류 0(경고 12), 병합 매니페스트 INTERNET 0·새 권한 없음.

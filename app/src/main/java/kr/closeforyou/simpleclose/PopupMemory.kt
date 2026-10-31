@@ -104,3 +104,29 @@ object PageFocusRules {
         }
     }
 }
+
+/** F15: the node TalkBack's focus just went to, as the reclaim rule needs it (memory only, never logged). */
+class FocusedNode(val text: String?, val description: String?, val bounds: ScreenBounds, val visible: Boolean)
+
+/** F15: what to do with a focus move we did not make, while the watch after a press is on. */
+enum class ReclaimVerdict { OUR_OWN, LEAVE, RECLAIM, LIMIT }
+
+/**
+ * F15 (demo mode, AGENTS 6-0; LG 11/1 02:55: `FOCUS_MOVES_BY_OTHERS=2`, TalkBack read the closed
+ * 11번가 popup again): the page restores its own focus as its popup closes and TalkBack follows it. A
+ * move into the old popup (its words, place or area, [PopupMemory.matches]) or onto a node that is gone
+ * (no node, not visible, no size) is taken back at once, at most `max` times; a move anywhere else on
+ * the page is left alone, and so is our own move. Pure; JVM tested.
+ */
+object FocusReclaimRules {
+    fun decide(focused: FocusedNode?, ours: Boolean, memory: PopupMemory, reclaimed: Int, max: Int): ReclaimVerdict {
+        if (ours) return ReclaimVerdict.OUR_OWN
+        val intoPopup = focused == null || !focused.visible || focused.bounds.width <= 0 || focused.bounds.height <= 0 ||
+            memory.matches(focused.text, focused.description, focused.bounds)
+        return when {
+            !intoPopup -> ReclaimVerdict.LEAVE
+            reclaimed >= max -> ReclaimVerdict.LIMIT
+            else -> ReclaimVerdict.RECLAIM
+        }
+    }
+}

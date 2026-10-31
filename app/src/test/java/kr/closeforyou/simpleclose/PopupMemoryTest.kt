@@ -105,4 +105,30 @@ class PopupMemoryTest {
         assertEquals(listOf(toolbar), PageFocusRules.plan(listOf(leftoverAbove, beside), webViewPresent = true, beforeClick = true))
         assertEquals(emptyList<PageFocusRules.Pick>(), PageFocusRules.plan(listOf(leftoverAbove, beside), webViewPresent = false, beforeClick = true))
     }
+
+    // ---- F15 (LG 11/1 02:55: FOCUS_MOVES_BY_OTHERS=2, TalkBack read the closed 11번가 sheet again) ----
+
+    private fun decide(node: FocusedNode?, ours: Boolean = false, count: Int = 0) =
+        FocusReclaimRules.decide(node, ours, memory(SimpleNodes.elevenStreet()), count, max = 3)
+
+    @Test fun aMoveIntoTheOldPopupOrOntoAGoneNodeIsTakenBack() {
+        // The sheet's own words, its place, or nothing at all (the node went with the popup).
+        assertEquals(ReclaimVerdict.RECLAIM, decide(FocusedNode("모바일 웹으로 볼래요", null, ScreenBounds(0, 0, 10, 10), true)))
+        assertEquals(ReclaimVerdict.RECLAIM, decide(FocusedNode("다른 글", null, ScreenBounds(100, 1700, 900, 1800), true)))
+        assertEquals(ReclaimVerdict.RECLAIM, decide(null))
+        assertEquals(ReclaimVerdict.RECLAIM, decide(FocusedNode("로그인", null, ScreenBounds(0, 2337, 200, 2337), true)))
+        assertEquals(ReclaimVerdict.RECLAIM, decide(FocusedNode("오늘의 특가 상품", null, ScreenBounds(0, 320, 1080, 420), visible = false)))
+    }
+
+    @Test fun aMoveElsewhereOnThePageAndOurOwnMoveAreLeftAlone() {
+        assertEquals(ReclaimVerdict.LEAVE, decide(FocusedNode("오늘의 특가 상품", null, ScreenBounds(0, 320, 1080, 420), true)))
+        assertEquals(ReclaimVerdict.OUR_OWN, decide(null, ours = true))
+    }
+
+    @Test fun afterTheLimitTheWatchEnds() {
+        assertEquals(ReclaimVerdict.RECLAIM, decide(null, count = 2))
+        assertEquals(ReclaimVerdict.LIMIT, decide(null, count = 3))
+        // A move elsewhere is still left alone, whatever the count.
+        assertEquals(ReclaimVerdict.LEAVE, decide(FocusedNode("오늘의 특가 상품", null, ScreenBounds(0, 320, 1080, 420), true), count = 3))
+    }
 }

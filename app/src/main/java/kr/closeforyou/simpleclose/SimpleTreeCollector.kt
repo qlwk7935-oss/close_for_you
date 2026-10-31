@@ -22,7 +22,13 @@ class TreeRead(
     /** F14: live nodes fetched for this read (debug number only), and subtrees skipped as off screen. */
     val visited: Int = 0,
     val skippedSubtrees: Int = 0,
+    /** F15: whether only the popup's subtree was read, and how many nodes the probe fetched (in [visited]). */
+    val mode: TreeReadMode = TreeReadMode.FULL,
+    val probeVisited: Int = 0,
 )
+
+/** F15: how a read went (debug log `READ_*`). */
+enum class TreeReadMode { FULL, POPUP_SUBTREE, FULL_AFTER_PROBE }
 
 /**
  * F14 (LG 11/1: one read of an 11번가 page took 1.75 s, TalkBack read the popup meanwhile): every child
@@ -47,18 +53,40 @@ object TreeWalkRules {
  * walk stops at [SimpleCloseEngineFeature.MAX_NODES]; Chrome pages are large, but a popup's dialog
  * node is a child of the WebView near the top of its subtree. Nothing is logged here.
  */
+/** What [SimpleTreeCollector.focusPageItemKeeping] focused: its kind, and a copy of the node (null = nothing took it). */
+class PageFocus(val kind: FocusTargetKind, val node: AccessibilityNodeInfo?) {
+    val moved: Boolean get() = node != null
+}
+
 class SimpleTreeCollector(private val service: AccessibilityService) {
     fun read(expectedPackage: String, packageAllowed: (String) -> Boolean): TreeRead? =
         SimpleCollectionGuard.read(expectedPackage, { service.rootInActiveWindow },
-            { it.packageName?.toString() }, packageAllowed, collect = { root, packageName ->
+            { it.packageName?.toString() }, packageAllowed, collect = collect@{ root, packageName ->
                 val windows = mutableListOf<AccessibilityWindowInfo>()
                 try {
                     val screen = screenBounds()
                     windows += service.windows.orEmpty()
+                    val bounded = activeWindowBounded(windows, root.windowId, packageName, screen)
+                    var mode = TreeReadMode.FULL
+                    var probeVisited = 0
+                    if (SimpleCloseEngineFeature.READ_POPUP_SUBTREE_FIRST && !bounded) {
+                        val probe = PopupProbe.find(root, liveTree, screen, SimpleCloseEngineFeature.PROBE_MAX_VISITED, SimpleCloseEngineFeature.MAX_DEPTH)
+                        probeVisited = probe.visited
+                        probe.path?.takeIf { it != "0" }?.let { path ->
+                            val count = WalkCount()
+                            val nodes = subtree(root, path, screen, count)
+                            // The subtree must give a popup root by itself; otherwise the whole tree, as before.
+                            if (nodes != null && PopupRootFinder.find(nodes, screen) != null) {
+                                return@collect TreeRead(packageName, root.windowId, nodes, screen, false,
+                                    probeVisited + count.visited, count.skipped, TreeReadMode.POPUP_SUBTREE, probeVisited)
+                            }
+                        }
+                        mode = TreeReadMode.FULL_AFTER_PROBE
+                    }
                     val nodes = ArrayList<NodeSnapshot>(256)
                     val count = WalkCount()
                     walk(root, "0", 0, nodes, screen, count)
-                    TreeRead(packageName, root.windowId, nodes, screen, activeWindowBounded(windows, root.windowId, packageName, screen), count.visited, count.skipped)
+                    TreeRead(packageName, root.windowId, nodes, screen, bounded, probeVisited + count.visited, count.skipped, mode, probeVisited)
                 } finally {
                     windows.forEach(::release)
                 }
@@ -142,8 +170,15 @@ class SimpleTreeCollector(private val service: AccessibilityService) {
      * popup either. Nothing is clicked. Main thread or worker. Returns what was focused (debug log) and
      * whether the action was accepted. Device unverified.
      */
-    fun focusPageItem(exclude: PopupMemory, beforeClick: Boolean = false): Pair<FocusTargetKind, Boolean> {
-        val root = service.rootInActiveWindow ?: return FocusTargetKind.NONE to false
+    fun focusPageItem(exclude: PopupMemory, beforeClick: Boolean = false): Pair<FocusTargetKind, Boolean> =
+        focusPageItemKeeping(exclude, beforeClick).let { it.kind to it.moved }
+
+    /**
+     * [focusPageItem] that also hands back a copy of the node that took the focus (F15: the reclaim
+     * target, kept by the service for a second or two, never passed on), or null when none did.
+     */
+    fun focusPageItemKeeping(exclude: PopupMemory, beforeClick: Boolean = false): PageFocus {
+        val root = service.rootInActiveWindow ?: return PageFocus(FocusTargetKind.NONE, null)
         val live = mutableListOf<AccessibilityNodeInfo>()
         var webView: AccessibilityNodeInfo? = null
         try {
@@ -169,22 +204,22 @@ class SimpleTreeCollector(private val service: AccessibilityService) {
             val plan = PageFocusRules.plan(candidates, webViewPresent = webView != null, beforeClick = beforeClick)
             for (pick in plan) {
                 val index = pick.index
-                val accepted = when {
-                    index != null -> live[index].performAction(AccessibilityNodeInfo.ACTION_ACCESSIBILITY_FOCUS)
-                    pick.webViewRoot -> webView?.performAction(AccessibilityNodeInfo.ACTION_ACCESSIBILITY_FOCUS) == true
+                val node = when {
+                    index != null -> live[index].takeIf { it.performAction(AccessibilityNodeInfo.ACTION_ACCESSIBILITY_FOCUS) }?.let(::AccessibilityNodeInfo)
+                    pick.webViewRoot -> webView?.takeIf { it.performAction(AccessibilityNodeInfo.ACTION_ACCESSIBILITY_FOCUS) }?.let(::AccessibilityNodeInfo)
                     else -> {
                         // Chrome's toolbar: the first named item outside the WebView, never part of the old popup.
                         val item = firstOutsideWebView(root, 0) {
                             isNamedVisible(it) && !exclude.matches(it.text?.toString(), it.contentDescription?.toString(), boundsOf(it))
                         }
-                        item != null && try { item.performAction(AccessibilityNodeInfo.ACTION_ACCESSIBILITY_FOCUS) } finally { release(item) }
+                        item?.let { try { it.takeIf { n -> n.performAction(AccessibilityNodeInfo.ACTION_ACCESSIBILITY_FOCUS) }?.let(::AccessibilityNodeInfo) } finally { release(it) } }
                     }
                 }
-                if (accepted) return pick.kind to true
+                if (node != null) return PageFocus(pick.kind, node)
             }
-            return (plan.firstOrNull()?.kind ?: FocusTargetKind.NONE) to false
+            return PageFocus(plan.firstOrNull()?.kind ?: FocusTargetKind.NONE, null)
         } catch (e: RuntimeException) {
-            return FocusTargetKind.NONE to false
+            return PageFocus(FocusTargetKind.NONE, null)
         } finally {
             live.forEach(::release)
             webView?.let(::release)
@@ -212,6 +247,20 @@ class SimpleTreeCollector(private val service: AccessibilityService) {
         } catch (e: RuntimeException) {
             return null
         }
+    }
+
+    /** F15: the node an accessibility-focus event names, as [FocusReclaimRules] needs it; null when there is none. */
+    fun focusedNode(event: android.view.accessibility.AccessibilityEvent): Pair<FocusedNode, AccessibilityNodeInfo>? = try {
+        event.source?.let { FocusedNode(it.text?.toString(), it.contentDescription?.toString(), boundsOf(it), it.isVisibleToUser) to it }
+    } catch (e: RuntimeException) {
+        null
+    }
+
+    /** F15: TalkBack's focus back on [target] (a node we focused earlier). Main thread; one binder call. */
+    fun refocus(target: AccessibilityNodeInfo): Boolean = try {
+        target.refresh() && target.isVisibleToUser && target.performAction(AccessibilityNodeInfo.ACTION_ACCESSIBILITY_FOCUS)
+    } catch (e: RuntimeException) {
+        false
     }
 
     private fun isWebView(node: AccessibilityNodeInfo) = node.className?.contains("WebView", ignoreCase = true) == true
@@ -270,6 +319,32 @@ class SimpleTreeCollector(private val service: AccessibilityService) {
     }
 
     private class WalkCount(var visited: Int = 0, var skipped: Int = 0)
+
+    /** Live nodes for [PopupProbe]; reads class, bounds, clickable and whether there is text, nothing kept. */
+    private val liveTree = object : ProbeTree<AccessibilityNodeInfo> {
+        override fun info(node: AccessibilityNodeInfo) = ProbeNodeInfo(node.className?.toString(), boundsOf(node), node.isClickable, !node.text.isNullOrBlank())
+        override fun childCount(node: AccessibilityNodeInfo) = node.childCount
+        override fun child(node: AccessibilityNodeInfo, index: Int): AccessibilityNodeInfo? = node.getChild(index)
+        override fun release(node: AccessibilityNodeInfo) = this@SimpleTreeCollector.release(node)
+    }
+
+    /** F15: the visible nodes at [path] and below it, with their full paths; null when the path is gone. */
+    private fun subtree(root: AccessibilityNodeInfo, path: String, screen: ScreenBounds, count: WalkCount): List<NodeSnapshot>? {
+        val indices = path.split('/').drop(1).map { it.toIntOrNull() ?: return null }
+        var node = root
+        try {
+            for (index in indices) {
+                val child = node.getChild(index)
+                if (node !== root) release(node)
+                node = child ?: return null
+            }
+            val nodes = ArrayList<NodeSnapshot>(64)
+            walk(node, path, indices.size, nodes, screen, count)
+            return nodes
+        } finally {
+            if (node !== root) release(node)
+        }
+    }
 
     private fun walk(node: AccessibilityNodeInfo, path: String, depth: Int, out: MutableList<NodeSnapshot>, screen: ScreenBounds, count: WalkCount) {
         if (out.size >= SimpleCloseEngineFeature.MAX_NODES || depth > SimpleCloseEngineFeature.MAX_DEPTH) return

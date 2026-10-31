@@ -90,6 +90,19 @@ enum class SimpleTrace {
     /** Focus put on a page item right before the press ([SimpleCloseEngineFeature.FOCUS_PAGE_BEFORE_CLICK]). */
     FOCUS_PRE_CLICK_MOVED,
     FOCUS_PRE_CLICK_FAILED,
+    /** F15: the read that found the popup: only the popup's subtree / the whole tree / the whole tree after a probe miss. */
+    READ_POPUP_SUBTREE,
+    READ_FULL,
+    READ_FULL_AFTER_PROBE,
+    /**
+     * F15 (demo mode): after the press, the page moved TalkBack's focus into the old popup or onto a node
+     * that went with it, and we put it back on the page at once ([FocusReclaim]). STOPPED_BY_USER: a touch
+     * or gesture ended the watch; LIMIT: [SimpleCloseEngineFeature.FOCUS_RECLAIM_MAX] reached; NO_TARGET:
+     * no page item took the focus.
+     */
+    FOCUS_RECLAIM_STOPPED_BY_USER,
+    FOCUS_RECLAIM_LIMIT,
+    FOCUS_RECLAIM_NO_TARGET,
 
     // F6: why the image-dialog ad hint did not apply ([AdHintMiss]).
     AD_HINT_MISS_SCAM,

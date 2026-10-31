@@ -80,6 +80,21 @@ object SimpleCloseEngineFeature {
      */
     const val FOCUS_SETTLE_MILLIS = 300L
 
+    /**
+     * F15, demo mode (AGENTS 6-0; off again for any release): after a press, take TalkBack's focus back
+     * from the page when it moves it into the closed popup or onto a node that went with it ([FocusReclaimRules]).
+     * Watched from the click until [FOCUS_RECLAIM_WINDOW_MILLIS] after the confirmed close, at most
+     * [FOCUS_RECLAIM_MAX] times, ended by the person's touch or gesture. False = F14's single move after
+     * [FOCUS_SETTLE_MILLIS].
+     */
+    const val FOCUS_RECLAIM_AFTER_CLOSE = true
+    const val FOCUS_RECLAIM_WINDOW_MILLIS = 1_500L
+    const val FOCUS_RECLAIM_MAX = 3
+
+    /** F15: the result sentence waits until no move for this long (TalkBack reads the focused item first). */
+    const val FOCUS_RECLAIM_QUIET_MILLIS = 600L
+    const val FOCUS_RECLAIM_POLL_MILLIS = 50L
+
     /** F10: TalkBack focusing something in a helped app starts a read at once, at most this often. */
     const val FOCUS_EVENT_READ_MILLIS = 300L
 
@@ -106,6 +121,15 @@ object SimpleCloseEngineFeature {
     const val SAME_POPUP_COOLDOWN_MILLIS = 10_000L
 
     /** Tree walk caps: a page like m.naver.com has ~1,500 nodes; the popup is found well before. */
+    /**
+     * F15: find the popup root with a small probe ([PopupProbe], last child first) and read only its
+     * subtree; the whole tree only when that gives no popup root. False = every read is a full read.
+     */
+    const val READ_POPUP_SUBTREE_FIRST = true
+
+    /** F15: nodes the probe may fetch (about 1.4 ms each on the LG Velvet in Chrome). */
+    const val PROBE_MAX_VISITED = 200
+
     const val MAX_NODES = 2_500
     const val MAX_DEPTH = 64
 }
