@@ -17,7 +17,7 @@ internal object P01ComparisonPreparation {
     const val MAX_READS = 4
     const val BUDGET_MS = 1_500L
 
-    fun assess(read: P01ReaderComparisonService.Read): PreparationVerdict {
+    fun assess(read: P01ReaderComparisonService.Read, awaitingTarget: Boolean = false): PreparationVerdict {
         fun reject(issue: ComparisonIssue) = PreparationVerdict(PreparationState.REJECTED,issue)
         fun waitFor(issue: ComparisonIssue) = PreparationVerdict(PreparationState.WAITING,issue)
         if (read.f0Release in setOf(CaptureReadRelease.FAILED,CaptureReadRelease.CANCELLED,
@@ -26,6 +26,12 @@ internal object P01ComparisonPreparation {
             // This exact early branch acquired no node/window. UNKNOWN is NOT generally retryable.
             if (read.block == PrivacyBlockReason.UNREADABLE_TREE && read.f0Detail == CaptureDetail.ROOT_UNAVAILABLE &&
                 read.f0Point == CaptureReadPoint.ROOT && read.f0Release == CaptureReadRelease.UNKNOWN)
+                return waitFor(ComparisonIssue.READ_UNAVAILABLE)
+            // Only the explicitly unbound preparation arm may wait for this exact failed read.
+            // It proves neither ownership nor transience; the sample remains discarded.
+            if (awaitingTarget && read.block == PrivacyBlockReason.UNREADABLE_TREE &&
+                read.f0Detail == CaptureDetail.TARGET_MISSING && read.f0Point == CaptureReadPoint.TARGET_BINDING &&
+                read.f0Release == CaptureReadRelease.COMPLETED)
                 return waitFor(ComparisonIssue.READ_UNAVAILABLE)
             if (read.block in setOf(PrivacyBlockReason.UNREADABLE_TREE,PrivacyBlockReason.TRUNCATED_TREE) &&
                 read.f0Detail == CaptureDetail.TIME_LIMIT && read.f0Release == CaptureReadRelease.COMPLETED)
@@ -77,7 +83,7 @@ internal object P01ComparisonPreparation {
         read: (Int) -> P01ReaderComparisonService.Read,
         awaitChange: suspend (Long) -> Boolean,
         accept: (P01ReaderComparisonService.Read) -> Unit,
-        report: (String) -> Unit): PreparationEnd {
+        report: (String) -> Unit, awaitingTarget: () -> Boolean = { false }): PreparationEnd {
         val start=clock()
         var attempts=0; var unavailable=0; var waiting=0
         var first=CaptureDetail.NONE; var firstPoint=CaptureReadPoint.UNKNOWN
@@ -100,7 +106,7 @@ internal object P01ComparisonPreparation {
                 if (first == CaptureDetail.NONE && observed.f0Detail != CaptureDetail.NONE) {
                     first=observed.f0Detail; firstPoint=observed.f0Point; firstRelease=observed.f0Release
                 }
-                val verdict=assess(observed)
+                val verdict=assess(observed,awaitingTarget())
                 val after=clock()
                 report("PREP_ATTEMPT=$attempts;START_MS=${before-start};END_MS=${after-start};"+
                     "OBSERVATION=${verdict.state};ISSUE=${verdict.issue}")

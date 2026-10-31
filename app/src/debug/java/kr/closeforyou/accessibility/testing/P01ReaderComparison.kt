@@ -26,6 +26,13 @@ internal class ComparisonRunChecks(private val started: Long) {
     private var target: Pair<String,Int>? = null
     private var frame: ScreenBounds? = null
     private var prepared: ReaderSample? = null
+    private var measurementStarted = false
+    val awaitingPreparationTarget get() = target == null && !measurementStarted && issue == ComparisonIssue.NONE
+    /** A failed INITIAL still starts measurement; never turn it back into preparation. */
+    fun beginRead(preparation: Boolean) {
+        if (preparation && !awaitingPreparationTarget) throw ComparisonAbort(ComparisonIssue.PREPARATION_NOT_READY)
+        if (!preparation) measurementStarted=true
+    }
     private var deliveredHostEvent = false
     private var lastPreparationTrigger = started
     var issue = ComparisonIssue.NONE; private set

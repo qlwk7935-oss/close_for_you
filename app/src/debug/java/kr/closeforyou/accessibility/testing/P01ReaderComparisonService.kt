@@ -115,7 +115,10 @@ class P01ReaderComparisonService : AccessibilityService() {
     }
     /** Explicit opt-in test mode only; no change to production admission or normal INITIAL. */
     internal suspend fun prepareComparison(): PreparationEnd {
-        checkBoundary(); preparing=true
+        checkBoundary()
+        if (preparing || !checks.awaitingPreparationTarget || cRequested || overlay != null)
+            throw ComparisonAbort(ComparisonIssue.PREPARATION_NOT_READY)
+        preparing=true
         try {
             val result=P01ComparisonPreparation.run(SystemClock::uptimeMillis, ::checkBoundary,
                 read = { attempt ->
@@ -125,7 +128,8 @@ class P01ReaderComparisonService : AccessibilityService() {
                     if (remaining <= 0) false else withTimeoutOrNull(remaining) {
                         preparationChanges.receive(); checkBoundary(); true
                     } ?: false
-                }, accept = { observed -> checks.preparedTarget(requireNotNull(observed.sample)) }, report = ::emit)
+                }, accept = { observed -> checks.preparedTarget(requireNotNull(observed.sample)) }, report = ::emit,
+                awaitingTarget = { preparing && !cRequested && overlay == null && checks.awaitingPreparationTarget })
             checkBoundary()
             if (result != PreparationEnd.READY) {
                 checks.fail(ComparisonIssue.PREPARATION_NOT_READY); failed=true
@@ -232,7 +236,11 @@ class P01ReaderComparisonService : AccessibilityService() {
         }
     }
     internal fun read(kind: ComparisonReader, phase: ComparisonPhase, number: Int, closePath: String?, preparation: Boolean = false): Read {
-        checkBoundary(); val started = SystemClock.uptimeMillis(); val eventBefore = events
+        checkBoundary()
+        if (preparation && (!preparing || cRequested || overlay != null))
+            throw ComparisonAbort(ComparisonIssue.PREPARATION_NOT_READY)
+        checks.beginRead(preparation)
+        val started = SystemClock.uptimeMillis(); val eventBefore = events
         val cBefore=cState()
         // An early ownership/read failure has no after-read witness.
         var cAfter=ComparisonCState.UNCONFIRMED

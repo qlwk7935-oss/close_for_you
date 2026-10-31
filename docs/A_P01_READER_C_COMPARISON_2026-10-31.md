@@ -2,7 +2,7 @@
 
 원 대조 계측 기준: `fdbb65d2922b43354550a72faaa049a77142cbd4`, `fix/a-samsung-p01-lifetime-20261028`.
 이 문서는 대조 성공 보고가 아니다. 계측 준비 당시 Linux에서는 연결 기기/실행 가능한 emulator가 없었다.
-이후 사용자가 제공한 API 37 첫 실패 관측·진단은 10절, 후속 8완료/4실패 및 새 준비 모드는 11절에 별도로 기록한다.
+이후 사용자가 제공한 API 37 첫 실패 관측·진단은 10절, 후속 8완료/4실패 및 새 준비 모드는 11절, 준비 TARGET_MISSING 처리 경계는 12절에 별도로 기록한다.
 이번 작업에서는 Android 기기·에뮬레이터 명령을 실행하지 않았다. 운영 허용 정책, B안 3회/100ms, TTL, cleanup을 변경하지 않는다.
 
 ## 1. 최신 증거와 가설
@@ -585,6 +585,8 @@ CLEANUP=CONFIRMED, EXTERNAL_CLICK=NOT_WIRED. C와 AFTER는 미실행이다.
 
 ### 11.3 두 시작 모드와 실패 보존
 
+아래는 최초 준비 모드 계약이다. 이후 실측에 따른 정확한 TARGET_MISSING 추가 대기 조건은 12절을 따른다.
+
 기존 4개 method에 `-e p01PreparedStart true`를 명시한 경우만 새 모드다.
 생략/다른 값이면 `START_MODE=IMMEDIATE`로 기존 INITIAL부터 읽는다. 기존 실패 카운터와
 첫 baseline 실패 뒤 11회 성공해도 INCONCLUSIVE인 회귀를 유지한다.
@@ -797,3 +799,144 @@ WITH_C에서는 기존 F9_ACTIVE의 정확한 overlay 차단만 OBSERVED_WITH_GU
 패키징 `/workspace/a-p01-prepared-review-packaging.log`.
 현재 검토 범위에서 미해결 P2 이상/실패 은폐/판정 우회/민감정보 출력 문제는 발견하지 않았다.
 준비 모드 실측, reader 비교 완료, 삼성 P01 표시 유지·닫기 및 별도 Cleanup 장애는 여전히 미검증/미해결이다.
+
+
+## 12. 대상 미확보와 확보 후 소실 — TARGET_MISSING 준비 경계
+
+기준 `c7fb08dddbd1d6cbeeab4d9ba1ee5348459e712b`. 이번 변경은 **시험 준비 종료 조건**의 수정이다.
+삼성 운영 표시 정책이나 collector/F9 결과를 변경하지 않는다. 기기 실행·커밋·푸시는 하지 않았다.
+
+### 12.1 제공된 실제 관측
+
+사용자 제공 withoutCForward / --no-restart / p01PreparedStart=true 발췌:
+
+```text
+SERVICE=CONNECTED;RECEPTION=HOST_EVENT_CONFIRMED;POPUP_READY=UNCONFIRMED
+READ=1;START_MS=467;END_MS=525;STATUS=BLOCKED;F0=UNREADABLE_TREE
+F0_DETAIL=TARGET_MISSING;F0_POINT=TARGET_BINDING;F0_RELEASE=COMPLETED
+PREPARATION=NOT_READY;END=REJECTED;ISSUE=READ_UNAVAILABLE
+ATTEMPTS=1;UNAVAILABLE_READS=1;WAITING_OBSERVATIONS=0;ELAPSED_MS=63
+SUMMARY=INCONCLUSIVE;ISSUE=PREPARATION_NOT_READY;COMPLETED_PHASES=0
+CLEANUP=CONFIRMED;EXTERNAL_CLICK=NOT_WIRED
+```
+
+이번 실행에는 TIME_LIMIT이 없다. 이전 ROOT_UNAVAILABLE/시간 초과 시험과 혼합하지 않는다.
+collector에서 `windows.firstOrNull { it.id == root.windowId }`가 null인 실제 분기다.
+root가 조회되었지만 읽은 창 목록에서 그 window ID에 대응하는 창을 확보하지 못했다.
+이후 ADDED/CONTENT 이벤트의 관계 UNCONFIRMED만으로 실패한 root의 창이라고 연결하거나
+캐시 오류·일시적 상태·C 영향으로 단정하지 않는다. C 및 본 INITIAL은 시작하지 않았다.
+F0_RELEASE=COMPLETED는 기존 로컬 정리 호출/배치 완료만 뜻하며 native 창 제거 증거는 아니다.
+기존 준비 분류가 정확히 구현된 결과이나, 이번에 승인한 시험 목적상 미확보 상태의 제한된 대기를 추가한다.
+
+### 12.2 이번에만 바뀌는 조합과 상태 경계
+
+다음 모든 값이 일치할 때만 추가 WAITING이다:
+
+```text
+Debug / p01PreparedStart=true / 준비 진행 중 / 대상 미고정 / 본 측정 미시작 / C 미생성
+기존 세션 검사 통과 / 외부 실행기 미연결
+status=BLOCKED / ready=null / sample=null / block=UNREADABLE_TREE
+f0Detail=TARGET_MISSING / f0Point=TARGET_BINDING / f0Release=COMPLETED
+```
+
+- `assess`와 공유 `run`의 새 `awaitingTarget` 입력은 기본 false다. 위 문맥을 제공하지 않으면
+  TARGET_MISSING은 이전처럼 REJECTED다. 공통 재시도 목록에 추가한 것이 아니다.
+- 실제 service만 준비 진행 중, 대상 미고정, INITIAL 미시작, C 미요청/미생성 상태를 명시적으로 전달한다.
+  기존 checkBoundary는 읽기 전후/대기 후에 동의·단독 서비스·연결·입력·취소/설정 실패를 확인한다.
+- 공유 `ComparisonRunChecks.beginRead`는 실제 정상 측정 읽기 시작을 기록한다. **첫 INITIAL이 실패해도**
+  준비 모드로 돌아갈 수 없다. 실제 준비 함수/읽기 진입점도 재진입과 C 생성 후 준비를 거부한다.
+  대상 고정 후 TARGET_MISSING/교체 및 본 측정 TIME_LIMIT은 기존 unavailable/INCONCLUSIVE로 남는다.
+- 새 enum·진단 필드·대규모 상태 기계는 없다. 기존 target binding과 측정 시작 boolean guard를 사용한다.
+- 불완전한 표본은 폐기한다. TARGET_MISSING의 WAITING은 대상 소유권이나 준비 완료 승인이 아니다.
+  실제 complete fresh F0와 기존 window/frame/보호/metadata/단일 B CLOSE 조건을 모두 통과해야 READY다.
+- 검증된 새 host 이벤트가 있어야 다음 읽기를 한다. 이전 세션·다른 앱·중복·역순 이벤트 차단을 유지한다.
+  최대 4회/1,500ms, 개별 읽기 100ms, 기존 세션/TTL은 그대로다. 고정 sleep이나 자동 시험 재실행은 없다.
+  동기 Android 호출은 강제 중단할 수 없으며 늦은 반환을 준비 승인에 사용하지 않는다.
+- FIRST_F0_DETAIL/POINT/RELEASE, 시도·unavailable·대기 횟수 및 경과 시간은 뒤의 성공에도 유지한다.
+  READY 다음 INITIAL은 독립적인 새 읽기이고 준비 token/시각/후보를 갱신·복사하지 않는다.
+
+### 12.3 전체 준비 판정표
+
+아래 대기/READY는 모두 유효한 준비 세션 내부에서만 의미가 있다. 본 측정 실패에는 적용하지 않는다.
+
+| 입력/문맥 | 처리 | 근거 및 이번 변경 여부 |
+|---|---|---|
+| 세션 검사 실패, 대상 고정 후/INITIAL 후 준비 재진입, C 생성 후 준비 | 종료 | 새 read 전 거부. 준비 예산이나 대상 기준을 새로 만들지 않음 |
+| 로컬 release FAILED / CANCELLED / FAILED_AND_CANCELLED | REJECTED | 최우선 cleanup 실패, 뒤의 성공으로 복구 안 함. 유지 |
+| BLOCKED/null/null, UNREADABLE_TREE, ROOT_UNAVAILABLE, ROOT, release UNKNOWN | WAITING | 정확한 최초 root 미획득 분기. UNKNOWN 일반 허용 아님. 유지 |
+| **BLOCKED/null/null, UNREADABLE_TREE, TARGET_MISSING, TARGET_BINDING, release COMPLETED + 명시적 미확보 문맥** | **WAITING** | **이번에 추가한 유일한 실패 분류 변경**. 결합 확인/일시적 오류 증명이 아님 |
+| BLOCKED/null/null, TIME_LIMIT, UNREADABLE_TREE 또는 TRUNCATED_TREE, release COMPLETED | WAITING | 기존 준비 계약 그대로. 처리 구간/실패 원인을 추가 완화하지 않음 |
+| 그 외 BLOCKED, 보호/다른 앱/일반 예외, 위 조합의 point/release/status 불일치 | REJECTED | UNKNOWN/미확인 해제를 성공으로 승격하지 않음 |
+| COMPLETE가 아니거나 F0 detail이 NONE 아님, release 미확인 | REJECTED | 불완전/오류 결과는 준비 성공 아님. 유지 |
+| COMPLETE여도 객체 결합·package/window/frame·창 종류/focus·geometry·region·action metadata 불확실, 경쟁 창/가림 | REJECTED | 기존 target/소유권/보호 조건 유지 |
+| 위 검증을 통과한 complete 배경 Activity이나 bounded F1 popup 아님 | WAITING | 이벤트만으로 P01 준비를 승인하지 않음. 유지 |
+| bounded popup이나 B CLOSE 후보 없음/복수/노드 결합 불일치 | REJECTED | 실제 단일 닫기 후보 필요. 유지 |
+| 모든 complete F0/F1/B 준비 조건 충족 | READY | 측정 시작 조건일 뿐 표시/클릭/향후 안정성/native 세대 보증 아님 |
+| 새 유효 이벤트 없음 또는 4회/1,500ms 상한 소진 | NOT_READY | 시간만 지나서 승인하거나 추가 무제한 수집하지 않음 |
+| coroutine 취소/경계 예외 | 종료·전파 | 실제 취소를 WAITING으로 변환하지 않음. 원래 정리 및 최종 기록 유지 |
+
+### 12.4 회귀와 실제 연결
+
+공유 run/assess, 실제 서비스의 `ComparisonRunChecks.beginRead` 및 기존 event 검증을 테스트에서 사용한다.
+수정 전 `targetMissingWaitsForVerifiedEventThenUsesOnlyCompleteFreshRead`와
+`targetMissingWithoutNewEventEndsNotReadyAtBudget`가 실패했다. 첫 시험은 대기 없이 종료했고,
+두 번째는 TIME_LIMIT까지 대기할 기대와 달리 REJECTED를 반환했다.
+수정 후 두 회귀 및 추가 경계 회귀를 검증한다:
+
+- 정확한 조합은 READY가 아닌 WAITING이고, 이벤트 전 read 1회/승인 0회.
+- 새 검증 이벤트 뒤 actual B finder를 통과한 완전한 새 fixture 객체만 준비 승인.
+- 첫 TARGET_MISSING/포인트/해제 결과와 unavailable=1이 후속 READY에도 남음.
+- 이벤트 없음, 4회 상한, 읽기 반환 시 이미 1,500ms이면 NOT_READY.
+- 문맥 입력 누락, 모든 핵심 tuple 불일치, release 미확인/실패는 REJECTED.
+- target 고정 및 첫 INITIAL(결과가 실패여도) 이후 준비 재진입 거부.
+- 대기 후 보호/소유권/정리/예외/취소/세션 무효화가 생기면 후속 성공 표본을 읽지 않음.
+- 기존 즉시 시작 baseline 실패, 측정 중 timeout, 이전 세션/중복/역순 이벤트와 Release 격리 회귀 유지.
+
+JVM은 합성 DTO를 사용하는 공유 제어 경계 검증이다. 실제 Android에서 TARGET_MISSING이
+재현되거나 이후 준비가 성공했다는 증거는 아니다. collector의 100ms/자원 처리 코드는 변경하지 않았다.
+
+이번 변경 파일(5개):
+1. `app/src/debug/java/kr/closeforyou/accessibility/testing/P01ComparisonPreparation.kt`
+2. `app/src/debug/java/kr/closeforyou/accessibility/testing/P01ReaderComparison.kt`
+3. `app/src/debug/java/kr/closeforyou/accessibility/testing/P01ReaderComparisonService.kt`
+4. `app/src/testDebug/java/kr/closeforyou/accessibility/testing/P01ComparisonPreparationTest.kt`
+5. `docs/A_P01_READER_C_COMPARISON_2026-10-31.md`
+
+### 12.5 다음 시험의 판독
+
+11.5의 withoutCForward/--no-restart/p01PreparedStart=true 한 조건 명령을 그대로 사용한다.
+이번 작업에서는 실행하지 않았다. 과거 로그를 새 결과로 덮어쓰지 않는다.
+정확한 TARGET_MISSING이 반복되면 READ는 여전히 BLOCKED이며 PREP_ATTEMPT의 OBSERVATION만 WAITING이 된다.
+새 이벤트가 없으면 추가 읽기 없이 NOT_READY, 새 이벤트가 있어도 4회/1,500ms 안에 완전한 관측을
+얻지 못하면 NOT_READY다. 후속 READ가 정상이어도 FIRST_F0_DETAIL=TARGET_MISSING과 이전 unavailable 횟수는 남는다.
+
+준비 성공과 본 대조 완료는 별개다. READY → 새 INITIAL → 5구간 완료 → 측정 unavailable=0 →
+OBSERVED → CLEANUP=CONFIRMED → 실제 JUnit 성공(skip 없음)을 모두 확인해야 한다.
+본 측정 실패나 NOT_READY/INCONCLUSIVE면 후속 조건은 중단한다.
+시험 준비 종료 조건을 조정했으며, 삼성 선택창 유지·수동 닫기 또는 별도 Cleanup ADDED/HEALTH 문제가
+해결됐다고 주장하지 않는다. TARGET_MISSING의 Android 내부 원인과 새 대기의 실효성은 아직 미검증이다.
+
+
+### 12.6 최종 로컬 검증과 보존 상태
+
+| 검증 | 이번 결과 / 재사용 구분 |
+|---|---|
+| 수정 전 재현 | 새 TARGET_MISSING 공유 run 회귀 2개 실패: 즉시 REJECTED되어 이벤트 대기/예산 종료 기대 불충족 |
+| 수정 후 대상 회귀 | 준비 26개 + reader 비교 28개 = **54개 재실행 통과** |
+| 앱 Debug JVM 전체 | **1,615개 재실행 통과**, 실패·오류·skip 0 |
+| 앱 Release JVM | **1,499개 기존 통과 결과 재사용**, Gradle UP-TO-DATE, 실패·오류·skip 0 |
+| 호스트 / 합성 앱 JVM | **55개 / 26개 기존 결과 재사용**, UP-TO-DATE, 실패·오류·skip 0 |
+| 빌드 | Debug/Release, 앱·호스트 AndroidTest, 호스트·합성 앱 Debug task 모두 성공. Debug 앱 재빌드 및 앱 AndroidTest Kotlin 재컴파일; 변경 없는 Release/호스트/합성 산출물은 UP-TO-DATE |
+| Lint | 앱 Debug 분석 재실행. 앱 Release/호스트 기존 분석 재사용. 세 XML 보고서 issue 0 |
+| APK/DEX/Manifest | 이번 산출물 재검사 통과. Debug 준비/reader/service 존재, Release 정의·참조·준비 로그·시험 서비스 부재. 기존 호스트/앱/계측 DEX 격리 검사 통과 |
+| 공백 / 줄바꿈 | CRLF-aware working/staged 검사 통과(index 비어 있음). 변경 5개 파일의 기존 LF 유지, 다른 파일 줄바꿈 변환 없음 |
+| 보존 | 기준 HEAD 유지, 다른 9개 worktree HEAD/status 및 기존 미커밋 파일 해시 일치. 보호 구조 검토 문서 해시 일치 |
+| 기기 / Git | 기기 실행·stage·커밋·푸시·병합 없음 |
+
+수정 전 로그 `/workspace/a-p01-target-missing-before.log`, 대상 회귀
+`/workspace/a-p01-target-missing-targeted.log`, 전체 검증
+`/workspace/a-p01-target-missing-full.log` (BUILD SUCCESSFUL, 250 tasks: 15 executed / 235 up-to-date).
+이 결과는 시험 제어 경계의 JVM/빌드 검증이며 Android 대조 시험 완료가 아니다.
+이번 범위의 추가 판정 완화·실패 은폐·실행 권한 확대는 발견하지 않았다.
+첫 실패의 내부 Android 원인, 삼성 선택창 유지·수동 닫기 및 Cleanup RETIRED_ID_EVENT/ADDED/HEALTH는
+여전히 별도 미확정/미해결이다.
