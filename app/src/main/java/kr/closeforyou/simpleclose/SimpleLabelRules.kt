@@ -135,8 +135,10 @@ object SimpleLabelRules {
      * L13: an event popup with a "구매" button is CLOSE_OK): a buy or order button alone does not keep it asked; it is
      * still never pressed ([isDecision]), and B may still call the popup a decision (L03, L17 → asked).
      */
-    fun isRisky(label: String?): Boolean {
+    fun isRisky(label: String?, askWhenPurchase: Boolean = SimpleCloseEngineFeature.ASK_WHEN_PURCHASE_BUTTON): Boolean {
         if (!isDecision(label)) return false
+        // F24: with the switch on (default), every decision word keeps the popup asked, 구매·주문 too (F16~F22).
+        if (askWhenPurchase) return true
         val normalized = ButtonLabelRules.normalize(label!!)
         val tokens = normalized.split(NON_TOKEN).filter { it.isNotEmpty() }
         return ASK_KO.any { it in normalized } || ASK_EN.any { phrase ->

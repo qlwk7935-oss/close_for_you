@@ -104,6 +104,12 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
     /** F23: a browser showing YouTube (seen in a whole read): its reads stay whole for a while (skip button outside popups). */
     private var videoWebPackage: String? = null
     private var videoWebUntil = 0L
+    /** F24: a page whose whole read was slow (> 1 s): whole reads only on window changes for a while. */
+    private var slowPackage: String? = null
+    private var slowUntil = 0L
+    /** F24: share of time spent reading, per 10 s window (debug `READ_DUTY_PCT`). */
+    private var dutyWindowStart = 0L
+    private var dutyBusy = 0L
     /** F13: the person's press already moved TalkBack's focus off the popup before our window went. */
     private var focusedBeforeClose = false
     /**
@@ -280,8 +286,8 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
         // F20: the YouTube app's skip button sits outside any popup: its tree is always read whole.
         // F22-2: a re-check or repaint read that the probe finds nothing in stops there (cheap), except every few reads.
         val videoWeb = expectedPackage == videoWebPackage && readStart < videoWebUntil
-        val whole = trigger == DetectTrigger.WINDOW_EVENT || trigger == DetectTrigger.TALKBACK_FOCUS || videoWeb ||
-            searchReads % SimpleCloseEngineFeature.WHOLE_READ_EVERY == SimpleCloseEngineFeature.WHOLE_READ_EVERY - 1
+        val slowPage = expectedPackage == slowPackage && readStart < slowUntil
+        val whole = ReadBudget.wholeRead(trigger, searchReads, slowPage, videoWeb)
         val read = withContext(Dispatchers.Default) {
             collector.read(expectedPackage, ::allowsApp, probe = expectedPackage != VideoAdSkip.YOUTUBE_APP && !videoWeb, wholeIfProbeMisses = whole)
         }
@@ -293,6 +299,12 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
         if (whole) searchWholeReads += 1
         if (firstEventAt != 0L) log.latency("READ_AT_MS", readStart - firstEventAt)
         log.latency(if (whole) "READ_WHOLE_COST_MS" else "READ_PROBE_COST_MS", readMillis)
+        // F24: a slow whole read (예스24 3.6 s) makes the next ones rarer on this page.
+        if (whole && read?.mode != TreeReadMode.POPUP_SUBTREE && readMillis > ReadBudget.SLOW_WHOLE_MILLIS) {
+            slowPackage = expectedPackage
+            slowUntil = SystemClock.uptimeMillis() + SLOW_PAGE_MILLIS
+        }
+        countDuty(readStart, readMillis)
         if (read == null) {
             searchUnavailable += 1
             log.trace(SimpleTrace.TREE_UNAVAILABLE)
@@ -475,6 +487,8 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
                         if (pressing == words) pressing = null
                     }
                     if (PressSuccess.isConfirmed(result)) {
+                        // F24: the page settles after a close; no fast re-reads of it.
+                        inspectionEvents.backOff()
                         speakClosedThenFocusPage(classified, moveFocus)
                     } else if (result.attempted && result.outcome != ClickOutcome.LEFT_APP) {
                         // F20: pressed and not closed (or back again): no card, no focus move, no second press; the
@@ -700,6 +714,7 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
                     val result = pressAndConfirm(popup, candidate, moveFocus = !focusedAlready, watchFocus = true)
                     when {
                         PressSuccess.isConfirmed(result) -> {
+                            inspectionEvents.backOff()
                             if (remember) {
                                 RememberedPopupRules.ruleFor(popup.snapshot.token.packageName, popup, candidate)?.let { rule ->
                                     withContext(Dispatchers.Default) { remembered.put(rule) }
@@ -763,6 +778,18 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
         val sentence = getString(R.string.ui_move_button_position, candidate.label?.trim().orEmpty(), place)
         log.trace(SimpleTrace.MOVE_POSITION_SPOKEN)
         scope.launch { announcer.announce(AnnouncementRequest(null, AnnouncementKind.POPUP_FOUND, sentence)) }
+    }
+
+    /** F24: adds one read to the current 10 s window and logs the share of time reading when the window is over. */
+    private fun countDuty(start: Long, cost: Long) {
+        if (dutyWindowStart == 0L) dutyWindowStart = start
+        dutyBusy += cost
+        val elapsed = start + cost - dutyWindowStart
+        if (elapsed >= DUTY_WINDOW_MILLIS) {
+            log.latency("READ_DUTY_PCT", dutyBusy * 100 / elapsed)
+            dutyWindowStart = 0L
+            dutyBusy = 0L
+        }
     }
 
     /** F20/F21: the popup's key by its words (stable when it moves), as [inspect] uses it. */
@@ -1099,6 +1126,8 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
         const val OWN_FOCUS_ECHO_MILLIS = 250L
         const val VIDEO_EVENT_LOG_MILLIS = 5_000L
         const val VIDEO_WEB_STICKY_MILLIS = 60_000L
+        const val SLOW_PAGE_MILLIS = 60_000L
+        const val DUTY_WINDOW_MILLIS = 10_000L
         val WINDOW_EVENTS = setOf(
             AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED, AccessibilityEvent.TYPE_WINDOWS_CHANGED,
             AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED, AccessibilityEvent.TYPE_VIEW_ACCESSIBILITY_FOCUSED,

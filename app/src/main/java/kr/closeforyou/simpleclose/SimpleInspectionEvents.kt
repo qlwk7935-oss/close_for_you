@@ -35,6 +35,16 @@ internal class SimpleInspectionEvents(
 ) {
     private var lastFocusEventReadAt = 0L
 
+    /**
+     * F24 (LG 11/1 G마켓 웹: 25 reads in 25 s, a probe read every 0.2 s on a page that never had a popup): searches
+     * in a row that found nothing ([ReadBudget]). Repaint reads wait longer each time; a window change, a new
+     * window, a TalkBack focus move or a found popup start again from 0. Repaints alone (carousels) never do.
+     */
+    private var quiet = 0
+
+    /** F24: the app whose window re-check chain is running now (null = none). */
+    private var chainPackage: String? = null
+
     /** F13: when the first read now waiting was first armed ([NOT_PENDING] = none), for which app. */
     private var pendingSince = NOT_PENDING
     private var pendingPackage: String? = null
@@ -43,7 +53,14 @@ internal class SimpleInspectionEvents(
     private var inFlightPackage: String? = null
     private var foldedIn: SimpleInspectionEvent? = null
 
+    /** F24: after a close the page settles: repaint reads go straight into the budget ([ReadBudget.AFTER_CLOSE]). */
+    fun backOff(level: Int = ReadBudget.AFTER_CLOSE) {
+        quiet = maxOf(quiet, level)
+    }
+
     fun resetConnection() {
+        quiet = 0
+        chainPackage = null
         lastFocusEventReadAt = 0L
         pendingSince = NOT_PENDING
         inFlightPackage = null
@@ -54,7 +71,7 @@ internal class SimpleInspectionEvents(
         val activeJobs = jobs()
         if (activeJobs.busy) return
         if (promptShowing() && now() - lastInspection() < SimpleCloseEngineFeature.PROMPT_RECHECK_MILLIS) return
-        if (kind == SimpleInspectionEvent.CONTENT && now() - lastInspection() < SimpleCloseEngineFeature.CONTENT_CHANGE_READ_MILLIS) {
+        if (kind == SimpleInspectionEvent.CONTENT && now() - lastInspection() < ReadBudget.contentGap(quiet)) {
             log.trace(SimpleTrace.CONTENT_READ_THROTTLED)
             return
         }
@@ -68,6 +85,8 @@ internal class SimpleInspectionEvents(
             return
         }
         val expectedPackage = eventPackage ?: return
+        // F24: a popup is likely new after one of these; the budget starts again.
+        if (kind != SimpleInspectionEvent.CONTENT) quiet = 0
         onAccepted()
         if (kind == SimpleInspectionEvent.TALKBACK_FOCUS) {
             lastFocusEventReadAt = now()
@@ -75,12 +94,17 @@ internal class SimpleInspectionEvents(
             activeJobs.scheduleInspection {
                 // Immediate scheduling, no debounce. Full authorization still runs in the worker.
                 if (!activeJobs.busy && !promptShowing() && !read(expectedPackage, DetectTrigger.TALKBACK_FOCUS)) {
-                    onSearchExhausted()
+                    exhausted()
                 }
             }
             return
         }
         val at = now()
+        // F24: a window change's re-check chain is running for this app: its next read covers a repaint.
+        if (kind == SimpleInspectionEvent.CONTENT && chainPackage == expectedPackage && activeJobs.inspecting) {
+            log.trace(SimpleTrace.EVENT_COALESCED)
+            return
+        }
         // F14: a read running for this app is never cut short; it is followed up when it finds nothing.
         if (activeJobs.inspecting && inFlightPackage == expectedPackage) {
             if (foldedIn != SimpleInspectionEvent.WINDOW) foldedIn = kind
@@ -111,25 +135,39 @@ internal class SimpleInspectionEvents(
                         chain = true
                         break
                     }
-                    delay(SimpleCloseEngineFeature.DEBOUNCE_MILLIS)
+                    // F24 (LG 11/1 G마켓: a carousel repaints during every read, so this loop read every 0.2 s for
+                    // good): each further repaint read waits the budget, longer every time nothing is found.
+                    quiet = minOf(quiet + 1, ReadBudget.MAX_LEVEL)
+                    delay(ReadBudget.contentGap(quiet))
                 }
                 if (!chain) {
-                    onSearchExhausted()
+                    exhausted()
                     return@scheduleInspection
                 }
             }
-            for (wait in listOf(0L) + SimpleCloseEngineFeature.RECHECK_DELAYS_MILLIS) {
-                if (wait > 0) {
-                    log.trace(SimpleTrace.RECHECK_SCHEDULED)
-                    delay(wait)
+            chainPackage = expectedPackage
+            try {
+                for (wait in listOf(0L) + SimpleCloseEngineFeature.RECHECK_DELAYS_MILLIS) {
+                    if (wait > 0) {
+                        log.trace(SimpleTrace.RECHECK_SCHEDULED)
+                        delay(wait)
+                    }
+                    if (activeJobs.busy || promptShowing()) return@scheduleInspection
+                    if (read(expectedPackage, if (wait == 0L) DetectTrigger.WINDOW_EVENT else DetectTrigger.RECHECK)) return@scheduleInspection
+                    // The chain's next read covers whatever came in during this one.
+                    foldedIn = null
                 }
-                if (activeJobs.busy || promptShowing()) return@scheduleInspection
-                if (read(expectedPackage, if (wait == 0L) DetectTrigger.WINDOW_EVENT else DetectTrigger.RECHECK)) return@scheduleInspection
-                // The chain's next read covers whatever came in during this one.
-                foldedIn = null
+            } finally {
+                if (chainPackage == expectedPackage) chainPackage = null
             }
-            onSearchExhausted()
+            exhausted()
         }
+    }
+
+    /** A search found nothing: the next repaint read waits longer (F24). */
+    private fun exhausted() {
+        quiet = minOf(quiet + 1, ReadBudget.MAX_LEVEL)
+        onSearchExhausted()
     }
 
     /** One read, marked in flight for [expectedPackage] so events for the same app do not cancel it (F14). */
@@ -137,7 +175,7 @@ internal class SimpleInspectionEvents(
         inFlightPackage = expectedPackage
         foldedIn = null
         try {
-            return inspect(expectedPackage, trigger)
+            return inspect(expectedPackage, trigger).also { found -> if (found) quiet = 0 }
         } finally {
             if (inFlightPackage == expectedPackage) inFlightPackage = null
         }
@@ -145,5 +183,29 @@ internal class SimpleInspectionEvents(
 
     private companion object {
         const val NOT_PENDING = Long.MIN_VALUE
+    }
+}
+
+/**
+ * F24 read budget, pure. Repaint reads after [quiet] empty searches in a row wait [contentGap]: 0.2, 0.4, 0.8, 1.6,
+ * then 3 s. At 3 s a probe read of about 0.3 s is 10% of the time. [plan]: whether a read walks the whole tree when
+ * the probe finds nothing; a page whose whole read took over [SLOW_WHOLE_MILLIS] (예스24 3.6 s) walks it only on a
+ * window change, and every [SLOW_WHOLE_EVERY]-th read instead of every [SimpleCloseEngineFeature.WHOLE_READ_EVERY]-th.
+ */
+object ReadBudget {
+    const val MAX_LEVEL = 8
+    const val AFTER_CLOSE = 3
+    const val SLOW_WHOLE_MILLIS = 1_000L
+    const val SLOW_WHOLE_EVERY = 9
+    private const val FIRST_GAP_MILLIS = 200L
+    const val MAX_GAP_MILLIS = 3_000L
+
+    fun contentGap(quiet: Int): Long = minOf(FIRST_GAP_MILLIS shl quiet.coerceIn(0, MAX_LEVEL), MAX_GAP_MILLIS)
+
+    fun wholeRead(trigger: DetectTrigger, readIndex: Int, slowPage: Boolean, videoWeb: Boolean): Boolean {
+        if (videoWeb || trigger == DetectTrigger.WINDOW_EVENT) return true
+        if (slowPage) return readIndex % SLOW_WHOLE_EVERY == SLOW_WHOLE_EVERY - 1
+        return trigger == DetectTrigger.TALKBACK_FOCUS ||
+            readIndex % SimpleCloseEngineFeature.WHOLE_READ_EVERY == SimpleCloseEngineFeature.WHOLE_READ_EVERY - 1
     }
 }

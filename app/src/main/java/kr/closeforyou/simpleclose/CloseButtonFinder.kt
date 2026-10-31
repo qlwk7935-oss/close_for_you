@@ -40,7 +40,7 @@ data class ButtonScan(
  * Candidate ids follow B's form ("node:<path>") so C's prompt and the engine's re-check agree.
  */
 object CloseButtonFinder {
-    fun scan(nodes: List<NodeSnapshot>, root: PopupRoot): ButtonScan {
+    fun scan(nodes: List<NodeSnapshot>, root: PopupRoot, askWhenPurchase: Boolean = SimpleCloseEngineFeature.ASK_WHEN_PURCHASE_BUTTON): ButtonScan {
         val inside = nodes.filter(root::contains)
         val candidates = mutableListOf<CloseCandidate>()
         var forbidden = 0
@@ -52,7 +52,7 @@ object CloseButtonFinder {
         for (node in inside) {
             if (!node.clickable || !node.enabled) continue
             val label = nameOf(node, inside)
-            if (SimpleLabelRules.isRisky(label)) risk++
+            if (SimpleLabelRules.isRisky(label, askWhenPurchase)) risk++
             if (SimpleLabelRules.isDecision(label)) {
                 riskButtons += CloseCandidate("node:${node.path}", node.path, node.viewId, label, node.bounds, EvidenceLevel.E2_LABELED_NODE, ButtonRole.USER_DECISION)
             }

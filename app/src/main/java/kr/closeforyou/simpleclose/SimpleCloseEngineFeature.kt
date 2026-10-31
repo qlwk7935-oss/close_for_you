@@ -81,6 +81,13 @@ object SimpleCloseEngineFeature {
      * time when the same popup is in the same place with the same button.
      */
     const val REMEMBER_X_ALWAYS: Boolean = true
+
+    /**
+     * F24 (재호 to decide): true = a "구매·주문" button beside the close keeps the popup asked, as in F16~F22 (the
+     * safe default). False = F23: only 결제·동의·구독·삭제·권한·허용·로그인… keep it asked; 구매·주문 are still never
+     * pressed (D's answer key L04~L06, L13 CLOSE_OK).
+     */
+    const val ASK_WHEN_PURCHASE_BUTTON: Boolean = true
     const val CLOSE_RECHECK_MILLIS = 220L
 
     /**
@@ -100,7 +107,7 @@ object SimpleCloseEngineFeature {
     /**
      * F22-2 (LG 11/1 옥션 웹: DETECT_LATENCY_MS=4461, caught by the 5th re-check): re-checks and repaint reads that
      * find nothing cost only the probe (no whole-page walk, about 0.3 s instead of 0.7~2 s), so they can come
-     * more often ([RECHECK_DELAYS_MILLIS], [CONTENT_CHANGE_READ_MILLIS]). The window event's read, a TalkBack
+     * more often ([RECHECK_DELAYS_MILLIS], [ReadBudget]). The window event's read, a TalkBack
      * focus read and every [WHOLE_READ_EVERY]-th read of a search still read the whole tree when the probe
      * misses (a popup beyond its cap).
      */
@@ -112,12 +119,10 @@ object SimpleCloseEngineFeature {
      */
     const val FIRST_READ_MAX_WAIT_MILLIS = 400L
 
-    /**
-     * A content change (Chrome repaints constantly) gets one read, at most this often, and never
-     * restarts the re-check chain; only a window-state or windows change does (LG 10/31: the chain
-     * restarted on every repaint and read the tree every 1~2 s for minutes).
+    /*
+     * F24: repaint reads follow [ReadBudget.contentGap] (0.2 s, doubling to 3 s while nothing is found; was a fixed
+     * 1.5 s, then 0.7 s in F22-2, which read without rest on carousel pages).
      */
-    const val CONTENT_CHANGE_READ_MILLIS = 700L
 
     /**
      * Demo hint for an image-only dialog (옥션: one big clickable image with little text, a 닫기

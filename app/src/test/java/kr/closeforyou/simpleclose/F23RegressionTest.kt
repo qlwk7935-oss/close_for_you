@@ -39,12 +39,17 @@ class F23RegressionTest {
 
     // ---- 3. answer key ----
 
-    @Test fun anEventPopupWithABuyButtonIsClosedByItsCloseNeverByBuy() {
-        // L04/L05/L06/L13: EVENT_POPUP, forbidden BUY, expected CLOSE_OK.
+    @Test fun anEventPopupWithABuyButtonIsAskedByDefaultAndClosedWithTheSwitchOff() {
+        // L04/L05/L06/L13: EVENT_POPUP, forbidden BUY, expected CLOSE_OK. F24: 재호 decides; default asks (F16~F22).
         val popup = popupOf(dialog("구매하기", "닫기"))
-        assertEquals(0, popup.scan.riskCount)
+        assertEquals(1, popup.scan.riskCount)
+        assertEquals(SimpleDecision.Ask, strong(popup, PopupClassification.ADVERTISEMENT))
         assertEquals(listOf("구매하기"), popup.scan.riskButtons.map { it.label })
-        val decision = strong(popup, PopupClassification.ADVERTISEMENT) as SimpleDecision.AutoClose
+        val switchOff = CloseButtonFinder.scan(popup.snapshot.nodes, popup.root, askWhenPurchase = false)
+        assertEquals(0, switchOff.riskCount)
+        val decision = SimpleCloseDecider.decide(PopupClassification.ADVERTISEMENT, false, switchOff.candidates,
+            kr.closeforyou.ui.voice.settings.HandlingPreset.CLOSE_ALL.autoCloseKinds(), switchOff.forbiddenCount,
+            unknownEnabled = true, riskCount = switchOff.riskCount, strongEnabled = true) as SimpleDecision.AutoClose
         assertEquals("닫기", decision.candidate.label)
     }
 
