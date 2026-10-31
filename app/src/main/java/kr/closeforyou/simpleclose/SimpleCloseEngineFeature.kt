@@ -49,6 +49,14 @@ object SimpleCloseEngineFeature {
      */
     const val RESULT_BANNER_TAKES_FOCUS: Boolean = true
 
+    /**
+     * F22-2 D (browser speech, "올리브영 수준": found, closed, one sentence): with the result card taking the focus, an
+     * automatic close no longer first moves TalkBack's focus to the toolbar (it said the toolbar's name before the
+     * result). The reclaim watch still runs from the click and takes a page place only if the page pulls the focus
+     * into the old popup. The person's own press keeps its move (our window goes away under the focus).
+     */
+    const val AUTO_PRE_CLICK_MOVE_WITH_BANNER: Boolean = false
+
     /** F17: touch events this soon after the reclaim watch began are the press's own double tap, not a new touch. */
     const val FOCUS_RECLAIM_TOUCH_GRACE_MILLIS = 800L
 
@@ -60,7 +68,8 @@ object SimpleCloseEngineFeature {
 
     /**
      * F20 (LG 11/1 11번가: "closed" 0.27 s after the click, then the same sheet again): a close counts only when,
-     * [CLOSE_RECHECK_MILLIS] after the root went away, a fresh probe-only read (F21: 600 → 350 ms, no whole-page
+     * [CLOSE_RECHECK_MILLIS] after the root went away, a fresh probe-only read (F21: 600 → 350 ms, F22-2: 220 ms for
+     * CLOSE_RECHECK_MS ≤ 500 (LG 옥션 625); no whole-page
      * walk, so the result follows within about 0.7 s) does not show the same popup again
      * ([PopupMemory.reappeared]). Before that no result card, focus move or reclaim end happens.
      */
@@ -72,7 +81,7 @@ object SimpleCloseEngineFeature {
      * time when the same popup is in the same place with the same button.
      */
     const val REMEMBER_X_ALWAYS: Boolean = true
-    const val CLOSE_RECHECK_MILLIS = 350L
+    const val CLOSE_RECHECK_MILLIS = 220L
 
     /**
      * Window events settle before the tree is read (Chrome paints web nodes a little late). 300 → 200 ms
@@ -86,7 +95,16 @@ object SimpleCloseEngineFeature {
      * 11번가 sheet was still animating at the first read and Chrome sent no further event for 40 s).
      * Any new window event restarts the chain.
      */
-    val RECHECK_DELAYS_MILLIS = listOf(200L, 500L, 1_000L, 2_000L, 3_000L)
+    val RECHECK_DELAYS_MILLIS = listOf(200L, 400L, 600L, 800L, 1_000L, 1_500L, 2_000L, 3_000L)
+
+    /**
+     * F22-2 (LG 11/1 옥션 웹: DETECT_LATENCY_MS=4461, caught by the 5th re-check): re-checks and repaint reads that
+     * find nothing cost only the probe (no whole-page walk, about 0.3 s instead of 0.7~2 s), so they can come
+     * more often ([RECHECK_DELAYS_MILLIS], [CONTENT_CHANGE_READ_MILLIS]). The window event's read, a TalkBack
+     * focus read and every [WHOLE_READ_EVERY]-th read of a search still read the whole tree when the probe
+     * misses (a popup beyond its cap).
+     */
+    const val WHOLE_READ_EVERY = 3
 
     /**
      * F13 (LG 11/1 11번가: 6.4 s from the first event to the read that found the sheet, no read in
@@ -99,7 +117,7 @@ object SimpleCloseEngineFeature {
      * restarts the re-check chain; only a window-state or windows change does (LG 10/31: the chain
      * restarted on every repaint and read the tree every 1~2 s for minutes).
      */
-    const val CONTENT_CHANGE_READ_MILLIS = 1_500L
+    const val CONTENT_CHANGE_READ_MILLIS = 700L
 
     /**
      * Demo hint for an image-only dialog (옥션: one big clickable image with little text, a 닫기

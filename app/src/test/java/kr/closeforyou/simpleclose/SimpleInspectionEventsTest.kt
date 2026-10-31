@@ -95,11 +95,11 @@ class SimpleInspectionEventsTest {
         r.event()
         assertEquals(0, r.queries)
         advanceUntilIdle()
-        assertEquals(listOf(200L, 400L, 900L, 1900L, 3900L, 6900L), r.reads.map { it.first })
+        assertEquals(chainTimes(), r.reads.map { it.first })
         assertTrue(r.reads.all { it.second == r.chrome })
-        assertEquals(6, r.queries)
-        assertEquals(6, r.walks)
-        assertEquals(5, r.traces.count { it == SimpleTrace.RECHECK_SCHEDULED })
+        assertEquals(DELAYS.size + 1, r.queries)
+        assertEquals(DELAYS.size + 1, r.walks)
+        assertEquals(DELAYS.size, r.traces.count { it == SimpleTrace.RECHECK_SCHEDULED })
     }
 
     @Test fun contentEventKeepsSingleDebouncedReadEvenWhenNoPopupFound() = runTest {
@@ -187,10 +187,10 @@ class SimpleInspectionEventsTest {
         advanceTimeBy(400)
         r.settings = r.settings.copy(helpAppsExcluded = setOf(r.chrome))
         advanceUntilIdle()
-        assertEquals(6, r.reads.size)
+        assertEquals(DELAYS.size + 1, r.reads.size)
         assertEquals(1, r.queries)
         assertEquals(1, r.walks)
-        assertEquals(6, r.releases)
+        assertEquals(DELAYS.size + 1, r.releases)
     }
 
     @Test fun changedSelectionOrMissingMetadataNeverUsesEventAdmissionAsPermission() = runTest {
@@ -270,8 +270,8 @@ class SimpleInspectionEventsTest {
         advanceTimeBy(150)
         r.focus()
         advanceUntilIdle()
-        assertEquals(listOf(200L, 400L, 900L, 1900L, 3900L, 6900L), r.reads.map { it.first })
-        assertEquals(listOf(DetectTrigger.WINDOW_EVENT) + List(5) { DetectTrigger.RECHECK }, r.triggers)
+        assertEquals(chainTimes(), r.reads.map { it.first })
+        assertEquals(listOf(DetectTrigger.WINDOW_EVENT) + List(DELAYS.size) { DetectTrigger.RECHECK }, r.triggers)
         assertEquals(1, r.accepted)
         assertEquals(1, r.exhausted)
     }
@@ -402,7 +402,7 @@ class SimpleInspectionEventsTest {
         advanceTimeBy(50)
         r.event(content = true)
         advanceUntilIdle()
-        assertEquals(listOf(DetectTrigger.WINDOW_EVENT) + List(5) { DetectTrigger.RECHECK }, r.triggers)
+        assertEquals(listOf(DetectTrigger.WINDOW_EVENT) + List(DELAYS.size) { DetectTrigger.RECHECK }, r.triggers)
     }
 
     @Test fun anotherAppsEventIsNotFoldedIntoTheWaitingRead() = runTest {
@@ -420,6 +420,9 @@ class SimpleInspectionEventsTest {
 
     private val DEBOUNCE = SimpleCloseEngineFeature.DEBOUNCE_MILLIS
     private val DELAYS = SimpleCloseEngineFeature.RECHECK_DELAYS_MILLIS
+
+    /** When each read of a window chain starts: the debounce, then each re-check delay after the last (reads take 0 here). */
+    private fun chainTimes(): List<Long> = DELAYS.runningFold(SimpleCloseEngineFeature.DEBOUNCE_MILLIS) { at, wait -> at + wait }
 
     @Test fun aRepaintDuringASlowReadDoesNotCancelItAndBringsOneMoreRead() = runTest {
         val r = Rig(this).apply { popupFound = false; readDelay = 1_750 }

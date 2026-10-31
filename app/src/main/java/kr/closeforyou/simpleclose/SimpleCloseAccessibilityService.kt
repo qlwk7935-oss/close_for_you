@@ -270,7 +270,12 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
         // before traversal. Event scope admission is not collection permission.
         val readStart = SystemClock.uptimeMillis()
         // F20: the YouTube app's skip button sits outside any popup: its tree is always read whole.
-        val read = withContext(Dispatchers.Default) { collector.read(expectedPackage, ::allowsApp, probe = expectedPackage != VideoAdSkip.YOUTUBE_APP) }
+        // F22-2: a re-check or repaint read that the probe finds nothing in stops there (cheap), except every few reads.
+        val whole = trigger == DetectTrigger.WINDOW_EVENT || trigger == DetectTrigger.TALKBACK_FOCUS ||
+            searchReads % SimpleCloseEngineFeature.WHOLE_READ_EVERY == SimpleCloseEngineFeature.WHOLE_READ_EVERY - 1
+        val read = withContext(Dispatchers.Default) {
+            collector.read(expectedPackage, ::allowsApp, probe = expectedPackage != VideoAdSkip.YOUTUBE_APP, wholeIfProbeMisses = whole)
+        }
         val readMillis = SystemClock.uptimeMillis() - readStart
         searchReads += 1
         if (read == null) {
@@ -438,8 +443,11 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
                         null -> SimpleTrace.FOCUS_WAS_UNKNOWN
                     })
                     val moveFocus = inside == true
+                    // F22-2 D: with the result card taking the focus, no toolbar stop before the click (one sentence).
+                    val preClickMove = moveFocus && (SimpleCloseEngineFeature.AUTO_PRE_CLICK_MOVE_WITH_BANNER ||
+                        !SimpleCloseEngineFeature.RESULT_BANNER_TAKES_FOCUS || resultBanner?.talkBackOn() != true)
                     val result = try {
-                        pressAndConfirm(classified, decision.candidate, moveFocus, watchFocus = moveFocus)
+                        pressAndConfirm(classified, decision.candidate, preClickMove, watchFocus = moveFocus)
                     } finally {
                         if (pressing == words) pressing = null
                     }
