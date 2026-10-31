@@ -23,6 +23,19 @@ object SimpleCloseEngineFeature {
     /** Window events settle before the tree is read (Chrome paints web nodes a little late). */
     const val DEBOUNCE_MILLIS = 300L
 
+    /**
+     * After a read found no popup, the tree is read again after each of these waits (LG 10/31: the
+     * 11번가 sheet was still animating at the first read and Chrome sent no further event for 40 s).
+     * Any new window event restarts the chain.
+     */
+    val RECHECK_DELAYS_MILLIS = listOf(500L, 1_000L, 2_000L, 3_000L)
+
+    /**
+     * After a confirmed close, TalkBack's focus is moved to the first item of the page's web content
+     * (demo mode 6-0): a closed web popup can stay in the DOM and TalkBack kept reading it (LG 10/31).
+     */
+    const val FOCUS_PAGE_AFTER_CLOSE = true
+
     /** After the click: the popup root must be gone within this to count as closed, checked every [CONFIRM_POLL_MILLIS]. */
     const val CONFIRM_DELAY_MILLIS = 1_500L
     const val CONFIRM_POLL_MILLIS = 250L

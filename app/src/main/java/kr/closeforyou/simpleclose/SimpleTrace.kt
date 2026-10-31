@@ -42,6 +42,9 @@ enum class SimpleTrace {
     NOT_CLOSED,
     LEFT_APP,
     POPUP_GONE_PROMPT_DISMISSED,
+    RECHECK_SCHEDULED,
+    FOCUS_MOVED_TO_PAGE,
+    FOCUS_MOVE_FAILED,
 }
 
 /** Debug-only sink for [SimpleTrace]; the Android service installs Log.d, tests a list. */

@@ -117,6 +117,45 @@ class SimpleTreeCollector(private val service: AccessibilityService) {
         return parts.joinToString(" ").ifBlank { null }
     }
 
+    /**
+     * Moves accessibility (TalkBack) focus to the first visible, named item of the page: inside the
+     * first WebView when there is one (so the URL bar is skipped), else the first named node. Nothing
+     * is clicked. Device unverified.
+     */
+    fun focusFirstPageItem(): Boolean {
+        val root = service.rootInActiveWindow ?: return false
+        try {
+            val webView = firstMatch(root, 0) { it.className?.contains("WebView", ignoreCase = true) == true }
+            val target = (webView?.let { firstMatch(it, 0, ::isNamedVisible) ?: run { release(it); null } }
+                ?: firstMatch(root, 0, ::isNamedVisible)) ?: return false
+            try {
+                return target.performAction(AccessibilityNodeInfo.ACTION_ACCESSIBILITY_FOCUS)
+            } finally {
+                release(target)
+            }
+        } catch (e: RuntimeException) {
+            return false
+        } finally {
+            release(root)
+        }
+    }
+
+    private fun isNamedVisible(node: AccessibilityNodeInfo): Boolean =
+        node.isVisibleToUser && (!node.text.isNullOrBlank() || !node.contentDescription.isNullOrBlank()) &&
+            node.className?.contains("EditText", ignoreCase = true) != true
+
+    /** Depth-first search; the returned node is the caller's to release, every other visited node is released here. */
+    private fun firstMatch(node: AccessibilityNodeInfo, depth: Int, predicate: (AccessibilityNodeInfo) -> Boolean): AccessibilityNodeInfo? {
+        if (depth > SimpleCloseEngineFeature.MAX_DEPTH) return null
+        for (i in 0 until node.childCount) {
+            val child = node.getChild(i) ?: continue
+            if (predicate(child)) return child
+            val found = try { firstMatch(child, depth + 1, predicate) } finally { release(child) }
+            if (found != null) return found
+        }
+        return null
+    }
+
     /** Follows a path from the active root to the live node, or null when the tree changed. Caller releases. */
     fun nodeAt(path: String): AccessibilityNodeInfo? {
         val root = service.rootInActiveWindow ?: return null

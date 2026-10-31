@@ -72,6 +72,12 @@
 - ❌ 말이 많음(원문 전체 낭독), 우리 창 스와이프 느림, 선택 → 클릭 2.3초, 클릭 → 닫힘 확인 5.7초.
 - 고친 것: ① 선택 창 TTS는 종류 한 문장만(`READ_POPUP_TEXT_ON_PROMPT = false`; 원문은 [내용 다시 읽기]). ② 트리 읽기를 메인 스레드 밖(`Dispatchers.Default`)으로, 선택 창이 떠 있는 동안은 2초에 한 번 루트 노드만 확인(`PROMPT_RECHECK_MILLIS`). ③ 클릭 직전 재확인은 전체 트리 대신 라이브 노드 몇 개(`rootStillPresent`·`targetMatches`), 선택 즉시 TTS 끊고 클릭. ④ 닫힘 확인은 250ms마다 루트 노드만 폴링, 사라지는 즉시 `CLOSED_CONFIRMED`(최대 1.5초). ⑤ 결과 문장 전에 진행 중 TTS 중지. ⑥ `CfySpeech` 태그: 우리 TTS 문장마다 종류(PROMPT_OR_DENY_NOTE / CONTENT_FULL / RESULT / REPEAT / STOP) + 글자 수만.
 
+## 5-3. LG 3차 결과 (10/31 19:40, 140f6f7) → 4차 수정
+
+- ✅ 우리 TTS 안내 1 + 결과 1(+STOP 3)로 끝. 선택 → 클릭 53ms, 클릭 → 닫힘 확인 270ms.
+- ❌ 감지 40초 늦음: 첫 읽기 때 시트가 애니메이션 중이라 `NO_POPUP_ROOT`, 이후 크롬이 이벤트를 더 안 보냄. ⚠️ 닫힌 뒤 TalkBack이 DOM에 남은 팝업 내용을 계속 읽음.
+- 고친 것: ① 팝업을 못 찾은 뒤 0.5/1/2/3초에 다시 읽기(`RECHECK_DELAYS_MILLIS`, 새 이벤트가 오면 처음부터; 로그 `RECHECK_SCHEDULED`). ② `CLOSED_CONFIRMED` 뒤 TalkBack 포커스를 WebView 안 첫 이름 있는 항목으로(`FOCUS_PAGE_AFTER_CLOSE`, 주소창 제외; 로그 `FOCUS_MOVED_TO_PAGE`/`FOCUS_MOVE_FAILED`). 시연 모드 완화(6-10). 효과 없으면 한계로 기록.
+
 ## 6. 남은 위험·미확인
 
 - 크롬이 실기기에서 `AlertDialog` 노드를 주는지(10/30 LG 확인됨), 두 번째 서비스에서도 주는지.

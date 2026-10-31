@@ -133,31 +133,43 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
         pending?.cancel()
         pending = scope.launch {
             delay(SimpleCloseEngineFeature.DEBOUNCE_MILLIS)
-            if (!busy) inspect()
+            // A popup still animating is missed by the first read, and Chrome may send nothing more
+            // (LG 10/31: 40 s late): read again a few times, until something is found or handled.
+            for (wait in listOf(0L) + SimpleCloseEngineFeature.RECHECK_DELAYS_MILLIS) {
+                if (wait > 0) {
+                    log.trace(SimpleTrace.RECHECK_SCHEDULED)
+                    delay(wait)
+                }
+                if (busy || prompted != null) return@launch
+                if (inspect()) return@launch
+            }
         }
     }
 
-    /** Reads the screen once (off the main thread) and acts on what it finds. Main thread. */
-    private suspend fun inspect() {
+    /**
+     * Reads the screen once (off the main thread) and acts on what it finds. Main thread. Returns
+     * false only when nothing was there to act on (no tree, no popup root), so the caller may read again.
+     */
+    private suspend fun inspect(): Boolean {
         lastInspectAt = SystemClock.uptimeMillis()
         val shownBefore = prompted
         if (shownBefore != null) {
             // Cheap check first: is the prompted popup still there? No full read unless it is gone.
             when (withContext(Dispatchers.Default) { collector.rootStillPresent(shownBefore.root) }) {
-                true -> return
+                true -> return true
                 false -> promptGone()
-                null -> return
+                null -> return true
             }
         }
         val read = withContext(Dispatchers.Default) { collector.read() }
         if (read == null) {
             log.trace(SimpleTrace.TREE_UNAVAILABLE)
-            return
+            return false
         }
         val root = PopupRootFinder.find(read.nodes, read.screen, read.activeWindowBounded)
         if (root == null) {
             log.trace(SimpleTrace.NO_POPUP_ROOT)
-            return
+            return false
         }
         val popup = SimplePopupAnalysis.build(read.nodes, root, read.packageName, read.windowId, read.screen, screenVersion, SystemClock.uptimeMillis())
         val key = popup.coarseKey
@@ -168,7 +180,7 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
         if (seenAt.size > 32) seenAt.remove(seenAt.keys.first())
         if (last != null && now - last < SimpleCloseEngineFeature.SAME_POPUP_COOLDOWN_MILLIS) {
             log.trace(SimpleTrace.SAME_POPUP_COOLDOWN)
-            return
+            return true
         }
         log.trace(when (root.kind) {
             PopupRootKind.ALERT_DIALOG -> SimpleTrace.DETECTED_ALERTDIALOG
@@ -202,13 +214,13 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
             }
             SimpleDecision.DenyDecision -> {
                 log.trace(SimpleTrace.DECIDED_DENY_DECISION)
-                if (!denyOnce(key)) return
+                if (!denyOnce(key)) return true
                 val deny = ActionDecision(analysis.token, ActionAuthorization.DENY, persistentSetOf(SafetyReason.IMPORTANT_DECISION), null, DecisionSource.PRESET, NextStep.DENY)
                 handlingListener?.onHandled(HandlingReport(analysis.token, classification, deny))
             }
             SimpleDecision.DenySuspicious -> {
                 log.trace(SimpleTrace.DECIDED_DENY_SUSPICIOUS)
-                if (!denyOnce(key)) return
+                if (!denyOnce(key)) return true
                 val deny = ActionDecision(analysis.token, ActionAuthorization.DENY, persistentSetOf(SafetyReason.SUSPICIOUS_CONTENT), null, DecisionSource.PRESET, NextStep.DENY)
                 handlingListener?.onHandled(HandlingReport(analysis.token, classification, deny))
             }
@@ -217,6 +229,14 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
                 ask(classified, classification)
             }
         }
+        return true
+    }
+
+    /** Demo mode: after a confirmed close, TalkBack reads the page, not a popup left in the DOM. */
+    private suspend fun focusPageAfterClose(outcome: ClickOutcome) {
+        if (!SimpleCloseEngineFeature.FOCUS_PAGE_AFTER_CLOSE || outcome != ClickOutcome.CLOSED_CONFIRMED) return
+        val moved = withContext(Dispatchers.Default) { collector.focusFirstPageItem() }
+        log.trace(if (moved) SimpleTrace.FOCUS_MOVED_TO_PAGE else SimpleTrace.FOCUS_MOVE_FAILED)
     }
 
     /** A deny sentence ("확인이 필요한 팝업이에요", the scam warning) is said once per popup key per session (LG 10/31: it looped). */
@@ -334,6 +354,7 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
                 ClickOutcome.LEFT_APP -> SimpleTrace.LEFT_APP
                 else -> SimpleTrace.NOT_CLOSED
             })
+            focusPageAfterClose(outcome)
             return ActionResult(token, ActionStatus.MECHANICAL_SUCCESS, null, attempted = true, outcome = outcome)
         } finally {
             busy = false
