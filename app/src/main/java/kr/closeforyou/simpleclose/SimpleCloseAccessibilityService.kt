@@ -10,6 +10,7 @@ import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import android.view.inputmethod.InputMethodManager
 import kotlinx.collections.immutable.persistentSetOf
+import kotlinx.collections.immutable.toImmutableList
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -26,6 +27,7 @@ import kr.closeforyou.core.model.ActionAuthorization
 import kr.closeforyou.core.model.ActionDecision
 import kr.closeforyou.core.model.ActionResult
 import kr.closeforyou.core.model.ActionStatus
+import kr.closeforyou.core.model.ButtonRole
 import kr.closeforyou.core.model.ChoiceKind
 import kr.closeforyou.core.model.ClickOutcome
 import kr.closeforyou.core.model.CloseCandidate
@@ -45,6 +47,7 @@ import kr.closeforyou.ui.voice.SpeechHandlingListener
 import kr.closeforyou.ui.voice.TtsPopupAnnouncer
 import kr.closeforyou.ui.voice.UiFormat
 import kr.closeforyou.ui.voice.choice.ChoicePromptPlanner
+import kr.closeforyou.ui.voice.choice.PromptOption
 import kr.closeforyou.ui.voice.choice.PromptOptionKind
 import kr.closeforyou.ui.voice.choice.RememberChoiceRules
 import kr.closeforyou.ui.voice.overlay.AccessibilityChoiceOverlay
@@ -227,7 +230,11 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
             log.trace(SimpleTrace.TREE_UNAVAILABLE)
             return false
         }
-        val root = PopupRootFinder.find(read.nodes, read.screen, read.activeWindowBounded)
+        // F16: an app popup window's tree has its own window for the live look-ups.
+        val root = PopupRootFinder.find(read.nodes, read.screen, read.activeWindowBounded)?.let { found ->
+            val windowId = read.popupWindowId ?: return@let found
+            found.copy(windowId = windowId, kind = if (found.kind == PopupRootKind.DIALOG_WINDOW) PopupRootKind.APP_WINDOW else found.kind)
+        }
         if (root == null) {
             log.trace(SimpleTrace.NO_POPUP_ROOT)
             lastNoRootAt = SystemClock.uptimeMillis()
@@ -249,6 +256,9 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
             PopupRootKind.ALERT_DIALOG -> SimpleTrace.DETECTED_ALERTDIALOG
             PopupRootKind.DIALOG_WINDOW -> SimpleTrace.DETECTED_DIALOG_WINDOW
             PopupRootKind.DIM_OVERLAY -> SimpleTrace.DETECTED_DIM_OVERLAY
+            PopupRootKind.FRONT_LAYER -> SimpleTrace.DETECTED_FRONT_LAYER
+            PopupRootKind.BOTTOM_SHEET -> SimpleTrace.DETECTED_BOTTOM_SHEET
+            PopupRootKind.APP_WINDOW -> SimpleTrace.DETECTED_APP_WINDOW
         })
         // F10: first event -> here overstates when the page itself loaded first; the gap since the last
         // read that saw no popup bounds when the popup really appeared. Which trigger caught it, too.
@@ -265,6 +275,7 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
             TreeReadMode.POPUP_SUBTREE -> SimpleTrace.READ_POPUP_SUBTREE
             TreeReadMode.FULL -> SimpleTrace.READ_FULL
             TreeReadMode.FULL_AFTER_PROBE -> SimpleTrace.READ_FULL_AFTER_PROBE
+            TreeReadMode.APP_WINDOW -> SimpleTrace.READ_APP_WINDOW
         })
         log.latency("TREE_PROBE_VISITED", read.probeVisited.toLong())
         endSearch()
@@ -287,14 +298,19 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
             else -> SimpleTrace.CLASSIFIED_UNKNOWN
         })
         if (popup.scan.forbiddenCount > 0) log.trace(SimpleTrace.BLOCKED_FORBIDDEN)
+        if (popup.scan.riskCount > 0) log.trace(SimpleTrace.BLOCKED_RISKY)
         if (popup.scan.unlabeledCount > 0) log.trace(SimpleTrace.UNLABELED_SKIPPED)
         log.trace(if (popup.scan.candidates.isEmpty()) SimpleTrace.CANDIDATE_NONE else SimpleTrace.CANDIDATE_FOUND)
 
         val analysis = popup.analysis.copy(classification = classification)
         val classified = popup.copy(analysis = analysis)
-        when (val decision = SimpleCloseDecider.decide(classification, suspicious, popup.scan.candidates, preferences.current(), popup.scan.forbiddenCount)) {
+        when (val decision = SimpleCloseDecider.decide(classification, suspicious, popup.scan.candidates, preferences.current(), popup.scan.forbiddenCount, popup.scan.riskCount)) {
             is SimpleDecision.AutoClose -> {
-                log.trace(if (decision.unknown) SimpleTrace.DECIDED_AUTO_CLOSE_UNKNOWN else SimpleTrace.DECIDED_AUTO_CLOSE)
+                log.trace(when {
+                    decision.strong -> SimpleTrace.DECIDED_AUTO_CLOSE_STRONG
+                    decision.unknown -> SimpleTrace.DECIDED_AUTO_CLOSE_UNKNOWN
+                    else -> SimpleTrace.DECIDED_AUTO_CLOSE
+                })
                 val approval = ActionDecision(analysis.token, ActionAuthorization.ALLOW_ONCE, persistentSetOf(), decision.candidate.id, DecisionSource.PRESET, NextStep.EXECUTE)
                 // Its own job: the inspection this runs in is replaced by the next window event.
                 jobs.runAction {
@@ -435,9 +451,19 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
                 ?.let { TalkBackTakeoverPlan.excerpt(it, SimpleCloseEngineFeature.PROMPT_EXCERPT_CHARS) },
             briefQuestion = brief,
         )
+        // F16: nothing named to press, but one X-shaped button: offered as "X 모양 닫기", pressed only on the tap (6-3).
+        val x = popup.scan.xButton?.takeIf {
+            SimpleCloseEngineFeature.OFFER_X_BUTTON && popup.scan.riskCount == 0 &&
+                classification != PopupClassification.USER_DECISION && prompt.options.none { o -> o.kind == PromptOptionKind.PRESS_CANDIDATE }
+        }
+        val shown = if (x == null) prompt else prompt.copy(
+            cannotPressForUser = false,
+            options = (listOf(PromptOption(PromptOptionKind.PRESS_CANDIDATE, candidateId = x.id, candidateRole = ButtonRole.CLOSE, buttonLabel = getString(R.string.ui_simple_x_button))) + prompt.options).toImmutableList(),
+        )
+        if (x != null) log.trace(SimpleTrace.X_BUTTON_OFFERED)
         prompted = popup
         focusedBeforeClose = false
-        val result = presenter.present(prompt) { answer -> onAnswer(popup, answer) }
+        val result = presenter.present(shown) { answer -> onAnswer(popup, answer) }
         if (result != PromptShowResult.SHOWN) {
             prompted = null
             log.trace(SimpleTrace.PROMPT_NOT_SHOWN)
@@ -458,7 +484,7 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
             ChoiceKind.CLOSE_ONCE, ChoiceKind.SKIP_ONCE -> {
                 log.trace(SimpleTrace.USER_CHOSE_PRESS)
                 prompted = null
-                val candidate = popup.scan.candidates.firstOrNull { it.id == choice.candidateId } ?: return
+                val candidate = (popup.scan.candidates + listOfNotNull(popup.scan.xButton)).firstOrNull { it.id == choice.candidateId } ?: return
                 // Nothing waits for the prompt's speech: stop it and press right away.
                 tts?.stop()
                 // F13: the focus already left the popup before our window went ([focusPageBeforeOurWindowGoes]); not again.
@@ -569,13 +595,14 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
                 if (focus.node != null) target = focus.node
             }
             val stillThere = withContext(Dispatchers.Default) {
-                collector.foregroundPackage() == token.packageName && collector.rootStillPresent(popup.root) == true && collector.targetMatches(candidate)
+                collector.foregroundPackage() == token.packageName && collector.rootStillPresent(popup.root) == true &&
+                    collector.targetMatches(candidate, popup.root.windowId)
             }
             if (!stillThere) {
                 log.trace(SimpleTrace.RECHECK_TARGET_GONE)
                 return ActionResult(token, ActionStatus.STALE, SafetyReason.STALE_SCREEN, attempted = false)
             }
-            val clicked = clickOnce(candidate.nodePath!!, popup.root.path)
+            val clicked = clickOnce(candidate.nodePath!!, popup.root.path, popup.root.windowId)
             if (clicked == null) {
                 log.trace(SimpleTrace.CLICK_TARGET_NOT_CLICKABLE)
                 return ActionResult(token, ActionStatus.BLOCKED, SafetyReason.UNVERIFIED_TARGET, attempted = false)
@@ -620,10 +647,10 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
     }
 
     /** True/false = performAction result; null = no clickable node between the target and the popup root. */
-    private fun clickOnce(targetPath: String, rootPath: String): Boolean? {
+    private fun clickOnce(targetPath: String, rootPath: String, windowId: Int? = null): Boolean? {
         var path = targetPath
         while (true) {
-            val node = collector.nodeAt(path) ?: return null
+            val node = collector.nodeAt(path, windowId) ?: return null
             try {
                 if (node.isClickable && node.isEnabled) return node.performAction(AccessibilityNodeInfo.ACTION_CLICK)
             } finally {

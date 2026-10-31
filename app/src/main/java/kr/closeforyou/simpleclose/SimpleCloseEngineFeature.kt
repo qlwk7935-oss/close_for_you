@@ -18,6 +18,30 @@ object SimpleCloseEngineFeature {
     const val enabled: Boolean = true
     const val demoLabelRulesV2: Boolean = true
 
+    /** F16: polite dismiss labels ("오늘 하루 보지 않기", "괜찮아요", "No thanks"…), whole label only ([SimpleLabelRules]). */
+    const val demoLabelRulesV3: Boolean = true
+
+    /**
+     * F16 강력 모드 (demo mode 6-0, F7 extended): with "전부 닫기" and its "자동 닫기" switch on, a popup is
+     * closed whatever its kind (광고·쿠폰·공지·판단 불가) when it has no risky button, at least one named
+     * close button (the plainest is pressed) and is neither a decision nor scam-like ([StrongCloseRules]).
+     * False = F7 (an unknown popup only with exactly one button).
+     */
+    const val STRONG_CLOSE_ALL: Boolean = true
+
+    /**
+     * F16: popups without a Dialog mark are found too: a large front layer over the page, a bottom sheet
+     * ([PopupRootFinder]), and an app's own popup window above its main window ([SimpleTreeCollector]).
+     */
+    const val FIND_FRONT_LAYERS: Boolean = true
+    const val FIND_APP_POPUP_WINDOWS: Boolean = true
+
+    /**
+     * F16: a popup with nothing named to press but one X-shaped button ([ButtonScan.xButton]) offers
+     * "'X 모양 닫기' 버튼 눌러 주기"; pressed only on the person's tap (AGENTS 6-3), never automatically.
+     */
+    const val OFFER_X_BUTTON: Boolean = true
+
     /**
      * Window events settle before the tree is read (Chrome paints web nodes a little late). 300 → 200 ms
      * (F5, LG 10/31 21:00: TalkBack read the 11번가 sheet twice before our window came); a read that comes

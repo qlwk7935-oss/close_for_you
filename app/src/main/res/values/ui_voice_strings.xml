@@ -348,4 +348,6 @@
 
     <!-- 통합 브랜치 integration/popup-helper: 단순 닫기 엔진(플랜 B)이 앱의 접근성 서비스. 이름은 app_name("팝업처리도우미") -->
     <string name="ui_simple_close_service_description">도와줄 앱의 팝업을 찾아 광고는 설정대로 닫고, 그 밖에는 선택 창으로 물어봅니다. 결제·동의·권한 같은 중요한 버튼은 대신 누르지 않습니다. 다른 팝업 엔진 서비스와 함께 켜지 마세요.</string>
+    <!-- F16: 이름 없는 X 버튼. 사용자가 탭으로 고를 때만 누른다(6-3). '%s 버튼 눌러 주기'에 들어가므로 '닫기'로 끝난다. -->
+    <string name="ui_simple_x_button">X 모양 닫기</string>
 </resources>

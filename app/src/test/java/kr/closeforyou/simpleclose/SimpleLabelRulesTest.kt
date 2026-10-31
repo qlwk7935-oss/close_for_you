@@ -33,15 +33,19 @@ class SimpleLabelRulesTest {
     }
 
     @Test fun forbiddenWordsWinEvenWhenLabelEndsWithClose() {
-        for (label in listOf("오늘 하루 닫기", "구매창 닫기", "결제 닫기", "동의 후 닫기", "오늘 하루 보지 않기", "다시 보지 않기")) {
+        for (label in listOf("구매창 닫기", "결제 닫기", "동의 후 닫기", "오늘 하루 무료 체험 닫기")) {
             assertEquals(label, SimpleLabelReject.FORBIDDEN, reject(label))
+        }
+        // F16 (v3): the whole phrases "오늘 하루 닫기", "오늘 하루 보지 않기", "다시 보지 않기" are closes ([StrongCloseTest]).
+        for (label in listOf("오늘 하루 닫기", "오늘 하루 보지 않기", "다시 보지 않기")) {
+            assertEquals(label, ButtonRole.CLOSE, role(label))
         }
     }
 
     @Test fun decisionAndNavigationLabelsAreNeverPressed() {
         for (label in listOf(
             "구매하기", "결제하기", "주문하기", "동의", "허용", "권한 허용", "앱 설치", "설치", "구독", "삭제", "로그인", "회원가입",
-            "쿠폰 받기", "자세히 보기", "더보기", "11번가 앱에서 확인", "앱 열기", "다운로드", "오늘 하루 보지 않기", "취소",
+            "쿠폰 받기", "자세히 보기", "더보기", "11번가 앱에서 확인", "앱 열기", "다운로드", "취소",
             "Allow", "Install", "Buy now", "Sign up", "Get coupon", "OK", "확인",
         )) {
             assertNull(label, role(label))

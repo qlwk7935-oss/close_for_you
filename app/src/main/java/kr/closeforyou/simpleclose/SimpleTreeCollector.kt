@@ -25,10 +25,12 @@ class TreeRead(
     /** F15: whether only the popup's subtree was read, and how many nodes the probe fetched (in [visited]). */
     val mode: TreeReadMode = TreeReadMode.FULL,
     val probeVisited: Int = 0,
+    /** F16: the nodes are the tree of this app popup window (not the active window); its id for the live look-ups. */
+    val popupWindowId: Int? = null,
 )
 
-/** F15: how a read went (debug log `READ_*`). */
-enum class TreeReadMode { FULL, POPUP_SUBTREE, FULL_AFTER_PROBE }
+/** F15: how a read went (debug log `READ_*`). F16: [APP_WINDOW], an app's own popup window above its main window. */
+enum class TreeReadMode { FULL, POPUP_SUBTREE, FULL_AFTER_PROBE, APP_WINDOW }
 
 /**
  * F14 (LG 11/1: one read of an 11번가 page took 1.75 s, TalkBack read the popup meanwhile): every child
@@ -67,6 +69,22 @@ class SimpleTreeCollector(private val service: AccessibilityService) {
                     val screen = screenBounds()
                     windows += service.windows.orEmpty()
                     val bounded = activeWindowBounded(windows, root.windowId, packageName, screen)
+                    if (SimpleCloseEngineFeature.FIND_APP_POPUP_WINDOWS && !bounded) {
+                        // F16: a PopupWindow or non-focusable Dialog of the same app sits above the active window.
+                        appPopupWindow(windows, root.windowId, packageName, screen)?.let { (windowId, popupRoot) ->
+                            try {
+                                val nodes = ArrayList<NodeSnapshot>(64)
+                                val count = WalkCount()
+                                walk(popupRoot, "0", 0, nodes, screen, count)
+                                if (nodes.isNotEmpty()) {
+                                    return@collect TreeRead(packageName, windowId, nodes, screen, true, count.visited, count.skipped,
+                                        TreeReadMode.APP_WINDOW, popupWindowId = windowId)
+                                }
+                            } finally {
+                                release(popupRoot)
+                            }
+                        }
+                    }
                     var mode = TreeReadMode.FULL
                     var probeVisited = 0
                     if (SimpleCloseEngineFeature.READ_POPUP_SUBTREE_FIRST && !bounded) {
@@ -74,7 +92,11 @@ class SimpleTreeCollector(private val service: AccessibilityService) {
                         probeVisited = probe.visited
                         probe.path?.takeIf { it != "0" }?.let { path ->
                             val count = WalkCount()
-                            val nodes = subtree(root, path, screen, count)
+                            // F16: a front layer brings the one page node under it, so the finder sees it is over the page.
+                            val nodes = subtree(root, path, screen, count)?.let { sub ->
+                                val context = probe.context ?: return@let sub
+                                single(root, context, screen, count)?.let { listOf(it) + sub }
+                            }
                             // The subtree must give a popup root by itself; otherwise the whole tree, as before.
                             if (nodes != null && PopupRootFinder.find(nodes, screen) != null) {
                                 return@collect TreeRead(packageName, root.windowId, nodes, screen, false,
@@ -110,7 +132,7 @@ class SimpleTreeCollector(private val service: AccessibilityService) {
     fun rootStillPresent(root: PopupRoot): Boolean? {
         val active = service.rootInActiveWindow ?: return null
         release(active)
-        val node = nodeAt(root.path) ?: return false
+        val node = nodeAt(root.path, root.windowId) ?: return false
         try {
             if (!node.isVisibleToUser) return false
             val bounds = Rect().also(node::getBoundsInScreen)
@@ -125,9 +147,9 @@ class SimpleTreeCollector(private val service: AccessibilityService) {
     }
 
     /** The live node at [candidate]'s path still carries the same name (own text/description or its subtree's). */
-    fun targetMatches(candidate: CloseCandidate): Boolean {
+    fun targetMatches(candidate: CloseCandidate, windowId: Int? = null): Boolean {
         val path = candidate.nodePath ?: return false
-        val node = nodeAt(path) ?: return false
+        val node = nodeAt(path, windowId) ?: return false
         try {
             return node.isVisibleToUser && node.isEnabled && liveName(node) == candidate.label
         } catch (e: RuntimeException) {
@@ -305,9 +327,12 @@ class SimpleTreeCollector(private val service: AccessibilityService) {
         return null
     }
 
-    /** Follows a path from the active root to the live node, or null when the tree changed. Caller releases. */
-    fun nodeAt(path: String): AccessibilityNodeInfo? {
-        val root = service.rootInActiveWindow ?: return null
+    /**
+     * Follows a path from the active root (or, F16, the root of window [windowId]) to the live node, or
+     * null when the tree changed or the window is gone. Caller releases.
+     */
+    fun nodeAt(path: String, windowId: Int? = null): AccessibilityNodeInfo? {
+        val root = (if (windowId == null) service.rootInActiveWindow else windowRoot(windowId)) ?: return null
         val indices = path.split('/').drop(1).map { it.toIntOrNull() ?: return null }
         var node = root
         for (index in indices) {
@@ -316,6 +341,53 @@ class SimpleTreeCollector(private val service: AccessibilityService) {
             node = child ?: return null
         }
         return node
+    }
+
+    private fun windowRoot(windowId: Int): AccessibilityNodeInfo? {
+        val windows = service.windows.orEmpty()
+        try {
+            return windows.firstOrNull { it.id == windowId }?.root
+        } finally {
+            windows.forEach(::release)
+        }
+    }
+
+    /**
+     * F16: the topmost application window of the same app above the active one, bounded (smaller than the
+     * screen): a PopupWindow or a Dialog that did not take the focus. Its id and root (the caller releases).
+     */
+    private fun appPopupWindow(windows: List<AccessibilityWindowInfo>, activeId: Int, packageName: String, screen: ScreenBounds): Pair<Int, AccessibilityNodeInfo>? {
+        val screenArea = screen.width.toLong() * screen.height
+        val active = windows.firstOrNull { it.id == activeId } ?: return null
+        val above = windows.filter { other ->
+            val b = Rect().also(other::getBoundsInScreen)
+            val a = b.width().toLong() * b.height()
+            other.id != activeId && other.type == AccessibilityWindowInfo.TYPE_APPLICATION && other.layer > active.layer &&
+                a > 0 && a.toDouble() / screenArea < 0.96
+        }.sortedByDescending { it.layer }
+        for (window in above) {
+            val r = window.root ?: continue
+            if (r.packageName?.toString() == packageName) return window.id to r
+            release(r)
+        }
+        return null
+    }
+
+    /** F16: one node's snapshot at [path] (not its subtree), visible or not; null when the path is gone. */
+    private fun single(root: AccessibilityNodeInfo, path: String, screen: ScreenBounds, count: WalkCount): NodeSnapshot? {
+        val indices = path.split('/').drop(1).map { it.toIntOrNull() ?: return null }
+        var node = root
+        try {
+            for (index in indices) {
+                val child = node.getChild(index)
+                if (node !== root) release(node)
+                node = child ?: return null
+            }
+            count.visited += 1
+            return snapshot(node, path)
+        } finally {
+            if (node !== root) release(node)
+        }
     }
 
     private class WalkCount(var visited: Int = 0, var skipped: Int = 0)
@@ -356,23 +428,7 @@ class SimpleTreeCollector(private val service: AccessibilityService) {
             count.skipped += 1
             return
         }
-        if (visible) {
-            val ids = node.actionList.map { it.id }
-            out += NodeSnapshot(
-                path = path,
-                viewId = node.viewIdResourceName,
-                className = node.className?.toString(),
-                text = node.text?.toString(),
-                contentDescription = node.contentDescription?.toString(),
-                clickable = node.isClickable,
-                enabled = node.isEnabled,
-                bounds = box,
-                actions = buildSet {
-                    if (AccessibilityNodeInfo.ACTION_CLICK in ids) add(NodeAction.CLICK)
-                    if (AccessibilityNodeInfo.ACTION_DISMISS in ids) add(NodeAction.DISMISS)
-                }.toPersistentSet(),
-            )
-        }
+        if (visible) out += snapshot(node, path)
         for (index in 0 until node.childCount) {
             val child = node.getChild(index) ?: continue
             try {
@@ -381,6 +437,25 @@ class SimpleTreeCollector(private val service: AccessibilityService) {
                 release(child)
             }
         }
+    }
+
+    private fun snapshot(node: AccessibilityNodeInfo, path: String): NodeSnapshot {
+        val bounds = Rect().also(node::getBoundsInScreen)
+        val ids = node.actionList.map { it.id }
+        return NodeSnapshot(
+            path = path,
+            viewId = node.viewIdResourceName,
+            className = node.className?.toString(),
+            text = node.text?.toString(),
+            contentDescription = node.contentDescription?.toString(),
+            clickable = node.isClickable,
+            enabled = node.isEnabled,
+            bounds = ScreenBounds(bounds.left, bounds.top, maxOf(bounds.right, bounds.left), maxOf(bounds.bottom, bounds.top)),
+            actions = buildSet {
+                if (AccessibilityNodeInfo.ACTION_CLICK in ids) add(NodeAction.CLICK)
+                if (AccessibilityNodeInfo.ACTION_DISMISS in ids) add(NodeAction.DISMISS)
+            }.toPersistentSet(),
+        )
     }
 
     private fun activeWindowBounded(windows: List<AccessibilityWindowInfo>, activeId: Int, packageName: String, screen: ScreenBounds): Boolean {

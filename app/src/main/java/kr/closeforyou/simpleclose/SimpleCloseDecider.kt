@@ -13,7 +13,7 @@ sealed interface SimpleDecision {
      * Preset says close this kind and exactly one close button is verified: press it without asking.
      * [unknown]: a popup B could not judge, closed under [DemoUnknownAutoClose] ("전부 자동 닫기" only).
      */
-    data class AutoClose(val candidate: CloseCandidate, val unknown: Boolean = false) : SimpleDecision
+    data class AutoClose(val candidate: CloseCandidate, val unknown: Boolean = false, val strong: Boolean = false) : SimpleDecision
 
     /** Show C's prompt (a kind the preset asks about, an unknown popup, no or several close buttons). */
     data object Ask : SimpleDecision
@@ -39,7 +39,9 @@ object SimpleCloseDecider {
         settings: UiVoiceSettings,
         /** Buttons with a decision word in the popup ([ButtonScan.forbiddenCount]); any one keeps an UNKNOWN popup asked. */
         forbiddenCount: Int = 0,
-    ): SimpleDecision = decide(classification, suspicious, candidates, settings.autoCloseKinds(live = true), forbiddenCount)
+        /** F16: buttons with a decision word ([ButtonScan.riskCount]); any one keeps the popup asked. */
+        riskCount: Int = 0,
+    ): SimpleDecision = decide(classification, suspicious, candidates, settings.autoCloseKinds(live = true), forbiddenCount, riskCount = riskCount)
 
     fun decide(
         classification: PopupClassification,
@@ -48,9 +50,17 @@ object SimpleCloseDecider {
         autoCloseKinds: ImmutableSet<PopupClassification>,
         forbiddenCount: Int = 0,
         unknownEnabled: Boolean = DemoUnknownAutoClose.ENABLED,
+        riskCount: Int = 0,
+        strongEnabled: Boolean = SimpleCloseEngineFeature.STRONG_CLOSE_ALL,
     ): SimpleDecision {
         if (suspicious) return SimpleDecision.DenySuspicious
         if (classification == PopupClassification.USER_DECISION) return SimpleDecision.DenyDecision
+        // F16: a 결제·동의·구독·삭제·권한 button beside the close keeps the popup asked, in every preset.
+        if (riskCount > 0) return SimpleDecision.Ask
+        if (strongEnabled && unknownEnabled && DemoUnknownAutoClose.presetAllows(autoCloseKinds)) {
+            val pick = StrongCloseRules.pick(candidates) ?: return SimpleDecision.Ask
+            return SimpleDecision.AutoClose(pick, unknown = classification == PopupClassification.UNKNOWN, strong = true)
+        }
         if (classification == PopupClassification.UNKNOWN) {
             if (!unknownEnabled || !DemoUnknownAutoClose.presetAllows(autoCloseKinds) || forbiddenCount > 0) return SimpleDecision.Ask
             // Exactly one verified button in the whole popup, and it is a labeled close (an unlabeled X is never a candidate, 6-3).
@@ -81,4 +91,18 @@ object DemoUnknownAutoClose {
         autoCloseKinds.containsAll(ALL_KINDS)
 
     private val ALL_KINDS = setOf(PopupClassification.ADVERTISEMENT, PopupClassification.NOTICE, PopupClassification.COUPON)
+}
+
+/**
+ * F16 강력 모드 ("전부 닫기" + "자동 닫기", demo mode 6-0, F7 extended; [SimpleCloseEngineFeature.STRONG_CLOSE_ALL]):
+ * whatever B says the popup is (광고·쿠폰·공지·판단 불가), it is closed without asking when it has no risky
+ * button ([SimpleLabelRules.isRisky]), is neither a decision nor scam-like, and has at least one named
+ * close button; of several, the plainest ([SimpleLabelRules.clarity]: "닫기" before "○○ 닫기" before
+ * "오늘 하루 보지 않기" before "괜찮아요"), the first in reading order on a tie. A button with a navigation
+ * word ("앱에서 열기", "설치", "쿠폰 받기") is never pressed but does not keep the popup asked. An unnamed X
+ * is never picked (6-3). The target is still re-checked right before the press. Other presets are unchanged.
+ */
+object StrongCloseRules {
+    fun pick(candidates: List<CloseCandidate>): CloseCandidate? =
+        candidates.filter { it.role == ButtonRole.CLOSE }.minByOrNull { SimpleLabelRules.clarity(it.label) }
 }

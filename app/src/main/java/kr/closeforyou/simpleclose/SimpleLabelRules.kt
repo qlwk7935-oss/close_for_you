@@ -2,6 +2,7 @@ package kr.closeforyou.simpleclose
 
 import kr.closeforyou.core.model.ButtonLabelRules
 import kr.closeforyou.core.model.ButtonRole
+import kr.closeforyou.core.model.LabelRejectReason
 import kr.closeforyou.ui.voice.choice.PressableLabelPolicy
 
 /** Why the engine will not press a button. Codes only, never the label itself. */
@@ -30,6 +31,12 @@ data class SimpleLabelVerdict(val role: ButtonRole?, val reject: SimpleLabelReje
  * - "모바일 웹으로 볼래요/볼게요", "웹으로 계속 보기": stays on the web page = closes the install sheet.
  * - "배경을 눌러 닫기": the dim background of an app's own overlay (올리브영).
  *
+ * v3 ([SimpleCloseEngineFeature.demoLabelRulesV3], F16): whole-label polite dismissals ("오늘 하루 보지 않기",
+ * "7일간 보지 않기", "괜찮아요", "다음에", "나중에", "그냥 볼게요", "웹으로 계속", "No thanks", "Not now").
+ * Only the exact phrase counts, so nothing else can ride along ("오늘 하루 무료 체험" is still refused).
+ * "확인"/"OK" stay ambiguous; "앱에서 열기", "설치", "받기" stay forbidden; a lone "×" is not a name
+ * (AGENTS 6-3: it goes to the person as "X 모양 닫기", [CloseButtonFinder]).
+ *
  * Matching uses the contract's [ButtonLabelRules.normalize] (NFKC, lowercase, one space).
  */
 object SimpleLabelRules {
@@ -54,12 +61,34 @@ object SimpleLabelRules {
 
     private val NON_TOKEN = Regex("[^a-z0-9']+")
 
+    /** F16 v3: whole labels only (normalized). Each one closes the popup and changes nothing else that matters. */
+    private val HIDE_FOR_A_WHILE = setOf(
+        "오늘 하루 보지 않기", "오늘하루 보지 않기", "오늘 하루 보지않기", "오늘하루 보지않기", "오늘 하루 그만 보기",
+        "오늘 그만 보기", "오늘은 그만 보기", "오늘 보지 않기", "오늘은 보지 않기", "오늘 하루 닫기", "오늘하루 닫기",
+        "다시 보지 않기", "다시 보지않기", "다시는 보지 않기", "다시 열지 않기", "그만 보기",
+    )
+    private val DAYS_HIDE = Regex("""^\d{1,2}\s*일\s*(간|동안|간 ?동안)?\s*(보지 ?않기|안 ?보기|그만 ?보기|닫기)$""")
+    private val STAY_ON_WEB = setOf(
+        "그냥 볼게요", "그냥 볼래요", "웹으로 계속", "웹으로 계속하기", "모바일 웹으로 계속", "모바일웹으로 계속",
+        "웹에서 계속 보기", "웹에서 볼게요", "모바일 웹에서 볼게요",
+    )
+    private val POLITE_NO = setOf(
+        "괜찮아요", "괜찮습니다", "아니요, 괜찮아요", "아니요 괜찮아요", "아니요, 괜찮습니다", "아니요 괜찮습니다",
+        "아니오, 괜찮습니다", "아니오 괜찮습니다", "다음에", "나중에", "다음에 할게요", "나중에 할게요", "다음에 볼게요",
+        "나중에 볼게요", "다음에 하기", "나중에 하기", "no thanks", "no, thanks", "no thank you", "not now", "maybe later",
+    )
+
+    private fun v3Close(normalized: String): Boolean =
+        normalized in HIDE_FOR_A_WHILE || DAYS_HIDE.matches(normalized) || normalized in STAY_ON_WEB || normalized in POLITE_NO
+
     fun roleOf(label: String?, v2: Boolean = SimpleCloseEngineFeature.demoLabelRulesV2): ButtonRole? = judge(label, v2).role
 
     fun judge(label: String?, v2: Boolean = SimpleCloseEngineFeature.demoLabelRulesV2): SimpleLabelVerdict {
         if (label == null) return reject(SimpleLabelReject.NO_LABEL)
         val normalized = ButtonLabelRules.normalize(label)
         if (normalized.isEmpty()) return reject(SimpleLabelReject.NO_LABEL)
+        // The exact phrase is the whole label, so the forbidden words in it ("하루", "보지 않기") carry nothing else.
+        if (v2 && SimpleCloseEngineFeature.demoLabelRulesV3 && v3Close(normalized)) return SimpleLabelVerdict(ButtonRole.CLOSE, null)
         // A "○○ 닫기" label may describe an install sheet ("앱설치 안내 레이어 닫기"); only that form
         // tolerates the install word, and only when nothing else forbidden is in front.
         val closeTail = v2 && ENDS_WITH_CLOSE.matches(normalized) && normalized !in DIM_CLOSE
@@ -82,6 +111,35 @@ object SimpleLabelRules {
         return FORBIDDEN_EN.any { phrase ->
             val words = phrase.split(' ')
             (0..tokens.size - words.size).any { start -> words.indices.all { tokens[start + it] == words[it] } }
+        }
+    }
+
+    /**
+     * F16: a button with a decision word (결제·구매·주문·동의·허용·권한·구독·삭제·가입·로그인…: the shared
+     * contract's decision grade, plus 주문/order). Any one in a popup keeps it asked in every preset.
+     */
+    fun isRisky(label: String?): Boolean {
+        if (label.isNullOrBlank()) return false
+        val normalized = ButtonLabelRules.normalize(label)
+        if (ButtonLabelRules.judge(normalized).reason == LabelRejectReason.DECISION_WORD) return true
+        return "주문" in normalized || normalized.split(NON_TOKEN).any { it == "order" }
+    }
+
+    /** F16: a label made of X marks only ("×", "X", "✕"): the shape, not a name (AGENTS 6-3). */
+    fun isXMark(label: String?): Boolean =
+        !label.isNullOrBlank() && ButtonLabelRules.judge(label).reason == LabelRejectReason.SYMBOL_ONLY
+
+    /**
+     * F16 "전부 닫기": how plainly a close label says close, lower is plainer. The plain contract close
+     * ("닫기", "Close") first, then "○○ 닫기", then hiding for a while or staying on the web, then a polite no.
+     */
+    fun clarity(label: String?): Int {
+        val normalized = label?.let(ButtonLabelRules::normalize).orEmpty()
+        return when {
+            ButtonLabelRules.roleOf(normalized) == ButtonRole.CLOSE -> 0
+            normalized in DIM_CLOSE || ENDS_WITH_CLOSE.matches(normalized) && normalized !in HIDE_FOR_A_WHILE -> 1
+            normalized in HIDE_FOR_A_WHILE || DAYS_HIDE.matches(normalized) || normalized in WEB_STAY || normalized in STAY_ON_WEB -> 2
+            else -> 3
         }
     }
 

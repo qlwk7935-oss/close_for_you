@@ -104,6 +104,18 @@ enum class SimpleTrace {
     FOCUS_RECLAIM_LIMIT,
     FOCUS_RECLAIM_NO_TARGET,
 
+    /** F16: popups without a Dialog mark ([PopupRootKind]), and an app popup window read as its own tree. */
+    DETECTED_FRONT_LAYER,
+    DETECTED_BOTTOM_SHEET,
+    DETECTED_APP_WINDOW,
+    READ_APP_WINDOW,
+    /** F16: a 결제·동의·구독·삭제·권한 button in the popup: asked in every preset. */
+    BLOCKED_RISKY,
+    /** F16 강력 모드: closed whatever its kind ([StrongCloseRules]). */
+    DECIDED_AUTO_CLOSE_STRONG,
+    /** F16: the prompt offers the popup's one unnamed X as "X 모양 닫기" (pressed only on the person's tap). */
+    X_BUTTON_OFFERED,
+
     // F6: why the image-dialog ad hint did not apply ([AdHintMiss]).
     AD_HINT_MISS_SCAM,
     AD_HINT_MISS_NOT_UNKNOWN,
