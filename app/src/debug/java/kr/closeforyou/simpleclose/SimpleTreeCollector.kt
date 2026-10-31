@@ -119,15 +119,22 @@ class SimpleTreeCollector(private val service: AccessibilityService) {
 
     /**
      * Moves accessibility (TalkBack) focus to the first visible, named item of the page: inside the
-     * first WebView when there is one (so the URL bar is skipped), else the first named node. Nothing
-     * is clicked. Device unverified.
+     * first WebView when there is one (so the URL bar is skipped), else the first named node. A node
+     * that was part of the closed popup ([exclude]: its texts and bounds, memory only) is skipped,
+     * because a closed web popup can stay in the DOM with the same words (LG 10/31). Nothing is
+     * clicked. Device unverified.
      */
-    fun focusFirstPageItem(): Boolean {
+    fun focusFirstPageItem(exclude: PopupMemory): Boolean {
         val root = service.rootInActiveWindow ?: return false
         try {
+            val predicate = { node: AccessibilityNodeInfo ->
+                val rect = Rect().also(node::getBoundsInScreen)
+                val bounds = ScreenBounds(rect.left, rect.top, maxOf(rect.right, rect.left), maxOf(rect.bottom, rect.top))
+                isNamedVisible(node) && !exclude.matches(node.text?.toString(), node.contentDescription?.toString(), bounds)
+            }
             val webView = firstMatch(root, 0) { it.className?.contains("WebView", ignoreCase = true) == true }
-            val target = (webView?.let { firstMatch(it, 0, ::isNamedVisible) ?: run { release(it); null } }
-                ?: firstMatch(root, 0, ::isNamedVisible)) ?: return false
+            val target = (webView?.let { firstMatch(it, 0, predicate) ?: run { release(it); null } }
+                ?: firstMatch(root, 0, predicate)) ?: return false
             try {
                 return target.performAction(AccessibilityNodeInfo.ACTION_ACCESSIBILITY_FOCUS)
             } finally {
@@ -140,9 +147,12 @@ class SimpleTreeCollector(private val service: AccessibilityService) {
         }
     }
 
-    private fun isNamedVisible(node: AccessibilityNodeInfo): Boolean =
-        node.isVisibleToUser && (!node.text.isNullOrBlank() || !node.contentDescription.isNullOrBlank()) &&
-            node.className?.contains("EditText", ignoreCase = true) != true
+    private fun isNamedVisible(node: AccessibilityNodeInfo): Boolean {
+        if (!node.isVisibleToUser || node.className?.contains("EditText", ignoreCase = true) == true) return false
+        if (node.text.isNullOrBlank() && node.contentDescription.isNullOrBlank()) return false
+        val bounds = Rect().also(node::getBoundsInScreen)
+        return bounds.width() > 0 && bounds.height() > 0
+    }
 
     /** Depth-first search; the returned node is the caller's to release, every other visited node is released here. */
     private fun firstMatch(node: AccessibilityNodeInfo, depth: Int, predicate: (AccessibilityNodeInfo) -> Boolean): AccessibilityNodeInfo? {

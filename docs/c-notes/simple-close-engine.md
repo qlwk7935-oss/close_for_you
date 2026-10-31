@@ -78,6 +78,13 @@
 - ❌ 감지 40초 늦음: 첫 읽기 때 시트가 애니메이션 중이라 `NO_POPUP_ROOT`, 이후 크롬이 이벤트를 더 안 보냄. ⚠️ 닫힌 뒤 TalkBack이 DOM에 남은 팝업 내용을 계속 읽음.
 - 고친 것: ① 팝업을 못 찾은 뒤 0.5/1/2/3초에 다시 읽기(`RECHECK_DELAYS_MILLIS`, 새 이벤트가 오면 처음부터; 로그 `RECHECK_SCHEDULED`). ② `CLOSED_CONFIRMED` 뒤 TalkBack 포커스를 WebView 안 첫 이름 있는 항목으로(`FOCUS_PAGE_AFTER_CLOSE`, 주소창 제외; 로그 `FOCUS_MOVED_TO_PAGE`/`FOCUS_MOVE_FAILED`). 시연 모드 완화(6-10). 효과 없으면 한계로 기록.
 
+## 5-4. LG 4차 결과 (10/31 19:52, 3e47eee) → 5차 수정
+
+- ✅ TalkBack이 팝업을 한 번 읽고 끝나면 우리 창 첫 버튼으로 포커스("나이스"), 스와이프 빠름, 두 번 탭 → 바로 닫힘(53ms/270ms), `FOCUS_MOVED_TO_PAGE` 찍힘.
+- ❌ 닫힌 뒤 TalkBack이 팝업 내용을 한 번 더 읽음 — 포커스 대상이 DOM에 남은 팝업 레이어 글자였을 가능성.
+- 고친 것: ① 닫힌 뒤 포커스 대상은 팝업 노드의 글자·bounds(`PopupMemory`, 메모리만)와 겹치지 않고 `isVisibleToUser`·넓이>0인 항목만. ② 순서: `CLOSED_CONFIRMED` → 우리 RESULT 문장을 바로, 끝까지 말함("광고를/공지를/팝업을 닫았어요", `ui_auto_closed_one`, 2초 묶음 없이) → 그 뒤 포커스 이동(TalkBack 낭독과 겹치지 않음).
+- B 분류 메모(바꾸지 않음): 11번가 앱설치 유도 시트("앱에서만 제공되는 혜택…", "지금 바로 … 확인해보세요")는 B main `DecisionKinds`에서 **NOTICE**("안내" 단어). 사용자는 "광고 닫았어요"를 기대. B 브랜치 `feature/decision-web-overlay`의 `extraAdKo`(앱에서만+혜택, 앱 열기/설치/다운로드)가 들어오면 ADVERTISEMENT가 되고, 프리셋 "광고만 닫기"에서도 묻지 않고 닫힘. B(준영) 판단 사항.
+
 ## 6. 남은 위험·미확인
 
 - 크롬이 실기기에서 `AlertDialog` 노드를 주는지(10/30 LG 확인됨), 두 번째 서비스에서도 주는지.

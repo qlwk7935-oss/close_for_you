@@ -35,8 +35,10 @@ import kr.closeforyou.core.model.HandlingReport
 import kr.closeforyou.core.model.NextStep
 import kr.closeforyou.core.model.PopupClassification
 import kr.closeforyou.core.model.SafetyReason
+import kr.closeforyou.R
 import kr.closeforyou.decision.DecisionPopupClassifier
 import kr.closeforyou.ui.voice.AnnouncementBatcher
+import kr.closeforyou.ui.voice.AutoDecisionSpeech
 import kr.closeforyou.ui.voice.PressFailure
 import kr.closeforyou.ui.voice.PressResultSpeech
 import kr.closeforyou.ui.voice.PressSuccess
@@ -209,8 +211,12 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
                 log.trace(SimpleTrace.DECIDED_AUTO_CLOSE)
                 val approval = ActionDecision(analysis.token, ActionAuthorization.ALLOW_ONCE, persistentSetOf(), decision.candidate.id, DecisionSource.PRESET, NextStep.EXECUTE)
                 val result = pressAndConfirm(classified, decision.candidate)
-                tts?.stop()
-                handlingListener?.onHandled(HandlingReport(analysis.token, classification, approval, result))
+                if (PressSuccess.isConfirmed(result)) {
+                    speakClosedThenFocusPage(classified)
+                } else {
+                    tts?.stop()
+                    handlingListener?.onHandled(HandlingReport(analysis.token, classification, approval, result))
+                }
             }
             SimpleDecision.DenyDecision -> {
                 log.trace(SimpleTrace.DECIDED_DENY_DECISION)
@@ -232,10 +238,21 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
         return true
     }
 
-    /** Demo mode: after a confirmed close, TalkBack reads the page, not a popup left in the DOM. */
-    private suspend fun focusPageAfterClose(outcome: ClickOutcome) {
-        if (!SimpleCloseEngineFeature.FOCUS_PAGE_AFTER_CLOSE || outcome != ClickOutcome.CLOSED_CONFIRMED) return
-        val moved = withContext(Dispatchers.Default) { collector.focusFirstPageItem() }
+    /**
+     * A confirmed close, whoever asked: the one sentence the person expects ("광고를 닫았어요", said at once
+     * and to the end), then — demo mode — TalkBack's focus goes to the page's first item that was not part
+     * of the popup, so what TalkBack reads next is the page, not a popup left in the DOM, and never over
+     * our sentence (LG 10/31 order problem).
+     */
+    private suspend fun speakClosedThenFocusPage(popup: SimplePopup) {
+        val announcer = tts ?: return
+        announcer.stop()
+        val kind = AutoDecisionSpeech.kindOf(popup.analysis.classification)
+        val sentence = getString(R.string.ui_auto_closed_one, getString(AutoDecisionSpeech.objectRes(kind)))
+        announcer.announce(AnnouncementRequest(null, AnnouncementKind.ACTION_RESULT, sentence))
+        if (!SimpleCloseEngineFeature.FOCUS_PAGE_AFTER_CLOSE) return
+        val memory = PopupMemory.of(popup)
+        val moved = withContext(Dispatchers.Default) { collector.focusFirstPageItem(memory) }
         log.trace(if (moved) SimpleTrace.FOCUS_MOVED_TO_PAGE else SimpleTrace.FOCUS_MOVE_FAILED)
     }
 
@@ -281,7 +298,7 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
                 tts?.stop()
                 scope.launch {
                     val result = pressAndConfirm(popup, candidate)
-                    speakOwnPress(result, choice.kind)
+                    if (PressSuccess.isConfirmed(result)) speakClosedThenFocusPage(popup) else speakOwnPress(result)
                 }
             }
             else -> {
@@ -291,14 +308,10 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
         }
     }
 
-    /** The person's own press: "닫았어요" is batched; anything else is said at once, no follow-up press. */
-    private suspend fun speakOwnPress(result: ActionResult, kind: ChoiceKind) {
+    /** The person's own press that did not confirm a close: said at once, no follow-up press (AGENTS 6-6). */
+    private suspend fun speakOwnPress(result: ActionResult) {
         val announcer = tts ?: return
         announcer.stop()
-        if (PressSuccess.isConfirmed(result)) {
-            AnnouncementBatcher.outcomeOf(result, kind)?.let { batcher?.add(it) }
-            return
-        }
         val failure = PressResultSpeech.failureOf(result) ?: PressFailure.NOT_CONFIRMED
         announcer.announce(AnnouncementRequest(null, AnnouncementKind.ACTION_RESULT, PressResultSpeech.sentence(failure, false, ::getString)))
     }
@@ -354,7 +367,6 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
                 ClickOutcome.LEFT_APP -> SimpleTrace.LEFT_APP
                 else -> SimpleTrace.NOT_CLOSED
             })
-            focusPageAfterClose(outcome)
             return ActionResult(token, ActionStatus.MECHANICAL_SUCCESS, null, attempted = true, outcome = outcome)
         } finally {
             busy = false
