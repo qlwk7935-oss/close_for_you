@@ -2,6 +2,7 @@ package kr.closeforyou.simpleclose
 
 import android.accessibilityservice.AccessibilityService
 import android.graphics.Rect
+import android.os.SystemClock
 import android.view.WindowManager
 import android.view.accessibility.AccessibilityNodeInfo
 import android.view.accessibility.AccessibilityWindowInfo
@@ -31,6 +32,8 @@ class TreeRead(
     val probeOutcome: ProbeOutcome = ProbeOutcome.NOT_RUN,
     /** F22: an app window above the main one was read and not taken (too small, nothing to press). */
     val appWindowIgnored: Boolean = false,
+    /** F25: the whole-tree walk stopped at its node or time cap ([WholeReadCap]); [nodes] are the part read. */
+    val wholeAborted: Boolean = false,
 )
 
 /** F15: how a read went (debug log `READ_*`). F16: [APP_WINDOW], an app's own popup window above its main window. */
@@ -131,9 +134,18 @@ class SimpleTreeCollector(private val service: AccessibilityService) {
                         }
                     }
                     val nodes = ArrayList<NodeSnapshot>(256)
-                    val count = WalkCount()
+                    // F25 (LG 11/1 G마켓: one whole read took 6.1 s): the walk stops at [WholeReadCap]; the probe above
+                    // already looked at the end of the page (last child first), this walk covers its beginning.
+                    val count = WalkCount(maxVisited = WholeReadCap.MAX_NODES, deadline = SystemClock.uptimeMillis() + WholeReadCap.MAX_MILLIS)
                     walk(root, "0", 0, nodes, screen, count)
-                    TreeRead(packageName, root.windowId, nodes, screen, bounded, probeVisited + count.visited, count.skipped, mode, probeVisited, probeOutcome = outcome, appWindowIgnored = appWindowIgnored)
+                    // F25 (safety): a popup cut by the cap could be missing a 결제·동의 button that must keep it asked:
+                    // the popup found in the part read is read again whole, its own subtree only.
+                    val complete = if (!count.aborted) nodes else WholeReadCap.complete(nodes, screen, bounded) { path ->
+                        val popupCount = WalkCount()
+                        subtree(root, path, screen, popupCount).also { count.visited += popupCount.visited }
+                    }
+                    TreeRead(packageName, root.windowId, complete, screen, bounded, probeVisited + count.visited, count.skipped, mode, probeVisited,
+                        probeOutcome = outcome, appWindowIgnored = appWindowIgnored, wholeAborted = count.aborted)
                 } finally {
                     windows.forEach(::release)
                 }
@@ -410,7 +422,14 @@ class SimpleTreeCollector(private val service: AccessibilityService) {
         }
     }
 
-    private class WalkCount(var visited: Int = 0, var skipped: Int = 0)
+    /** [maxVisited]/[deadline] (F25, whole reads only): past either, the walk stops and [aborted] is set. */
+    private class WalkCount(
+        var visited: Int = 0,
+        var skipped: Int = 0,
+        val maxVisited: Int = Int.MAX_VALUE,
+        val deadline: Long = Long.MAX_VALUE,
+        var aborted: Boolean = false,
+    )
 
     /** Live nodes for [PopupProbe]; reads class, bounds, clickable and whether there is text, nothing kept. */
     private val liveTree = object : ProbeTree<AccessibilityNodeInfo> {
@@ -439,7 +458,11 @@ class SimpleTreeCollector(private val service: AccessibilityService) {
     }
 
     private fun walk(node: AccessibilityNodeInfo, path: String, depth: Int, out: MutableList<NodeSnapshot>, screen: ScreenBounds, count: WalkCount) {
-        if (out.size >= SimpleCloseEngineFeature.MAX_NODES || depth > SimpleCloseEngineFeature.MAX_DEPTH) return
+        if (out.size >= SimpleCloseEngineFeature.MAX_NODES || depth > SimpleCloseEngineFeature.MAX_DEPTH || count.aborted) return
+        if (count.visited >= count.maxVisited || (count.visited and 15) == 0 && SystemClock.uptimeMillis() > count.deadline) {
+            count.aborted = true
+            return
+        }
         count.visited += 1
         val visible = node.isVisibleToUser
         val bounds = Rect().also(node::getBoundsInScreen)
@@ -508,4 +531,31 @@ class SimpleTreeCollector(private val service: AccessibilityService) {
 
     @Suppress("DEPRECATION")
     private fun release(window: AccessibilityWindowInfo) { window.recycle() }
+}
+
+/**
+ * F25 whole-read cap (LG 11/1: G마켓 6.1 s, 예스24 3.6 s for one whole read; TalkBack sluggish meanwhile, a popup
+ * appearing then waited for the read). A whole read is a first-child-first walk: past [MAX_NODES] nodes or
+ * [MAX_MILLIS] it stops (`READ_WHOLE_ABORTED`) with what it has. Why popups are still found on such pages:
+ * - the probe runs first and walks last child first (popups are appended at the end of the page and drawn on top),
+ *   skipping off-screen and, until last, zero-size subtrees: it finds end-of-page Dialogs and layers within 200 nodes;
+ * - the capped whole walk covers the beginning of the page (a modal early in the DOM, a portal at the top);
+ * - a page that aborted is walked whole at most every [ABORTED_RETRY_MILLIS], the probe on every read.
+ * What both can miss: a modal deep in the middle of a huge page with no Dialog mark (`PROBE_MISS_CAPPED` and
+ * `READ_WHOLE_ABORTED` together in the log).
+ */
+object WholeReadCap {
+    const val MAX_NODES = 1_500
+    const val MAX_MILLIS = 600L
+    const val ABORTED_RETRY_MILLIS = 10_000L
+
+    /**
+     * Safety after a cut walk: a popup found in the part read may be missing a 결제·동의 button that must keep it
+     * asked, so its own subtree is read again whole ([readSubtree]) and replaces the cut part. Pure; JVM tested.
+     */
+    fun complete(partial: List<NodeSnapshot>, screen: ScreenBounds, bounded: Boolean, readSubtree: (String) -> List<NodeSnapshot>?): List<NodeSnapshot> {
+        val path = PopupRootFinder.find(partial, screen, bounded)?.path?.takeIf { it != "0" } ?: return partial
+        val whole = readSubtree(path) ?: return partial
+        return partial.filterNot { it.path == path || it.path.startsWith("$path/") } + whole
+    }
 }

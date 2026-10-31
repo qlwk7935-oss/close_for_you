@@ -202,7 +202,12 @@ object ReadBudget {
 
     fun contentGap(quiet: Int): Long = minOf(FIRST_GAP_MILLIS shl quiet.coerceIn(0, MAX_LEVEL), MAX_GAP_MILLIS)
 
-    fun wholeRead(trigger: DetectTrigger, readIndex: Int, slowPage: Boolean, videoWeb: Boolean): Boolean {
+    /**
+     * [sinceAbortedWhole] (F25): ms since a whole read of this page stopped at [WholeReadCap] (null = none lately);
+     * then a whole read again only after [WholeReadCap.ABORTED_RETRY_MILLIS], whatever the trigger.
+     */
+    fun wholeRead(trigger: DetectTrigger, readIndex: Int, slowPage: Boolean, videoWeb: Boolean, sinceAbortedWhole: Long? = null): Boolean {
+        if (sinceAbortedWhole != null && sinceAbortedWhole < WholeReadCap.ABORTED_RETRY_MILLIS) return false
         if (videoWeb || trigger == DetectTrigger.WINDOW_EVENT) return true
         if (slowPage) return readIndex % SLOW_WHOLE_EVERY == SLOW_WHOLE_EVERY - 1
         return trigger == DetectTrigger.TALKBACK_FOCUS ||

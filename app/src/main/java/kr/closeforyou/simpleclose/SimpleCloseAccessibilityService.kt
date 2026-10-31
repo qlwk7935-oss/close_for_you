@@ -107,6 +107,9 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
     /** F24: a page whose whole read was slow (> 1 s): whole reads only on window changes for a while. */
     private var slowPackage: String? = null
     private var slowUntil = 0L
+    /** F25: the page whose last whole read stopped at its cap, and when. */
+    private var abortedPackage: String? = null
+    private var abortedAt = 0L
     /** F24: share of time spent reading, per 10 s window (debug `READ_DUTY_PCT`). */
     private var dutyWindowStart = 0L
     private var dutyBusy = 0L
@@ -287,7 +290,8 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
         // F22-2: a re-check or repaint read that the probe finds nothing in stops there (cheap), except every few reads.
         val videoWeb = expectedPackage == videoWebPackage && readStart < videoWebUntil
         val slowPage = expectedPackage == slowPackage && readStart < slowUntil
-        val whole = ReadBudget.wholeRead(trigger, searchReads, slowPage, videoWeb)
+        val sinceAborted = (readStart - abortedAt).takeIf { expectedPackage == abortedPackage }
+        val whole = ReadBudget.wholeRead(trigger, searchReads, slowPage, videoWeb, sinceAborted)
         val read = withContext(Dispatchers.Default) {
             collector.read(expectedPackage, ::allowsApp, probe = expectedPackage != VideoAdSkip.YOUTUBE_APP && !videoWeb, wholeIfProbeMisses = whole)
         }
@@ -303,6 +307,11 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
         if (whole && read?.mode != TreeReadMode.POPUP_SUBTREE && readMillis > ReadBudget.SLOW_WHOLE_MILLIS) {
             slowPackage = expectedPackage
             slowUntil = SystemClock.uptimeMillis() + SLOW_PAGE_MILLIS
+        }
+        if (read?.wholeAborted == true) {
+            log.trace(SimpleTrace.READ_WHOLE_ABORTED)
+            abortedPackage = expectedPackage
+            abortedAt = SystemClock.uptimeMillis()
         }
         countDuty(readStart, readMillis)
         if (read == null) {

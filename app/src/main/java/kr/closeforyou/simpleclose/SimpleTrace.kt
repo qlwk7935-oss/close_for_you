@@ -187,6 +187,8 @@ enum class SimpleTrace {
     REMEMBER_OFFERED,
     /** F22: a video path read outside YouTube (app, m.youtube.com) was not run. */
     VIDEO_NOT_VIDEO_CONTEXT,
+    /** F25: a whole read stopped at its node or time cap ([WholeReadCap]); the part read is used. */
+    READ_WHOLE_ABORTED,
 
     // F6: why the image-dialog ad hint did not apply ([AdHintMiss]).
     AD_HINT_MISS_SCAM,
