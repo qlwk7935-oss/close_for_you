@@ -114,33 +114,103 @@ class SimpleTreeCollector(private val service: AccessibilityService) {
     }
 
     /**
-     * Moves accessibility (TalkBack) focus to the first visible, named item of the page: inside the
-     * first WebView when there is one (so the URL bar is skipped), else the first named node. A node
-     * that was part of the closed popup ([exclude]: its texts and bounds, memory only) is skipped,
-     * because a closed web popup can stay in the DOM with the same words (LG 10/31). Nothing is
-     * clicked. Device unverified.
+     * Moves accessibility (TalkBack) focus away from a closed popup, by [PageFocusRules]: a page item
+     * inside the first WebView (so the URL bar is skipped) that was not part of the popup ([exclude]:
+     * its texts, bounds and area, memory only), the highest one; with [fallback] also an item above the
+     * old popup, the WebView itself, or Chrome's first named toolbar item, so the focus always leaves
+     * the popup's DOM leftovers (LG 10/31 22:29: every candidate overlapped, nothing moved, TalkBack
+     * read the popup again). Nothing is clicked. Returns what was focused (debug log) and whether the
+     * action was accepted. Device unverified.
      */
-    fun focusFirstPageItem(exclude: PopupMemory): Boolean {
-        val root = service.rootInActiveWindow ?: return false
+    fun focusPageItem(exclude: PopupMemory, fallback: Boolean = true): Pair<FocusTargetKind, Boolean> {
+        val root = service.rootInActiveWindow ?: return FocusTargetKind.NONE to false
+        val live = mutableListOf<AccessibilityNodeInfo>()
+        var webView: AccessibilityNodeInfo? = null
         try {
-            val predicate = { node: AccessibilityNodeInfo ->
-                val rect = Rect().also(node::getBoundsInScreen)
-                val bounds = ScreenBounds(rect.left, rect.top, maxOf(rect.right, rect.left), maxOf(rect.bottom, rect.top))
-                isNamedVisible(node) && !exclude.matches(node.text?.toString(), node.contentDescription?.toString(), bounds)
+            webView = firstMatch(root, 0, ::isWebView)
+            val candidates = mutableListOf<FocusCandidate>()
+            var visited = 0
+            fun visit(n: AccessibilityNodeInfo, depth: Int) {
+                if (depth > SimpleCloseEngineFeature.MAX_DEPTH) return
+                for (i in 0 until n.childCount) {
+                    if (visited++ >= FOCUS_MAX_VISITED || live.size >= FOCUS_MAX_CANDIDATES) return
+                    val child = n.getChild(i) ?: continue
+                    if (isNamedVisible(child)) {
+                        val bounds = boundsOf(child)
+                        val leftover = exclude.matches(child.text?.toString(), child.contentDescription?.toString(), bounds)
+                        candidates += FocusCandidate(bounds, leftover, child.isHeading, exclude.above(bounds))
+                        live += child
+                    } else {
+                        try { visit(child, depth + 1) } finally { release(child) }
+                    }
+                }
             }
-            val webView = firstMatch(root, 0) { it.className?.contains("WebView", ignoreCase = true) == true }
-            val target = (webView?.let { firstMatch(it, 0, predicate) ?: run { release(it); null } }
-                ?: firstMatch(root, 0, predicate)) ?: return false
-            try {
-                return target.performAction(AccessibilityNodeInfo.ACTION_ACCESSIBILITY_FOCUS)
+            visit(webView ?: root, 0)
+            val pick = PageFocusRules.pick(candidates, webViewPresent = webView != null, fallback = fallback)
+            pick.index?.let { return pick.kind to live[it].performAction(AccessibilityNodeInfo.ACTION_ACCESSIBILITY_FOCUS) }
+            if (pick.webViewRoot && webView?.performAction(AccessibilityNodeInfo.ACTION_ACCESSIBILITY_FOCUS) == true) {
+                return pick.kind to true
+            }
+            if (!pick.webViewRoot && !pick.toolbar) return pick.kind to false
+            // Last step: the first named item outside the WebView (Chrome's toolbar), never inside the old popup.
+            val toolbarItem = firstOutsideWebView(root, 0) { isNamedVisible(it) && !exclude.overlapsArea(boundsOf(it)) }
+                ?: return FocusTargetKind.NONE to false
+            return try {
+                FocusTargetKind.TOOLBAR_ITEM to toolbarItem.performAction(AccessibilityNodeInfo.ACTION_ACCESSIBILITY_FOCUS)
             } finally {
-                release(target)
+                release(toolbarItem)
             }
         } catch (e: RuntimeException) {
-            return false
+            return FocusTargetKind.NONE to false
+        } finally {
+            live.forEach(::release)
+            webView?.let(::release)
+            release(root)
+        }
+    }
+
+    /**
+     * Where TalkBack's focus is in the active window: true inside [area] (the popup), false elsewhere,
+     * null when no node there holds it. F11: after an automatic close the focus is moved only when it
+     * was in the popup, so TalkBack does not read a page heading for nothing.
+     */
+    fun accessibilityFocusInside(area: ScreenBounds): Boolean? {
+        val root = service.rootInActiveWindow ?: return null
+        try {
+            val focused = root.findFocus(AccessibilityNodeInfo.FOCUS_ACCESSIBILITY) ?: return null
+            try {
+                return PopupMemory.overlaps(area, boundsOf(focused))
+            } finally {
+                release(focused)
+            }
+        } catch (e: RuntimeException) {
+            return null
         } finally {
             release(root)
         }
+    }
+
+    private fun isWebView(node: AccessibilityNodeInfo) = node.className?.contains("WebView", ignoreCase = true) == true
+
+    private fun boundsOf(node: AccessibilityNodeInfo): ScreenBounds {
+        val rect = Rect().also(node::getBoundsInScreen)
+        return ScreenBounds(rect.left, rect.top, maxOf(rect.right, rect.left), maxOf(rect.bottom, rect.top))
+    }
+
+    /** [firstMatch] that never enters a WebView. */
+    private fun firstOutsideWebView(node: AccessibilityNodeInfo, depth: Int, predicate: (AccessibilityNodeInfo) -> Boolean): AccessibilityNodeInfo? {
+        if (depth > SimpleCloseEngineFeature.MAX_DEPTH) return null
+        for (i in 0 until node.childCount) {
+            val child = node.getChild(i) ?: continue
+            if (isWebView(child)) {
+                release(child)
+                continue
+            }
+            if (predicate(child)) return child
+            val found = try { firstOutsideWebView(child, depth + 1, predicate) } finally { release(child) }
+            if (found != null) return found
+        }
+        return null
     }
 
     private fun isNamedVisible(node: AccessibilityNodeInfo): Boolean {
@@ -229,6 +299,8 @@ class SimpleTreeCollector(private val service: AccessibilityService) {
 
     private companion object {
         const val LIVE_NAME_MAX_NODES = 60
+        const val FOCUS_MAX_VISITED = 400
+        const val FOCUS_MAX_CANDIDATES = 40
     }
 
     @Suppress("DEPRECATION")

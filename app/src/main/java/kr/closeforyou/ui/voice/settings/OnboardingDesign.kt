@@ -31,6 +31,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
@@ -189,11 +190,20 @@ internal fun ChoiceCard(title: String, body: String?, selected: Boolean, onClick
 
 /** One switch as a card: one TalkBack node (label, help, 켜짐/꺼짐, 스위치; disabled "사용 중지됨"). */
 @Composable
-internal fun SwitchCard(label: String, help: String?, checked: Boolean, onCheckedChange: (Boolean) -> Unit, enabled: Boolean = true) {
+internal fun SwitchCard(
+    label: String,
+    help: String?,
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit,
+    enabled: Boolean = true,
+    /** Test tag on the toggleable row (the TalkBack stop), for [returnFocusToTag]. */
+    tag: String? = null,
+) {
     val brand = brandColors()
     Surface(shape = RoundedCornerShape(16.dp), color = MaterialTheme.colorScheme.surfaceVariant, modifier = Modifier.fillMaxWidth()) {
         Row(
             Modifier
+                .then(if (tag != null) Modifier.testTag(tag) else Modifier)
                 .toggleable(value = checked, enabled = enabled, role = Role.Switch, onValueChange = onCheckedChange)
                 .padding(16.dp)
                 .heightIn(min = 40.dp),

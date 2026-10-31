@@ -18,15 +18,19 @@ object SimpleCloseEngineFeature {
     const val enabled: Boolean = true
     const val demoLabelRulesV2: Boolean = true
 
-    /** Window events settle before the tree is read (Chrome paints web nodes a little late). */
-    const val DEBOUNCE_MILLIS = 300L
+    /**
+     * Window events settle before the tree is read (Chrome paints web nodes a little late). 300 → 200 ms
+     * (F5, LG 10/31 21:00: TalkBack read the 11번가 sheet twice before our window came); a read that comes
+     * too early is caught by the first re-check.
+     */
+    const val DEBOUNCE_MILLIS = 200L
 
     /**
      * After a read found no popup, the tree is read again after each of these waits (LG 10/31: the
      * 11번가 sheet was still animating at the first read and Chrome sent no further event for 40 s).
      * Any new window event restarts the chain.
      */
-    val RECHECK_DELAYS_MILLIS = listOf(500L, 1_000L, 2_000L, 3_000L)
+    val RECHECK_DELAYS_MILLIS = listOf(200L, 500L, 1_000L, 2_000L, 3_000L)
 
     /**
      * A content change (Chrome repaints constantly) gets one read, at most this often, and never
@@ -47,6 +51,19 @@ object SimpleCloseEngineFeature {
      * (demo mode 6-0): a closed web popup can stay in the DOM and TalkBack kept reading it (LG 10/31).
      */
     const val FOCUS_PAGE_AFTER_CLOSE = true
+
+    /**
+     * Also right before the press (F4): TalkBack's focus is put on a page item outside the popup first,
+     * so when our window (or the popup) goes away it is not left on the popup's DOM leftovers. Done
+     * before the target re-check, which still runs right before the click. Device check needed.
+     */
+    const val FOCUS_PAGE_BEFORE_CLICK = true
+
+    /** F9: a close whose first focus try found only popup leftovers tries again (with fallbacks) after this. */
+    const val FOCUS_RETRY_MILLIS = 300L
+
+    /** F10: TalkBack focusing something in a helped app starts a read at once, at most this often. */
+    const val FOCUS_EVENT_READ_MILLIS = 300L
 
     /** After the click: the popup root must be gone within this to count as closed, checked every [CONFIRM_POLL_MILLIS]. */
     const val CONFIRM_DELAY_MILLIS = 1_500L

@@ -37,8 +37,8 @@ class AutoCloseConsentTest {
     @Test fun notLiveMeansEmptyEvenWithConsent() = HandlingPreset.entries.forEach { preset ->
         assertTrue("$preset", consented(preset).autoCloseKinds(live = false).isEmpty())
         assertFalse("$preset", consented(preset).autoCloseConsentNow(live = false).granted)
-        // The build default: live is false, so today nothing is exported.
-        assertTrue("$preset", consented(preset).autoCloseKinds().isEmpty())
+        // The build default follows the plan-B engine ([PresetAutoCloseFeature.live]).
+        assertEquals("$preset", if (PresetAutoCloseFeature.live) preset.autoCloseKinds() else emptySet<PopupClassification>(), consented(preset).autoCloseKinds())
     }
 
     @Test fun beforeFirstRunIsFinishedMeansEmpty() = HandlingPreset.entries.forEach { preset ->
@@ -258,7 +258,7 @@ class AutoCloseConsentTest {
         assertEquals(preset, started.handlingPreset)
         assertTrue("$preset", started.autoCloseKinds(live = true).isEmpty())
         assertTrue("$preset", started.autoCloseKinds().isEmpty())
-        // Even with the switch confirmed, the build default (not live) exports nothing.
-        assertTrue("$preset", UiVoiceSettings().completedOnboarding(preset, true, 5L).autoCloseKinds().isEmpty())
+        // Not live: even with the switch confirmed nothing is exported.
+        assertTrue("$preset", UiVoiceSettings().completedOnboarding(preset, true, 5L).autoCloseKinds(live = false).isEmpty())
     }
 }

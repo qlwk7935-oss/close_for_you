@@ -175,6 +175,8 @@
     <string name="ui_preset_pref_ask">물어보기</string>
     <string name="ui_preset_close_all_note">안전 확인을 통과한 팝업만 닫아요.</string>
     <string name="ui_preset_decision_fixed">결제·동의 같은 중요한 팝업은 어떤 방식이든 항상 직접 확인해요. 무엇인지 알 수 없는 팝업도 물어봐요.</string>
+    <!-- 시연 모드 6-0 완화(재호 10/31, F7): "전부 자동 닫기"를 골랐을 때만 위 문장 대신. DemoUnknownAutoClose. -->
+    <string name="ui_preset_decision_fixed_close_all">결제·동의 같은 중요한 팝업은 어떤 방식이든 항상 직접 확인해요. 무엇인지 알 수 없는 팝업은 위험한 버튼이 없고 닫는 버튼이 하나뿐일 때만 닫고, 그 밖에는 물어봐요.</string>
     <!-- PresetAutoCloseFeature.live 가 false인 동안만 보인다. 실제 클릭(F9)이 연결되면 플래그로 지운다. -->
     <string name="ui_preset_not_live">자동 닫기는 곧 켜질 예정이에요. 지금은 닫기 전에 물어봐요.</string>
     <!-- 자동 닫기 동의 스위치 (C, 10/25). 프리셋 선택과 별개인 명시적 동의. 기본 꺼짐, 켤 때만 확인 대화상자.
@@ -189,6 +191,7 @@
     <string name="ui_preset_consent_kinds_ads">고른 방식대로 광고 팝업은 묻지 않고 바로 닫을게요.</string>
     <string name="ui_preset_consent_kinds_ads_coupons">고른 방식대로 광고와 쿠폰 팝업은 묻지 않고 바로 닫을게요. 공지는 알려 드려요.</string>
     <string name="ui_preset_consent_kinds_all">고른 방식대로 광고, 쿠폰, 공지 팝업은 묻지 않고 바로 닫을게요.</string>
+    <string name="ui_preset_consent_unknown_all">무엇인지 알 수 없는 팝업도 위험한 버튼이 없고 닫는 버튼이 하나뿐이면 묻지 않고 닫을게요.</string>
     <string name="ui_preset_consent_safety">안전 확인을 통과한 팝업만 해당돼요. 결제·동의 같은 중요한 팝업은 항상 직접 확인해요.</string>
     <!-- PresetAutoCloseFeature.live 가 false인 동안만 대화상자에 붙는다. -->
     <string name="ui_preset_consent_not_live">다만 이 기능은 아직 준비 중이라, 지금은 처리하기 전에 물어봐요.</string>

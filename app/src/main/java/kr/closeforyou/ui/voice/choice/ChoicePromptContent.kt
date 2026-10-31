@@ -101,8 +101,10 @@ fun ChoicePromptContent(
                 }
             }
             val enabled = !revalidating
+            // Two or more press buttons keep their own names, so they are never both "'닫기' 버튼".
+            val pressButtonCount = prompt.options.count { it.kind == PromptOptionKind.PRESS_CANDIDATE }
             prompt.options.forEachIndexed { index, option ->
-                val label = option.label()
+                val label = option.label(pressButtonCount)
                 val buttonModifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).then(
                     if (index == buttonIndex) Modifier.testTag(TakeoverFocusTarget.CHOICE_BUTTON.tag) else Modifier,
                 )
@@ -175,19 +177,20 @@ internal fun PromptSummary.textRes(): Int = when (this) {
 }
 
 @Composable
-private fun PromptOption.label(): String = when (kind) {
-    PromptOptionKind.PRESS_CANDIDATE -> stringResource(R.string.ui_choice_press_candidate, shownName())
-    PromptOptionKind.REMEMBER_ALWAYS -> stringResource(R.string.ui_choice_remember_always, shownName())
+private fun PromptOption.label(pressButtonCount: Int): String = when (kind) {
+    PromptOptionKind.PRESS_CANDIDATE -> stringResource(R.string.ui_choice_press_candidate, shownName(pressButtonCount))
+    PromptOptionKind.REMEMBER_ALWAYS -> stringResource(R.string.ui_choice_remember_always, shownName(pressButtonCount))
     PromptOptionKind.MOVE_TO_BUTTON -> stringResource(R.string.ui_choice_move_to_button, buttonLabel.orEmpty())
     PromptOptionKind.READ_CONTENT -> stringResource(R.string.ui_choice_read_content)
     PromptOptionKind.KEEP_OPEN -> stringResource(R.string.ui_choice_keep_open)
     PromptOptionKind.STOP_ASKING -> stringResource(R.string.ui_choice_stop_asking)
 }
 
-/** A long or indirect close/skip label is shown by its role ([ButtonNameDisplay]). */
+/** A lone long or indirect close/skip label is shown by its role ([ButtonNameDisplay]). */
 @Composable
-private fun PromptOption.shownName(): String =
-    ButtonNameDisplay.roleNameRes(buttonLabel, candidateRole)?.let { stringResource(it) } ?: buttonLabel.orEmpty()
+private fun PromptOption.shownName(pressButtonCount: Int): String =
+    ButtonNameDisplay.roleNameRes(buttonLabel, candidateRole, pressButtonCount)?.let { stringResource(it) }
+        ?: buttonLabel.orEmpty()
 
 /** Previews use the fixture's expected answer as a stand-in for B's classifier. */
 @Composable

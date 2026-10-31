@@ -38,11 +38,16 @@ class SimpleInspectionEventsTest {
         var popupFound = true
         val reads = mutableListOf<Pair<Long, String>>()
         val traces = mutableListOf<SimpleTrace>()
+        val triggers = mutableListOf<DetectTrigger>()
+        var exhausted = 0
+        var readDelay = 0L
         val worker = StandardTestDispatcher(scope.testScheduler)
         fun now() = 10_000L + scope.testScheduler.currentTime
         val events = SimpleInspectionEvents({ jobs }, { prompt }, { lastInspection }, ::now,
             { SimpleAppAllowance.isInScope(it, "kr.closeforyou", settings, emptySet()) },
-            { accepted++ }, { expected ->
+            { accepted++ }, { expected, trigger ->
+                triggers += trigger
+                delay(readDelay)
                 lastInspection = now()
                 reads += scope.testScheduler.currentTime to expected
                 val result = withContext(worker) {
@@ -52,8 +57,9 @@ class SimpleInspectionEventsTest {
                         }) }, { _, _ -> walks++; "COLLECTED" }, { releases++ })
                 }
                 result != null && popupFound
-            }, SimpleTraceSink { traces += it })
-        fun event(content: Boolean = false, pkg: String = chrome) = events.onEvent(pkg, content)
+            }, SimpleTraceSink { traces += it }, { exhausted++ })
+        fun focus() = events.onEvent(chrome, SimpleInspectionEvent.TALKBACK_FOCUS)
+        fun event(content: Boolean = false, pkg: String = chrome) = events.onEvent(pkg, if (content) SimpleInspectionEvent.CONTENT else SimpleInspectionEvent.WINDOW)
     }
 
     @Test fun busyEventNeverQueriesPackageMetadata() = runTest {
@@ -61,8 +67,8 @@ class SimpleInspectionEventsTest {
         jobs.runAction { delay(500) }
         var queries = 0
         val events = SimpleInspectionEvents({ jobs }, { false }, { 0L }, { 10_000L },
-            { queries++; true }, {}, { error("UNEXPECTED_READ") }, SimpleTraceSink.NONE)
-        events.onEvent("com.android.chrome", false)
+            { queries++; true }, {}, { _, _ -> error("UNEXPECTED_READ") }, SimpleTraceSink.NONE)
+        events.onEvent("com.android.chrome", SimpleInspectionEvent.WINDOW)
         assertEquals(0, queries)
     }
 
@@ -70,8 +76,8 @@ class SimpleInspectionEventsTest {
         val jobs = EngineJobs(this)
         var queries = 0
         val events = SimpleInspectionEvents({ jobs }, { true }, { 10_000L }, { 10_100L },
-            { queries++; true }, {}, { error("UNEXPECTED_READ") }, SimpleTraceSink.NONE)
-        events.onEvent("com.android.chrome", false)
+            { queries++; true }, {}, { _, _ -> error("UNEXPECTED_READ") }, SimpleTraceSink.NONE)
+        events.onEvent("com.android.chrome", SimpleInspectionEvent.WINDOW)
         assertEquals(0, queries)
     }
 
@@ -79,8 +85,8 @@ class SimpleInspectionEventsTest {
         val jobs = EngineJobs(this)
         var queries = 0
         val events = SimpleInspectionEvents({ jobs }, { false }, { 10_000L }, { 10_100L },
-            { queries++; true }, {}, { error("UNEXPECTED_READ") }, SimpleTraceSink.NONE)
-        events.onEvent("com.android.chrome", true)
+            { queries++; true }, {}, { _, _ -> error("UNEXPECTED_READ") }, SimpleTraceSink.NONE)
+        events.onEvent("com.android.chrome", SimpleInspectionEvent.CONTENT)
         assertEquals(0, queries)
     }
 
@@ -89,11 +95,11 @@ class SimpleInspectionEventsTest {
         r.event()
         assertEquals(0, r.queries)
         advanceUntilIdle()
-        assertEquals(listOf(300L, 800L, 1800L, 3800L, 6800L), r.reads.map { it.first })
+        assertEquals(listOf(200L, 400L, 900L, 1900L, 3900L, 6900L), r.reads.map { it.first })
         assertTrue(r.reads.all { it.second == r.chrome })
-        assertEquals(5, r.queries)
-        assertEquals(5, r.walks)
-        assertEquals(4, r.traces.count { it == SimpleTrace.RECHECK_SCHEDULED })
+        assertEquals(6, r.queries)
+        assertEquals(6, r.walks)
+        assertEquals(5, r.traces.count { it == SimpleTrace.RECHECK_SCHEDULED })
     }
 
     @Test fun contentEventKeepsSingleDebouncedReadEvenWhenNoPopupFound() = runTest {
@@ -101,7 +107,7 @@ class SimpleInspectionEventsTest {
         r.event(content = true)
         assertEquals(0, r.queries)
         advanceUntilIdle()
-        assertEquals(listOf(300L to r.chrome), r.reads)
+        assertEquals(listOf(200L to r.chrome), r.reads)
         assertEquals(1, r.queries)
     }
 
@@ -113,7 +119,7 @@ class SimpleInspectionEventsTest {
         r.event(pkg = "com.kbstar.kbbank")
         r.popupFound = true
         advanceUntilIdle()
-        assertEquals(listOf(300L, 800L), r.reads.map { it.first })
+        assertEquals(listOf(200L, 400L), r.reads.map { it.first })
         assertEquals(2, r.queries)
     }
 
@@ -123,7 +129,7 @@ class SimpleInspectionEventsTest {
         advanceTimeBy(100)
         r.event()
         advanceUntilIdle()
-        assertEquals(listOf(400L to r.chrome), r.reads)
+        assertEquals(listOf(300L to r.chrome), r.reads)
         assertEquals(1, r.queries)
     }
 
@@ -143,7 +149,7 @@ class SimpleInspectionEventsTest {
         var spoken = 0
         r.event()
         r.jobs.runAction { delay(500); confirmed++; spoken++ }
-        repeat(10) { r.event(content = it % 2 == 0) }
+        repeat(10) { r.event(content = it % 2 == 0); r.focus() }
         advanceUntilIdle()
         assertEquals(1, confirmed)
         assertEquals(1, spoken)
@@ -161,7 +167,7 @@ class SimpleInspectionEventsTest {
         r.root = Root(replacement)
         r.event(pkg = replacement)
         advanceUntilIdle()
-        assertEquals(listOf(400L to replacement), r.reads)
+        assertEquals(listOf(300L to replacement), r.reads)
         assertEquals(1, r.queries)
     }
 
@@ -181,10 +187,10 @@ class SimpleInspectionEventsTest {
         advanceTimeBy(400)
         r.settings = r.settings.copy(helpAppsExcluded = setOf(r.chrome))
         advanceUntilIdle()
-        assertEquals(5, r.reads.size)
+        assertEquals(6, r.reads.size)
         assertEquals(1, r.queries)
         assertEquals(1, r.walks)
-        assertEquals(5, r.releases)
+        assertEquals(6, r.releases)
     }
 
     @Test fun changedSelectionOrMissingMetadataNeverUsesEventAdmissionAsPermission() = runTest {
@@ -226,7 +232,7 @@ class SimpleInspectionEventsTest {
         try {
             val events = SimpleInspectionEvents({ jobs }, { false }, { 0L }, { 10_000L },
                 { SimpleAppAllowance.isInScope(it, "kr.closeforyou", UiVoiceSettings(helpAppsMode = HelpAppsMode.ALL), emptySet()) },
-                {}, { expected ->
+                {}, { expected, _ ->
                     withContext(worker) {
                         SimpleCollectionGuard.read(expected, { Root(expected) }, { it.pkg },
                             { SimpleAppAllowance.allows(it, "kr.closeforyou", UiVoiceSettings(helpAppsMode = HelpAppsMode.ALL), emptySet(), lookup = { pkg ->
@@ -237,12 +243,131 @@ class SimpleInspectionEventsTest {
                     finished.complete(Unit)
                     true
                 }, SimpleTraceSink.NONE)
-            events.onEvent("com.android.chrome", false)
+            events.onEvent("com.android.chrome", SimpleInspectionEvent.WINDOW)
             assertEquals(0, queries)
             advanceTimeBy(SimpleCloseEngineFeature.DEBOUNCE_MILLIS)
             runCurrent()
             finished.await()
             assertEquals(1, queries)
         } finally { worker.close() }
+    }
+
+    @Test fun talkBackFocusReadsImmediatelyWithoutDebounceAndUsesFocusTrigger() = runTest {
+        val r = Rig(this)
+        r.focus()
+        assertEquals(0, r.queries)
+        runCurrent()
+        assertEquals(listOf(0L to r.chrome), r.reads)
+        assertEquals(listOf(DetectTrigger.TALKBACK_FOCUS), r.triggers)
+        assertEquals(1, r.walks)
+    }
+
+    @Test fun talkBackFocusNeverReplacesPendingWindowOrRecheckChain() = runTest {
+        val r = Rig(this).apply { popupFound = false }
+        r.event()
+        advanceTimeBy(100)
+        r.focus()
+        advanceTimeBy(150)
+        r.focus()
+        advanceUntilIdle()
+        assertEquals(listOf(200L, 400L, 900L, 1900L, 3900L, 6900L), r.reads.map { it.first })
+        assertEquals(listOf(DetectTrigger.WINDOW_EVENT) + List(5) { DetectTrigger.RECHECK }, r.triggers)
+        assertEquals(1, r.accepted)
+        assertEquals(1, r.exhausted)
+    }
+
+    @Test fun focusDuringSuspendedWorkerReadDoesNotCancelIt() = runTest {
+        val r = Rig(this).apply { readDelay = 500 }
+        r.focus()
+        runCurrent()
+        advanceTimeBy(100)
+        r.focus()
+        advanceUntilIdle()
+        assertEquals(listOf(500L to r.chrome), r.reads)
+        assertEquals(1, r.walks)
+        assertEquals(1, r.triggers.size)
+    }
+
+    @Test fun focusThrottleIs300msAndDoesNotUseContentThrottleOrRecheck() = runTest {
+        val r = Rig(this).apply { popupFound = false }
+        r.focus()
+        runCurrent()
+        advanceTimeBy(299)
+        r.focus()
+        runCurrent()
+        assertEquals(1, r.reads.size)
+        advanceTimeBy(1)
+        r.focus()
+        runCurrent()
+        assertEquals(listOf(0L, 300L), r.reads.map { it.first })
+        assertTrue(r.triggers.all { it == DetectTrigger.TALKBACK_FOCUS })
+        assertEquals(2, r.exhausted)
+        assertTrue(r.traces.none { it == SimpleTrace.RECHECK_SCHEDULED })
+    }
+
+    @Test fun focusDoesNotReadWhilePromptIsUpEvenAfterPromptThrottle() = runTest {
+        val r = Rig(this).apply { prompt = true }
+        r.focus()
+        advanceUntilIdle()
+        assertTrue(r.reads.isEmpty())
+        assertEquals(0, r.accepted)
+        assertEquals(0, r.queries)
+    }
+
+    @Test fun focusQueuedBeforeActionCannotInterruptClickConfirmationOrSpeech() = runTest {
+        val r = Rig(this)
+        var completed = false
+        r.focus()
+        r.jobs.runAction { delay(1500); completed = true }
+        r.focus()
+        advanceUntilIdle()
+        assertTrue(completed)
+        assertEquals(0, r.queries)
+        assertTrue(r.reads.isEmpty())
+    }
+
+    @Test fun focusReadStillRechecksLatestSettingsPackageAndMetadataBeforeWalk() = runTest {
+        for (failure in 0..3) {
+            val r = Rig(this)
+            r.focus()
+            when (failure) {
+                0 -> r.settings = r.settings.copy(helpAppsMode = null)
+                1 -> r.root = Root("com.example.other")
+                2 -> r.lookup = { null }
+                3 -> r.lookup = { InstalledApp(it, "모바일 은행") }
+            }
+            runCurrent()
+            assertEquals(listOf(DetectTrigger.TALKBACK_FOCUS), r.triggers)
+            assertEquals(0, r.walks)
+            assertEquals(1, r.releases)
+            assertEquals(1, r.exhausted)
+        }
+    }
+
+    @Test fun contentAndWindowTriggerAndExhaustionKeepDiagnosticMeaning() = runTest {
+        val r = Rig(this).apply { popupFound = false }
+        r.event(content = true)
+        advanceUntilIdle()
+        assertEquals(listOf(DetectTrigger.CONTENT_EVENT), r.triggers)
+        assertEquals(1, r.exhausted)
+        r.event()
+        r.popupFound = true
+        advanceUntilIdle()
+        assertEquals(DetectTrigger.WINDOW_EVENT, r.triggers.last())
+        assertEquals(1, r.exhausted)
+        assertEquals(SimpleTrace.DETECTED_BY_TALKBACK_FOCUS, DetectTrigger.TALKBACK_FOCUS.trace)
+        assertEquals(SimpleTrace.DETECTED_BY_RECHECK, DetectTrigger.RECHECK.trace)
+    }
+
+    @Test fun reconnectDiscardsPendingFocusAndUsesNewJobsWithoutOldThrottle() = runTest {
+        val r = Rig(this)
+        r.focus()
+        r.jobs.cancelAll()
+        r.jobs = EngineJobs(this)
+        r.events.resetConnection()
+        r.focus()
+        runCurrent()
+        assertEquals(listOf(0L to r.chrome), r.reads)
+        assertEquals(1, r.walks)
     }
 }

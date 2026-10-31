@@ -9,7 +9,7 @@ import kr.closeforyou.core.model.PopupClassification
  * screenshot/OCR consent and auto close consent are three separate things; a preset alone is not
  * consent). A policy input only: B's policy and A's gate still decide every press.
  *
- * - [granted]: first-run finished, the switch is on and [PresetAutoCloseFeature.live]. False today.
+ * - [granted]: first-run finished, the switch is on and [PresetAutoCloseFeature.live] (the plan-B engine on).
  * - [autoCloseKinds]: the same set C gives `DecisionContext.autoCloseKinds`; empty when not [granted].
  *   Never USER_DECISION or UNKNOWN.
  * - [changedAtEpochMillis]: when the switch or its range last changed (null = never), so A can
