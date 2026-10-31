@@ -27,9 +27,13 @@ object TalkBackTakeoverFeature {
     /** Feature flag: false removes the takeover and its settings row whatever the setting says. */
     val enabled: Boolean get() = true
 
-    /** The window reaches A's window list a little after addView; tried this often, this far apart. */
-    const val FIRST_FOCUS_ATTEMPTS = 10
-    const val FIRST_FOCUS_RETRY_MILLIS = 100L
+    /**
+     * The window reaches A's window list a little after addView; tried this often, this far apart.
+     * F17 (LG 11/1 11번가: TalkBack read the popup twice before our window took the focus): 10 × 100 ms →
+     * 40 × 25 ms, the same one second at most, so the focus comes as soon as the window is listed.
+     */
+    const val FIRST_FOCUS_ATTEMPTS = 40
+    const val FIRST_FOCUS_RETRY_MILLIS = 25L
 
     /** Lets TalkBack read the focused first item (the short summary) before our TTS starts (unverified). */
     const val SPEECH_DELAY_MILLIS = 1_000L

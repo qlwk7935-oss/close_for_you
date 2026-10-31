@@ -115,6 +115,11 @@ enum class SimpleTrace {
     DECIDED_AUTO_CLOSE_STRONG,
     /** F16: the prompt offers the popup's one unnamed X as "X 모양 닫기" (pressed only on the person's tap). */
     X_BUTTON_OFFERED,
+    /** F17: the result card took TalkBack's focus / could not, so it spoke through its live region. */
+    RESULT_BANNER_FOCUSED,
+    RESULT_BANNER_FOCUS_FAILED,
+    /** F17: the reclaim watch got its first target right when the page moved the focus (none was set yet). */
+    FOCUS_RECLAIM_TARGET_TAKEN,
 
     // F6: why the image-dialog ad hint did not apply ([AdHintMiss]).
     AD_HINT_MISS_SCAM,

@@ -43,6 +43,16 @@ object SimpleCloseEngineFeature {
     const val OFFER_X_BUTTON: Boolean = true
 
     /**
+     * F17 (demo mode 6-0): after a close with the focus to look after, the result card takes TalkBack's
+     * focus ([TalkBackResultBanner]) instead of a page item: one move, one sentence. False = F15 (page move,
+     * reclaim, then the card in TalkBack's queue).
+     */
+    const val RESULT_BANNER_TAKES_FOCUS: Boolean = true
+
+    /** F17: touch events this soon after the reclaim watch began are the press's own double tap, not a new touch. */
+    const val FOCUS_RECLAIM_TOUCH_GRACE_MILLIS = 800L
+
+    /**
      * Window events settle before the tree is read (Chrome paints web nodes a little late). 300 → 200 ms
      * (F5, LG 10/31 21:00: TalkBack read the 11번가 sheet twice before our window came); a read that comes
      * too early is caught by the first re-check.
