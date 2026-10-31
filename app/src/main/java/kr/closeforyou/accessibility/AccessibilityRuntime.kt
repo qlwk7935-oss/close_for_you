@@ -37,6 +37,7 @@ data class AccessibilityStatus(
  */
 object AccessibilityRuntime : SnapshotSource, EvidenceExtractor, CaptureCapability {
     internal val serviceLifecycle = ServiceLifecycleMonitor()
+    internal val engineActivity = AEngineActivity()
     private val mutableEvents = MutableSharedFlow<PopupEvent>(
         replay = 0, extraBufferCapacity = 1, onBufferOverflow = BufferOverflow.DROP_OLDEST,
     )
