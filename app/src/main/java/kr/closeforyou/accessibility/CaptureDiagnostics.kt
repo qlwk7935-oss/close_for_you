@@ -21,7 +21,21 @@ internal enum class CaptureDetail {
     REGION_NO_BOUNDED_DIALOG, REGION_MULTIPLE_DIALOGS, REGION_OUTSIDE, REGION_OCCLUDED,
     DISPLAY_GEOMETRY_UNCERTAIN, REGION_WINDOW_OUTSIDE, REGION_DIALOG_OUTSIDE, REGION_DIALOG_NOT_BOUNDED,
     REGION_WINDOW_BOUNDED, REGION_DIALOG_BOUNDED, PIPELINE_FAILED,
+    BACKGROUND_ROOT_UNAVAILABLE, BACKGROUND_PACKAGE_UNAVAILABLE, CHILD_UNAVAILABLE,
+    REFRESH_FAILED, REFRESH_WINDOW_CHANGED, INVALID_WINDOW, INVALID_CLOCK, TIME_LIMIT,
+    NODE_WINDOW_MISMATCH, NODE_PACKAGE_MISMATCH, NODE_LIMIT, DEPTH_LIMIT, TEXT_LIMIT,
+    END_ROOT_UNAVAILABLE, END_ROOT_WINDOW_MISMATCH, END_ROOT_PACKAGE_MISMATCH, END_ROOT_BOUNDS_MISMATCH,
+    END_WINDOW_ROOT_UNAVAILABLE, END_WINDOW_ROOT_ID_MISMATCH, END_WINDOW_ROOT_PACKAGE_MISMATCH,
+    END_WINDOW_ROOT_BOUNDS_MISMATCH, END_FRAME_MISMATCH, END_DISPLAY_MISMATCH, END_WINDOWS_MISMATCH,
+    COLLECTION_EXCEPTION, COLLECTION_CANCELLED, RELEASE_FAILED, RELEASE_CANCELLED,
 }
+/** Fixed diagnostic vocabulary only. These values do not authorize collection or execution. */
+internal enum class CaptureReadPoint {
+    UNKNOWN, ROOT, ROOT_REFRESH, WINDOWS, TARGET_BINDING, BACKGROUND_ROOT, FRAME,
+    PROTECTION_PASS, SNAPSHOT_PASS, END_ACTIVE_ROOT, END_WINDOW_ROOT, END_FRAME, END_WINDOWS,
+    END_BUDGET, RESULT, CHILD_RELEASE, ROOT_RELEASE, WINDOW_RELEASE, RELEASE_BATCH,
+}
+internal enum class CaptureReadRelease { UNKNOWN, COMPLETED, FAILED, CANCELLED, FAILED_AND_CANCELLED }
 internal enum class CaptureApi { NONE, WINDOW, DISPLAY }
 internal enum class RegionGeometry { UNKNOWN, BOUNDED, LARGE_OR_FULL, TOO_SMALL, OUTSIDE, EMPTY }
 internal enum class EventWindowRelation { SAME, DIFFERENT, UNKNOWN }
@@ -89,6 +103,7 @@ internal class CaptureTrace(
     private val session: CaptureDiagnosticSession?,
     private val eventWindowId: Int = -1,
     private val epoch: Long = -1,
+    private val collectionRead: CaptureReadTrace? = null,
 ) {
     @Volatile private var ended = false
     private var bound = false
@@ -105,9 +120,18 @@ internal class CaptureTrace(
     }
     fun geometry(geometry: RegionGeometry) = update { it.copy(geometry = geometry) }
     fun api(api: CaptureApi) = update { it.copy(api = api) }
-    fun detail(detail: CaptureDetail, relatedType: WindowType? = null) = update {
-        it.copy(detail = detail, relatedType = relatedType)
+    fun detail(detail: CaptureDetail, relatedType: WindowType? = null) {
+        readRejected(detail)
+        update { it.copy(detail = detail, relatedType = relatedType) }
     }
+    // A null session stays unbound: this probe never enables title/legacy-frame getters.
+    fun readPoint(point: CaptureReadPoint) { collectionRead?.point(point) }
+    fun readRejected(detail: CaptureDetail) { collectionRead?.reject(detail) }
+    fun <T> readBody(body: () -> T): T = if (collectionRead == null) body() else collectionRead.body(body)
+    fun readRelease(point: CaptureReadPoint, release: () -> Unit) {
+        if (collectionRead == null) release() else collectionRead.release(point, release)
+    }
+    fun readReleased() { collectionRead?.released() }
     fun frameStatus(status: ScreenFrameStatus) = update { it.copy(frameStatus = status) }
     fun coordinates(window: ScreenBounds, frame: ScreenBounds,
         root: ScreenBounds, legacy: () -> ScreenBounds?) {

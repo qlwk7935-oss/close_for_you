@@ -1,8 +1,9 @@
 # P01 STABLE_FRESH 이후 제거: reader × C 생성 대조 시험
 
-기준: `fdbb65d2922b43354550a72faaa049a77142cbd4`, `fix/a-samsung-p01-lifetime-20261028`.
-이 문서는 실측 성공 보고가 아니다. Linux에서 연결 기기 없음, emulator 실행 파일/AVD 없음을 확인했다.
-삼성/LG 재실행은 하지 않았다. 운영 허용 정책, B안 3회/100ms, TTL, cleanup을 변경하지 않는다.
+원 대조 계측 기준: `fdbb65d2922b43354550a72faaa049a77142cbd4`, `fix/a-samsung-p01-lifetime-20261028`.
+이 문서는 대조 성공 보고가 아니다. 계측 준비 당시 Linux에서는 연결 기기/실행 가능한 emulator가 없었다.
+이후 사용자가 제공한 API 37 첫 실패 관측과 이번 진단 보완은 10절에 별도로 기록한다.
+이번 작업에서는 Android 기기·에뮬레이터 명령을 실행하지 않았다. 운영 허용 정책, B안 3회/100ms, TTL, cleanup을 변경하지 않는다.
 
 ## 1. 최신 증거와 가설
 
@@ -121,7 +122,7 @@ NOT_ENUMERATED를 소유권 확인으로 바꾸거나 임의 ID를 넣지 않는
 
 예시(형식 예시이며 실측 아님):
 ```text
-CONDITION=WITHOUT_C;ORDER=FORWARD;A_P01_READER;READ=1;PHASE=INITIAL;SOURCE=COLLECTOR_FRESH;STATUS=COMPLETE;START_MS=...;END_MS=...;EVENTS_DURING=0;F0=NONE;F9_STAGE=NONE;F9_DETAIL=NONE;F9_RELEASE=NONE;F0_RELEASE=COMPLETED
+CONDITION=WITHOUT_C;ORDER=FORWARD;A_P01_READER;READ=1;PHASE=INITIAL;SOURCE=COLLECTOR_FRESH;STATUS=COMPLETE;START_MS=...;END_MS=...;EVENTS_DURING=0;F0=NONE;F9_STAGE=NONE;F9_DETAIL=NONE;F9_RELEASE=NONE;F0_DETAIL=NONE;F0_POINT=UNKNOWN;F0_RELEASE=COMPLETED
 CONDITION=WITH_C;ORDER=FORWARD;PAIR=ADJACENT;FROM=COLLECTOR_FRESH;SOURCE=F9_WINDOW;PHASE=AFTER_150;BINDING=SAME;FRAME=SAME;WINDOW_SET=CHANGED;WINDOW_BOUNDS=CHANGED;WINDOW_REGION=CHANGED;ROOT_BOUNDS=CHANGED;CLOSE_BOUNDS=UNKNOWN;NODES=CHANGED;NATIVE_ACTIONS=SAME
 ```
 
@@ -154,11 +155,18 @@ $serial = "emulator-5554" # adb devices -l에서 전용 에뮬레이터인지 �
 & $adb devices -l
 & $adb -s $serial shell getprop ro.build.version.sdk
 .\gradlew.bat :app:assembleDebug :app:assembleDebugAndroidTest :popup-test-app:assembleDebug
+if ($LASTEXITCODE -ne 0) { throw "APK 빌드 실패: 이전 APK로 시험하지 않음" }
 & $adb -s $serial install -r app\build\outputs\apk\debug\app-debug.apk
-& $adb -s $serial install -r app\build\outputs\apk\androidTest\debug\app-debug-androidTest.apk
+if ($LASTEXITCODE -ne 0) { throw "Debug APK 설치 실패: 시험 중단" }
+& $adb -s $serial install -r -t app\build\outputs\apk\androidTest\debug\app-debug-androidTest.apk
+if ($LASTEXITCODE -ne 0) { throw "AndroidTest APK 설치 실패: 시험 중단" }
 & $adb -s $serial install -r popup-test-app\build\outputs\apk\debug\popup-test-app-debug.apk
+if ($LASTEXITCODE -ne 0) { throw "합성 앱 APK 설치 실패: 시험 중단" }
 & $adb -s $serial shell am start -n kr.closeforyou/.app.MainActivity
 ```
+
+AndroidTest APK는 test-only 설치를 위해 `-t`를 포함한다. APK 교체로 프로세스·서비스 연결이 끊길 수 있으므로
+이전 Bound 상태를 재사용하지 않는다. 설치 후 UI 설정과 **실행 직전** Bound 확인을 다시 수행한다.
 
 UI 준비:
 1. 수집 동의를 확인하고 분석 시작. 허용 앱은 `kr.closeforyou.popuptest` 한 개만.
@@ -175,16 +183,29 @@ UI 준비:
 시험은 enabled service가 위 시험 component 하나뿐인지 실제 package와 class 모두 확인한다.
 4. **P01 읽기 대조 시험 (Debug)**만 직접 켠다. 이 통제 조건은 TalkBack 문제 전체를 재현하는 시험이 아니다.
 5. 시험 중 화면을 터치/스크롤/클릭하지 않는다. 사용자 입력은 시험 취소 사유다.
+6. 실행 전 아래 읽기 전용 조회에서 시험 서비스가 **Bound 목록**에 있는지 확인한다.
+   Enabled 목록의 이름만으로 Bound라고 판정하지 않는다. 전체 dumpsys 원문은 일반 로그로 저장/공유하지 않는다.
+
+```powershell
+& $adb -s $serial shell dumpsys accessibility |
+    Select-String -Pattern "Bound services|boundServices|P01ReaderComparisonService"
+```
+
+출력 구조는 Android 버전별로 다를 수 있다. Bound 위치를 식별할 수 없으면 시작을 보류한다.
+실행 이후에도 `SERVICE=CONNECTED`, `RECEPTION=HOST_EVENT_CONFIRMED`가 별도로 필요하다.
+이 둘은 P01 전체 트리 준비 증거가 아니며 새 출력은 `POPUP_READY=UNCONFIRMED`를 명시한다.
+
 
 ```powershell
 $runner = "kr.closeforyou.test/androidx.test.runner.AndroidJUnitRunner"
 $class = "kr.closeforyou.accessibility.integration.P01ReaderComparisonInstrumentedTest"
 $methods = @("withoutCForward", "withoutCReverse", "withCForward", "withCReverse")
 $logDir = Join-Path (Get-Location) ("p01-reader-" + (Get-Date -Format "yyyyMMdd-HHmmss"))
-New-Item -ItemType Directory -Path $logDir | Out-Null
+New-Item -ItemType Directory -Path $logDir -ErrorAction Stop | Out-Null
 foreach ($method in $methods) {
     $logFile = Join-Path $logDir "$method.txt"
-    & $adb -s $serial shell am instrument -w `
+    if (Test-Path -LiteralPath $logFile) { throw "기존 로그 보존: 새 출력 폴더 사용" }
+    & $adb -s $serial shell am instrument --no-restart -w `
         -e class "$class#$method" -e p01ReaderComparison true -e dedicatedEmulator true $runner `
         2>&1 | Tee-Object -FilePath $logFile
     $adbExit = $LASTEXITCODE
@@ -203,8 +224,9 @@ Select-String -Path (Join-Path $logDir "*.txt") -Pattern "p01_reader=|COMPARISON
 COLLECTOR×2→F9_ACTIVE×2→F9_WINDOW×2, Reverse는 그 역순이다.
 STARTED만 있고 ENDED/유효 SUMMARY/JUnit OK가 없으면 중단/미완료다. skip/기기 미연결도 성공이 아니다.
 한 조건에서 INCONCLUSIVE나 cleanup 미확인 시 후속 조건은 실행하지 않고 전체 로그를 보존한다.
-새 instrumentation 호출은 Android가 target process를 재시작할 수 있다. 동일 process의 failed latch가
-process 재시작을 넘어서 유지된다고 주장하지 않는다. 실패 뒤 자동 재실행하지 않는 위 PowerShell과 아래 사용자 종료 절차가 필요하다. INCONCLUSIVE가 나면 로그를 남기고 원인을 확인한다.
+이 환경에서 사용자가 확인한 `--no-restart`로 target process 재시작을 요청하지 않는 실행을 사용한다.
+옵션이 서비스 연결/수신/팝업 준비를 보증하지는 않는다. 서비스의 실제 Bound 상태와 SESSION 로그를 각각 확인한다.
+정상 종료나 프로세스 사망을 넘어서 failed latch가 유지된다고 주장하지 않는다. 실패 뒤 자동 재실행하지 않는 위 PowerShell과 아래 사용자 종료 절차가 필요하다. INCONCLUSIVE가 나면 로그를 남기고 원인을 확인한다.
 C teardown이 UNCONFIRMED이면 같은 서비스 인스턴스의 후속 arm을 거부한다. 단순 HEALTH 초기화 코드가 없다.
 실제 창 제거가 의심되면 사람이 시험을 종료하고 서비스 OFF로 정리한다. 이 절차를 production Cleanup 성공으로 기록하지 않는다.
 시험 도중 연결 끊김·동의 철회·다른 서비스 활성화·사용자 입력·Configuration 변화는 실패다.
@@ -254,7 +276,7 @@ reader pair가 TARGET 변경을 기록해도 조건의 target을 고정하지 �
 운영 정책과 AndroidF9ScreenPort의 기존 시험 진입점은 최종 보완에서 추가 변경하지 않았다.
 기존 12개 파일 안에서 보완했으며 파일 수를 맞추려고 다른 변경을 제외한 것이 아니다.
 
-## 9. 로컬 검증과 해결 상태
+## 9. 이전 전달 단계의 로컬 검증과 해결 상태 (997437c)
 
 실제 변경 파일(12개; 기존 구조 검토 문서는 제외):
 
@@ -306,5 +328,214 @@ TARGET_UNCONFIRMED를 반환했다. fixture를 실제 일관된 교체 창으로
 선택창 유지: 미해결/실기기 미검증. 수동 닫기: 이번 시험에서 실행하지 않음.
 Cleanup RETIRED_ID_EVENT/ADDED/HEALTH: 별도 미해결 그대로. test teardown 확인은 production barrier 해결 증거가 아니다.
 다른 9개 worktree, 기존 구조 검토 문서, P23/C/B/D 코드, 원본 P01은 보존한다.
-이번 최종 전달 단계에서는 사용자 승인에 따라 위 12개 파일만 현재 A 브랜치에 커밋·일반 푸시한다.
+이전 전달 단계에서는 사용자 승인에 따라 위 12개 파일을 커밋·일반 푸시했다. 10절 최초 진단 구현 단계에서는 커밋·푸시하지 않았다. 이번 최종 전달은 별도 사용자 승인에 따라 검토를 통과한 10개 파일만 커밋·일반 푸시한다.
 main 병합/force push/PR 생성/기기 실행은 하지 않는다. 삼성 P01 해결 또는 네 조건 성공을 주장하지 않는다.
+
+
+## 10. 첫 F0 실패 세부 진단 보완 (기준 997437cedff68d1bfcc806f756e3c5c10034f9df)
+
+### 10.1 실제 관측과 확정 범위
+
+사용자 제공 API 37 / emulator-5554 요약 (`am instrument --no-restart`, 시험 서비스만 ON):
+
+```text
+SERVICE=CONNECTED;RECEPTION=HOST_EVENT_CONFIRMED
+READ=1;PHASE=INITIAL;SOURCE=COLLECTOR_FRESH;START_MS=505;END_MS=595
+STATUS=BLOCKED;F0=UNREADABLE_TREE;F0_RELEASE=UNCONFIRMED
+READ=2~12: COMPLETE;BEFORE_C 후속 유효 비교 SAME
+SUMMARY=INCONCLUSIVE;ISSUE=BASELINE_UNAVAILABLE
+COMPLETE_READS=11;UNAVAILABLE_READS=1;COMPLETED_PHASES=2;CLEANUP=CONFIRMED;EXTERNAL_CLICK=NOT_WIRED
+```
+
+참조된 원본 `p01-reader-withoutCForward-norestart.txt`는 이번 작업 환경/첨부 목록에서 접근할 수 없었다.
+위 내용은 사용자가 제공한 이전 버전 로그 발췌이며 원본 파일을 열어 전체 순서를 검증했다고 주장하지 않는다.
+새 F0_DETAIL/F0_POINT는 아직 기기에서 관측되지 않았다. 새 코드를 과거 로그에 소급 적용하지 않는다.
+이전 F0_RELEASE=UNCONFIRMED는 당시 Ready 기반 표시였으므로 실제 해제 실패를 입증하지 않는다.
+원래 실패 로그는 보존한다. 새 파일이나 후속 성공으로 덮어쓰지 않는다.
+
+확정: 시험 서비스 연결과 실제 F0 읽기에 도달했고 첫 capture가 Blocked였다.
+이후 11개 성공과 BEFORE_C의 SAME은 첫 실패를 지우지 않는다. C는 생성하지 않았고 AFTER 구간도 실행하지 않았다.
+`CLEANUP=CONFIRMED`는 시험 종료 정리 결과이며 **그 첫 capture의 해제 성공 증거가 아니다**.
+대조 성공·삼성 원인 규명·C 영향 확인이 아니다.
+
+현재 `UNREADABLE_TREE`만으로 root/child 누락, refresh 실패, 종료 root/window/frame 불일치,
+일반 예외, 정리 실패를 특정할 수 없다. refresh의 시간 제한 실패도 기존대로 UNREADABLE_TREE이고,
+별도의 traversal/end-budget 초과는 기존대로 TRUNCATED_TREE다. 제공된 90ms 구간을 timeout 원인으로 해석하지 않는다.
+실제 다음 실패 분기의 고정 코드를 얻기 전에는 재시도/실패 무시를 도입하지 않는다.
+
+### 10.2 진단 경계와 코드
+
+시험 service의 **각 COLLECTOR_FRESH 읽기마다 새 CaptureReadTrace**를 만들고
+`CaptureTrace(null, collectionRead=...)`로 전달한다. 기존 CaptureDiagnosticSession은 연결하지 않는다.
+따라서 session bind를 필요로 하는 title getter와 legacy maximumWindowMetrics getter가 새로 켜지지 않는다.
+진단 객체에는 enum/boolean만 있고 package·node·path·bounds·예외 객체를 보관하지 않는다.
+로그 sink는 capture 내부에 없으며 기존 READ 보고 한 줄에만 필드를 붙인다.
+추가 수집, refresh, getter, 시계, OCR, IPC 호출은 없다. 기존 getter/검사 순서를 유지한다.
+고정 코드 기록의 CPU 오버헤드는 있으므로 시간 경계에 대한 관측 간섭이 0이라고 보증하지 않는다. 기존 예산은 늘리지 않는다.
+
+```text
+...;READ=1;PHASE=INITIAL;SOURCE=COLLECTOR_FRESH;STATUS=BLOCKED;F0=UNREADABLE_TREE;...
+F0_DETAIL=REFRESH_FAILED;F0_POINT=PROTECTION_PASS;F0_RELEASE=COMPLETED
+```
+
+위는 **형식 예시**이며 이번 실측의 확정 원인이 아니다. 실제로는 한 줄로 출력된다.
+
+| 실제 첫 실패 분기 | F0_DETAIL | 해석/한계 |
+|---|---|---|
+| 최초 active root/package 없음 | ROOT_UNAVAILABLE / ROOT_PACKAGE_UNAVAILABLE | 해당 getter가 null. null의 원격 내부 원인은 UNKNOWN |
+| 같은 앱 배경 창 root/package 없음 | BACKGROUND_ROOT_UNAVAILABLE / BACKGROUND_PACKAGE_UNAVAILABLE | 이전 WINDOW_LIST_UNAVAILABLE에서 진단만 분리 |
+| child 조회 null | CHILD_UNAVAILABLE | 원본 경로/index는 기록하지 않음 |
+| refresh() false | REFRESH_FAILED | API가 false 반환. 예외와 구분하며 장치 내부 원인은 추정하지 않음 |
+| refresh 전 window ID 음수/refresh 후 다름 | INVALID_WINDOW / REFRESH_WINDOW_CHANGED | 이미 읽은 값 비교, 실제 ID 출력 없음 |
+| clock 역행/기존 deadline 초과 | INVALID_CLOCK / TIME_LIMIT | 새 clock 조회 없음. 기존 reason·100ms 경계 그대로 |
+| pass 중 package/window 결합 실패 | NODE_PACKAGE_MISMATCH / NODE_WINDOW_MISMATCH | F0 전체 차단 유지 |
+| 종료 active root 없음/ID/package/bounds 차이 | END_ROOT_UNAVAILABLE / END_ROOT_WINDOW_MISMATCH / END_ROOT_PACKAGE_MISMATCH / END_ROOT_BOUNDS_MISMATCH | 기존 OR 조건을 기존 순서대로 분리 |
+| 종료 window.root 없음/ID/package/bounds 차이 | END_WINDOW_ROOT_UNAVAILABLE / END_WINDOW_ROOT_ID_MISMATCH / END_WINDOW_ROOT_PACKAGE_MISMATCH / END_WINDOW_ROOT_BOUNDS_MISMATCH | active root와 window.root의 다른 소스 구분 |
+| 종료 frame 차이/읽기 불가 | END_FRAME_MISMATCH | 기존 frame 결과가 다르거나 null. 내부 geometry 실패 원인은 이 코드만으로 확정 불가 |
+| 종료 display/창 DTO 목록 차이 | END_DISPLAY_MISMATCH / END_WINDOWS_MISMATCH | 새 창 조회 없음, 기존 비교 관찰 |
+| node/depth/text 제한 | NODE_LIMIT / DEPTH_LIMIT / TEXT_LIMIT | 기존 제한 그대로 |
+| 기존 보호 검사 | TREE_PROTECTION, PACKAGE_GATE 등 | F0 reason과 함께 판독, 보호 내용 원문 없음 |
+| 일반 수집 예외/취소 | COLLECTION_EXCEPTION / COLLECTION_CANCELLED | 예외 type/message 미출력. point 안에서 어느 Android getter인지는 UNKNOWN일 수 있음 |
+| 실제 release 호출/배치 실패·취소 | RELEASE_FAILED / RELEASE_CANCELLED | 앞선 수집 실패가 있으면 그 detail을 유지하고 F0_RELEASE만 별도 보고 |
+
+`F0_POINT`는 첫 실패를 기록할 때 저장된 **마지막 처리 구간 표식**이다.
+정확한 실패 predicate는 F0_DETAIL로 구분하고, POINT만으로 특정 getter나 내부 원인을 추정하지 않는다.
+release 자체가 최초 실패면 해당 해제 wrapper의 구간을 사용한다. 구간 값은 다음과 같다: ROOT, ROOT_REFRESH, WINDOWS, TARGET_BINDING,
+BACKGROUND_ROOT, FRAME, PROTECTION_PASS, SNAPSHOT_PASS, END_ACTIVE_ROOT, END_WINDOW_ROOT,
+END_FRAME, END_WINDOWS, END_BUDGET, RESULT, CHILD_RELEASE, ROOT_RELEASE, WINDOW_RELEASE, RELEASE_BATCH.
+구간이 확인되지 않으면 UNKNOWN. 새 세부 코드가 root bind 이전에도 남으며 최초 사유/point만 유지한다.
+첫 guard를 throw 이전에 기록하고 child body 예외도 cleanup 이전에 관찰하여 연쇄 해제 실패가 원인을 덮지 못한다.
+원래 취소 전파/예외 우선순위/Blocked reason은 바꾸지 않는다.
+
+`F0_RELEASE`의 정확한 의미:
+- COMPLETED: 실제 확보한 child/root/window의 로컬 release 호출과 전체 root/window 배치가 예외 없이 완료됨.
+- FAILED / CANCELLED / FAILED_AND_CANCELLED: 실제 호출에서 관측한 실패. 나머지 batch cleanup은 원래대로 시도한다.
+- UNKNOWN: F9 읽기, 미시작, 해제할 객체를 얻지 못함, 전체 해제 완료를 관찰하지 못함.
+- Ready 유무로 계산하지 않는다. Blocked + COMPLETED와 정상 body + FAILED가 모두 가능하다.
+- API 33+의 recycle은 pooling 제거로 무동작일 수 있다. COMPLETED는 로컬 API 호출 완료이지
+  원격 native 해제·창 제거·C cleanup·F0 승인 또는 native generation 증명이 아니다.
+
+### 10.3 준비 신호와 INITIAL 분리 검토
+
+`awaitReception()`은 arm 이후 HOST package의 STATE/CONTENT 이벤트를 받았는지만 확인한다.
+첫 `am start -W ... f9_defer_popup true`의 배경 Activity 이벤트도 조건을 만족할 수 있다.
+두 번째 `am start ... f9_show_deferred_popup true`와 onNewIntent/Dialog.show()/setLayout() 뒤의
+원격 트리 읽기가 모두 준비됐음을 확인하는 handshake는 아니다. 실제 읽은 창과 수신 창의 결합 검사는
+계속하지만 이 역시 “P01 layout 완료”를 뜻하지 않는다.
+
+공식 근거와 구현 근거:
+- [adb am start -W](https://developer.android.com/tools/adb#am): launch 완료까지 기다리는 옵션이다. 임의 Dialog의 후속 layout/전체 접근성 트리 완료 계약은 없다.
+- [AccessibilityEvent TYPE_WINDOW_STATE_CHANGED / TYPE_WINDOW_CONTENT_CHANGED](https://developer.android.com/reference/android/view/accessibility/AccessibilityEvent): UI 구역 또는 내용 변화 이벤트다. 트리 전체를 원자적으로 읽을 수 있는 준비 신호로 정의되지 않는다.
+- [AccessibilityNodeInfo.refresh](https://developer.android.com/reference/android/view/accessibility/AccessibilityNodeInfo#refresh()): 해당 View의 최신 상태 갱신 API이며 false는 obsolete node 계약이다. 원격 전체 트리의 동시성이나 native 세대 증명은 제공하지 않는다.
+- [AccessibilityNodeInfo.recycle](https://developer.android.com/reference/android/view/accessibility/AccessibilityNodeInfo#recycle()): API 33부터 deprecated, pooling 중단 후 호출 효과가 없다.
+- AOSP **android-15.0.0_r1** [ActivityManagerShellCommand.runStartActivity](https://github.com/aosp-mirror/platform_frameworks_base/blob/android-15.0.0_r1/services/core/java/com/android/server/am/ActivityManagerShellCommand.java): `-W` 경로는 startActivityAndWait/WaitResult를 사용한다.
+- 같은 버전의 Dialog.show/addView, Window.setLayout/속성 전달, ViewRootImpl의 예약 traversal,
+  접근성 Handler 이벤트 전달 경계는 2절 링크와 같다. API 37/OEM 구현과 동일하다고 간주하지 않는다.
+- 실제 P01 fixture는 background setContentView → deferred onNewIntent → Dialog.show → setLayout 순이다.
+  이 코드와 공식 API는 초기 변화 가능성의 근거이고 **READ1 실패 원인의 증거는 아니다**.
+
+준비 단계 분리는 향후 시험 해석에 유용하지만 이번에는 **구현하지 않는다**.
+원인을 확인한 뒤 필요하면 PREPARATION 표본(실패 포함)을 별도 보존하고, 명시적인 대상/보호/자원 확인을
+통과한 시점을 새로운 INITIAL로 정의하는 계약을 검토할 수 있다. 그 경우 초기 변화를 측정 밖으로
+밀어내는 편향과 기존 INITIAL 기준과 비교할 수 없다는 점을 함께 기록해야 한다.
+UNKNOWN/보호 차단/해제 실패는 일시적 오류로 분류하지 않는다. 성공까지 반복, blocked 카운터 초기화,
+첫 실패 덮기, 고정 sleep 승인, 수집 예산/TTL 확대는 도입하지 않았다.
+
+### 10.4 다음 한 번의 진단 실행 (명령만 준비; 이번 작업에서 미실행)
+
+6절 APK 빌드/설치와 UI 설정, Bound 확인을 한 뒤 **withoutCForward 한 조건만** 먼저 실행한다.
+사용자가 확인한 --no-restart를 유지하며 전체 원래 로그와 별도 폴더로 저장한다.
+
+```powershell
+$runner = "kr.closeforyou.test/androidx.test.runner.AndroidJUnitRunner"
+$class = "kr.closeforyou.accessibility.integration.P01ReaderComparisonInstrumentedTest"
+$logDir = Join-Path (Get-Location) ("p01-first-f0-" + (Get-Date -Format "yyyyMMdd-HHmmss"))
+New-Item -ItemType Directory -Path $logDir -ErrorAction Stop | Out-Null
+$logFile = Join-Path $logDir "withoutCForward-norestart.txt"
+if (Test-Path -LiteralPath $logFile) { throw "기존 로그 보존: 새 출력 폴더 사용" }
+& $adb -s $serial shell am instrument --no-restart -w `
+    -e class "$class#withoutCForward" -e p01ReaderComparison true -e dedicatedEmulator true $runner `
+    2>&1 | Tee-Object -FilePath $logFile
+Select-String -Path $logFile -Pattern "SERVICE=|RECEPTION=|READ=|F0_DETAIL=|SUMMARY=|FAILURES|OK \("
+```
+
+첫 BLOCKED/CANCELLED/FAILED READ의 F0_DETAIL + F0_POINT + F0_RELEASE를 함께 본다.
+COLLECTION_EXCEPTION/UNKNOWN이면 그 구간의 내부 원인은 여전히 미확정이다. 이번에 실패가 재현되지 않아도
+기존 READ1 실패 원인이 해결됐다고 판단하지 않는다. INCONCLUSIVE이면 후속 세 조건은 실행하지 않고
+6절 UI 종료/복구 절차로 돌아간다. 권한·접근성 설정을 명령으로 강제 변경하지 않는다.
+
+### 10.5 이번 변경 및 검증
+
+이번 변경은 다음 10개 파일이며 원래 12개 전달 목록(9절)과 구분한다.
+
+1. `app/src/main/java/kr/closeforyou/accessibility/AndroidSnapshotCollector.kt`
+2. `app/src/main/java/kr/closeforyou/accessibility/CaptureDiagnostics.kt`
+3. `app/src/main/java/kr/closeforyou/accessibility/PresentationNodeRefresh.kt`
+4. `app/src/debug/java/kr/closeforyou/accessibility/CaptureReadTrace.kt` (신규)
+5. `app/src/release/java/kr/closeforyou/accessibility/CaptureReadTrace.kt` (신규 무동작 stub)
+6. `app/src/debug/java/kr/closeforyou/accessibility/testing/P01ReaderComparisonService.kt`
+7. `app/src/test/java/kr/closeforyou/accessibility/integration/PresentationNodeRefreshTest.kt`
+8. `app/src/testDebug/java/kr/closeforyou/accessibility/CaptureReadTraceTest.kt` (신규)
+9. `app/src/testRelease/java/kr/closeforyou/accessibility/CaptureReadTraceReleaseTest.kt` (신규)
+10. `docs/A_P01_READER_C_COMPARISON_2026-10-31.md`
+
+공통 collector/helper 수정은 기존 결과를 관찰하는 상세 코드와 callback 전달에 한정한다.
+수집/보호/refresh/endpoint/cleanup의 원래 predicate, getter 순서와 횟수, 예산 및 결과를 유지한다.
+시험 driver의 읽기 순서·반복 수·baseline 거부·카운터와 기존 운영 service/policy는 변경하지 않았다.
+Release는 CaptureReadTrace 무동작 stub만 사용하며 시험 service/log formatter는 포함하지 않는다.
+
+최종 로컬 검증 (2026-10-31, JDK 17, offline):
+
+| 검증 | 결과 / 재실행 구분 |
+|---|---|
+| 대상 Debug / Release JVM | 이번 재실행 55 / 18 통과, 실패·오류·skip 0 |
+| 전체 앱 Debug JVM | 이번 재실행 **1,589** 통과, 실패·오류·skip 0 |
+| 전체 앱 Release JVM | 이번 재실행 **1,498** 통과, 실패·오류·skip 0 |
+| 호스트 / 합성 앱 JVM | **55 / 26** 통과 기록 재사용, 이번 task UP-TO-DATE |
+| 앱 Debug / Release APK | 이번 변경 반영 재빌드 통과 |
+| 앱·호스트 AndroidTest APK | build task 통과(UP-TO-DATE), 실행 아님 |
+| 호스트 / 합성 앱 Debug APK | build task 통과(UP-TO-DATE) |
+| 앱 Debug / Release 및 호스트 Lint | 전체 task 통과, XML issue 0 |
+| APK/DEX | 기존 verify_capture_test_apks.py 통과; 새 로그 필드/시험 서비스 Debug 존재, Release 부재 |
+| Release probe | 실제 DEX instance field 0개(Debug 5개), JVM bytecode 무동작 stub 확인 |
+| 공백 / CRLF | CRLF-aware diff 검사 통과; collector 기존 CRLF 유지; 신규 파일 실제 후행 공백 없음 |
+| 보존 상태 | 10개 worktree HEAD 유지, 다른 9개 status 유지, 보호 문서 bytes 유지; staging 없음 |
+| Android 실행 | **미실행**, 이번 작업에서 adb/device 명령 실행 없음 |
+
+전체 실행 기록: `/workspace/a-p01-first-f0-full.log` (BUILD SUCCESSFUL, 250 tasks),
+대상 회귀: `/workspace/a-p01-first-f0-targeted-final.log`,
+패키징: `/workspace/a-p01-first-f0-packaging.log`, Release stub 확인: `/workspace/a-p01-first-f0-release-stub.javap`.
+새 회귀는 공유 refresh/trace/resource-safety/최종 comparisonComplete를 사용한다.
+12개 Debug + 2개 공유 + 2개 Release 테스트 정의를 추가했다(공유 2개는 두 variant에서 실행).
+실제 Android getter의 null/예외나 emulator 첫 실패 자체를 JVM에서 재현했다고 주장하지 않는다.
+첫 대상 실행에서 Release 무상태 reflection 검사가 Compose의 정적 `$stable` 필드까지 검사하여 실패했다.
+인스턴스 상태만 검사하도록 고쳤고, 이후 대상/전체 모두 통과했다. 정책이나 원래 테스트 정답을 완화한 것은 아니다.
+
+Release에는 공통 고정 enum 선언이 남지만, 수집 관찰 상태·시험 service·새 READ 로그 formatter는 없다.
+빌드 산출물을 통한 격리 확인이며 기기 런타임 성공 증거가 아니다.
+Android 계측/삼성/LG/에뮬레이터 실행은 하지 않았다.
+선택창 유지·수동 닫기·production Cleanup 장애 해결을 주장하지 않는다. 이번 작업은 원인 구분 준비다.
+
+
+### 10.6 전달 전 최종 검토
+
+- 기준 HEAD 및 origin은 `997437cedff68d1bfcc806f756e3c5c10034f9df`로 일치했다.
+- 10.5의 10개 파일 외에는 기존 미추적 구조 검토 문서만 있다. 그 문서는 수정/스테이징하지 않는다.
+- 검증 당시 저장한 파일 해시와 대조하여 소스·테스트 9개가 동일함을 확인했다.
+  이번에는 이 보고서의 실행 옵션·Bound 재확인·로그 보존·POINT 의미만 보완했다.
+- 따라서 Debug 1,589 / Release 1,498, 대상 55 / 18, 호스트 55 / 합성 앱 26,
+  빌드·Lint·APK/DEX 결과는 **기존 결과 재사용**이다. 이번에 테스트/빌드를 다시 실행했다고 보고하지 않는다.
+- 기존 회귀와 실제 연결을 검토했다: 첫 사유 고정, body 예외/취소를 정리 전에 관찰,
+  child release 실패가 뒤의 정상 배치로 사라지지 않음, 정리 실패/취소 조합 보존,
+  매 read 새 관찰자, refresh의 원래 getter/clock 순서, Release 무상태 stub.
+- 관찰자는 고정 enum/boolean을 갱신하며 외부 진단 sink/callback을 호출하지 않는다.
+  공유 refresh의 진단 callback에서 발생한 Exception은 기존 false 결과를 바꾸지 않으며,
+  실제 checkpoint/refresh/cleanup의 예외·취소는 원래 수명주기 규칙대로 전파한다.
+  복구 불가능한 VM Error까지 정상 정리를 보증한다는 의미는 아니다.
+- `F0_RELEASE=COMPLETED`는 확보한 로컬 자원의 해제 호출 및 전체 배치 완료만 의미한다.
+  첫 수집 실패와 후속 정리 실패는 DETAIL/POINT와 RELEASE로 분리한다.
+- 새 policy/준비 단계/retry/sleep, 시간 예산 또는 TTL 변경은 없다. 기존 baseline 실패 카운터와
+  C 미생성·후속 구간 미실행 판정은 유지한다. 현재 검토에서 미해결 P2 이상 또는 진단 정보 노출은 발견하지 않았다.
+- 최종 CRLF-aware 작업/staged 공백 검사와 파일 범위 확인 후 현재 브랜치에만 전달한다.
+  main/다른 worktree/보호 문서는 보존하며 기기 명령은 실행하지 않는다.
+- 첫 F0 실패 원인, P01 표시 유지·수동 닫기 및 Cleanup ADDED/HEALTH 문제는 여전히 미해결이다.

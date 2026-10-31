@@ -99,11 +99,12 @@ class P01ReaderComparisonService : AccessibilityService() {
         if (configuration != resources.configuration) throw ComparisonAbort(ComparisonIssue.CONFIGURATION_CHANGED)
     }
     /** Connection alone is insufficient. Wait only for real synthetic-host event delivery;
-     * this does not approve geometry or delay production admission. No screen read/poll here. */
+     * the event may be from the background Activity, not the P01 Dialog.
+     * This does not approve geometry or delay production admission. No screen read/poll here. */
     internal suspend fun awaitReception() {
         repeat(100) {
             checkBoundary()
-            if (receiving) { emit("SERVICE=CONNECTED;RECEPTION=HOST_EVENT_CONFIRMED"); return }
+            if (receiving) { emit("SERVICE=CONNECTED;RECEPTION=HOST_EVENT_CONFIRMED;POPUP_READY=UNCONFIRMED"); return }
             delay(10)
         }
         checks.fail(ComparisonIssue.EVENT_UNCONFIRMED)
@@ -208,13 +209,15 @@ class P01ReaderComparisonService : AccessibilityService() {
         var result: Read = Read(null,null)
         readCode = null; regionReads.clear(); collectingRegions = true
         var block: PrivacyBlockReason? = null
+        val f0 = CaptureReadTrace()
         try {
             val ready: CollectionResult.Ready?
             val scene: F9Scene?
             if (kind == ComparisonReader.COLLECTOR_FRESH) {
                 val collected = collector.capture(this,epoch,PopupTrigger.WINDOW_CHANGED,
                     { if (allowed(it)) null else PrivacyBlockReason.APP_NOT_ALLOWED },
-                    requireCaptureIsolation = true, freshPresentation = true, checkpoint = ::checkLive)
+                    requireCaptureIsolation = true, trace = CaptureTrace(null, collectionRead = f0),
+                    freshPresentation = true, checkpoint = ::checkLive)
                 ready = collected as? CollectionResult.Ready; scene = null
                 block = (collected as? CollectionResult.Blocked)?.reason
             } else {
@@ -266,7 +269,7 @@ class P01ReaderComparisonService : AccessibilityService() {
                 "EVENTS_DURING=${events-eventBefore};F0=${block?.name ?: "NONE"};" +
                 "F9_STAGE=${readCode?.stage?.name ?: "NONE"};F9_DETAIL=${readCode?.detail?.name ?: "NONE"};" +
                 "F9_RELEASE=${readCode?.release?.name ?: "NONE"};" +
-                "F0_RELEASE=${if (result.ready != null) "COMPLETED" else "UNCONFIRMED"}")
+                "F0_DETAIL=${f0.detail};F0_POINT=${f0.failurePoint};F0_RELEASE=${f0.release}")
         }
     }
     @Suppress("DEPRECATION")

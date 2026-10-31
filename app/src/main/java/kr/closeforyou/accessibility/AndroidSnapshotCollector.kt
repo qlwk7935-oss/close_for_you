@@ -49,74 +49,81 @@ internal class AndroidSnapshotCollector {
             return CollectionResult.Blocked(reason)
         }
         return try {
-            CollectionResourceSafety.run(body = {
+            CollectionResourceSafety.run(body = { trace.readBody {
+                trace.readPoint(CaptureReadPoint.ROOT)
                 if (freshPresentation) checkpoint()
                 val root = service.rootInActiveWindow
-                    ?: return@run blocked(PrivacyBlockReason.UNREADABLE_TREE, CaptureDetail.ROOT_UNAVAILABLE)
+                    ?: return@readBody blocked(PrivacyBlockReason.UNREADABLE_TREE, CaptureDetail.ROOT_UNAVAILABLE)
                 roots += root
                 val packageName = root.packageName?.toString()
-                    ?: return@run blocked(PrivacyBlockReason.UNREADABLE_TREE, CaptureDetail.ROOT_PACKAGE_UNAVAILABLE)
+                    ?: return@readBody blocked(PrivacyBlockReason.UNREADABLE_TREE, CaptureDetail.ROOT_PACKAGE_UNAVAILABLE)
                 trace.root(packageName, root.windowId)
-                packageGate(packageName)?.let { return@run blocked(it, CaptureDetail.PACKAGE_GATE) }
+                packageGate(packageName)?.let { return@readBody blocked(it, CaptureDetail.PACKAGE_GATE) }
                 if (freshPresentation) {
-                    refreshPresentationNode(root, capturedAtUptimeMillis, checkpoint)
-                    if (root.packageName?.toString() != packageName) throw GuardFailure(PrivacyBlockReason.UNREADABLE_TREE)
+                    trace.readPoint(CaptureReadPoint.ROOT_REFRESH)
+                    refreshPresentationNode(root, capturedAtUptimeMillis, checkpoint, trace)
+                    if (root.packageName?.toString() != packageName) throw guard(PrivacyBlockReason.UNREADABLE_TREE, trace, CaptureDetail.NODE_PACKAGE_MISMATCH)
                 }
+                trace.readPoint(CaptureReadPoint.WINDOWS)
                 androidWindows += service.windows
                 if (requireCaptureIsolation && androidWindows.any { it.displayId != Display.DEFAULT_DISPLAY }) {
-                    return@run blocked(PrivacyBlockReason.SYSTEM_WINDOW, CaptureDetail.SECONDARY_DISPLAY)
+                    return@readBody blocked(PrivacyBlockReason.SYSTEM_WINDOW, CaptureDetail.SECONDARY_DISPLAY)
                 }
                 if (androidWindows.isEmpty() || androidWindows.size > MAX_WINDOWS) {
-                    return@run blocked(PrivacyBlockReason.UNREADABLE_TREE, CaptureDetail.WINDOW_LIST_UNAVAILABLE)
+                    return@readBody blocked(PrivacyBlockReason.UNREADABLE_TREE, CaptureDetail.WINDOW_LIST_UNAVAILABLE)
                 }
                 val windows = androidWindows.map { window ->
                     WindowSnapshot(window.id, windowType(window.type), window.bounds(),
                         window.isActive, window.isFocused, window.layer)
                 }
+                trace.readPoint(CaptureReadPoint.TARGET_BINDING)
                 val targetWindow = windows.firstOrNull { it.id == root.windowId }
-                    ?: return@run blocked(PrivacyBlockReason.UNREADABLE_TREE, CaptureDetail.TARGET_MISSING)
+                    ?: return@readBody blocked(PrivacyBlockReason.UNREADABLE_TREE, CaptureDetail.TARGET_MISSING)
                 trace.target(targetWindow.type)
                 val frameworkTarget = androidWindows.single { it.id == root.windowId }
                 if (frameworkTarget.displayId != Display.DEFAULT_DISPLAY) {
-                    return@run blocked(PrivacyBlockReason.SYSTEM_WINDOW, CaptureDetail.SECONDARY_DISPLAY)
+                    return@readBody blocked(PrivacyBlockReason.SYSTEM_WINDOW, CaptureDetail.SECONDARY_DISPLAY)
                 }
                 trace.syntheticWindow { frameworkTarget.title }
                 if (targetWindow.type != WindowType.APPLICATION) {
-                    return@run blocked(PrivacyBlockReason.SYSTEM_WINDOW, CaptureDetail.TARGET_NOT_APPLICATION)
+                    return@readBody blocked(PrivacyBlockReason.SYSTEM_WINDOW, CaptureDetail.TARGET_NOT_APPLICATION)
                 }
                 windows.firstOrNull { (it.active || it.focused) && it.type != WindowType.APPLICATION }?.let {
-                    return@run blocked(PrivacyBlockReason.SYSTEM_WINDOW, CaptureDetail.NON_APPLICATION_FOCUS, it.type)
+                    return@readBody blocked(PrivacyBlockReason.SYSTEM_WINDOW, CaptureDetail.NON_APPLICATION_FOCUS, it.type)
                 }
 
+                trace.readPoint(CaptureReadPoint.BACKGROUND_ROOT)
                 for (window in androidWindows) {
                     if (window.type != AccessibilityWindowInfo.TYPE_APPLICATION || window.id == root.windowId) continue
                     val other = window.root
-                        ?: return@run blocked(PrivacyBlockReason.UNREADABLE_TREE, CaptureDetail.WINDOW_LIST_UNAVAILABLE)
+                        ?: return@readBody blocked(PrivacyBlockReason.UNREADABLE_TREE, CaptureDetail.BACKGROUND_ROOT_UNAVAILABLE)
                     roots += other
                     val otherPackage = other.packageName?.toString()
-                        ?: return@run blocked(PrivacyBlockReason.UNREADABLE_TREE, CaptureDetail.WINDOW_LIST_UNAVAILABLE)
+                        ?: return@readBody blocked(PrivacyBlockReason.UNREADABLE_TREE, CaptureDetail.BACKGROUND_PACKAGE_UNAVAILABLE)
                     if (otherPackage != packageName && (requireCaptureIsolation || window.isActive || window.isFocused)) {
-                        return@run blocked(PrivacyBlockReason.SYSTEM_WINDOW, CaptureDetail.FOREIGN_APPLICATION, WindowType.APPLICATION)
+                        return@readBody blocked(PrivacyBlockReason.SYSTEM_WINDOW, CaptureDetail.FOREIGN_APPLICATION, WindowType.APPLICATION)
                     }
                 }
 
+                trace.readPoint(CaptureReadPoint.FRAME)
                 val geometryRead = (geometry ?: AndroidScreenGeometry(service).also { geometry = it }).read()
                 trace.frameStatus(geometryRead.status)
-                val screen = geometryRead.frame ?: return@run blocked(PrivacyBlockReason.UNREADABLE_TREE, CaptureDetail.DISPLAY_GEOMETRY_UNCERTAIN)
+                val screen = geometryRead.frame ?: return@readBody blocked(PrivacyBlockReason.UNREADABLE_TREE, CaptureDetail.DISPLAY_GEOMETRY_UNCERTAIN)
                 trace.coordinates(targetWindow.bounds, screen, root.bounds()) {
                     try { service.getSystemService(WindowManager::class.java).maximumWindowMetrics.bounds.toScreenBounds() }
                     catch (_: Exception) { null }
                 }
-                val budget = TraversalBudget()
+                val budget = TraversalBudget(trace)
+                trace.readPoint(CaptureReadPoint.PROTECTION_PASS)
                 // Inspect all trees of this application, including its obscured background window.
                 for (candidateRoot in roots) {
                     if (candidateRoot.packageName?.toString() == packageName) {
-                        walk(candidateRoot, budget, beforeRead = { node ->
+                        walk(candidateRoot, budget, trace, beforeRead = { node ->
                             if (freshPresentation) {
-                                refreshPresentationNode(node, capturedAtUptimeMillis, checkpoint)
-                                if (node.windowId != candidateRoot.windowId) throw GuardFailure(PrivacyBlockReason.UNREADABLE_TREE)
+                                refreshPresentationNode(node, capturedAtUptimeMillis, checkpoint, trace)
+                                if (node.windowId != candidateRoot.windowId) throw guard(PrivacyBlockReason.UNREADABLE_TREE, trace, CaptureDetail.NODE_WINDOW_MISMATCH)
                             }
-                        }) { node, _ -> inspect(node, packageName) }
+                        }) { node, _ -> inspect(node, packageName, trace) }
                     }
                 }
 
@@ -127,17 +134,18 @@ internal class AndroidSnapshotCollector {
                 val structure = MessageDigest.getInstance("SHA-256").apply { update(salt) }
                 val content = MessageDigest.getInstance("SHA-256").apply { update(salt) }
                 var textCharacters = 0
-                walk(root, budget, beforeRead = { node ->
+                trace.readPoint(CaptureReadPoint.SNAPSHOT_PASS)
+                walk(root, budget, trace, beforeRead = { node ->
                     if (freshPresentation) {
-                        refreshPresentationNode(node, capturedAtUptimeMillis, checkpoint)
-                        if (node.windowId != root.windowId) throw GuardFailure(PrivacyBlockReason.UNREADABLE_TREE)
+                        refreshPresentationNode(node, capturedAtUptimeMillis, checkpoint, trace)
+                        if (node.windowId != root.windowId) throw guard(PrivacyBlockReason.UNREADABLE_TREE, trace, CaptureDetail.NODE_WINDOW_MISMATCH)
                     }
                 }) { node, path ->
-                    inspect(node, packageName)
+                    inspect(node, packageName, trace)
                     val text = node.text?.toString()
                     val description = node.contentDescription?.toString()
                     textCharacters += (text?.length ?: 0) + (description?.length ?: 0)
-                    if (textCharacters > MAX_TEXT_CHARACTERS) throw GuardFailure(PrivacyBlockReason.TRUNCATED_TREE)
+                    if (textCharacters > MAX_TEXT_CHARACTERS) throw guard(PrivacyBlockReason.TRUNCATED_TREE, trace, CaptureDetail.TEXT_LIMIT)
                     val bounds = node.bounds()
                     val actions = buildSet {
                         val actions = node.actionList
@@ -172,40 +180,51 @@ internal class AndroidSnapshotCollector {
                     windows.toPersistentList(), screen, trigger, SnapshotCompleteness.COMPLETE)
                 if (freshPresentation) {
                     checkpoint()
-                    val endpoint = service.rootInActiveWindow ?: throw GuardFailure(PrivacyBlockReason.UNREADABLE_TREE)
+                    trace.readPoint(CaptureReadPoint.END_ACTIVE_ROOT)
+                    val endpoint = service.rootInActiveWindow ?: throw guard(PrivacyBlockReason.UNREADABLE_TREE, trace, CaptureDetail.END_ROOT_UNAVAILABLE)
                     roots += endpoint
-                    refreshPresentationNode(endpoint, capturedAtUptimeMillis, checkpoint)
-                    if (endpoint.windowId != token.windowId || endpoint.packageName?.toString() != packageName ||
-                        endpoint.bounds() != nodes.first().bounds) throw GuardFailure(PrivacyBlockReason.UNREADABLE_TREE)
+                    refreshPresentationNode(endpoint, capturedAtUptimeMillis, checkpoint, trace)
+                    if (endpoint.windowId != token.windowId) throw guard(PrivacyBlockReason.UNREADABLE_TREE, trace, CaptureDetail.END_ROOT_WINDOW_MISMATCH)
+                    if (endpoint.packageName?.toString() != packageName) throw guard(PrivacyBlockReason.UNREADABLE_TREE, trace, CaptureDetail.END_ROOT_PACKAGE_MISMATCH)
+                    if (endpoint.bounds() != nodes.first().bounds) throw guard(PrivacyBlockReason.UNREADABLE_TREE, trace, CaptureDetail.END_ROOT_BOUNDS_MISMATCH)
                     // The later DISPLAY_REVIEW uses window.root. Refuse differing root sources
                     // before C exists; do not silently rebase the active-root snapshot onto it.
-                    val windowRoot = frameworkTarget.root ?: throw GuardFailure(PrivacyBlockReason.UNREADABLE_TREE)
+                    trace.readPoint(CaptureReadPoint.END_WINDOW_ROOT)
+                    val windowRoot = frameworkTarget.root ?: throw guard(PrivacyBlockReason.UNREADABLE_TREE, trace, CaptureDetail.END_WINDOW_ROOT_UNAVAILABLE)
                     roots += windowRoot
-                    refreshPresentationNode(windowRoot, capturedAtUptimeMillis, checkpoint)
-                    if (windowRoot.windowId != token.windowId || windowRoot.packageName?.toString() != packageName ||
-                        windowRoot.bounds() != nodes.first().bounds || geometry?.read()?.frame != screen)
-                        throw GuardFailure(PrivacyBlockReason.UNREADABLE_TREE)
+                    refreshPresentationNode(windowRoot, capturedAtUptimeMillis, checkpoint, trace)
+                    if (windowRoot.windowId != token.windowId) throw guard(PrivacyBlockReason.UNREADABLE_TREE, trace, CaptureDetail.END_WINDOW_ROOT_ID_MISMATCH)
+                    if (windowRoot.packageName?.toString() != packageName) throw guard(PrivacyBlockReason.UNREADABLE_TREE, trace, CaptureDetail.END_WINDOW_ROOT_PACKAGE_MISMATCH)
+                    if (windowRoot.bounds() != nodes.first().bounds) throw guard(PrivacyBlockReason.UNREADABLE_TREE, trace, CaptureDetail.END_WINDOW_ROOT_BOUNDS_MISMATCH)
+                    trace.readPoint(CaptureReadPoint.END_FRAME)
+                    if (geometry?.read()?.frame != screen) throw guard(PrivacyBlockReason.UNREADABLE_TREE, trace, CaptureDetail.END_FRAME_MISMATCH)
+                    trace.readPoint(CaptureReadPoint.END_WINDOWS)
                     val endingWindows = service.windows
                     androidWindows += endingWindows
-                    if (endingWindows.any { it.displayId != Display.DEFAULT_DISPLAY } || endingWindows.map { window ->
+                    if (endingWindows.any { it.displayId != Display.DEFAULT_DISPLAY })
+                        throw guard(PrivacyBlockReason.UNREADABLE_TREE, trace, CaptureDetail.END_DISPLAY_MISMATCH)
+                    if (endingWindows.map { window ->
                         WindowSnapshot(window.id, windowType(window.type), window.bounds(), window.isActive, window.isFocused, window.layer)
-                    } != windows) throw GuardFailure(PrivacyBlockReason.UNREADABLE_TREE)
+                    } != windows) throw guard(PrivacyBlockReason.UNREADABLE_TREE, trace, CaptureDetail.END_WINDOWS_MISMATCH)
+                    trace.readPoint(CaptureReadPoint.END_BUDGET)
                     if (SystemClock.uptimeMillis() - capturedAtUptimeMillis >= MAX_CAPTURE_MILLIS)
-                        throw GuardFailure(PrivacyBlockReason.TRUNCATED_TREE)
+                        throw guard(PrivacyBlockReason.TRUNCATED_TREE, trace, CaptureDetail.TIME_LIMIT)
                     checkpoint()
                 }
+                trace.readPoint(CaptureReadPoint.RESULT)
                 CollectionResult.Ready(snapshot, DetectionFrame(
                     digest(packageName), root.windowId,
                     windows.filter { it.type == WindowType.APPLICATION }.mapTo(mutableSetOf()) { it.id },
                     structureDigest, screen, outlines.toList(), trigger, targetWindow.bounds,
                 ), nativeRows?.let { NativeNodeActions.forSnapshotSummaries(snapshot, it) })
-            }, cleanup = {
+            } }, cleanup = { trace.readRelease(CaptureReadPoint.RELEASE_BATCH) {
                 val batch = CollectionReleaseBatch()
                 val seen = java.util.IdentityHashMap<Any, Boolean>()
-                roots.forEach { if (seen.put(it, true) == null) batch.attempt { it.release() } }
-                androidWindows.forEach { if (seen.put(it, true) == null) batch.attempt { it.release() } }
+                roots.forEach { if (seen.put(it, true) == null) batch.attempt { trace.readRelease(CaptureReadPoint.ROOT_RELEASE) { it.release() } } }
+                androidWindows.forEach { if (seen.put(it, true) == null) batch.attempt { trace.readRelease(CaptureReadPoint.WINDOW_RELEASE) { it.release() } } }
                 batch.finish()
-            }, cleanupFailure = { outcome ->
+                trace.readReleased()
+            } }, cleanupFailure = { outcome ->
                 if (outcome is CollectionResult.Blocked) outcome
                 else blocked(PrivacyBlockReason.UNREADABLE_TREE, CaptureDetail.COLLECTION_FAILED)
             })
@@ -224,20 +243,20 @@ internal class AndroidSnapshotCollector {
     /** Supplementary cache bypass for bounded pre-show reads only, never proof of native ABA.
      * refresh() false, identity change, cancellation or the original 100 ms bound discards all.
      */
-    private fun refreshPresentationNode(node: AccessibilityNodeInfo, started: Long, checkpoint: () -> Unit) {
+    private fun refreshPresentationNode(node: AccessibilityNodeInfo, started: Long, checkpoint: () -> Unit, trace: CaptureTrace) {
         if (!refreshPresentationNodeRead(started, SystemClock::uptimeMillis, checkpoint,
-                { node.windowId }, node::refresh)) throw GuardFailure(PrivacyBlockReason.UNREADABLE_TREE)
+                { node.windowId }, node::refresh, trace::readRejected)) throw guard(PrivacyBlockReason.UNREADABLE_TREE, trace)
     }
 
-    private fun inspect(node: AccessibilityNodeInfo, expectedPackage: String) {
+    private fun inspect(node: AccessibilityNodeInfo, expectedPackage: String, trace: CaptureTrace) {
         val packageName = node.packageName?.toString()
         if (packageName != null && packageName != expectedPackage) {
-            throw GuardFailure(PrivacyBlockReason.UNREADABLE_TREE)
+            throw guard(PrivacyBlockReason.UNREADABLE_TREE, trace, CaptureDetail.NODE_PACKAGE_MISMATCH)
         }
-        PrivacyPolicy.fieldBlock(node.isPassword, node.isEditable, node.inputType)?.let { throw GuardFailure(it) }
+        PrivacyPolicy.fieldBlock(node.isPassword, node.isEditable, node.inputType)?.let { throw guard(it, trace) }
         fun check(value: CharSequence?) {
-            if ((value?.length ?: 0) > MAX_NODE_TEXT_CHARACTERS) throw GuardFailure(PrivacyBlockReason.TRUNCATED_TREE)
-            if (PrivacyPolicy.hasSensitiveText(value) || PrivacyPolicy.hasUncertainText(value)) throw GuardFailure(PrivacyBlockReason.SENSITIVE_CONTENT)
+            if ((value?.length ?: 0) > MAX_NODE_TEXT_CHARACTERS) throw guard(PrivacyBlockReason.TRUNCATED_TREE, trace, CaptureDetail.TEXT_LIMIT)
+            if (PrivacyPolicy.hasSensitiveText(value) || PrivacyPolicy.hasUncertainText(value)) throw guard(PrivacyBlockReason.SENSITIVE_CONTENT, trace)
         }
         check(node.text)
         check(node.contentDescription)
@@ -253,6 +272,7 @@ internal class AndroidSnapshotCollector {
     private fun walk(
         root: AccessibilityNodeInfo,
         budget: TraversalBudget,
+        trace: CaptureTrace,
         beforeRead: (AccessibilityNodeInfo) -> Unit = {},
         visitor: (AccessibilityNodeInfo, String) -> Unit,
     ) {
@@ -261,11 +281,11 @@ internal class AndroidSnapshotCollector {
             beforeRead(node)
             visitor(node, path)
             val count = node.childCount
-            if (count > MAX_NODES) throw GuardFailure(PrivacyBlockReason.TRUNCATED_TREE)
+            if (count > MAX_NODES) throw guard(PrivacyBlockReason.TRUNCATED_TREE, trace, CaptureDetail.NODE_LIMIT)
             for (index in 0 until count) {
-                val child = node.getChild(index) ?: throw GuardFailure(PrivacyBlockReason.UNREADABLE_TREE)
-                CollectionResourceSafety.run(body = { visit(child, "$path/$index", depth + 1) },
-                    cleanup = { child.release() }, cleanupFailure = { throw CollectionCleanupFailure() })
+                val child = node.getChild(index) ?: throw guard(PrivacyBlockReason.UNREADABLE_TREE, trace, CaptureDetail.CHILD_UNAVAILABLE)
+                CollectionResourceSafety.run(body = { trace.readBody { visit(child, "$path/$index", depth + 1) } },
+                    cleanup = { trace.readRelease(CaptureReadPoint.CHILD_RELEASE) { child.release() } }, cleanupFailure = { throw CollectionCleanupFailure() })
             }
         }
         visit(root, "0", 0)
@@ -284,14 +304,21 @@ internal class AndroidSnapshotCollector {
         if (bytes != null) update(bytes)
     }
 
-    private class TraversalBudget {
+    private inner class TraversalBudget(private val trace: CaptureTrace) {
         private var count = 0
         private val deadline = SystemClock.uptimeMillis() + MAX_CAPTURE_MILLIS
         fun visit(depth: Int) {
-            if (++count > MAX_NODES * 2 || depth > MAX_DEPTH || SystemClock.uptimeMillis() > deadline) {
-                throw GuardFailure(PrivacyBlockReason.TRUNCATED_TREE)
-            }
+            if (++count > MAX_NODES * 2) throw guard(PrivacyBlockReason.TRUNCATED_TREE, trace, CaptureDetail.NODE_LIMIT)
+            if (depth > MAX_DEPTH) throw guard(PrivacyBlockReason.TRUNCATED_TREE, trace, CaptureDetail.DEPTH_LIMIT)
+            if (SystemClock.uptimeMillis() > deadline) throw guard(PrivacyBlockReason.TRUNCATED_TREE, trace, CaptureDetail.TIME_LIMIT)
         }
+    }
+
+    private fun guard(reason: PrivacyBlockReason, trace: CaptureTrace,
+        detail: CaptureDetail = CaptureDetail.TREE_PROTECTION): GuardFailure {
+        // Record at the failed branch, before child/root cleanup can fail as well.
+        trace.readRejected(detail)
+        return GuardFailure(reason)
     }
 
     private class GuardFailure(val reason: PrivacyBlockReason) : RuntimeException()
