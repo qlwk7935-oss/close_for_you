@@ -189,6 +189,14 @@ enum class SimpleTrace {
     VIDEO_NOT_VIDEO_CONTEXT,
     /** F25: a whole read stopped at its node or time cap ([WholeReadCap]); the part read is used. */
     READ_WHOLE_ABORTED,
+    /** F27 (self review): the same popup came back within a few seconds of a confirmed close: a failure after all. */
+    CLOSE_REAPPEARED_LATE,
+    /** F27: part of the popup is deeper than the walk goes: asked, never closed by itself. */
+    DEPTH_CUT_ASKED,
+    /** F27: a remembered "앞으로 항상 닫기" failed: the rule is forgotten. */
+    REMEMBERED_RULE_DROPPED,
+    /** F27: this skip button did not go away when pressed: never pressed again this session. */
+    VIDEO_SKIP_FAILED_BEFORE,
 
     // F6: why the image-dialog ad hint did not apply ([AdHintMiss]).
     AD_HINT_MISS_SCAM,

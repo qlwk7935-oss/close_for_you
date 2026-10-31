@@ -21,6 +21,13 @@ data class SimplePopup(
     val analysis: PopupAnalysis,
     val root: PopupRoot,
     val scan: ButtonScan,
+    /**
+     * F27 (review #1): the read that found it was the probe's subtree read. Otherwise (a whole read found it) the
+     * strict close re-check reads the whole tree too, or a moved popup the probe cannot see would count as closed.
+     */
+    val foundByProbe: Boolean = true,
+    /** F27 (review #7): part of the popup lies deeper than the walk goes; a risky button there would be unseen. */
+    val depthCut: Boolean = false,
 ) {
     /** Same popup later: same window, same root kind, same structure under the root. */
     val fingerprint: String get() = "${snapshot.token.windowId}:${root.kind}:${snapshot.token.structureDigest}"

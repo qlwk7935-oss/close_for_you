@@ -60,6 +60,19 @@ class WholeReadCapTest {
         assertEquals(1, popup.scan.riskCount)
     }
 
+    @Test fun theProbeStopsAtTheReadsDeadline() {
+        // F27: the probe keeps the read's deadline (올리브영 앱 re-check 734 ms with a 250 ms cap).
+        val nodes = hugePage(before = 5, after = 3_000)
+        var calls = 0
+        val tree = object : ProbeTree<NodeSnapshot> by Tree(nodes) {
+            override fun expired(): Boolean = ++calls > 3
+        }
+        val probe = PopupProbe.find(nodes.first(), tree, SCREEN, 200, 64)
+        assertTrue(probe.capped)
+        assertEquals(null, probe.path)
+        assertTrue(probe.visited <= 3)
+    }
+
     @Test fun anAbortedPageWalksWholeAgainOnlyAfterTenSeconds() {
         assertFalse(ReadBudget.wholeRead(DetectTrigger.WINDOW_EVENT, 0, slowPage = false, videoWeb = false, sinceAbortedWhole = 2_000))
         assertFalse(ReadBudget.wholeRead(DetectTrigger.TALKBACK_FOCUS, 0, slowPage = false, videoWeb = false, sinceAbortedWhole = 9_999))

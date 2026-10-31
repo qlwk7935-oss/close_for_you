@@ -34,6 +34,8 @@ class TreeRead(
     val appWindowIgnored: Boolean = false,
     /** F25: the whole-tree walk stopped at its node or time cap ([WholeReadCap]); [nodes] are the part read. */
     val wholeAborted: Boolean = false,
+    /** F27: paths where the walk stopped at [SimpleCloseEngineFeature.MAX_DEPTH] (a few at most). */
+    val depthCut: List<String> = emptyList(),
 )
 
 /** F15: how a read went (debug log `READ_*`). F16: [APP_WINDOW], an app's own popup window above its main window. */
@@ -84,6 +86,8 @@ class SimpleTreeCollector(private val service: AccessibilityService) {
         probe: Boolean = true,
         wholeIfProbeMisses: Boolean = true,
         capMillis: Long = WholeReadCap.MAX_MILLIS,
+        /** F27: false (the strict re-check of a popup that was not an app window): the windows above are not walked. */
+        appWindows: Boolean = true,
     ): TreeRead? =
         SimpleCollectionGuard.read(expectedPackage, { service.rootInActiveWindow },
             { it.packageName?.toString() }, packageAllowed, collect = collect@{ root, packageName ->
@@ -95,7 +99,7 @@ class SimpleTreeCollector(private val service: AccessibilityService) {
                     windows += service.windows.orEmpty()
                     val bounded = activeWindowBounded(windows, root.windowId, packageName, screen)
                     var appWindowIgnored = false
-                    if (SimpleCloseEngineFeature.FIND_APP_POPUP_WINDOWS && !bounded) {
+                    if (SimpleCloseEngineFeature.FIND_APP_POPUP_WINDOWS && appWindows && !bounded) {
                         // F16: a PopupWindow or non-focusable Dialog of the same app sits above the active window.
                         // F22 (LG 11/1 06:57: a 5-node window was taken for the popup, nothing to press, the real popup in
                         // the main window never read): only a window that is a popup by itself ([AppWindowRules]).
@@ -109,7 +113,7 @@ class SimpleTreeCollector(private val service: AccessibilityService) {
                                 aborted = aborted || count.aborted
                                 if (!count.aborted && AppWindowRules.isPopup(nodes, screen)) {
                                     return@collect TreeRead(packageName, window.id, nodes, screen, true, count.visited, count.skipped,
-                                        TreeReadMode.APP_WINDOW, popupWindowId = window.id)
+                                        TreeReadMode.APP_WINDOW, popupWindowId = window.id, depthCut = count.depthCut)
                                 }
                                 appWindowIgnored = true
                             } finally {
@@ -121,7 +125,8 @@ class SimpleTreeCollector(private val service: AccessibilityService) {
                     var probeVisited = 0
                     var outcome = ProbeOutcome.NOT_RUN
                     if (probe && SimpleCloseEngineFeature.READ_POPUP_SUBTREE_FIRST && !bounded) {
-                        val found = PopupProbe.find(root, liveTree, screen, SimpleCloseEngineFeature.PROBE_MAX_VISITED, SimpleCloseEngineFeature.MAX_DEPTH)
+                        // F27 (LG 11/1 올리브영 앱: CLOSE_RECHECK_MS 734 with a 250 ms read cap): the probe keeps the read's deadline too.
+                        val found = PopupProbe.find(root, liveTree(deadline), screen, SimpleCloseEngineFeature.PROBE_MAX_VISITED, SimpleCloseEngineFeature.MAX_DEPTH)
                         probeVisited = found.visited
                         outcome = when (found.kind) {
                             ProbeHitKind.DIALOG -> ProbeOutcome.HIT_DIALOG
@@ -141,7 +146,8 @@ class SimpleTreeCollector(private val service: AccessibilityService) {
                             aborted = aborted || count.aborted
                             if (nodes != null && !count.aborted && PopupRootFinder.find(nodes, screen) != null) {
                                 return@collect TreeRead(packageName, root.windowId, nodes, screen, false,
-                                    probeVisited + count.visited, count.skipped, TreeReadMode.POPUP_SUBTREE, probeVisited, probeOutcome = outcome, appWindowIgnored = appWindowIgnored)
+                                    probeVisited + count.visited, count.skipped, TreeReadMode.POPUP_SUBTREE, probeVisited, probeOutcome = outcome,
+                                    appWindowIgnored = appWindowIgnored, depthCut = count.depthCut)
                             }
                         }
                         mode = TreeReadMode.FULL_AFTER_PROBE
@@ -162,7 +168,7 @@ class SimpleTreeCollector(private val service: AccessibilityService) {
                         subtree(root, path, screen, popupCount).also { count.visited += popupCount.visited }
                     }
                     TreeRead(packageName, root.windowId, complete, screen, bounded, probeVisited + count.visited, count.skipped, mode, probeVisited,
-                        probeOutcome = outcome, appWindowIgnored = appWindowIgnored, wholeAborted = aborted || count.aborted)
+                        probeOutcome = outcome, appWindowIgnored = appWindowIgnored, wholeAborted = aborted || count.aborted, depthCut = count.depthCut)
                 } finally {
                     windows.forEach(::release)
                 }
@@ -205,7 +211,8 @@ class SimpleTreeCollector(private val service: AccessibilityService) {
         val path = candidate.nodePath ?: return false
         val node = nodeAt(path, windowId) ?: return false
         try {
-            return node.isVisibleToUser && node.isEnabled && liveName(node) == candidate.label
+            // F27 (review #5): still clickable itself, so the click never climbs to a parent (an ad card's link).
+            return node.isVisibleToUser && node.isEnabled && node.isClickable && liveName(node) == candidate.label
         } catch (e: RuntimeException) {
             return false
         } finally {
@@ -462,14 +469,16 @@ class SimpleTreeCollector(private val service: AccessibilityService) {
         val maxVisited: Int = Int.MAX_VALUE,
         val deadline: Long = Long.MAX_VALUE,
         var aborted: Boolean = false,
+        val depthCut: MutableList<String> = mutableListOf(),
     )
 
     /** Live nodes for [PopupProbe]; reads class, bounds, clickable and whether there is text, nothing kept. */
-    private val liveTree = object : ProbeTree<AccessibilityNodeInfo> {
+    private fun liveTree(deadline: Long) = object : ProbeTree<AccessibilityNodeInfo> {
         override fun info(node: AccessibilityNodeInfo) = ProbeNodeInfo(node.className?.toString(), boundsOf(node), node.isClickable, !node.text.isNullOrBlank())
         override fun childCount(node: AccessibilityNodeInfo) = node.childCount
         override fun child(node: AccessibilityNodeInfo, index: Int): AccessibilityNodeInfo? = node.getChild(index)
         override fun release(node: AccessibilityNodeInfo) = this@SimpleTreeCollector.release(node)
+        override fun expired() = SystemClock.uptimeMillis() > deadline
     }
 
     /** F15: the visible nodes at [path] and below it, with their full paths; null when the path is gone. */
@@ -491,7 +500,12 @@ class SimpleTreeCollector(private val service: AccessibilityService) {
     }
 
     private fun walk(node: AccessibilityNodeInfo, path: String, depth: Int, out: MutableList<NodeSnapshot>, screen: ScreenBounds, count: WalkCount) {
-        if (out.size >= SimpleCloseEngineFeature.MAX_NODES || depth > SimpleCloseEngineFeature.MAX_DEPTH || count.aborted) return
+        if (depth > SimpleCloseEngineFeature.MAX_DEPTH) {
+            // F27 (review #7): remembered, so a popup with a part this deep is never closed by itself.
+            if (count.depthCut.size < 8) count.depthCut += path
+            return
+        }
+        if (out.size >= SimpleCloseEngineFeature.MAX_NODES || count.aborted) return
         // F26: the clock every 4 nodes (G마켓 went 444 ms past the cap with every 16th).
         if (count.visited >= count.maxVisited || (count.visited and 3) == 0 && SystemClock.uptimeMillis() > count.deadline) {
             count.aborted = true

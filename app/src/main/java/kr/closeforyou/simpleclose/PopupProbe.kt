@@ -16,6 +16,9 @@ interface ProbeTree<N> {
     fun childCount(node: N): Int
     fun child(node: N, index: Int): N?
     fun release(node: N)
+
+    /** F27: the read's deadline passed; the probe stops as if capped (the read then decides with what it has). */
+    fun expired(): Boolean = false
 }
 
 /**
@@ -78,7 +81,7 @@ object PopupProbe {
         // F20: [deferZero] = a zero-size node is not entered now (it returns its empty bounds); its parent comes
         // back to it after its sized siblings ([revisit]: already counted).
         fun visit(node: N, path: String, depth: Int, above: List<Pair<Int, ScreenBounds>>, deferZero: Boolean = false, revisit: Boolean = false): ScreenBounds? {
-            if (!revisit && visited >= maxVisited) {
+            if (!revisit && (visited >= maxVisited || tree.expired())) {
                 capped = true
                 return null
             }
