@@ -12,6 +12,7 @@ import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityManager
 import android.view.accessibility.AccessibilityWindowInfo
 import kotlinx.coroutines.*
+import kotlinx.coroutines.channels.Channel
 import kr.closeforyou.accessibility.*
 import kr.closeforyou.accessibility.action.*
 import kr.closeforyou.accessibility.integration.*
@@ -38,6 +39,8 @@ class P01ReaderComparisonService : AccessibilityService() {
     private var armAt = 0L
     private var events = 0
     private var hardInvalidation = false
+    private var preparing = false
+    private val preparationChanges = Channel<Unit>(Channel.CONFLATED)
     private var scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private var watchdog: Job? = null
     private var overlay: AccessibilityChoiceOverlay? = null
@@ -110,13 +113,37 @@ class P01ReaderComparisonService : AccessibilityService() {
         checks.fail(ComparisonIssue.EVENT_UNCONFIRMED)
         throw ComparisonAbort(issue)
     }
+    /** Explicit opt-in test mode only; no change to production admission or normal INITIAL. */
+    internal suspend fun prepareComparison(): PreparationEnd {
+        checkBoundary(); preparing=true
+        try {
+            val result=P01ComparisonPreparation.run(SystemClock::uptimeMillis, ::checkBoundary,
+                read = { attempt ->
+                    preparationChanges.tryReceive() // One conflated slot; do not reuse an older trigger.
+                    read(ComparisonReader.COLLECTOR_FRESH,ComparisonPhase.INITIAL,attempt,null,preparation=true)
+                }, awaitChange = { remaining ->
+                    if (remaining <= 0) false else withTimeoutOrNull(remaining) {
+                        preparationChanges.receive(); checkBoundary(); true
+                    } ?: false
+                }, accept = { observed -> checks.preparedTarget(requireNotNull(observed.sample)) }, report = ::emit)
+            checkBoundary()
+            if (result != PreparationEnd.READY) {
+                checks.fail(ComparisonIssue.PREPARATION_NOT_READY); failed=true
+            }
+            return result
+        } finally {
+            preparing=false; preparationChanges.tryReceive()
+        }
+    }
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         if (!active || event == null) return
         // No event.source/tree getter. Event occurrence and delivery clocks are distinct samples.
         val delivered = SystemClock.uptimeMillis()
-        checks.event(event.packageName?.toString() == HOST && event.eventType in setOf(
-            AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED, AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED),
-            event.windowId, event.eventTime, delivered)
+        val hostEvent = event.packageName?.toString() == HOST && event.eventType in setOf(
+            AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED, AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED)
+        val freshHostEvent=checks.event(hostEvent,event.windowId,event.eventTime,delivered)
+        if (event.eventType == AccessibilityEvent.TYPE_WINDOWS_CHANGED) checks.targetLifecycle(event.windowId,
+            event.windowChanges and (AccessibilityEvent.WINDOWS_CHANGE_ADDED or AccessibilityEvent.WINDOWS_CHANGE_REMOVED) != 0)
         val kind = when (event.eventType) {
             AccessibilityEvent.TYPE_WINDOWS_CHANGED -> "WINDOW_SET"
             AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED -> "WINDOW_STATE"
@@ -139,6 +166,7 @@ class P01ReaderComparisonService : AccessibilityService() {
         if (event.eventType in setOf(AccessibilityEvent.TYPE_TOUCH_INTERACTION_START,
                 AccessibilityEvent.TYPE_TOUCH_EXPLORATION_GESTURE_START, AccessibilityEvent.TYPE_VIEW_CLICKED,
                 AccessibilityEvent.TYPE_VIEW_LONG_CLICKED, AccessibilityEvent.TYPE_VIEW_SCROLLED)) hardInvalidation = true
+        if (preparing && (freshHostEvent || hardInvalidation || issue != ComparisonIssue.NONE)) preparationChanges.trySend(Unit)
         if (events++ < 48) emit("EVENT=$kind;MASK=$mask;RELATION=$relation;" +
             "DELIVERY_MS=${delivered-armAt};OCCURRENCE_MS=${event.eventTime-armAt}")
     }
@@ -181,7 +209,10 @@ class P01ReaderComparisonService : AccessibilityService() {
             throw failure
         }
     }
-    internal data class Read(val sample: ReaderSample?, val ready: CollectionResult.Ready?, val detail: F9ReadDetail? = null) {
+    internal data class Read(val sample: ReaderSample?, val ready: CollectionResult.Ready?, val detail: F9ReadDetail? = null,
+        val status: ComparisonStatus = ComparisonStatus.FAILED, val block: PrivacyBlockReason? = null,
+        val f0Detail: CaptureDetail = CaptureDetail.NONE, val f0Point: CaptureReadPoint = CaptureReadPoint.UNKNOWN,
+        val f0Release: CaptureReadRelease = CaptureReadRelease.UNKNOWN) {
         override fun toString() = "Read(redacted)"
     }
     @Suppress("DEPRECATION")
@@ -200,7 +231,7 @@ class P01ReaderComparisonService : AccessibilityService() {
             val batch = CollectionReleaseBatch(); windows.forEach { batch.attempt { it.recycle() } }; batch.finish()
         }
     }
-    internal fun read(kind: ComparisonReader, phase: ComparisonPhase, number: Int, closePath: String?): Read {
+    internal fun read(kind: ComparisonReader, phase: ComparisonPhase, number: Int, closePath: String?, preparation: Boolean = false): Read {
         checkBoundary(); val started = SystemClock.uptimeMillis(); val eventBefore = events
         val cBefore=cState()
         // An early ownership/read failure has no after-read witness.
@@ -243,8 +274,12 @@ class P01ReaderComparisonService : AccessibilityService() {
                 else scene?.takeIf { it.complete }?.let { ReaderSample(it.packageName,it.windowId,it.screen,it.windows,
                     it.nodes,it.nodes,it.nativeActions,regions,closePath) }
             if (sample != null) {
-                val binding=checks.sample(sample)
-                if (binding!=ComparisonIssue.NONE) throw ComparisonAbort(binding)
+                // Preparation can observe a background Activity without binding it as the popup.
+                // The protected bounded popup is anchored only by prepareComparison.accept.
+                if (!preparation) {
+                    val binding=checks.sample(sample)
+                    if (binding!=ComparisonIssue.NONE) throw ComparisonAbort(binding)
+                }
                 status = ComparisonStatus.COMPLETE
             }
             if (cRequested && (cBefore!=ComparisonCState.NATIVE_ATTACHED || cAfter!=ComparisonCState.NATIVE_ATTACHED)) {
@@ -253,7 +288,7 @@ class P01ReaderComparisonService : AccessibilityService() {
                 status=ComparisonStatus.OWNERSHIP_UNAVAILABLE
                 return result
             }
-            result = Read(sample,ready,readCode?.detail)
+            result = Read(sample,ready,readCode?.detail,status,block,f0.detail,f0.failurePoint,f0.release)
             return result
         } catch (cancelled: CancellationException) {
             status = ComparisonStatus.CANCELLED; throw cancelled
@@ -263,7 +298,8 @@ class P01ReaderComparisonService : AccessibilityService() {
             return result
         } finally {
             collectingRegions = false; regionReads.clear()
-            emit("READ=$number;PHASE=$phase;SOURCE=$kind;STATUS=$status;" +
+            emit((if (preparation) "SEGMENT=PREPARATION;" else "") +
+                "READ=$number;PHASE=${if(preparation) "PREPARATION" else phase};SOURCE=$kind;STATUS=$status;" +
                 "ISSUE=$issue;C_BEFORE=$cBefore;C_AFTER=$cAfter;RENDER=UNOBSERVED;" +
                 "START_MS=${started-armAt};END_MS=${SystemClock.uptimeMillis()-armAt};" +
                 "EVENTS_DURING=${events-eventBefore};F0=${block?.name ?: "NONE"};" +
@@ -321,6 +357,7 @@ class P01ReaderComparisonService : AccessibilityService() {
         } catch (cancelled: CancellationException) { failed=true; throw cancelled }
         catch (_: Exception) { checks.fail(ComparisonIssue.CLEANUP_FAILED); failed=true; cleanupOkay=false }
         finally {
+            preparing=false; preparationChanges.tryReceive()
             active=false; source=null; overlay=null; native=null; nativeBefore=null; configuration=null
             regionReads.clear(); checks.clearObservations(); sink={}
         }
@@ -329,14 +366,14 @@ class P01ReaderComparisonService : AccessibilityService() {
         // and first issue survive, so successful removal cannot make the experiment successful.
         return absent && cleanupOkay
     }
-    override fun onInterrupt() { hardInvalidation=true; dismissSafely() }
+    override fun onInterrupt() { hardInvalidation=true; preparationChanges.trySend(Unit); dismissSafely() }
     override fun onUnbind(intent: Intent?): Boolean {
-        checks.fail(ComparisonIssue.SERVICE_DISCONNECTED); hardInvalidation=true; dismissSafely(); active=false
+        checks.fail(ComparisonIssue.SERVICE_DISCONNECTED); hardInvalidation=true; preparationChanges.trySend(Unit); dismissSafely(); active=false
         if (connected === this) connected=null
         return super.onUnbind(intent)
     }
     override fun onDestroy() {
-        hardInvalidation=true; dismissSafely(); scope.cancel(); active=false
+        hardInvalidation=true; preparationChanges.trySend(Unit); dismissSafely(); scope.cancel(); active=false
         if (connected === this) connected=null
         super.onDestroy()
     }

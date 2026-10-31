@@ -16,7 +16,7 @@ internal enum class ComparisonIssue {
     TARGET_CHANGED, FRAME_CHANGED, TARGET_UNCONFIRMED, CONFIGURATION_CHANGED,
     SERVICE_DISCONNECTED, INVALIDATED, STALE_CALLBACK, NATIVE_C_UNCONFIRMED,
     C_LOST, BASELINE_UNAVAILABLE, EVIDENCE_UNAVAILABLE, POLICY_BLOCKED,
-    C_NOT_SHOWN, READ_UNAVAILABLE, TIME_LIMIT, CANCELLED, CLEANUP_FAILED, UNEXPECTED_FAILURE
+    C_NOT_SHOWN, READ_UNAVAILABLE, TIME_LIMIT, CANCELLED, CLEANUP_FAILED, UNEXPECTED_FAILURE, PREPARATION_NOT_READY
 }
 internal class ComparisonAbort(val issue: ComparisonIssue) : RuntimeException(issue.name)
 
@@ -25,18 +25,36 @@ internal class ComparisonRunChecks(private val started: Long) {
     private val receivedWindows = mutableSetOf<Int>()
     private var target: Pair<String,Int>? = null
     private var frame: ScreenBounds? = null
+    private var prepared: ReaderSample? = null
     private var deliveredHostEvent = false
+    private var lastPreparationTrigger = started
     var issue = ComparisonIssue.NONE; private set
     val receiving get() = deliveredHostEvent
     fun fail(value: ComparisonIssue) { if (issue == ComparisonIssue.NONE) issue = value }
-    fun event(fromHost: Boolean, window: Int, occurred: Long, delivered: Long) {
+    /** Keep reception semantics unchanged. Only a validated, strictly newer occurrence can
+     * wake preparation. Equal-millisecond/out-of-order events conservatively do not trigger
+     * another read; timestamps never establish layout readiness or native generation. */
+    fun event(fromHost: Boolean, window: Int, occurred: Long, delivered: Long): Boolean {
         if (fromHost && window >= 0 && occurred in started..delivered && receivedWindows.size < 32) {
             receivedWindows += window
             deliveredHostEvent = true
+            if (occurred > lastPreparationTrigger) {
+                lastPreparationTrigger = occurred
+                return true
+            }
         }
+        return false
     }
     /** Keep only fixed-code completion facts once teardown ends. */
-    fun clearObservations() { receivedWindows.clear(); target=null; frame=null }
+    fun clearObservations() { receivedWindows.clear(); target=null; frame=null; prepared=null }
+    fun preparedTarget(value: ReaderSample) {
+        val result=sample(value)
+        if (result != ComparisonIssue.NONE) throw ComparisonAbort(result)
+        prepared=value
+    }
+    fun targetLifecycle(window: Int, addedOrRemoved: Boolean) {
+        if (prepared?.window == window && addedOrRemoved) fail(ComparisonIssue.TARGET_CHANGED)
+    }
     fun sample(value: ReaderSample): ComparisonIssue {
         val window = value.windows.singleOrNull { it.id == value.window }
         val current = value.packageName to value.window
@@ -45,6 +63,7 @@ internal class ComparisonRunChecks(private val started: Long) {
             target != null && target != current -> ComparisonIssue.TARGET_CHANGED
             frame != null && frame != value.frame -> ComparisonIssue.FRAME_CHANGED
             value.window !in receivedWindows -> ComparisonIssue.EVENT_UNCONFIRMED
+            prepared?.let { !preparedTargetMatches(it,value) } == true -> ComparisonIssue.TARGET_CHANGED
             else -> ComparisonIssue.NONE
         }
         if (result == ComparisonIssue.NONE && target == null) { target = current; frame = value.frame }

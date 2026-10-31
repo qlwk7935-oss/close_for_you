@@ -37,11 +37,12 @@ class P01ReaderComparisonInstrumentedTest {
         val instrumentation=InstrumentationRegistry.getInstrumentation()
         assumeTrue(InstrumentationRegistry.getArguments().getString("p01ReaderComparison")=="true")
         assumeTrue(InstrumentationRegistry.getArguments().getString("dedicatedEmulator")=="true")
+        val preparedStart=InstrumentationRegistry.getArguments().getString("p01PreparedStart")=="true"
         var ui: UiAutomation?=null
         fun shell(command: String) = ParcelFileDescriptor.AutoCloseInputStream(
             requireNotNull(ui).executeShellCommand(command)).use { it.readBytes() }
         fun report(codes: String) = instrumentation.sendStatus(0,Bundle().apply {
-            putString("p01_reader","CONDITION=$condition;ORDER=$order;$codes")
+            putString("p01_reader","CONDITION=$condition;ORDER=$order;START_MODE=${if(preparedStart) "PREPARED" else "IMMEDIATE"};$codes")
         })
         var service: P01ReaderComparisonService?=null
         var problem=ComparisonIssue.NONE
@@ -72,6 +73,14 @@ class P01ReaderComparisonInstrumentedTest {
             shell("am start -W -f 0x20000000 -n kr.closeforyou.popuptest/.PopupScenarioActivity --ez f9_show_deferred_popup true")
             withContext(Dispatchers.Main) {
                 actual.awaitReception()
+                if (preparedStart) {
+                    if (actual.prepareComparison()!=PreparationEnd.READY)
+                        throw ComparisonAbort(ComparisonIssue.PREPARATION_NOT_READY)
+                    // Deliver queued invalidations before INITIAL. No prepared DTO seeds any pair,
+                    // measurement counter, candidate, token or evidence pipeline.
+                    yield(); actual.checkLive()
+                    report("MEASUREMENT=STARTED;PREPARATION=READY;INITIAL_SOURCE=NEW_READ")
+                }
                 val previous=mutableMapOf<ComparisonReader,ReaderSample?>()
                 var adjacent: ReaderSample?=null
                 var adjacentReader: ComparisonReader?=null

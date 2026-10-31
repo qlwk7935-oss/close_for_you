@@ -2,7 +2,7 @@
 
 원 대조 계측 기준: `fdbb65d2922b43354550a72faaa049a77142cbd4`, `fix/a-samsung-p01-lifetime-20261028`.
 이 문서는 대조 성공 보고가 아니다. 계측 준비 당시 Linux에서는 연결 기기/실행 가능한 emulator가 없었다.
-이후 사용자가 제공한 API 37 첫 실패 관측과 이번 진단 보완은 10절에 별도로 기록한다.
+이후 사용자가 제공한 API 37 첫 실패 관측·진단은 10절, 후속 8완료/4실패 및 새 준비 모드는 11절에 별도로 기록한다.
 이번 작업에서는 Android 기기·에뮬레이터 명령을 실행하지 않았다. 운영 허용 정책, B안 3회/100ms, TTL, cleanup을 변경하지 않는다.
 
 ## 1. 최신 증거와 가설
@@ -539,3 +539,261 @@ Android 계측/삼성/LG/에뮬레이터 실행은 하지 않았다.
 - 최종 CRLF-aware 작업/staged 공백 검사와 파일 범위 확인 후 현재 브랜치에만 전달한다.
   main/다른 worktree/보호 문서는 보존하며 기기 명령은 실행하지 않는다.
 - 첫 F0 실패 원인, P01 표시 유지·수동 닫기 및 Cleanup ADDED/HEALTH 문제는 여전히 미해결이다.
+
+## 11. 준비 완료 후 대조 모드 — root 조회 실패·시간 초과 반영
+
+기준 `34fb274031d3a12239ef425e5f5ae71f51c1cc78`. 10절은 이전 진단 개발·전달 기록으로 보존한다.
+이번에는 사용자가 명시적으로 승인한 **시험 준비 분리**만 구현한다. 운영 표시/클릭 정책이나
+기존 즉시 시작 시험을 변경하는 결정이 아니다. 아래 새 모드는 Android에서 아직 실행하지 않았다.
+
+### 11.1 이번 실제 관측과 한계
+
+`p01-reader-withoutCForward-34fb274.txt` 원본 파일은 이 환경에서 찾지 못했다.
+**사용자가 제공한 발췌**를 근거로 하며 원본 전체를 직접 검토했다고 주장하지 않는다.
+API 37, emulator-5554, WITHOUT_C/FORWARD/--no-restart:
+
+| 표본 | 제공된 실제 진단 | START–END (ms) |
+|---|---|---|
+| READ 1 / COLLECTOR_FRESH | ROOT_UNAVAILABLE / ROOT / F0_RELEASE=UNKNOWN | 1158–1191 |
+| READ 2 / COLLECTOR_FRESH | TIME_LIMIT / ROOT_REFRESH / F0_RELEASE=COMPLETED | 1211–1318 |
+| READ 3 / F9 | TIME_LIMIT / TREE | 1348–1496 |
+| READ 8 / COLLECTOR_FRESH | TIME_LIMIT / SNAPSHOT_PASS / F0_RELEASE=COMPLETED | 1754–1865 |
+
+SERVICE=CONNECTED, RECEPTION=HOST_EVENT_CONFIRMED이나 POPUP_READY=UNCONFIRMED에서 INITIAL이 시작됐다.
+최종 COMPLETE_READS=8 / UNAVAILABLE_READS=4, BASELINE_UNAVAILABLE, COMPLETED_PHASES=2,
+CLEANUP=CONFIRMED, EXTERNAL_CLICK=NOT_WIRED. C와 AFTER는 미실행이다.
+10절의 **11완료/1실패**와 합산·대체하지 않는다. 각각 한 번의 관측으로 새 진단의 성능 회귀를 확정하지 않는다.
+
+직접 확인된 범위:
+- READ1은 최초 `rootInActiveWindow`가 null인 분기다. 왜 null인지는 미확정이다.
+  이 분기는 roots/windows에 객체를 넣기 전이며 UNKNOWN은 로컬 release 호출 증거가 없다는 뜻이다.
+- READ2/3/8은 **프로젝트의 읽기 예산** 검사에 걸렸다. POINT/STAGE는 처리 구간이며 어떤 IPC가
+  오래 걸렸는지 특정하지 않는다. READ8도 실패했으므로 준비 분리만으로 timeout이 해결된다고 할 수 없다.
+- Android가 100ms 안에 응답해야 한다는 플랫폼 보장을 위반한 것이 아니다.
+- 이 결과는 삼성 ROOT 변화 원인이나 C 영향 확인, 선택창 유지·닫기·Cleanup 성공 증거가 아니다.
+
+### 11.2 공식 근거와 시험 정책 구분
+
+- [AccessibilityService.getRootInActiveWindow](https://developer.android.com/reference/android/accessibilityservice/AccessibilityService#getRootInActiveWindow())는 활성 창의 root를 반환하는 접근성 API다.
+  [공식 서비스 예제](https://developer.android.com/guide/topics/ui/accessibility/service)는 창이 unavailable일 때 root가 null일 수 있음을 설명한다.
+  null 자체가 해당 화면이 안전하거나 팝업이 없다는 증거는 아니다.
+- [UI test stability](https://developer.android.com/training/testing/instrumented-tests/stability)는 비동기 작업에 대한 동기화/관측 조건을 다룬다.
+  조건 확인과 고정 sleep은 다르며, 이 자료가 보호 실패를 무시하거나 운영 수집을 성공까지 재시도할 권한을 부여하지 않는다.
+- host Activity 이벤트, `am start -W`, Dialog.show/setLayout의 비동기 경계는 2절/10.3의
+  API 및 AOSP android-15.0.0_r1 근거와 같다. host 이벤트는 준비 **재확인 계기**이지 POPUP_READY가 아니다.
+- 아래 4회/1,500ms 및 한정된 재관측 조건은 **이번 시험 설계의 고정 상한**이며 Android API 계약이 아니다.
+
+### 11.3 두 시작 모드와 실패 보존
+
+기존 4개 method에 `-e p01PreparedStart true`를 명시한 경우만 새 모드다.
+생략/다른 값이면 `START_MODE=IMMEDIATE`로 기존 INITIAL부터 읽는다. 기존 실패 카운터와
+첫 baseline 실패 뒤 11회 성공해도 INCONCLUSIVE인 회귀를 유지한다.
+
+| 모드 | 측정 질문 | 준비 및 INITIAL |
+|---|---|---|
+| IMMEDIATE | 시작 직후 전체 구간을 실제로 읽을 수 있는가 | 기존 awaitReception 후 INITIAL |
+| PREPARED | 안전한 bounded P01이 한 번 관측된 뒤 reader/C 조건 간 차이는 무엇인가 | 별도 준비 후 **새** INITIAL 읽기 |
+
+네 조건은 동일한 `P01ComparisonPreparation.run/assess`를 사용한다. 준비 읽기는 모두
+실제 `AndroidSnapshotCollector.capture(freshPresentation=true, requireCaptureIsolation=true)`이며
+원래 F0 보호 두 순회/refresh/endpoint/로컬 해제를 거친다. 시험용 준비를 production service에 연결하지 않는다.
+
+- 준비 최대 **4회**, 시작부터 최종 준비 판정까지 **1,500ms**. 기존 세션 전체 8초, 각 수집 100ms,
+  실행 TTL 5초는 변경하지 않는다. 시간 역행·만료 후 결과로 승인하지 않는다.
+- 첫 읽기는 즉시 한 번. 그 후 재관측은 새 host STATE/CONTENT 이벤트 수신으로만 시작한다.
+  conflated 채널 하나를 사용해 이벤트 폭주를 누적 작업으로 바꾸지 않는다. 같은 trigger를 재사용하지 않는다.
+  세션 시작 이전/시작과 동시각, 미래 시각, 미확인 window, 다른 앱 및 마지막 유효 발생 시각 이하의
+  중복·역순 이벤트는 재수집을 깨우지 않는다. 원래 reception/대상 창 관측 기록은 유지한다.
+  동시각의 실제 별개 이벤트도 보수적으로 재수집 계기로 쓰지 않을 수 있으며, 이때 NOT_READY 가능성을 감수한다.
+  고정 sleep, 자동 재실행, 시간만 지나면 READY, 무한 polling은 없다.
+- 재관측 대기는 정확한 초기 ROOT_UNAVAILABLE/ROOT/UNREADABLE_TREE/UNKNOWN 분기,
+  TIME_LIMIT + 로컬 해제 COMPLETED, 또는 전체 F0 성공이나 아직 bounded popup이 아닌 배경 Activity에 한정한다.
+  null/timeout을 안전한 화면으로 승인하지 않으며 UNKNOWN 일반 예외를 임시 실패로 분류하지 않는다.
+- 보호 차단, 명시적 소유권/결합 실패, 해제 FAILED/CANCELLED, refresh 실패, 불완전 metadata,
+  예상 밖 오류는 종료한다. 사용자 조작·동의 철회·서비스 해제·단독 서비스/설정 변화도 기존 경계에서 중단한다.
+- 메인 스레드의 동기 Android IPC나 진단 전달을 deadline으로 강제 중단할 수는 없다.
+  실제 읽기 구간을 남기고 늦게 반환된 관측은 준비 승인에 사용하지 않는다. final summary 전달 자체의
+  벽시계 소요까지 1,500ms 이내라고 보증하지 않는다. 진단/검사 CPU 비용도 0이라고 주장하지 않는다.
+
+준비 READY의 관측 조건:
+- 합성 앱의 실제 snapshot과 frame·APPLICATION target window 결합, active/focused, 기본 display 격리,
+  창 중복 없음, frame/window 내부의 유효한 노드 geometry, 시험 region 관측, 정확한 native action 메타데이터 결합.
+- 입력창/다른 overlay/경쟁 focus/겹치는 상위·동일 layer 창 거부. passive system bar 예외를 새로 넣지 않는다.
+- 실제 F1의 bounded APPLICATION `NEW_WINDOW`와 실제 B finder의 단일 CLOSE 후보 및 노드 결합.
+- 이는 실제 B 실행 승인도, layout 완료나 native generation/ABA 인증도 아니다. 이후 evidence/B preflight와
+  각 reader의 보호 검사는 원래대로 다시 수행한다.
+
+준비 중 기록은 `SEGMENT=PREPARATION;READ=n;PHASE=PREPARATION`으로 분리하고 기존
+F0_DETAIL/F0_POINT/F0_RELEASE를 그대로 출력한다. 매 시도 START/END, OBSERVATION, ISSUE 및
+최종 ATTEMPTS/UNAVAILABLE_READS/WAITING_OBSERVATIONS/ELAPSED_MS/FIRST_F0_*를 보존한다.
+READY 관측이 있어도 최종 deadline/경계 검사에 실패하면 NOT_READY다. 취소/예외도 최종 사유를 남긴다.
+모든 표본은 로그에 남고 첫 F0 사유가 뒤의 성공/실패로 덮이지 않는다.
+
+```text
+START_MODE=PREPARED;A_P01_READER;SEGMENT=PREPARATION;READ=1;PHASE=PREPARATION;...;F0_DETAIL=ROOT_UNAVAILABLE;F0_POINT=ROOT;F0_RELEASE=UNKNOWN
+START_MODE=PREPARED;A_P01_READER;PREP_ATTEMPT=1;START_MS=0;END_MS=33;OBSERVATION=WAITING;ISSUE=READ_UNAVAILABLE
+START_MODE=PREPARED;A_P01_READER;PREPARATION=READY;END=READY;ISSUE=NONE;ATTEMPTS=2;UNAVAILABLE_READS=1;...;FIRST_F0_DETAIL=ROOT_UNAVAILABLE;...
+START_MODE=PREPARED;MEASUREMENT=STARTED;PREPARATION=READY;INITIAL_SOURCE=NEW_READ
+```
+
+위는 형식 예시이며 실행 결과가 아니다. READ의 시각은 arm 기준, PREP_ATTEMPT/ELAPSED는 준비 시작 기준이다.
+준비의 UNAVAILABLE_READS와 최종 SUMMARY의 측정 UNAVAILABLE_READS는 **별개 카운터**다.
+준비 실패를 삭제/초기화한 것이 아니며 각각의 segment에서 해석해야 한다.
+준비를 못 끝내면 NOT_READY/INCONCLUSIVE, INITIAL·C·AFTER 미실행이다.
+성공 시에도 준비 token/시각/후보/closePath/비교쌍을 INITIAL에 넘기지 않고 실제 새 읽기를 한다.
+준비 DTO는 세션 안에서 대상 관측 결합 비교에만 잠시 보유하고 finish에서 해제한다. Android 객체를 보관하지 않는다.
+package/window/frame 및 비geometry 노드·native action이 달라지거나 준비 대상의 ADDED/REMOVED를 받으면 중단한다.
+geometry는 이 실험의 관측 변수이므로 차이로 기록하며 승인/보정하지 않는다. 관측상 동일한 ABA는 배제할 수 없다.
+측정 중 READ8 같은 실패는 그대로 unavailable이며 BASELINE_UNAVAILABLE/INCONCLUSIVE다.
+
+이 모드는 초기 transient 구간을 측정 밖으로 미루므로 IMMEDIATE를 대체하거나 같은 기준의 개선율로
+비교할 수 없다. 초기 실패 표본은 PREPARATION에 남는다. 이번 네 조건도 서로 동일 설정/시작 모드로 비교해야 한다.
+
+### 11.4 시간 제한과 시험 비용 검토
+
+| 구간 | 코드상 시작·검사·종료 및 비용 |
+|---|---|
+| Collector fresh | capture 진입 시 수집 시각. root/child refresh 전후에 그 시각 기준 100ms 검사. 보호·snapshot 두 순회, 종료 active root/window.root/frame/window 재검증 후 최종 예산 검사. 별도 TraversalBudget은 geometry 취득 뒤 시작하며 node/depth/100ms를 제한 |
+| F9 | scan의 초기 clock부터 geometry/window/occlusion/root/tree/endpoint를 읽고 tick에서 100ms 확인. TREE 표시는 마지막 구간이며 개별 Android 호출 지연의 증거가 아님 |
+| 로컬 cleanup | 두 reader 모두 원래 try/finally/batch 정리를 끝까지 시도. 마지막 예산 검사 뒤 정리 시간이 READ 종료에 더해질 수 있음 |
+| 시험 region | 기존 window 핸들에 한정한 getRegionInScreen/iterator·목록 비교. getWindows override 안에서 실행되므로 reader 예산에도 비용이 들어감. 이번 작업에서 추가/제거하지 않음 |
+| READ START–END | 첫 checkBoundary 뒤부터 producer 반환·정리, 후속 boundary/C/region/sample 확인 및 finally 구간까지. READ 로그 송신은 END 시계 평가 뒤이며 producer의 100ms 구간과 같지 않음 |
+| 비교·로그 | pair 비교/진단 송신은 읽기 외에도 실행되어 다음 표본 시점에 영향을 줄 수 있음. 준비 자체도 별도 관측 간섭을 만들며 동일 네 조건에 적용 |
+
+root/child 원격 조회·refresh, 보호 순회와 snapshot 순회, 종료 검사는 서로 다른 안전 목적이므로
+중복이라고 제거하지 않았다. 지금 증거로 불필요함이 입증된 시험 작업은 없어 최적화하지 않았다.
+추가 operation별 시계/진단 체계도 넣지 않았다. 각 API의 기여 시간이나 준비 모드의 성능 개선은 미측정이다.
+기존 READ 전체 구간만으로 특정 getter의 비용을 역산하지 않는다. TIME_LIMIT이 지속되면 새 모드도 INCONCLUSIVE다.
+
+### 11.5 다음 한 조건 — Windows 명령만 준비
+
+6절의 APK 3개 빌드/설치(`AndroidTest -t`), UI 수집 동의·허용 앱, 운영/C 시험 서비스 OFF 및
+P01 시험 서비스 ON, TalkBack OFF, **APK 교체 후 실제 Bound 재확인** 절차를 그대로 따른다.
+이 작업에서는 아래 명령이나 기기 시험을 실행하지 않았다. 새 폴더를 사용해 과거 실패 파일을 보존한다.
+
+```powershell
+$adb = "$env:LOCALAPPDATA\Android\Sdk\platform-tools\adb.exe"
+$serial = "emulator-5554"
+& $adb -s $serial shell dumpsys accessibility | Select-String -Pattern "Bound services|P01ReaderComparisonService|CloseForYouAccessibilityService|ChoiceOverlayTestService" -Context 0,4
+# Enabled 목록만으로 충분하지 않음. 실제 Bound에 시험 서비스가 연결됐는지 UI와 출력에서 확인.
+$runner = "kr.closeforyou.test/androidx.test.runner.AndroidJUnitRunner"
+$class = "kr.closeforyou.accessibility.integration.P01ReaderComparisonInstrumentedTest"
+$logDir = Join-Path (Get-Location) ("p01-prepared-" + (Get-Date -Format "yyyyMMdd-HHmmss"))
+New-Item -ItemType Directory -Path $logDir -ErrorAction Stop | Out-Null
+$logFile = Join-Path $logDir "withoutCForward-prepared-norestart.txt"
+if (Test-Path -LiteralPath $logFile) { throw "기존 로그 보존: 새 출력 폴더 사용" }
+& $adb -s $serial shell am instrument --no-restart -w `
+    -e class "$class#withoutCForward" -e p01ReaderComparison true -e dedicatedEmulator true `
+    -e p01PreparedStart true $runner 2>&1 | Tee-Object -FilePath $logFile
+Select-String -Path $logFile -Pattern "START_MODE=|RECEPTION=|SEGMENT=|PREP_ATTEMPT=|PREPARATION=|MEASUREMENT=|READ=|PAIR=|SUMMARY=|FAILURES|SKIP|IGNOR|ASSUMPTION|OK \("
+```
+
+완료 기준: PREPARATION=READY → 새 INITIAL → BEFORE_C/AFTER_0/AFTER_150/AFTER_300 모두 완료,
+측정 unavailable=0, SUMMARY=OBSERVED, CLEANUP=CONFIRMED, EXTERNAL_CLICK=NOT_WIRED와
+**해당 JUnit 1개 실제 실행 성공(실패·skip·ignored·assumption failure 없음)**을 모두 확인한다.
+PAIR=CHANGED는 유효하게 관측된 차이일 수 있으며 P01 기능 성공/실패와 같지 않다.
+준비 실패 이력은 이 경우에도 별도로 함께 보고한다.
+
+NOT_READY, INCONCLUSIVE, 취소, 보호/해제/소유권 실패가 나오면 **나머지 조건은 실행하지 않는다**.
+6절의 정상 UI 서비스 종료/재연결 절차로 복구하며 failed latch/HEALTH를 강제 초기화하지 않는다.
+withoutCForward가 유효하게 완료된 뒤에만 동일 옵션의 withoutCReverse/withCForward/withCReverse를 각각 별도 로그로 검토한다.
+WITH_C에서는 기존 F9_ACTIVE의 정확한 overlay 차단만 OBSERVED_WITH_GUARD_BLOCK의 별도 예상 안전 차단 대조로 분류한다.
+그 외 실패는 그대로 INCONCLUSIVE이며 C가 실제 렌더됐다고 주장하지 않는다.
+
+### 11.6 이번 변경 및 로컬 검증
+
+이번 변경 파일(7개):
+1. `app/src/debug/java/kr/closeforyou/accessibility/testing/P01ComparisonPreparation.kt` (신규)
+2. `app/src/debug/java/kr/closeforyou/accessibility/testing/P01ReaderComparison.kt`
+3. `app/src/debug/java/kr/closeforyou/accessibility/testing/P01ReaderComparisonService.kt`
+4. `app/src/androidTest/java/kr/closeforyou/accessibility/integration/P01ReaderComparisonInstrumentedTest.kt`
+5. `app/src/testDebug/java/kr/closeforyou/accessibility/testing/P01ComparisonPreparationTest.kt` (신규)
+6. `app/src/testRelease/java/kr/closeforyou/accessibility/testing/P01ReaderComparisonReleaseTest.kt`
+7. `docs/A_P01_READER_C_COMPARISON_2026-10-31.md`
+
+새 공유 준비 판정·driver를 실제 서비스와 JVM 회귀가 함께 사용한다. 실제 Android getter, remote cache,
+연결 timing, 준비 READY 또는 네 조건 성공을 JVM fixture로 입증했다고 주장하지 않는다.
+최종 검증 결과는 아래에 실제 실행/재사용을 구분해 기록한다.
+
+로컬 검증 완료 (2026-10-31, JDK 17/offline):
+
+| 검증 | 실제 결과 / 재사용 구분 |
+|---|---|
+| 새 준비 회귀 | Debug **17개** 신규: 제한/이벤트 대기, 첫 실패 보존, 실제 F1/B finder, 결합/가림/보호/정리/취소, 준비 DTO 미전달, 기존 측정 실패 유지 |
+| Release 격리 회귀 | **1개** 신규, 준비 driver/class 부재 확인 |
+| 전체 앱 Debug JVM | **1,606** 재실행 통과; 실패·오류·skip 0 |
+| 전체 앱 Release JVM | **1,499** 재실행 통과; 실패·오류·skip 0 |
+| 호스트 / 합성 앱 JVM | **55 / 26** 기존 통과 결과 재사용; 이번 task UP-TO-DATE |
+| 앱 Debug / AndroidTest APK | 변경 반영 재빌드·계측 컴파일 통과; Android 실행 아님 |
+| 앱 Release APK | build task 통과, 변경 없는 Release 산출물 UP-TO-DATE |
+| 호스트 APK·AndroidTest / 합성 앱 APK | build task 통과, UP-TO-DATE |
+| 앱 Debug/Release·호스트 Lint | task 통과, XML issue 0; 변경 영향 없는 분석/보고 task는 UP-TO-DATE |
+| APK/DEX | 기존 패키징 script 재실행 통과; 새 준비 class/필드·옵션이 Debug/AndroidTest에 있고 Release DEX 정의·참조·로그에는 없음 |
+| Manifest | 실제 APK 확인: 비교 시험 service Debug에만 존재, Release 부재 |
+| 공백/보존 | CRLF-aware 작업/staged 검사, 신규 파일 후행 공백 검사 통과. 다른 9개 HEAD/status 및 기존 보호 문서 bytes 유지 |
+| 기기/commit/push | 모두 **미실행** |
+
+전체 로그: `/workspace/a-p01-prepared-full.log` — BUILD SUCCESSFUL, 250 tasks (28 executed / 222 up-to-date).
+대상 회귀: `/workspace/a-p01-prepared-targeted.log`, 패키징: `/workspace/a-p01-prepared-packaging.log`.
+첫 대상 실행의 실패 2개는 fixture의 중복 target 생성 예외와 준비 단계에 없는 closePath를 CHANGED로
+기대한 테스트 오류였다. 중복 창 입력은 실제 판정까지 도달하도록 구성하고, 미결합 CLOSE_BOUNDS=UNKNOWN을
+유지하면서 ROOT_BOUNDS=CHANGED를 검증하도록 수정했다. 이후 대상 및 전체 검증이 통과했다.
+보호 판정이나 측정 실패 정답을 완화하지 않았다.
+
+남은 한계: 새로운 host 이벤트 없이 root가 뒤늦게 읽기 가능해져도 준비를 자동 반복하지 않아 NOT_READY일 수 있다.
+지연된 target ADDED/REMOVED도 확정할 수 없으면 중단한다. 이 계약은 native generation/ABA 인증이 아니다.
+준비 시점의 성공 이후라도 후속 시간 초과·다른 창·노드 변경·C 미등록·cleanup 실패 때문에 실험이 미완료일 수 있다.
+삼성 P01 선택창 유지, 수동 닫기, 운영 RETIRED_ID_EVENT/ADDED/HEALTH는 이번 변경의 해결 대상이 아니며 미해결 상태를 유지한다.
+
+
+### 11.7 전달 전 최종 검토 및 이벤트 재수집 결함 수정
+
+- 시작 HEAD와 원격은 모두 `34fb274031d3a12239ef425e5f5ae71f51c1cc78`였다. 지정 7개와
+  기존 미추적 구조 검토 문서만 있으며 보호 문서는 수정/스테이징하지 않는다.
+- 시작 시 저장된 `/workspace/a-p01-prepared-validated.json`과 비교하여 코드·테스트·문서 7개가
+  이전 전체 검증 당시와 일치함을 확인했다. 이후 아래 시험 범위 결함을 발견해 최소 수정했다.
+- **확인된 결함:** `checks.event()`는 오래된/미확인 이벤트를 reception에서 제외하지만,
+  준비 채널은 그 결과를 사용하지 않고 host package/type만으로 깨어났다. 이전 세션에서 발생한
+  지연 host 이벤트 또는 중복 전달이 새 준비 읽기를 유발할 수 있었다. 새 수집의 F0/B 검사를
+  건너뛰는 클릭 취약점은 아니지만, 이번 준비 시험 계약을 만족하지 않는 경로였다.
+- 실제 서비스가 사용하는 공유 event 경계에서 기존 wake 조건을 동작 변경 없이 분리하여
+  `preparationTriggerRejectsPreviousSessionUnknownWindowAndForeignEvents`,
+  `preparationTriggerCannotReuseDuplicateOrOutOfOrderEvent`를 실행했다.
+  수정 전 두 회귀 모두 **expected false / actual true**로 실패했다.
+- `ComparisonRunChecks.event()`가 기존 reception 기록은 유지하면서 검증된 최신 이벤트의
+  재수집 가능 여부를 반환하고, 실제 service 채널이 그 반환값만 사용하도록 고쳤다.
+  현재 세션 범위/유효 window/host/시각 순서를 확인하며, 동일 발생 시각의 재전달도 차단한다.
+  원문·ID·시각 필드를 새로 로그에 추가하거나 getter/시계/IPC를 추가하지 않았다.
+- 채널은 suspend receive + 기존 timeout이다. 추가 coroutine 회귀는 대기 중 다른 이벤트 처리 가능,
+  유효 이벤트 한 번만 수용, 중복·역순 무시, 새 이벤트가 없을 때 1,500ms에 NOT_READY를 확인한다.
+  active/preparing 종료 guard, read 전 채널 비우기, prepare finally/finish의 비우기 및
+  서비스 중단 시 깨운 뒤 checkpoint 거부도 실제 연결에서 확인했다.
+- 준비 max 4회/1,500ms, 기존 수집 100ms, 세션 8초, 실행 TTL 5초는 그대로다.
+  동기 Android 호출의 강제 중단이나 네트워크/진단 반환 시간 보장은 추가하지 않았다.
+- PREPARATION=READY는 수집 가능한 대상의 관측 조건이며 표시/클릭 허가가 아니다.
+  준비 실패 기록과 측정 카운터는 별도 유지한다. INITIAL은 새 읽기이며 준비 객체는
+  비geometry 동일성과 정확한 action 결합 검사에만 사용한다. 관측상 동일한 ABA는 인증하지 않는다.
+- 지정 7개 밖의 소스, 운영 정책, C/P23, Release, Cleanup ADDED/HEALTH는 변경하지 않았다.
+  문서의 --no-restart/명시적 prepared 옵션/설치 -t/Bound 재확인/새 로그/한 조건 중단 절차도 확인했다.
+- 아래 최종 결과는 이번 수정 이후의 검증으로 구분한다. 이전 Debug 1,606 통과를 그대로 재사용하지 않는다.
+
+전달 전 최종 검증 결과:
+
+| 항목 | 결과 |
+|---|---|
+| 수정 전 재현 | 공유 event/wake 경계 회귀 2개 실패 (`false` 기대 / `true` 반환) |
+| 수정 후 Debug JVM 전체 | **1,609개 재실행 통과**, 실패·오류·skip 0; 준비 회귀 총 20개 |
+| 추가 회귀 | 위 2개 + suspend/channel 대기·중복 방지·무이벤트 만료 1개 통과 |
+| Release JVM | **1,499개 기존 결과 재사용**, 이번 task UP-TO-DATE |
+| 호스트 / 합성 앱 JVM | **55 / 26개 기존 결과 재사용**, UP-TO-DATE |
+| 빌드 | Debug APK 재빌드, AndroidTest 컴파일 재실행·APK task 통과. Release 및 호스트/합성 APK task는 UP-TO-DATE |
+| Lint | 영향받는 Debug 분석 재실행, 앱 Debug/Release 및 호스트 task 통과·XML issue 0 |
+| APK/DEX/Manifest | 다시 확인: 시험 기능/옵션/로그 Debug 및 AndroidTest에만 존재; Release 정의·참조·로그·service 부재 |
+| 공백/파일 범위 | 지정 7개만 전달, CRLF 원본 보존, CRLF-aware 작업/staged 검사 통과 |
+| 기기 실행 | Android/삼성/LG/에뮬레이터 모두 미실행 |
+
+수정 전 로그 `/workspace/a-p01-prepared-review-before.log`, 수정 후 전체 로그
+`/workspace/a-p01-prepared-review-full.log` (BUILD SUCCESSFUL, 250 tasks: 21 executed / 229 up-to-date),
+패키징 `/workspace/a-p01-prepared-review-packaging.log`.
+현재 검토 범위에서 미해결 P2 이상/실패 은폐/판정 우회/민감정보 출력 문제는 발견하지 않았다.
+준비 모드 실측, reader 비교 완료, 삼성 P01 표시 유지·닫기 및 별도 Cleanup 장애는 여전히 미검증/미해결이다.
