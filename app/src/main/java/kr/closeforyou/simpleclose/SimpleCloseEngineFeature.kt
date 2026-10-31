@@ -10,7 +10,6 @@ package kr.closeforyou.simpleclose
  * - [enabled]: the whole engine (the service does nothing when false).
  * - [demoLabelRulesV2]: "○○ 닫기", "웹으로 볼래요", "배경을 눌러 닫기" count as close labels
  *   ([SimpleLabelRules]); the shared contract's allowlist is still tried first.
- * - [helpAllAppsWhenUnset]: with no "도와줄 앱" choice yet, every non-system app is helped.
  *
  * What never relaxes (6-0 "끝까지 유지"): decision words are never pressed ([SimpleLabelRules.FORBIDDEN]),
  * a suspicious popup is only warned about, one click and no retry, no screen text in logs.
@@ -18,7 +17,6 @@ package kr.closeforyou.simpleclose
 object SimpleCloseEngineFeature {
     const val enabled: Boolean = true
     const val demoLabelRulesV2: Boolean = true
-    const val helpAllAppsWhenUnset: Boolean = true
 
     /** Window events settle before the tree is read (Chrome paints web nodes a little late). */
     const val DEBOUNCE_MILLIS = 300L

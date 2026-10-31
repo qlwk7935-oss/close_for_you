@@ -91,6 +91,12 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
 
     private val preferences by lazy { UiVoicePreferences.get(this) }
     private val corePreferences by lazy { CorePreferences.get(this) }
+    private val installedApps by lazy { AndroidSimpleAppLookup(packageManager) }
+
+    private fun allowsApp(pkg: String?): Boolean = SimpleAppAllowance.allows(
+        pkg, packageName, preferences.current(), corePreferences.currentSettings().allowedPackages,
+        inputMethods, lookup = installedApps::find,
+    )
 
     override fun onServiceConnected() {
         super.onServiceConnected()
@@ -124,10 +130,11 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
         val eventPackage = event.packageName?.toString()
         // Our own prompt window and TTS: never a popup to handle (not logged: it would drown the rest).
         if (eventPackage == packageName) return
-        if (!SimpleAppAllowance.allows(eventPackage, packageName, preferences.current(), corePreferences.currentSettings().allowedPackages, inputMethods)) {
+        if (!allowsApp(eventPackage)) {
             log.trace(SimpleTrace.SKIPPED_NOT_ALLOWED_APP)
             return
         }
+        val expectedPackage = eventPackage ?: return
         screenVersion += 1
         // A press in progress: its confirmation must not be disturbed (LG 10/31 옥션: no CLOSED_CONFIRMED).
         if (jobs.busy) return
@@ -143,7 +150,7 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
             }
             jobs.scheduleInspection {
                 delay(SimpleCloseEngineFeature.DEBOUNCE_MILLIS)
-                if (!jobs.busy && prompted == null) inspect()
+                if (!jobs.busy && prompted == null) inspect(expectedPackage)
             }
             return
         }
@@ -157,7 +164,7 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
                     delay(wait)
                 }
                 if (jobs.busy || prompted != null) return@scheduleInspection
-                if (inspect()) return@scheduleInspection
+                if (inspect(expectedPackage)) return@scheduleInspection
             }
         }
     }
@@ -166,7 +173,7 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
      * Reads the screen once (off the main thread) and acts on what it finds. Main thread. Returns
      * false only when nothing was there to act on (no tree, no popup root), so the caller may read again.
      */
-    private suspend fun inspect(): Boolean {
+    private suspend fun inspect(expectedPackage: String): Boolean {
         lastInspectAt = SystemClock.uptimeMillis()
         val shownBefore = prompted
         if (shownBefore != null) {
@@ -177,7 +184,7 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
                 null -> return true
             }
         }
-        val read = withContext(Dispatchers.Default) { collector.read() }
+        val read = withContext(Dispatchers.Default) { collector.read(expectedPackage, ::allowsApp) }
         if (read == null) {
             log.trace(SimpleTrace.TREE_UNAVAILABLE)
             return false
