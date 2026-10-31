@@ -302,6 +302,30 @@ A 서비스(`CloseForYouAccessibilityService`)·`accessibility_service_config.xm
 - 한계: 탐색이 팝업을 못 찾는 사이트(200노드 안에 없음)에서는 재확인이 "닫힘"으로 본다(F19 이전과 같은 수준). 실패한 버튼 기억은 메모리에만, 서비스가 끝나면 지움.
 - 검증(F21): 5개 Gradle 작업 통과, 단위 시험 debug 1158개·release 1143개 실패 0, lintDebug 오류 0(경고 14), INTERNET 0·새 권한·새 라이브러리 없음. 시험 추가 `F21RegressionTest` 4, 순서 시험 갱신.
 
+### 8-12. F22 1단계 — 앱 팝업·이름 없는 X 기억·영상 오탐 (재호 앱 실측 11/1 06:57~07:03, `8dd26e4`) (JVM 시험만, 실기기 미검증)
+
+- **A. 앱 팝업 창이 5노드만 보인 이유(분석):** F16 앱 창 읽기는 활성 창 위의 같은 앱 TYPE_APPLICATION 창 중 **맨 위 것**을 무조건 팝업으로 읽었다. 5노드짜리는 떠 있는 작은 버튼·말풍선 같은 작은 창으로 보인다. 그 창을 팝업으로 잡아 누를 것이 없었고(`CANDIDATE_NONE`), 진짜 팝업이 있는 본 창은 읽지 않았다. 21초 동안 19번 읽은 것도 이 때문이다.
+  - 고침: 앱 창은 그 자체로 팝업일 때만 쓴다(`AppWindowRules`: 화면 10% 이상, 팝업 루트가 있고, 이름 있는 닫기·건너뛰기, X 모양 버튼, 위험 버튼 중 하나가 있음). 아니면 `APP_WINDOW_IGNORED`를 남기고 본 창을 예전처럼 읽는다. 위 창이 여럿이면 위에서부터 차례로 본다.
+  - 앱 창 안이 WebView라 자식이 안 보이는 경우는 이 수정으로 풀리지 않는다(실측 로그로 확인 필요).
+- **A. 11번가 앱 가운데 모달(`MODAL_CARD`):** 어두운 배경 + 흰 상자 + 이름 없는 X + "혜택 받으러 가기", 로그는 `NO_POPUP_ROOT`뿐이었다. dim·앞 레이어 규칙은 둘 다 **이름 있는 닫기**를 요구해서 못 찾았다. 새 규칙에서 상자 조건은 모두 만족해야 한다.
+  - 크기: 화면 8~70%, 가운데(중심이 화면 중심에서 10% 안), 양옆 끝에 붙지 않음, 상자 자체는 클릭 불가.
+  - 덮개 위: 읽는 순서상 앞에 있고 조상이 아닌 노드가 상자를 다 덮고 화면 60% 이상.
+  - 제외: 클릭 12개 미만, "쿠키" 없음.
+  - 닫기 근거: 이름 있는 닫기, 또는 **위쪽 모서리의 작고 거의 정사각형인 이름 없는(또는 X 기호뿐인) 클릭 노드가 딱 1개**.
+  - X는 절대 자동으로 누르지 않는다(6-3). 선택 창에 "'X 모양 닫기' 버튼 눌러 주기"로 묻는다. "혜택 받으러 가기"는 후보가 아니다. 아래쪽 작은 띠 배너는 화면 8% 미만이라 팝업이 아니다(유지).
+- **A. 범위 진단:**
+  - 옥션 앱(`com.ebay.kr.auction`)·11번가 앱·쿠팡 앱은 #65 민감 앱 규칙(패키지·앱 이름 키워드)에 **걸리지 않는다**(시험 `scopeMissReasons`).
+  - `SKIPPED_NOT_ALLOWED_APP` 대신 사유 코드 `SKIPPED_SCOPE_OWN_APP/SYSTEM/INPUT_METHOD/USER_EXCLUDED/SENSITIVE/NOT_CHOSEN/NO_MODE_NOT_ALLOWED/NO_PACKAGE`를 남긴다.
+  - `TREE_UNAVAILABLE` 뒤에는 `TREE_UNAVAILABLE_OTHER_APP/NO_ROOT/SENSITIVE/LABEL_UNKNOWN/NOT_ALLOWED`를 남긴다. 패키지 원값은 남기지 않는다.
+- **B. 이름 없는 X + 기억 (AGENTS 6-3·6-4, `REMEMBER_X_ALWAYS`):** 이전에는 simpleclose에 기억이 연결돼 있지 않았다(선택 창의 기억 옵션은 꺼져 있었고, D의 Room 저장소는 Mock).
+  - 선택지: X를 묻는 선택 창에 "'X 모양 닫기' 버튼 눌러 주기"와 "앞으로 항상 닫기('X 모양 닫기')"를 같이 낸다(`REMEMBER_OFFERED`).
+  - 저장: 앞으로 항상을 고르면(REMEMBER_EXACT_POPUP + buttonMeaningConfirmed + repeatAutomationExplicitlyAllowed) 한 번 누르고, **엄격 닫힘 확인을 통과했을 때만** 저장한다(`REMEMBERED_SAVED`).
+  - 저장 내용: C 자체 SharedPreferences(`ui_simple_remembered_popups`, 최대 50개)에 앱·팝업 글자·구조의 해시, 루트 자리, 버튼 경로와 자리만 둔다. 글자·패키지 원문은 저장하지 않는다.
+  - 다음 만남: 같은 앱·글자·구조, 같은 루트 자리, 같은 경로·자리의 버튼이면 클릭 직전 재확인 뒤 자동으로 닫는다(`REMEMBERED_AUTO_CLOSE`). 결정 팝업·사기 의심·위험 버튼이 있는 팝업·실패한 팝업은 제외하고, 실패하면 다시 누르지 않고 묻는다(F20). Room(D)은 바꾸지 않았다. 목록 보기·해제는 2단계 E에서 한다.
+- **C. 영상 오탐:** 영상 광고 경로는 유튜브 앱, 주소창이 youtube.com인 브라우저(주소는 메모리에서만 봄), skip_ad 뷰 id가 있는 화면에서만 돈다(`VideoAdSkip.isVideoContext`). 쇼핑 앱 배너의 "AD"로는 돌지 않는다.
+- 검증(F22 1단계): 5개 Gradle 작업 통과, 단위 시험 debug 1165개·release 1150개 실패 0, lintDebug 오류 0(경고 14), INTERNET 0·새 권한·새 라이브러리 없음. 시험 추가 `F22RegressionTest` 7, `StrongCloseTest` 1개 기대 변경(이름 없는 X만 있는 가운데 상자 → `MODAL_CARD`, 묻기만).
+- 커밋: 서비스 파일 한 곳을 세 기능이 함께 고쳐 1단계를 커밋 1개로 묶었다.
+
 - 잔여 노드 쪽 이벤트 무시: TalkBack이 무엇을 읽을지는 앱이 막을 수 없다. 대신 포커스를 잔여 노드 밖으로 옮기는 것(F9)이 할 수 있는 전부. 웹 페이지가 닫힌 팝업을 DOM에 `aria-hidden` 없이 남기는 한, 사용자가 스와이프로 다시 만날 수 있다(한계로 기록).
 - 선택 창 PROMPT도 TalkBack 큐로? 가능은 하다: 선택 창 자체(이미 접근성 오버레이)에 paneTitle이 있고 TalkBack이 창을 읽으므로, "안내 맡기기" ON이면 우리 TTS PROMPT를 끄고 paneTitle/첫 버튼 포커스 낭독에 맡기는 방식. 단, 지금 PROMPT는 TalkBack이 팝업을 읽는 도중 끊고 들어가야 시연이 빠르므로 polite로 바꾸면 늦어질 수 있다. F11 배너가 LG에서 잘 읽히면 같은 방식으로 옮길지 정하자(의견, 미구현).
 - 검증(F1~F11 한 빌드): 5개 Gradle 작업 통과, 단위 시험 debug 1028개·release 1013개 실패 0, lintDebug 오류 0(경고 12), 병합 매니페스트 INTERNET 0·새 권한 없음.

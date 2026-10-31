@@ -210,13 +210,18 @@ class StrongCloseTest {
         assertNull(PopupRootFinder.find(cookie, SCREEN))
     }
 
-    @Test fun aLayerWithOnlyAnUnnamedXIsNotRecognisedAsALayer() {
+    @Test fun aLayerWithOnlyAnUnnamedXIsNotAFrontLayerButAModalCardThatIsOnlyAsked() {
         val nodes = page(
             node("0/0/1", bounds = ScreenBounds(90, 600, 990, 1700)),
             node("0/0/1/0", text = "가을 맞이 특별 혜택", bounds = ScreenBounds(90, 600, 990, 800)),
             node("0/0/1/1", "android.widget.ImageView", clickable = true, bounds = ScreenBounds(900, 600, 990, 690)),
         )
-        assertNull(PopupRootFinder.find(nodes, SCREEN))
+        // F22: a centred box over the page with an unnamed corner X is a modal card; its X is only offered (6-3).
+        val popup = analyse(nodes)
+        assertEquals(PopupRootKind.MODAL_CARD, popup.root.kind)
+        assertTrue(popup.scan.candidates.isEmpty())
+        assertEquals("node:0/0/1/1", popup.scan.xButton?.id)
+        assertEquals(SimpleDecision.Ask, strong(popup))
     }
 
     @Test fun frontLayersCanBeSwitchedOff() {

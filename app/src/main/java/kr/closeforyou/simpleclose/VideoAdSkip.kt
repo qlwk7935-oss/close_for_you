@@ -68,6 +68,14 @@ object VideoAdSkip {
 
     fun find(nodes: List<NodeSnapshot>, screen: ScreenBounds): VideoAdSkipResult? = scan(nodes, screen).result
 
+    /**
+     * F22 (LG 11/1: a shopping app's banner "AD" ran the video path 64 times): only the YouTube app, or a browser
+     * showing youtube.com (its address bar, read in memory only), or a screen with a skip-ad view id.
+     */
+    fun isVideoContext(packageName: String, nodes: List<NodeSnapshot>): Boolean =
+        packageName == YOUTUBE_APP || nodes.any { isSkipAdId(it.viewId) } ||
+            nodes.any { node -> node.viewId?.endsWith(":id/url_bar") == true && node.text?.contains("youtube.com", ignoreCase = true) == true }
+
     fun scan(nodes: List<NodeSnapshot>, screen: ScreenBounds): VideoAdScan {
         val visible = nodes.filter { PopupRootFinder.isVisible(it, screen) }
         val names = visible.associateWith { CloseButtonFinder.nameOf(it, visible) }

@@ -65,6 +65,13 @@ object SimpleCloseEngineFeature {
      * ([PopupMemory.reappeared]). Before that no result card, focus move or reclaim end happens.
      */
     const val STRICT_CLOSE_CHECK: Boolean = true
+
+    /**
+     * F22 (AGENTS 6-3·6-4): the unnamed X offered in the prompt also comes as "앞으로 항상 닫기": pressed once on the
+     * person's tap, remembered only when the close is confirmed ([RememberedPopups]), then closed by itself next
+     * time when the same popup is in the same place with the same button.
+     */
+    const val REMEMBER_X_ALWAYS: Boolean = true
     const val CLOSE_RECHECK_MILLIS = 350L
 
     /**

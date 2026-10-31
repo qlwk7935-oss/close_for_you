@@ -162,6 +162,32 @@ enum class SimpleTrace {
     VIDEO_SKIP_NO_AD_MARKER,
     VIDEO_SKIP_SEVERAL,
 
+    /** F22: why an app event or read was skipped ([ScopeMiss]); replaces SKIPPED_NOT_ALLOWED_APP / TREE_UNAVAILABLE detail. */
+    SKIPPED_SCOPE_NO_PACKAGE,
+    SKIPPED_SCOPE_OWN_APP,
+    SKIPPED_SCOPE_SYSTEM,
+    SKIPPED_SCOPE_INPUT_METHOD,
+    SKIPPED_SCOPE_USER_EXCLUDED,
+    SKIPPED_SCOPE_SENSITIVE,
+    SKIPPED_SCOPE_NOT_CHOSEN,
+    SKIPPED_SCOPE_NO_MODE_NOT_ALLOWED,
+    SKIPPED_SCOPE_LABEL_UNKNOWN,
+    TREE_UNAVAILABLE_OTHER_APP,
+    TREE_UNAVAILABLE_NO_ROOT,
+    TREE_UNAVAILABLE_SENSITIVE,
+    TREE_UNAVAILABLE_LABEL_UNKNOWN,
+    TREE_UNAVAILABLE_NOT_ALLOWED,
+    /** F22: a small app window above the main one with nothing to press was not taken for the popup. */
+    APP_WINDOW_IGNORED,
+    /** F22: a centred box over a screen-covering layer with an unnamed corner X ([PopupRootKind.MODAL_CARD]). */
+    DETECTED_MODAL_CARD,
+    /** F22: the popup the person remembered with "앞으로 항상 닫기", closed again by itself. */
+    REMEMBERED_AUTO_CLOSE,
+    REMEMBERED_SAVED,
+    REMEMBER_OFFERED,
+    /** F22: a video path read outside YouTube (app, m.youtube.com) was not run. */
+    VIDEO_NOT_VIDEO_CONTEXT,
+
     // F6: why the image-dialog ad hint did not apply ([AdHintMiss]).
     AD_HINT_MISS_SCAM,
     AD_HINT_MISS_NOT_UNKNOWN,

@@ -30,6 +30,8 @@ internal class SimpleInspectionEvents(
     private val inspect: suspend (String, DetectTrigger) -> Boolean,
     private val log: SimpleTraceSink,
     private val onSearchExhausted: () -> Unit = {},
+    /** F22: the code logged when [appInScope] says no (the reason, never the package). */
+    private val scopeMissTrace: (String?) -> SimpleTrace = { SimpleTrace.SKIPPED_NOT_ALLOWED_APP },
 ) {
     private var lastFocusEventReadAt = 0L
 
@@ -62,7 +64,7 @@ internal class SimpleInspectionEvents(
             (promptShowing() || activeJobs.inspecting ||
                 now() - lastFocusEventReadAt < SimpleCloseEngineFeature.FOCUS_EVENT_READ_MILLIS)) return
         if (!appInScope(eventPackage)) {
-            log.trace(SimpleTrace.SKIPPED_NOT_ALLOWED_APP)
+            log.trace(scopeMissTrace(eventPackage))
             return
         }
         val expectedPackage = eventPackage ?: return

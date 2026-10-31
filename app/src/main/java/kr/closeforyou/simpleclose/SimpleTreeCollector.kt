@@ -29,6 +29,8 @@ class TreeRead(
     val popupWindowId: Int? = null,
     /** F20: what the probe did (why a read was full). */
     val probeOutcome: ProbeOutcome = ProbeOutcome.NOT_RUN,
+    /** F22: an app window above the main one was read and not taken (too small, nothing to press). */
+    val appWindowIgnored: Boolean = false,
 )
 
 /** F15: how a read went (debug log `READ_*`). F16: [APP_WINDOW], an app's own popup window above its main window. */
@@ -76,17 +78,23 @@ class SimpleTreeCollector(private val service: AccessibilityService) {
                     val screen = screenBounds()
                     windows += service.windows.orEmpty()
                     val bounded = activeWindowBounded(windows, root.windowId, packageName, screen)
+                    var appWindowIgnored = false
                     if (SimpleCloseEngineFeature.FIND_APP_POPUP_WINDOWS && !bounded) {
                         // F16: a PopupWindow or non-focusable Dialog of the same app sits above the active window.
-                        appPopupWindow(windows, root.windowId, packageName, screen)?.let { (windowId, popupRoot) ->
+                        // F22 (LG 11/1 06:57: a 5-node window was taken for the popup, nothing to press, the real popup in
+                        // the main window never read): only a window that is a popup by itself ([AppWindowRules]).
+                        for (window in appPopupWindows(windows, root.windowId, screen)) {
+                            val popupRoot = window.root ?: continue
                             try {
+                                if (popupRoot.packageName?.toString() != packageName) continue
                                 val nodes = ArrayList<NodeSnapshot>(64)
                                 val count = WalkCount()
                                 walk(popupRoot, "0", 0, nodes, screen, count)
-                                if (nodes.isNotEmpty()) {
-                                    return@collect TreeRead(packageName, windowId, nodes, screen, true, count.visited, count.skipped,
-                                        TreeReadMode.APP_WINDOW, popupWindowId = windowId)
+                                if (AppWindowRules.isPopup(nodes, screen)) {
+                                    return@collect TreeRead(packageName, window.id, nodes, screen, true, count.visited, count.skipped,
+                                        TreeReadMode.APP_WINDOW, popupWindowId = window.id)
                                 }
+                                appWindowIgnored = true
                             } finally {
                                 release(popupRoot)
                             }
@@ -114,18 +122,18 @@ class SimpleTreeCollector(private val service: AccessibilityService) {
                             // The subtree must give a popup root by itself; otherwise the whole tree, as before.
                             if (nodes != null && PopupRootFinder.find(nodes, screen) != null) {
                                 return@collect TreeRead(packageName, root.windowId, nodes, screen, false,
-                                    probeVisited + count.visited, count.skipped, TreeReadMode.POPUP_SUBTREE, probeVisited, probeOutcome = outcome)
+                                    probeVisited + count.visited, count.skipped, TreeReadMode.POPUP_SUBTREE, probeVisited, probeOutcome = outcome, appWindowIgnored = appWindowIgnored)
                             }
                         }
                         mode = TreeReadMode.FULL_AFTER_PROBE
                         if (!wholeIfProbeMisses) {
-                            return@collect TreeRead(packageName, root.windowId, emptyList(), screen, false, probeVisited, 0, mode, probeVisited, probeOutcome = outcome)
+                            return@collect TreeRead(packageName, root.windowId, emptyList(), screen, false, probeVisited, 0, mode, probeVisited, probeOutcome = outcome, appWindowIgnored = appWindowIgnored)
                         }
                     }
                     val nodes = ArrayList<NodeSnapshot>(256)
                     val count = WalkCount()
                     walk(root, "0", 0, nodes, screen, count)
-                    TreeRead(packageName, root.windowId, nodes, screen, bounded, probeVisited + count.visited, count.skipped, mode, probeVisited, probeOutcome = outcome)
+                    TreeRead(packageName, root.windowId, nodes, screen, bounded, probeVisited + count.visited, count.skipped, mode, probeVisited, probeOutcome = outcome, appWindowIgnored = appWindowIgnored)
                 } finally {
                     windows.forEach(::release)
                 }
@@ -373,21 +381,16 @@ class SimpleTreeCollector(private val service: AccessibilityService) {
      * F16: the topmost application window of the same app above the active one, bounded (smaller than the
      * screen): a PopupWindow or a Dialog that did not take the focus. Its id and root (the caller releases).
      */
-    private fun appPopupWindow(windows: List<AccessibilityWindowInfo>, activeId: Int, packageName: String, screen: ScreenBounds): Pair<Int, AccessibilityNodeInfo>? {
+    /** F16: application windows above the active one, bounded (smaller than the screen), topmost first. */
+    private fun appPopupWindows(windows: List<AccessibilityWindowInfo>, activeId: Int, screen: ScreenBounds): List<AccessibilityWindowInfo> {
         val screenArea = screen.width.toLong() * screen.height
-        val active = windows.firstOrNull { it.id == activeId } ?: return null
-        val above = windows.filter { other ->
+        val active = windows.firstOrNull { it.id == activeId } ?: return emptyList()
+        return windows.filter { other ->
             val b = Rect().also(other::getBoundsInScreen)
             val a = b.width().toLong() * b.height()
             other.id != activeId && other.type == AccessibilityWindowInfo.TYPE_APPLICATION && other.layer > active.layer &&
                 a > 0 && a.toDouble() / screenArea < 0.96
         }.sortedByDescending { it.layer }
-        for (window in above) {
-            val r = window.root ?: continue
-            if (r.packageName?.toString() == packageName) return window.id to r
-            release(r)
-        }
-        return null
     }
 
     /** F16: one node's snapshot at [path] (not its subtree), visible or not; null when the path is gone. */

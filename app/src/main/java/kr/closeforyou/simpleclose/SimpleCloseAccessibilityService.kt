@@ -142,6 +142,8 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
     private val preferences by lazy { UiVoicePreferences.get(this) }
     private val corePreferences by lazy { CorePreferences.get(this) }
     private val installedApps by lazy { AndroidSimpleAppLookup(packageManager) }
+    /** F22: popups the person told us to always close (C's own small store; hashes and numbers only). */
+    private val remembered: RememberedPopupStore by lazy { SharedPrefsRememberedPopups(this) }
 
     private fun allowsApp(pkg: String?): Boolean = SimpleAppAllowance.allows(
         pkg, packageName, preferences.current(), corePreferences.currentSettings().allowedPackages,
@@ -160,7 +162,14 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
             if (prompted == null && firstEventAt == 0L) firstEventAt = SystemClock.uptimeMillis()
         }, inspect = ::inspect,
         log = SimpleTraceSink { log.trace(it) }, onSearchExhausted = ::endSearch,
+        scopeMissTrace = { pkg -> scopeTrace(SimpleAppAllowance.scopeMiss(pkg, packageName, preferences.current(), corePreferences.currentSettings().allowedPackages, inputMethods)) },
     )
+
+    /** F22: the reason code for an app the engine leaves alone (never the package). */
+    private fun scopeTrace(miss: ScopeMiss?): SimpleTrace = when (miss) {
+        null -> SimpleTrace.SKIPPED_NOT_ALLOWED_APP
+        else -> SimpleTrace.valueOf("SKIPPED_SCOPE_${miss.name}")
+    }
 
     private fun endSearch() {
         firstEventAt = 0L
@@ -267,11 +276,29 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
         if (read == null) {
             searchUnavailable += 1
             log.trace(SimpleTrace.TREE_UNAVAILABLE)
+            // F22: why (the app moved on, no tree, #65 protection, the app's name unknown), as a code.
+            val why = withContext(Dispatchers.Default) {
+                when {
+                    collector.foregroundPackage() == null -> SimpleTrace.TREE_UNAVAILABLE_NO_ROOT
+                    collector.foregroundPackage() != expectedPackage -> SimpleTrace.TREE_UNAVAILABLE_OTHER_APP
+                    else -> when (SimpleAppAllowance.allowMiss(expectedPackage, packageName, preferences.current(),
+                        corePreferences.currentSettings().allowedPackages, inputMethods, lookup = installedApps::find)) {
+                        null -> SimpleTrace.TREE_UNAVAILABLE_NO_ROOT
+                        ScopeMiss.SENSITIVE -> SimpleTrace.TREE_UNAVAILABLE_SENSITIVE
+                        ScopeMiss.LABEL_UNKNOWN -> SimpleTrace.TREE_UNAVAILABLE_LABEL_UNKNOWN
+                        else -> SimpleTrace.TREE_UNAVAILABLE_NOT_ALLOWED
+                    }
+                }
+            }
+            log.trace(why)
             return false
         }
         // F18: a video ad's own skip button comes first (it is not a popup); a countdown waits for the next read.
         var videoAdWaiting = false
-        if (SimpleCloseEngineFeature.VIDEO_AD_SKIP) {
+        if (read.appWindowIgnored) log.trace(SimpleTrace.APP_WINDOW_IGNORED)
+        // F22 (LG 11/1: VIDEO_AD_MARKER_FOUND ×64 in a shopping app, a banner's "AD"): video ads only in YouTube.
+        val videoContext = VideoAdSkip.isVideoContext(read.packageName, read.nodes)
+        if (SimpleCloseEngineFeature.VIDEO_AD_SKIP && videoContext) {
             val video = VideoAdSkip.scan(read.nodes, read.screen)
             // F20: why or why not, as codes (only on a screen with an ad mark, a skip-like node, or in YouTube).
             if (video.diag != VideoAdDiag.NONE || read.packageName == VideoAdSkip.YOUTUBE_APP) {
@@ -317,6 +344,7 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
             PopupRootKind.FRONT_LAYER -> SimpleTrace.DETECTED_FRONT_LAYER
             PopupRootKind.BOTTOM_SHEET -> SimpleTrace.DETECTED_BOTTOM_SHEET
             PopupRootKind.APP_WINDOW -> SimpleTrace.DETECTED_APP_WINDOW
+            PopupRootKind.MODAL_CARD -> SimpleTrace.DETECTED_MODAL_CARD
         })
         // F10: first event -> here overstates when the page itself loaded first; the gap since the last
         // read that saw no popup bounds when the popup really appeared. Which trigger caught it, too.
@@ -374,7 +402,16 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
 
         val analysis = popup.analysis.copy(classification = classification)
         val classified = popup.copy(analysis = analysis)
-        val decided = SimpleCloseDecider.decide(classification, suspicious, popup.scan.candidates, preferences.current(), popup.scan.forbiddenCount, popup.scan.riskCount)
+        // F22 (AGENTS 6-4): the person said "앞으로 항상 닫기" for this exact popup and button: closed by itself, with the
+        // usual re-check right before the press. Never a decision, scam, risky-button or already-failed popup.
+        val rememberedButton = if (!suspicious && classification != PopupClassification.USER_DECISION && popup.scan.riskCount == 0 && words !in autoFailed) {
+            withContext(Dispatchers.Default) { RememberedPopupRules.match(remembered, read.packageName, popup) }
+        } else {
+            null
+        }
+        if (rememberedButton != null) log.trace(SimpleTrace.REMEMBERED_AUTO_CLOSE)
+        val decided = rememberedButton?.let { SimpleDecision.AutoClose(it) }
+            ?: SimpleCloseDecider.decide(classification, suspicious, popup.scan.candidates, preferences.current(), popup.scan.forbiddenCount, popup.scan.riskCount)
         // F20: an automatic close failed on this popup before: never pressed automatically again (AGENTS 6-6), asked.
         val decision = if (decided is SimpleDecision.AutoClose && words in autoFailed) {
             log.trace(SimpleTrace.AUTO_CLOSE_SKIPPED_AFTER_FAIL)
@@ -584,7 +621,14 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
             options = (listOf(PromptOption(PromptOptionKind.PRESS_CANDIDATE, candidateId = x.id, candidateRole = ButtonRole.CLOSE, buttonLabel = getString(R.string.ui_simple_x_button))) + prompt.options).toImmutableList(),
         )
         if (x != null) log.trace(SimpleTrace.X_BUTTON_OFFERED)
-        val shown = SimplePromptOptions.adjust(withX, popup.scan.riskButtons, failedButtons[keyOf(popup)].orEmpty(), failedNow)
+        // F22: "앞으로 항상 닫기" for the X: pressed once now, remembered only after the close is confirmed (AGENTS 6-4).
+        val withRemember = if (x == null || !SimpleCloseEngineFeature.REMEMBER_X_ALWAYS) withX else withX.copy(
+            options = withX.options.flatMap { o ->
+                if (o.kind == PromptOptionKind.PRESS_CANDIDATE && o.candidateId == x.id) listOf(o, o.copy(kind = PromptOptionKind.REMEMBER_ALWAYS)) else listOf(o)
+            }.toImmutableList(),
+        )
+        if (withRemember !== withX) log.trace(SimpleTrace.REMEMBER_OFFERED)
+        val shown = SimplePromptOptions.adjust(withRemember, popup.scan.riskButtons, failedButtons[keyOf(popup)].orEmpty(), failedNow)
         prompted = popup
         focusedBeforeClose = false
         val result = presenter.present(shown) { answer -> onAnswer(popup, answer) }
@@ -610,8 +654,9 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
                 val announcer = tts ?: return
                 scope.launch { announcer.announce(AnnouncementRequest(choice.token, AnnouncementKind.CONTENT, PromptSpeech.content(this@SimpleCloseAccessibilityService, popup.analysis))) }
             }
-            ChoiceKind.CLOSE_ONCE, ChoiceKind.SKIP_ONCE -> {
+            ChoiceKind.CLOSE_ONCE, ChoiceKind.SKIP_ONCE, ChoiceKind.REMEMBER_EXACT_POPUP -> {
                 log.trace(SimpleTrace.USER_CHOSE_PRESS)
+                val remember = choice.kind == ChoiceKind.REMEMBER_EXACT_POPUP && choice.buttonMeaningConfirmed && choice.repeatAutomationExplicitlyAllowed
                 prompted = null
                 val candidate = (popup.scan.candidates + listOfNotNull(popup.scan.xButton)).firstOrNull { it.id == choice.candidateId } ?: return
                 // Nothing waits for the prompt's speech: stop it and press right away.
@@ -623,7 +668,15 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
                     // Our window goes away under TalkBack's focus: it must land on the page, not the popup's leftovers.
                     val result = pressAndConfirm(popup, candidate, moveFocus = !focusedAlready, watchFocus = true)
                     when {
-                        PressSuccess.isConfirmed(result) -> speakClosedThenFocusPage(popup, moveFocus = true)
+                        PressSuccess.isConfirmed(result) -> {
+                            if (remember) {
+                                RememberedPopupRules.ruleFor(popup.snapshot.token.packageName, popup, candidate)?.let { rule ->
+                                    withContext(Dispatchers.Default) { remembered.put(rule) }
+                                    log.trace(SimpleTrace.REMEMBERED_SAVED)
+                                }
+                            }
+                            speakClosedThenFocusPage(popup, moveFocus = true)
+                        }
                         // F21: the person's own press did not close it either: asked again at once, without that button.
                         result.attempted && result.outcome != ClickOutcome.LEFT_APP -> {
                             endReclaim(null)
@@ -712,7 +765,7 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
      */
     private fun focusPageBeforeOurWindowGoes(answer: PromptAnswer) {
         val kind = (answer as? PromptAnswer.Picked)?.choice?.kind ?: return
-        if (kind != ChoiceKind.CLOSE_ONCE && kind != ChoiceKind.SKIP_ONCE) return
+        if (kind != ChoiceKind.CLOSE_ONCE && kind != ChoiceKind.SKIP_ONCE && kind != ChoiceKind.REMEMBER_EXACT_POPUP) return
         val popup = prompted ?: return
         if (!SimpleCloseEngineFeature.FOCUS_PAGE_BEFORE_CLICK) return
         lastOwnFocusAt = SystemClock.uptimeMillis()

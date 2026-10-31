@@ -18,6 +18,11 @@ enum class PopupRootKind {
     BOTTOM_SHEET,
     /** F16: an app's own popup window (Dialog, PopupWindow) above its main window, read as its own tree. */
     APP_WINDOW,
+    /**
+     * F22: a centred box drawn over a screen-covering layer, closed only by a small unnamed X in its corner
+     * (11번가 app "앱 전용 혜택 안내"). The X is offered to the person, never pressed by itself (6-3).
+     */
+    MODAL_CARD,
 }
 
 /**
@@ -60,8 +65,63 @@ object PopupRootFinder {
             return PopupRoot(root.path, root.bounds, PopupRootKind.DIALOG_WINDOW)
         }
         dimOverlayRoot(visible, screen)?.let { return it }
-        return if (frontLayers) frontLayerRoot(visible, screen) else null
+        if (!frontLayers) return null
+        return frontLayerRoot(visible, screen) ?: modalCardRoot(visible, screen)
     }
+
+    /**
+     * F22 (LG 11/1 07:0x, 11번가 app: dim + white box + an X TalkBack calls only "버튼" + "혜택 받으러 가기";
+     * NO_POPUP_ROOT): a box that is
+     * - centred (its middle within 10% of the screen's middle) and away from both side edges, 8~70% of the screen,
+     *   not clickable itself;
+     * - drawn over a layer: a node earlier in reading order, not one of its ancestors, covering it and at least
+     *   60% of the screen (the dim or the page under it);
+     * - fewer than [MENU_MIN_CLICKABLES] clickables, no "쿠키";
+     * - and with exactly one small unnamed (or X-mark) clickable in one of its top corners, or a named close.
+     * The root is the box. Nothing here makes the X pressable without the person: it stays [ButtonScan.xButton].
+     */
+    private fun modalCardRoot(nodes: List<NodeSnapshot>, screen: ScreenBounds): PopupRoot? {
+        val screenArea = area(screen)
+        if (screenArea <= 0) return null
+        for ((index, card) in nodes.withIndex().reversed()) {
+            if (card.path == "0" || card.clickable) continue
+            val b = card.bounds
+            val ratio = area(b).toDouble() / screenArea
+            if (ratio < MODAL_MIN_AREA_RATIO || ratio > MODAL_MAX_AREA_RATIO) continue
+            val margin = screen.width * 0.02
+            if (b.left <= screen.left + margin || b.right >= screen.right - margin) continue
+            if (kotlin.math.abs((b.left + b.right) / 2 - (screen.left + screen.right) / 2) > screen.width * 0.1) continue
+            val overLayer = nodes.subList(0, index).any { under ->
+                !card.path.startsWith("${under.path}/") && area(under.bounds) >= screenArea * MODAL_LAYER_MIN_RATIO &&
+                    under.bounds.left <= b.left && under.bounds.top <= b.top && under.bounds.right >= b.right && under.bounds.bottom >= b.bottom
+            }
+            if (!overLayer) continue
+            val inside = nodes.filter { it.path.startsWith("${card.path}/") }
+            if (inside.count { it.clickable } >= MENU_MIN_CLICKABLES || mentionsCookies(card) || inside.any(::mentionsCookies)) continue
+            val namedClose = inside.any { it.clickable && SimpleLabelRules.roleOf(CloseButtonFinder.nameOf(it, inside)) == ButtonRole.CLOSE }
+            if (namedClose || cornerXs(card, inside).size == 1) return PopupRoot(card.path, card.bounds, PopupRootKind.MODAL_CARD)
+        }
+        return null
+    }
+
+    /** Small, about square, unnamed (or X marks only) clickables whose middle is in the box's top corners. */
+    fun cornerXs(card: NodeSnapshot, inside: List<NodeSnapshot>): List<NodeSnapshot> {
+        val b = card.bounds
+        val side = maxOf(120, (minOf(b.width, b.height) * 0.2).toInt())
+        return inside.filter { node ->
+            val n = node.bounds
+            val name = CloseButtonFinder.nameOf(node, inside)
+            val cx = (n.left + n.right) / 2
+            val cy = (n.top + n.bottom) / 2
+            node.clickable && node.enabled && (name == null || SimpleLabelRules.isXMark(name)) &&
+                n.width in 1..side && n.height in 1..side && n.width.toDouble() / n.height in 0.5..2.0 &&
+                cy <= b.top + b.height * 0.3 && (cx >= b.right - b.width * 0.3 || cx <= b.left + b.width * 0.3)
+        }
+    }
+
+    private const val MODAL_MIN_AREA_RATIO = 0.08
+    private const val MODAL_MAX_AREA_RATIO = 0.7
+    private const val MODAL_LAYER_MIN_RATIO = 0.6
 
     /** True when the node can be seen: non-empty bounds that lie inside the screen. */
     fun isVisible(node: NodeSnapshot, screen: ScreenBounds): Boolean {
@@ -191,4 +251,23 @@ object PopupRootFinder {
     private fun NodeSnapshot.contains(other: NodeSnapshot): Boolean = other.path.startsWith("$path/")
 
     private fun area(b: ScreenBounds): Long = b.width.toLong() * b.height.toLong()
+}
+
+/**
+ * F22 (LG 11/1 06:57~59: an app window of 5 nodes was taken for the popup, nothing to press, asked again and
+ * again while the real popup sat in the main window): an app window above the main one is the popup only when
+ * it is one by itself: at least [MIN_AREA_RATIO] of the screen, a popup root in it, and something to offer
+ * (a named close or skip, an X-shaped button, or a risky button to point at). Otherwise the main window is read.
+ */
+object AppWindowRules {
+    private const val MIN_AREA_RATIO = 0.1
+
+    fun isPopup(nodes: List<NodeSnapshot>, screen: ScreenBounds): Boolean {
+        val top = nodes.firstOrNull { it.path == "0" } ?: return false
+        val screenArea = screen.width.toLong() * screen.height
+        if (screenArea <= 0 || top.bounds.width.toLong() * top.bounds.height < screenArea * MIN_AREA_RATIO) return false
+        val root = PopupRootFinder.find(nodes, screen, activeWindowBounded = true) ?: return false
+        val scan = CloseButtonFinder.scan(nodes, root)
+        return scan.candidates.isNotEmpty() || scan.xButton != null || scan.riskButtons.isNotEmpty()
+    }
 }
