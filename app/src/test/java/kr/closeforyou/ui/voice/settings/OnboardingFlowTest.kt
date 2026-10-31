@@ -405,6 +405,13 @@ class HelpAppsStatusPlanTest {
         assertTrue(HelpAppsStatusPlan.line(HelpAppsMode.ALL, emptySet(), all, emptySet(), catalog, false).waiting)
     }
 
+    @Test fun f19UnsetOnlyWithNoWayAndNoApp() {
+        assertTrue(HelpAppsStatusPlan.unset(HelpAppsStatusPlan.line(null, emptySet(), emptySet(), emptySet(), catalog, true)))
+        assertFalse(HelpAppsStatusPlan.unset(HelpAppsStatusPlan.line(null, setOf("com.android.chrome"), emptySet(), emptySet(), catalog, true)))
+        assertFalse(HelpAppsStatusPlan.unset(HelpAppsStatusPlan.line(null, emptySet(), setOf("com.android.chrome"), emptySet(), catalog, false)))
+        assertFalse(HelpAppsStatusPlan.unset(HelpAppsStatusPlan.line(HelpAppsMode.ALL, emptySet(), emptySet(), emptySet(), catalog, true)))
+    }
+
     @Test fun noWaySavedButAppsAllowedReadsAsChosen() {
         assertEquals(HelpAppsMode.CHOSEN, HelpAppsStatusPlan.line(null, setOf("kr.example.typed"), emptySet(), emptySet(), catalog, true).mode)
         assertNull(HelpAppsStatusPlan.line(null, emptySet(), emptySet(), emptySet(), catalog, true).mode)

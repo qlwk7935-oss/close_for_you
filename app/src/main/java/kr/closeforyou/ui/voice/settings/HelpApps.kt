@@ -280,6 +280,9 @@ object HelpAppsStatusPlan {
         }
         return HelpAppsStatusLine(shownMode, (allowed + pending).size, excluded, waiting)
     }
+
+    /** F19: no mode and no app: nothing is helped (the engine stays idle), so settings says so up front. */
+    fun unset(line: HelpAppsStatusLine): Boolean = line.mode == null && line.helpedCount == 0
 }
 
 /**

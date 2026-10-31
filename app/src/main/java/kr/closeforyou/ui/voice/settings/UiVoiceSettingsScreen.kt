@@ -270,6 +270,13 @@ fun UiVoiceSettingsScreen(
             HorizontalDivider()
         }
 
+        // F19: with no "도와줄 앱" chosen the engine helps no app at all (#65); say so first, with the way there.
+        if (onChangeHelpApps != null && HelpAppsStatusPlan.unset(helpLine)) {
+            BodyText(stringResource(R.string.ui_help_apps_unset_warning))
+            BrandButton(stringResource(R.string.ui_help_apps_pick_title), onChangeHelpApps)
+            HorizontalDivider()
+        }
+
         Heading(R.string.ui_preset_section)
         BodyText(stringResource(R.string.ui_preset_section_help))
         HandlingPresetWithConsent(
