@@ -86,11 +86,18 @@ class PromptAnnouncementListener internal constructor(
     private fun takeOver(prompt: ChoicePrompt, speakPressed: () -> Boolean, focus: PromptFocus) {
         // A failed-press follow-up: its result is being spoken by the caller; focus and speech stay as before.
         val words = TalkBackTakeoverPlan.speech(prompt, formatted) { sentence(prompt, detail()) } ?: return
+        val oneVoice = TalkBackTakeoverPlan.oneVoice(prompt)
         speaking = scope.launch {
+            var focused = false
             for (attempt in 1..takeoverTiming.firstFocusAttempts) {
-                if (focus.moveTo(TakeoverFocusTarget.FIRST_ITEM)) break
+                if (focus.moveTo(TakeoverFocusTarget.FIRST_ITEM)) {
+                    focused = true
+                    break
+                }
                 if (attempt < takeoverTiming.firstFocusAttempts) delay(takeoverTiming.firstFocusRetryMillis)
             }
+            // F13: TalkBack reads the first item (summary, a notice's first words, the question); nothing else speaks.
+            if (oneVoice && focused) return@launch
             delay(takeoverTiming.speechDelayMillis)
             if (speakPressed()) return@launch
             val receipt = announcer.announce(AnnouncementRequest(prompt.token, AnnouncementKind.POPUP_FOUND, words))

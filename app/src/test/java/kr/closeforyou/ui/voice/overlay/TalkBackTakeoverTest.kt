@@ -267,4 +267,33 @@ class TalkBackTakeoverTest {
         advanceUntilIdle()
         assertTrue(log.events.isEmpty())
     }
+
+    // ---- F13: one voice ----
+
+    @Test fun excerptKeepsTheFirstWordsCutAtASpace() {
+        assertEquals("서버 점검 안내", TalkBackTakeoverPlan.excerpt("서버 점검 안내", 50))
+        assertEquals("오늘 서버 점검이 있어요.", TalkBackTakeoverPlan.excerpt("오늘 서버 점검이 있어요\n자세히 보기", 16))
+        assertEquals("가나다라마바", TalkBackTakeoverPlan.excerpt("가나다라마바사아자차", 6))
+        assertNull(TalkBackTakeoverPlan.excerpt("  \n ", 50))
+    }
+
+    @Test fun oneVoiceOnlyWithoutPopupTextForOurSpeech() {
+        assertFalse(TalkBackTakeoverPlan.oneVoice(adWithClose))
+        assertTrue(TalkBackTakeoverPlan.oneVoice(adWithClose.copy(popupText = null)))
+        assertFalse(TalkBackTakeoverPlan.oneVoice(adWithClose.copy(popupText = null), enabled = false))
+    }
+
+    @Test fun oneVoiceFocusesTheFirstItemAndNothingElseSpeaks() = runTest {
+        val log = Log()
+        listener(FakeAnnouncer(log)).onShown(adWithClose.copy(popupText = null, shownExcerpt = "점검 안내"), { false }, FakeFocus(log))
+        advanceUntilIdle()
+        assertEquals(listOf("focus:FIRST_ITEM"), log.events)
+    }
+
+    @Test fun oneVoiceStillSpeaksWhenTheFirstItemCannotBeFocused() = runTest {
+        val log = Log()
+        listener(FakeAnnouncer(log)).onShown(adWithClose.copy(popupText = null), { false }, FakeFocus(log, firstFailures = 99))
+        advanceUntilIdle()
+        assertTrue(log.events.contains("say:SUMMARY"))
+    }
 }

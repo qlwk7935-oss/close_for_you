@@ -114,15 +114,14 @@ class SimpleTreeCollector(private val service: AccessibilityService) {
     }
 
     /**
-     * Moves accessibility (TalkBack) focus away from a closed popup, by [PageFocusRules]: a page item
-     * inside the first WebView (so the URL bar is skipped) that was not part of the popup ([exclude]:
-     * its texts, bounds and area, memory only), the highest one; with [fallback] also an item above the
-     * old popup, the WebView itself, or Chrome's first named toolbar item, so the focus always leaves
-     * the popup's DOM leftovers (LG 10/31 22:29: every candidate overlapped, nothing moved, TalkBack
-     * read the popup again). Nothing is clicked. Returns what was focused (debug log) and whether the
-     * action was accepted. Device unverified.
+     * Moves accessibility (TalkBack) focus off the popup, by [PageFocusRules.plan]: the first target
+     * in its order that accepts the focus. Page items are looked for inside the first WebView (so the
+     * URL bar is skipped) and must not be part of the popup ([exclude]: its texts, bounds and area,
+     * memory only); the toolbar is the first named item outside the WebView that is not part of the
+     * popup either. Nothing is clicked. Main thread or worker. Returns what was focused (debug log) and
+     * whether the action was accepted. Device unverified.
      */
-    fun focusPageItem(exclude: PopupMemory, fallback: Boolean = true, beforeClick: Boolean = false): Pair<FocusTargetKind, Boolean> {
+    fun focusPageItem(exclude: PopupMemory, beforeClick: Boolean = false): Pair<FocusTargetKind, Boolean> {
         val root = service.rootInActiveWindow ?: return FocusTargetKind.NONE to false
         val live = mutableListOf<AccessibilityNodeInfo>()
         var webView: AccessibilityNodeInfo? = null
@@ -146,20 +145,23 @@ class SimpleTreeCollector(private val service: AccessibilityService) {
                 }
             }
             visit(webView ?: root, 0)
-            val pick = PageFocusRules.pick(candidates, webViewPresent = webView != null, fallback = fallback, beforeClick = beforeClick)
-            pick.index?.let { return pick.kind to live[it].performAction(AccessibilityNodeInfo.ACTION_ACCESSIBILITY_FOCUS) }
-            if (pick.webViewRoot && webView?.performAction(AccessibilityNodeInfo.ACTION_ACCESSIBILITY_FOCUS) == true) {
-                return pick.kind to true
+            val plan = PageFocusRules.plan(candidates, webViewPresent = webView != null, beforeClick = beforeClick)
+            for (pick in plan) {
+                val index = pick.index
+                val accepted = when {
+                    index != null -> live[index].performAction(AccessibilityNodeInfo.ACTION_ACCESSIBILITY_FOCUS)
+                    pick.webViewRoot -> webView?.performAction(AccessibilityNodeInfo.ACTION_ACCESSIBILITY_FOCUS) == true
+                    else -> {
+                        // Chrome's toolbar: the first named item outside the WebView, never part of the old popup.
+                        val item = firstOutsideWebView(root, 0) {
+                            isNamedVisible(it) && !exclude.matches(it.text?.toString(), it.contentDescription?.toString(), boundsOf(it))
+                        }
+                        item != null && try { item.performAction(AccessibilityNodeInfo.ACTION_ACCESSIBILITY_FOCUS) } finally { release(item) }
+                    }
+                }
+                if (accepted) return pick.kind to true
             }
-            if (!pick.webViewRoot && !pick.toolbar) return pick.kind to false
-            // Last step: the first named item outside the WebView (Chrome's toolbar), never inside the old popup.
-            val toolbarItem = firstOutsideWebView(root, 0) { isNamedVisible(it) && !exclude.overlapsArea(boundsOf(it)) }
-                ?: return FocusTargetKind.NONE to false
-            return try {
-                FocusTargetKind.TOOLBAR_ITEM to toolbarItem.performAction(AccessibilityNodeInfo.ACTION_ACCESSIBILITY_FOCUS)
-            } finally {
-                release(toolbarItem)
-            }
+            return (plan.firstOrNull()?.kind ?: FocusTargetKind.NONE) to false
         } catch (e: RuntimeException) {
             return FocusTargetKind.NONE to false
         } finally {
@@ -170,14 +172,17 @@ class SimpleTreeCollector(private val service: AccessibilityService) {
     }
 
     /**
-     * Where TalkBack's focus is in the active window: true inside [area] (the popup), false elsewhere,
-     * null when no node there holds it. F11: after an automatic close the focus is moved only when it
-     * was in the popup, so TalkBack does not read a page heading for nothing.
+     * Where TalkBack's focus is: true inside [area] (the popup), false elsewhere, null when nothing
+     * holds it. F13: looked up across all windows first ([AccessibilityService.findFocus]; the toolbar
+     * or a page item keeps it after our window goes), then in the active window. F11: after an automatic
+     * close the focus is moved only when it was in the popup.
      */
     fun accessibilityFocusInside(area: ScreenBounds): Boolean? {
-        val root = service.rootInActiveWindow ?: return null
         try {
-            val focused = root.findFocus(AccessibilityNodeInfo.FOCUS_ACCESSIBILITY) ?: return null
+            val focused = service.findFocus(AccessibilityNodeInfo.FOCUS_ACCESSIBILITY) ?: run {
+                val root = service.rootInActiveWindow ?: return null
+                try { root.findFocus(AccessibilityNodeInfo.FOCUS_ACCESSIBILITY) } finally { release(root) }
+            } ?: return null
             try {
                 return PopupMemory.overlaps(area, boundsOf(focused))
             } finally {
@@ -185,8 +190,6 @@ class SimpleTreeCollector(private val service: AccessibilityService) {
             }
         } catch (e: RuntimeException) {
             return null
-        } finally {
-            release(root)
         }
     }
 

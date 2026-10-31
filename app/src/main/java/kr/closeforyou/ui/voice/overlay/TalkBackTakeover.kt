@@ -34,6 +34,14 @@ object TalkBackTakeoverFeature {
     /** Lets TalkBack read the focused first item (the short summary) before our TTS starts (unverified). */
     const val SPEECH_DELAY_MILLIS = 1_000L
 
+    /**
+     * F13 (LG 11/1: TalkBack, then our TTS, then TalkBack again): a prompt with no popup text to read
+     * aloud is spoken by TalkBack alone. The first item carries the summary, a notice's first words and
+     * the question; our TTS stays silent and the focus is not moved again. A prompt with popup text
+     * (A's path) keeps the three steps. Our TTS speaks only when the first item could not be focused.
+     */
+    const val ONE_VOICE = true
+
     fun isActive(settingOn: Boolean, touchExplorationOn: Boolean): Boolean =
         enabled && settingOn && touchExplorationOn
 
@@ -95,6 +103,23 @@ object TalkBackTakeoverPlan {
      * fixed safety lines ("대신 닫을 수 없어요", a video ad's wait). No popup text: the usual short
      * sentence. Null for a failed-press follow-up: its result was just spoken by the caller.
      */
+    /**
+     * F13: the first words of [text] for the prompt's first item: lines joined by spaces after a pause
+     * mark ([SpeakableText.of]), at most [max] characters, cut at the last space when there is one in
+     * the second half. The popup's own words, never reworded; null when nothing speakable is left.
+     */
+    fun excerpt(text: String, max: Int): String? {
+        val flat = SpeakableText.of(text).lines().map(String::trim).filter(String::isNotEmpty).joinToString(" ")
+        if (flat.isBlank()) return null
+        if (flat.length <= max) return flat
+        val cut = flat.lastIndexOf(' ', max).takeIf { it >= max / 2 } ?: max
+        return flat.substring(0, cut).trimEnd()
+    }
+
+    /** F13: TalkBack alone reads this prompt ([TalkBackTakeoverFeature.ONE_VOICE]). */
+    fun oneVoice(prompt: ChoicePrompt, enabled: Boolean = TalkBackTakeoverFeature.ONE_VOICE): Boolean =
+        enabled && prompt.popupText.isNullOrBlank() && prompt.pressFailure == null
+
     fun speech(prompt: ChoicePrompt, text: (Int, List<Any>) -> String, fallback: () -> String): String? {
         if (prompt.pressFailure != null) return null
         // Same words, only symbols and formats made readable ("02:00~04:00" → "오전 2시부터 오전 4시까지").

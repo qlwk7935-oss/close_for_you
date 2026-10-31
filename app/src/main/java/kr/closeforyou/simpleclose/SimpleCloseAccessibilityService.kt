@@ -52,6 +52,7 @@ import kr.closeforyou.ui.voice.overlay.PromptAnswer
 import kr.closeforyou.ui.voice.overlay.PromptControlsSupport
 import kr.closeforyou.ui.voice.overlay.PromptShowResult
 import kr.closeforyou.ui.voice.overlay.PromptSpeech
+import kr.closeforyou.ui.voice.overlay.TalkBackTakeoverPlan
 import kr.closeforyou.ui.voice.settings.UiVoicePreferences
 
 /**
@@ -87,6 +88,11 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
     private var firstEventAt = 0L
     /** F10: the last read that found no popup (0 = none yet); the popup appeared after it. */
     private var lastNoRootAt = 0L
+    /** F13: reads in the current search (debug numbers only): all, and those the collection guard refused. */
+    private var searchReads = 0
+    private var searchUnavailable = 0
+    /** F13: the person's press already moved TalkBack's focus off the popup before our window went. */
+    private var focusedBeforeClose = false
     private var inputMethods: Set<String> = emptySet()
 
     /** The popup the prompt on screen is about, when each popup key was last seen, and keys already explained. */
@@ -114,8 +120,14 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
             screenVersion += 1
             if (prompted == null && firstEventAt == 0L) firstEventAt = SystemClock.uptimeMillis()
         }, inspect = ::inspect,
-        log = SimpleTraceSink { log.trace(it) }, onSearchExhausted = { firstEventAt = 0L },
+        log = SimpleTraceSink { log.trace(it) }, onSearchExhausted = ::endSearch,
     )
+
+    private fun endSearch() {
+        firstEventAt = 0L
+        searchReads = 0
+        searchUnavailable = 0
+    }
 
     override fun onServiceConnected() {
         super.onServiceConnected()
@@ -128,7 +140,7 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
         scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
         jobs = EngineJobs(scope)
         inspectionEvents.resetConnection()
-        firstEventAt = 0L
+        endSearch()
         lastNoRootAt = 0L
         serviceInfo = serviceInfo?.apply {
             flags = flags or AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS or AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS
@@ -143,6 +155,7 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
             this,
             PromptAnnouncementListener(this, announcer, scope, mode = { preferences.current().promptAnnounceMode }, detail = { preferences.current().detail }),
             PromptControlsSupport.create(this, announcer),
+            beforeClose = ::focusPageBeforeOurWindowGoes,
         )
         resultBanner = TalkBackResultBanner(this)
         log.trace(SimpleTrace.SERVICE_CONNECTED)
@@ -178,8 +191,12 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
         }
         // Full package/label authorization stays off main and is repeated for the actual root
         // before traversal. Event scope admission is not collection permission.
+        val readStart = SystemClock.uptimeMillis()
         val read = withContext(Dispatchers.Default) { collector.read(expectedPackage, ::allowsApp) }
+        val readMillis = SystemClock.uptimeMillis() - readStart
+        searchReads += 1
         if (read == null) {
+            searchUnavailable += 1
             log.trace(SimpleTrace.TREE_UNAVAILABLE)
             return false
         }
@@ -198,7 +215,7 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
         if (seenAt.size > 32) seenAt.remove(seenAt.keys.first())
         if (last != null && now - last < SimpleCloseEngineFeature.SAME_POPUP_COOLDOWN_MILLIS) {
             log.trace(SimpleTrace.SAME_POPUP_COOLDOWN)
-            firstEventAt = 0L
+            endSearch()
             return true
         }
         log.trace(when (root.kind) {
@@ -211,7 +228,11 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
         log.trace(trigger.trace)
         if (firstEventAt != 0L) log.latency("DETECT_LATENCY_MS", now - firstEventAt)
         if (lastNoRootAt != 0L) log.latency("DETECT_GAP_MS", now - lastNoRootAt)
-        firstEventAt = 0L
+        // F13: where the time went: reads this search took, how many the guard refused, the last read's cost.
+        log.latency("DETECT_READS", searchReads.toLong())
+        log.latency("DETECT_TREE_UNAVAILABLE", searchUnavailable.toLong())
+        log.latency("TREE_READ_MS", readMillis)
+        endSearch()
 
         val byB = classifier.classify(popup.analysis)
         val suspicious = RememberChoiceRules.suspiciousByB(popup.analysis)
@@ -281,36 +302,38 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
 
     /**
      * A confirmed close. [moveFocus] (the person's own press, or TalkBack's focus was in the popup):
-     * first, demo mode, at once, TalkBack's focus leaves the popup: when our window or the popup went
-     * away it fell back to the popup text still in the DOM and TalkBack read it again (LG 10/31). A
-     * focus already put on the page before the press is kept; otherwise it is moved at once with every
-     * fallback ([PageFocusRules]), so it always lands somewhere outside. Then the sentence the person expects ("광고를 닫았어요"), not
-     * waited on: with TalkBack on through TalkBack's own queue ([TalkBackResultBanner], F11), else our TTS.
+     * TalkBack's focus must end outside the popup (a closed web popup can stay in the DOM and TalkBack
+     * read it again, LG 10/31). F13 (LG 11/1: moved before the press and again after the close, the
+     * popup read twice in between): one move per handling. The focus put on the page before the press
+     * is kept while it is still outside; only when it was lost (its node went with the popup) or is in
+     * the old popup is it moved once ([PageFocusRules.plan]: the top of the page, the toolbar, the
+     * WebView last). Then the sentence the person expects ("광고를 닫았어요"), not waited on: with
+     * TalkBack on through TalkBack's own queue ([TalkBackResultBanner], F11), else our TTS.
      */
     private suspend fun speakClosedThenFocusPage(popup: SimplePopup, moveFocus: Boolean) {
         val announcer = tts ?: return
         announcer.stop()
+        var movedNow = false
         if (SimpleCloseEngineFeature.FOCUS_PAGE_AFTER_CLOSE && moveFocus) {
-            val memory = PopupMemory.of(popup)
-            // F12: the focus put on the page before the press is still outside the old popup: leave it
-            // (moving again makes TalkBack read once more). Else move now, at once, with every fallback
-            // (the 0.3 s retry of F9 let TalkBack start the popup text again).
             val inside = withContext(Dispatchers.Default) { collector.accessibilityFocusInside(popup.root.bounds) }
-            if (inside == false) {
-                log.trace(SimpleTrace.FOCUS_KEPT_ON_PAGE)
-            } else {
-                val focus = withContext(Dispatchers.Default) { collector.focusPageItem(memory, fallback = true) }
+            log.trace(when (inside) {
+                false -> SimpleTrace.FOCUS_KEPT_ON_PAGE
+                true -> SimpleTrace.FOCUS_AFTER_CLOSE_IN_POPUP
+                null -> SimpleTrace.FOCUS_AFTER_CLOSE_LOST
+            })
+            if (inside != false) {
+                val focus = withContext(Dispatchers.Default) { collector.focusPageItem(PopupMemory.of(popup)) }
                 log.trace(SimpleTrace.focusTarget(focus.first))
                 log.trace(if (focus.second) SimpleTrace.FOCUS_MOVED_TO_PAGE else SimpleTrace.FOCUS_MOVE_FAILED)
+                movedNow = focus.second
             }
         }
         val kind = AutoDecisionSpeech.kindOf(popup.analysis.classification)
         val sentence = getString(R.string.ui_auto_closed_one, getString(AutoDecisionSpeech.objectRes(kind)))
         val banner = resultBanner
         if (banner != null && banner.talkBackOn()) {
-            // F12: after a focus move TalkBack reads the focused item first; the card comes after it,
-            // as on the automatic path where the focus was left alone (LG 10/31: heard there, not here).
-            if (moveFocus) delay(SimpleCloseEngineFeature.RESULT_AFTER_FOCUS_MILLIS)
+            // F12: after a focus move TalkBack reads the focused item first; the card comes after it.
+            if (movedNow) delay(SimpleCloseEngineFeature.RESULT_AFTER_FOCUS_MILLIS)
             if (banner.show(sentence) { shown -> log.trace(if (shown) SimpleTrace.RESULT_BANNER_SHOWN else SimpleTrace.RESULT_BANNER_NOT_SHOWN) }) {
                 log.trace(SimpleTrace.RESULT_VIA_TALKBACK)
                 return
@@ -334,8 +357,14 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
             rememberChoicesEnabled = false, preset = preferences.current().handlingPreset,
         )
         // Short by default: the kind sentence, then focus on the button. The full text stays behind [내용 다시 읽기].
-        val prompt = if (SimpleCloseEngineFeature.READ_POPUP_TEXT_ON_PROMPT) planned else planned.copy(popupText = null)
+        // F13: a notice's first words go into the prompt's first item, read by TalkBack (one voice).
+        val prompt = if (SimpleCloseEngineFeature.READ_POPUP_TEXT_ON_PROMPT) planned else planned.copy(
+            popupText = null,
+            shownExcerpt = planned.popupText?.takeIf { classification == PopupClassification.NOTICE }
+                ?.let { TalkBackTakeoverPlan.excerpt(it, SimpleCloseEngineFeature.PROMPT_EXCERPT_CHARS) },
+        )
         prompted = popup
+        focusedBeforeClose = false
         val result = presenter.present(prompt) { answer -> onAnswer(popup, answer) }
         if (result != PromptShowResult.SHOWN) {
             prompted = null
@@ -360,9 +389,12 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
                 val candidate = popup.scan.candidates.firstOrNull { it.id == choice.candidateId } ?: return
                 // Nothing waits for the prompt's speech: stop it and press right away.
                 tts?.stop()
+                // F13: the focus already left the popup before our window went ([focusPageBeforeOurWindowGoes]); not again.
+                val focusedAlready = focusedBeforeClose
+                focusedBeforeClose = false
                 jobs.runAction {
                     // Our window goes away under TalkBack's focus: it must land on the page, not the popup's leftovers.
-                    val result = pressAndConfirm(popup, candidate, moveFocus = true)
+                    val result = pressAndConfirm(popup, candidate, moveFocus = !focusedAlready)
                     if (PressSuccess.isConfirmed(result)) speakClosedThenFocusPage(popup, moveFocus = true) else speakOwnPress(result)
                 }
             }
@@ -371,6 +403,23 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
                 prompted = null
             }
         }
+    }
+
+    /**
+     * F13: the person picked a press on our window. Right now, before the window is removed, TalkBack's
+     * focus goes to a place that survives the close ([PageFocusRules.plan] with beforeClick: the toolbar,
+     * a heading or an item above the popup): removed under TalkBack's focus, our window let it fall back
+     * into the popup, which it read again (LG 11/1). Main thread, a bounded walk; nothing is clicked.
+     */
+    private fun focusPageBeforeOurWindowGoes(answer: PromptAnswer) {
+        val kind = (answer as? PromptAnswer.Picked)?.choice?.kind ?: return
+        if (kind != ChoiceKind.CLOSE_ONCE && kind != ChoiceKind.SKIP_ONCE) return
+        val popup = prompted ?: return
+        if (!SimpleCloseEngineFeature.FOCUS_PAGE_BEFORE_CLICK) return
+        val (target, moved) = collector.focusPageItem(PopupMemory.of(popup), beforeClick = true)
+        log.trace(SimpleTrace.preClickTarget(target))
+        log.trace(if (moved) SimpleTrace.FOCUS_PRE_CLICK_MOVED else SimpleTrace.FOCUS_PRE_CLICK_FAILED)
+        focusedBeforeClose = moved
     }
 
     /** The person's own press that did not confirm a close: said at once, no follow-up press (AGENTS 6-6). */
@@ -391,8 +440,8 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
         val token = popup.analysis.token
         run {
             if (SimpleCloseEngineFeature.FOCUS_PAGE_BEFORE_CLICK && moveFocus) {
-                // Before the re-check, so nothing sits between the re-check and the click. F12: straight to
-                // a place that survives the close (above the popup, the WebView, the toolbar), never beside it.
+                // Before the re-check, so nothing sits between the re-check and the click. F12/F13: straight to
+                // a place that survives the close (the toolbar, above the popup), never beside it or the WebView.
                 val (kind, moved) = withContext(Dispatchers.Default) { collector.focusPageItem(PopupMemory.of(popup), beforeClick = true) }
                 log.trace(SimpleTrace.preClickTarget(kind))
                 log.trace(if (moved) SimpleTrace.FOCUS_PRE_CLICK_MOVED else SimpleTrace.FOCUS_PRE_CLICK_FAILED)

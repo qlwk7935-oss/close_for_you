@@ -370,4 +370,49 @@ class SimpleInspectionEventsTest {
         assertEquals(listOf(0L to r.chrome), r.reads)
         assertEquals(1, r.walks)
     }
+
+    // ---- F13 (LG 11/1 11번가: 6.4 s with no read, Chrome repainting all the time) ----
+
+    @Test fun repaintsNeverPushBackAWaitingFirstRead() = runTest {
+        val r = Rig(this).apply { popupFound = false }
+        r.event(content = true)
+        repeat(30) {
+            advanceTimeBy(100)
+            r.event(content = true)
+        }
+        advanceUntilIdle()
+        assertEquals(SimpleCloseEngineFeature.DEBOUNCE_MILLIS, r.reads.first().first)
+        assertTrue(r.traces.contains(SimpleTrace.EVENT_COALESCED))
+    }
+
+    @Test fun windowEventsReArmTheFirstReadOnlyUpToTheCap() = runTest {
+        val r = Rig(this).apply { popupFound = true }
+        r.event()
+        repeat(10) {
+            advanceTimeBy(100)
+            r.event()
+        }
+        advanceUntilIdle()
+        assertEquals(SimpleCloseEngineFeature.FIRST_READ_MAX_WAIT_MILLIS to r.chrome, r.reads.first())
+    }
+
+    @Test fun aRepaintNeverReplacesAWaitingWindowChain() = runTest {
+        val r = Rig(this).apply { popupFound = false }
+        r.event()
+        advanceTimeBy(50)
+        r.event(content = true)
+        advanceUntilIdle()
+        assertEquals(listOf(DetectTrigger.WINDOW_EVENT) + List(5) { DetectTrigger.RECHECK }, r.triggers)
+    }
+
+    @Test fun anotherAppsEventIsNotFoldedIntoTheWaitingRead() = runTest {
+        val other = "com.example.browser"
+        val r = Rig(this).apply { popupFound = true }
+        r.event(content = true)
+        advanceTimeBy(100)
+        r.root = Root(other)
+        r.event(content = true, pkg = other)
+        advanceUntilIdle()
+        assertEquals(listOf(100L + SimpleCloseEngineFeature.DEBOUNCE_MILLIS to other), r.reads)
+    }
 }

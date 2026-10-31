@@ -38,44 +38,12 @@ class PopupMemoryTest {
         assertFalse(m.matches("오늘의 특가 상품", null, ScreenBounds(0, 320, 1080, 420)))
     }
 
-    @Test fun pickSkipsLeftoversAndTakesTheHighestItem() {
-        val list = listOf(
-            FocusCandidate(ScreenBounds(0, 1700, 1080, 1800), leftover = true, heading = false),
-            FocusCandidate(ScreenBounds(0, 900, 1080, 1000), leftover = false, heading = false),
-            FocusCandidate(ScreenBounds(0, 320, 1080, 420), leftover = false, heading = true),
-        )
-        assertEquals(PageFocusRules.Pick(2, FocusTargetKind.PAGE_HEADING), PageFocusRules.pick(list, webViewPresent = true))
-    }
-
     // ---- F9 (LG 10/31 22:29: FOCUS_TARGET_OVERLAPS_OLD_POPUP -> FOCUS_MOVE_FAILED, TalkBack read the popup again) ----
 
     private val sheetLeftovers = listOf(
         FocusCandidate(ScreenBounds(0, 1700, 1080, 1800), leftover = true, heading = false),
         FocusCandidate(ScreenBounds(0, 1900, 1080, 2000), leftover = true, heading = false),
     )
-
-    @Test fun firstTryWithoutFallbackOnlySaysWhy() {
-        assertEquals(PageFocusRules.Pick(null, FocusTargetKind.OVERLAPS_OLD_POPUP), PageFocusRules.pick(sheetLeftovers, webViewPresent = true, fallback = false))
-        assertEquals(FocusTargetKind.NONE, PageFocusRules.pick(emptyList(), webViewPresent = true, fallback = false).kind)
-    }
-
-    @Test fun whenEverythingOverlapsAnItemAboveThePopupIsTaken() {
-        // Shares a word with the sheet (so a leftover by words) but sits wholly above it.
-        val list = sheetLeftovers + FocusCandidate(ScreenBounds(0, 320, 1080, 420), leftover = true, heading = false, above = true)
-        assertEquals(PageFocusRules.Pick(2, FocusTargetKind.ABOVE_OLD_POPUP), PageFocusRules.pick(list, webViewPresent = true))
-    }
-
-    @Test fun thenTheWebViewThenTheToolbar() {
-        assertEquals(PageFocusRules.Pick(null, FocusTargetKind.WEBVIEW_ROOT, webViewRoot = true), PageFocusRules.pick(sheetLeftovers, webViewPresent = true))
-        assertEquals(PageFocusRules.Pick(null, FocusTargetKind.TOOLBAR_ITEM, toolbar = true), PageFocusRules.pick(sheetLeftovers, webViewPresent = false))
-        // Even with nothing named at all, a target is still looked for.
-        assertEquals(FocusTargetKind.WEBVIEW_ROOT, PageFocusRules.pick(emptyList(), webViewPresent = true).kind)
-    }
-
-    @Test fun aGoodPageItemStillWinsOverEveryFallback() {
-        val list = sheetLeftovers + FocusCandidate(ScreenBounds(0, 900, 1080, 1000), leftover = false, heading = false)
-        assertEquals(PageFocusRules.Pick(2, FocusTargetKind.PAGE_ITEM), PageFocusRules.pick(list, webViewPresent = true, fallback = false))
-    }
 
     @Test fun aboveIsMeasuredFromThePopupArea() {
         val m = memory(SimpleNodes.elevenStreet())
@@ -92,21 +60,49 @@ class PopupMemoryTest {
 
     // ---- F12 (LG 10/31: after the person's press TalkBack began the popup text again) ----
 
-    @Test fun beforeTheClickTheFocusGoesAboveThePopupNotBesideIt() {
+    @Test fun preClickTraceNames() {
+        assertEquals(SimpleTrace.FOCUS_PRE_CLICK_TOOLBAR_ITEM, SimpleTrace.preClickTarget(FocusTargetKind.TOOLBAR_ITEM))
+        assertEquals(SimpleTrace.FOCUS_PRE_CLICK_PAGE_HEADING, SimpleTrace.preClickTarget(FocusTargetKind.PAGE_HEADING))
+        assertEquals(SimpleTrace.FOCUS_PRE_CLICK_NONE, SimpleTrace.preClickTarget(FocusTargetKind.PAGE_ITEM))
+    }
+
+    // ---- F13 (LG 11/1 11번가: the focus moved twice, TalkBack read the popup twice in between) ----
+
+    private val toolbar = PageFocusRules.Pick(null, FocusTargetKind.TOOLBAR_ITEM, toolbar = true)
+    private val webView = PageFocusRules.Pick(null, FocusTargetKind.WEBVIEW_ROOT, webViewRoot = true)
+
+    @Test fun afterTheCloseTheTopOfThePageThenToolbarThenWebViewLast() {
+        val list = listOf(
+            FocusCandidate(ScreenBounds(0, 1700, 1080, 1800), leftover = true, heading = false),
+            FocusCandidate(ScreenBounds(0, 900, 1080, 1000), leftover = false, heading = false),
+            FocusCandidate(ScreenBounds(0, 320, 1080, 420), leftover = false, heading = true),
+        )
+        assertEquals(listOf(PageFocusRules.Pick(2, FocusTargetKind.PAGE_HEADING), toolbar, webView), PageFocusRules.plan(list, webViewPresent = true))
+        val item = listOf(FocusCandidate(ScreenBounds(0, 900, 1080, 1000), leftover = false, heading = false))
+        assertEquals(PageFocusRules.Pick(0, FocusTargetKind.PAGE_ITEM), PageFocusRules.plan(item, webViewPresent = true).first())
+    }
+
+    @Test fun afterTheCloseLeftoversAreNeverTargets() {
+        assertEquals(listOf(toolbar, webView), PageFocusRules.plan(sheetLeftovers, webViewPresent = true))
+        // A native app (no WebView): no toolbar guess, only page items.
+        assertEquals(emptyList<PageFocusRules.Pick>(), PageFocusRules.plan(sheetLeftovers, webViewPresent = false))
+    }
+
+    @Test fun beforeTheClickToolbarThenHeadingAboveThenItemAboveNeverTheWebView() {
         val beside = FocusCandidate(ScreenBounds(0, 1700, 300, 1800), leftover = false, heading = false)
         val above = FocusCandidate(ScreenBounds(0, 900, 1080, 1000), leftover = false, heading = false, above = true)
-        val higher = FocusCandidate(ScreenBounds(0, 320, 1080, 420), leftover = false, heading = true, above = true)
-        assertEquals(PageFocusRules.Pick(2, FocusTargetKind.ABOVE_OLD_POPUP), PageFocusRules.pick(listOf(beside, above, higher), webViewPresent = true, beforeClick = true))
+        val heading = FocusCandidate(ScreenBounds(0, 500, 1080, 600), leftover = false, heading = true, above = true)
+        val higher = FocusCandidate(ScreenBounds(0, 320, 1080, 420), leftover = false, heading = false, above = true)
+        val plan = PageFocusRules.plan(listOf(beside, above, heading, higher), webViewPresent = true, beforeClick = true)
+        assertEquals(listOf(toolbar, PageFocusRules.Pick(2, FocusTargetKind.PAGE_HEADING), PageFocusRules.Pick(3, FocusTargetKind.ABOVE_OLD_POPUP)), plan)
+        assertFalse(plan.any { it.webViewRoot })
     }
 
-    @Test fun beforeTheClickWithNothingAboveTheWebViewThenTheToolbar() {
-        val beside = listOf(FocusCandidate(ScreenBounds(0, 1700, 300, 1800), leftover = false, heading = false))
-        assertEquals(PageFocusRules.Pick(null, FocusTargetKind.WEBVIEW_ROOT, webViewRoot = true), PageFocusRules.pick(beside, webViewPresent = true, beforeClick = true))
-        assertEquals(PageFocusRules.Pick(null, FocusTargetKind.TOOLBAR_ITEM, toolbar = true), PageFocusRules.pick(beside, webViewPresent = false, beforeClick = true))
-    }
-
-    @Test fun preClickTraceNames() {
-        assertEquals(SimpleTrace.FOCUS_PRE_CLICK_WEBVIEW_ROOT, SimpleTrace.preClickTarget(FocusTargetKind.WEBVIEW_ROOT))
-        assertEquals(SimpleTrace.FOCUS_PRE_CLICK_NONE, SimpleTrace.preClickTarget(FocusTargetKind.PAGE_ITEM))
+    @Test fun beforeTheClickPopupPartsAndThingsBesideItAreSkipped() {
+        // Above the sheet but sharing its words (or inside the dim): a leftover, never focused.
+        val leftoverAbove = FocusCandidate(ScreenBounds(0, 320, 1080, 420), leftover = true, heading = true, above = true)
+        val beside = FocusCandidate(ScreenBounds(0, 1700, 300, 1800), leftover = false, heading = false)
+        assertEquals(listOf(toolbar), PageFocusRules.plan(listOf(leftoverAbove, beside), webViewPresent = true, beforeClick = true))
+        assertEquals(emptyList<PageFocusRules.Pick>(), PageFocusRules.plan(listOf(leftoverAbove, beside), webViewPresent = false, beforeClick = true))
     }
 }

@@ -76,6 +76,8 @@
     <string name="ui_choice_read_content">내용 다시 읽기</string>
     <string name="ui_choice_keep_open">그대로 두기</string>
     <!-- 선택 창이 새로 뜰 때 자체 음성으로 한 번 읽는 끝맺음. 포커스는 옮기지 않으므로 위치만 알려 준다. -->
+    <!-- F13: last line of the prompt's first item when TalkBack alone reads it. No command words. -->
+    <string name="ui_choice_takeover_question">어떻게 할까요? 다음 항목에서 고를 수 있어요.</string>
     <string name="ui_choice_where">화면 아래 선택 창에서 고를 수 있어요.</string>
     <!-- 안내 길이 "자세히": 확인된 정보만 덧붙인다 (버튼 이름, 선택지 개수). 분류 근거나 단정은 넣지 않는다. -->
     <string name="ui_choice_detail_press_buttons">대신 누를 수 있는 버튼: %1$s.</string>

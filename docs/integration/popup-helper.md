@@ -166,6 +166,22 @@ A 서비스(`CloseForYouAccessibilityService`)·`accessibility_service_config.xm
 - 검증(F1~F12 + #65): 5개 Gradle 작업 통과, 단위 시험 debug 1066개·release 1051개 실패 0, lintDebug 오류 0(경고 12), INTERNET 0·새 권한 없음.
 - #65 갱신(ab75a32) 재병합: `SimpleInspectionEvents`·시험과 서비스의 이벤트 분기·`inspect(expectedPackage, trigger)`·`resetConnection()`은 우진 버전(위의 `onTalkBackFocus`·`onTrigger`·`onSearchEnded`는 `onEvent(…, TALKBACK_FOCUS)`·trigger 매개변수·`onSearchExhausted`로 대체), F12(누르기 전 포커스, `FOCUS_KEPT_ON_PAGE`, 결과 카드 0.6초 뒤)는 우리 버전 유지.
 
+### 8-5. F13 — TalkBack이 말을 너무 많이 함 (11/1 실측 `ed6c153`, JVM 시험만, 실기기 미검증)
+
+실측(11번가 공지·묻기): `DETECT_LATENCY_MS=6419`, `DETECT_GAP_MS=7921` → 묻기 → 누르기 전 `FOCUS_PRE_CLICK_ABOVE_OLD_POPUP` → 닫힘 → `FOCUS_TARGET_WEBVIEW_ROOT`(또 이동) → 결과. 들린 것: TalkBack → 우리 TTS → TalkBack, 닫은 뒤 팝업 글 2번 → "공지를 닫았어요". 옥션(쿠폰·자동)은 정상, 그대로 둠.
+
+- **감지 6.4초의 원인 (코드 분석):** `DETECT_GAP_MS`(7.9초)가 지연(6.4초)보다 길다 = 첫 이벤트 뒤 6.4초 동안 "팝업 없음"으로 끝난 읽기가 한 번도 없었다. 크롬은 약 0.1초마다 내용 변경 이벤트를 보내는데, 그때마다 `scheduleInspection`이 기다리던 읽기를 취소하고 200ms 디바운스를 다시 걸었다. 페이지가 잠잠해질 때까지 읽기가 한 번도 돌지 못했다(또 내용 이벤트가 창 이벤트의 재확인 체인도 끊음). `SKIPPED_NOT_ALLOWED_APP`·#65 패키지 검사는 원인이 아님: 거부되면 `TREE_UNAVAILABLE`이 찍히고 이번 실측 로그 순서에는 없었다(다음 실측에서 `DETECT_TREE_UNAVAILABLE` 숫자로 확인).
+  - 고침(`SimpleInspectionEvents`, 대기만 줄임, 안전 검사 그대로): 같은 앱의 첫 읽기가 이미 기다리는 중이면 내용 이벤트는 합침(`EVENT_COALESCED`), 창 이벤트는 다시 걸되 처음 건 시점부터 최대 `FIRST_READ_MAX_WAIT_MILLIS`(400ms)까지만. 다른 앱 이벤트는 합치지 않음. 모든 읽기는 여전히 `appInScope`와 작업 스레드의 전체 검사(#65)를 거침.
+  - 단계 로그(숫자만): 감지 때 `DETECT_READS`(이번 탐색의 읽기 수), `DETECT_TREE_UNAVAILABLE`(가드가 거부한 수), `TREE_READ_MS`(마지막 읽기 시간).
+- **포커스는 한 번만:** 사용자가 [닫기]를 고르면 우리 창을 **없애기 전에** 포커스를 페이지로 옮긴다(`AccessibilityChoiceOverlay(beforeClose=…)` → `focusPageBeforeOurWindowGoes`). 우리 창이 포커스를 가진 채 사라지면 TalkBack이 팝업으로 돌아가 읽었다(재낭독 1번의 유력 원인, 실기기 확인 필요). 그 뒤 누르기 전 이동은 하지 않는다.
+  - 누르기 전 대상(`PageFocusRules.plan(beforeClick)`): 크롬 툴바(웹뷰 밖, DOM이 바뀌어도 남음) → 팝업 위쪽 제목 → 팝업 위쪽 항목. 팝업의 잔여(같은 글·같은 자리·팝업 영역·dim)는 제외, **WEBVIEW_ROOT는 쓰지 않음**.
+  - 닫은 뒤: 포커스가 팝업 밖에 살아 있으면 그대로(`FOCUS_KEPT_ON_PAGE`). 확인은 모든 창에서(`AccessibilityService.findFocus`) → 활성 창 순. 사라졌을 때(`FOCUS_AFTER_CLOSE_LOST`)나 팝업 안일 때(`FOCUS_AFTER_CLOSE_IN_POPUP`)만 한 번: 페이지 맨 위 항목 → 툴바 → WEBVIEW_ROOT(마지막 수단).
+  - 결과 카드는 닫은 뒤 실제로 옮겼을 때만 0.6초 기다리고, 아니면 바로 TalkBack 큐로.
+- **목소리 하나로 (시연 모드 6-0, 안내 맡기기 ON일 때):** 선택 창이 뜨면 포커스를 첫 항목으로 가져오고(기존), 그 항목을 요약 + 공지 앞부분(`PROMPT_EXCERPT_CHARS` 50자, 팝업 원문 그대로, 공백에서 자름) + "어떻게 할까요? 다음 항목에서 고를 수 있어요."를 합친 한 노드로 만든다. TalkBack 혼자 읽고, **우리 TTS는 말하지 않으며 버튼으로 다시 옮기지 않는다**(`TalkBackTakeoverFeature.ONE_VOICE`). 첫 항목에 포커스를 못 주면 예전처럼 TTS. 팝업 원문을 TTS로 읽는 프롬프트(A 경로)는 예전 3단계 그대로.
+- TalkBack을 끄거나 멈추는 코드는 없음(보안 설정 변경 X). 화면 글자·패키지는 로그에 없음(숫자·enum만).
+- 검증: 5개 Gradle 작업 통과, 단위 시험 debug 1077개·release 1062개 실패 0, lintDebug 오류 0(경고 12), INTERNET 0·새 권한 없음. 시험 추가: 포커스 계획 4, 이벤트 합치기 4, 발췌·한 목소리 4.
+- 위험: ① 툴바 첫 항목이 "홈"·"주소창" 등 무엇일지 기기마다 다름(TalkBack이 그 이름을 한 번 읽음). ② 우리 창이 사라진 뒤 TalkBack이 스스로 포커스를 옮기는지는 실기기 확인 필요. ③ 한 목소리 모드에서는 버튼으로 자동 이동하지 않으므로 사용자가 한 번 오른쪽으로 쓸어야 버튼. ④ 첫 읽기를 최대 0.4초에 강제로 돌리므로 애니메이션 중인 시트를 일찍 읽을 수 있음 → 재확인 체인이 다시 잡음.
+
 - 잔여 노드 쪽 이벤트 무시: TalkBack이 무엇을 읽을지는 앱이 막을 수 없다. 대신 포커스를 잔여 노드 밖으로 옮기는 것(F9)이 할 수 있는 전부. 웹 페이지가 닫힌 팝업을 DOM에 `aria-hidden` 없이 남기는 한, 사용자가 스와이프로 다시 만날 수 있다(한계로 기록).
 - 선택 창 PROMPT도 TalkBack 큐로? 가능은 하다: 선택 창 자체(이미 접근성 오버레이)에 paneTitle이 있고 TalkBack이 창을 읽으므로, "안내 맡기기" ON이면 우리 TTS PROMPT를 끄고 paneTitle/첫 버튼 포커스 낭독에 맡기는 방식. 단, 지금 PROMPT는 TalkBack이 팝업을 읽는 도중 끊고 들어가야 시연이 빠르므로 polite로 바꾸면 늦어질 수 있다. F11 배너가 LG에서 잘 읽히면 같은 방식으로 옮길지 정하자(의견, 미구현).
 - 검증(F1~F11 한 빌드): 5개 Gradle 작업 통과, 단위 시험 debug 1028개·release 1013개 실패 0, lintDebug 오류 0(경고 12), 병합 매니페스트 INTERNET 0·새 권한 없음.

@@ -73,6 +73,11 @@ data class ChoicePrompt(
      * Spoken only, never shown, logged or stored; null when there is none.
      */
     val popupText: String? = null,
+    /**
+     * F13 (one voice): the first words of a notice, shown in the prompt's first item so TalkBack reads
+     * them with the summary ([TalkBackTakeoverPlan.excerpt]). Never logged or stored; null = none.
+     */
+    val shownExcerpt: String? = null,
 ) {
     override fun toString(): String =
         "ChoicePrompt(summary=$summary, options=${options.size}, failure=$pressFailure, videoAd=$videoAd, redacted)"

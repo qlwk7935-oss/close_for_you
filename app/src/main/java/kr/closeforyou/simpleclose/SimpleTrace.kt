@@ -60,8 +60,15 @@ enum class SimpleTrace {
     FOCUS_TARGET_TOOLBAR_ITEM,
     /** F12: TalkBack's focus was already outside the old popup after the close (put there before the press): not moved again. */
     FOCUS_KEPT_ON_PAGE,
+    /** F13: after the close nothing held TalkBack's focus (the node it was on went away) / it was still in the old popup; moved once. */
+    FOCUS_AFTER_CLOSE_LOST,
+    FOCUS_AFTER_CLOSE_IN_POPUP,
+    /** F13: an event while a first read for the same app was already waiting; that read covers it. */
+    EVENT_COALESCED,
     /** F12: the focus target picked right before the press ([FocusTargetKind]). */
     FOCUS_PRE_CLICK_ABOVE_OLD_POPUP,
+    /** F13: a heading wholly above the popup, before the press. */
+    FOCUS_PRE_CLICK_PAGE_HEADING,
     FOCUS_PRE_CLICK_WEBVIEW_ROOT,
     FOCUS_PRE_CLICK_TOOLBAR_ITEM,
     FOCUS_PRE_CLICK_NONE,
@@ -96,7 +103,7 @@ enum class SimpleTrace {
     companion object {
         fun focusTarget(kind: FocusTargetKind): SimpleTrace = valueOf("FOCUS_TARGET_${kind.name}")
 
-        /** Before the press only ABOVE_OLD_POPUP / WEBVIEW_ROOT / TOOLBAR_ITEM are picked; anything else is NONE. */
+        /** Before the press only TOOLBAR_ITEM / PAGE_HEADING / ABOVE_OLD_POPUP are picked; anything else is NONE. */
         fun preClickTarget(kind: FocusTargetKind): SimpleTrace =
             entries.firstOrNull { it.name == "FOCUS_PRE_CLICK_${kind.name}" } ?: FOCUS_PRE_CLICK_NONE
         fun adHintMiss(miss: AdHintMiss): SimpleTrace = valueOf("AD_HINT_MISS_${miss.name}")

@@ -33,6 +33,12 @@ object SimpleCloseEngineFeature {
     val RECHECK_DELAYS_MILLIS = listOf(200L, 500L, 1_000L, 2_000L, 3_000L)
 
     /**
+     * F13 (LG 11/1 11번가: 6.4 s from the first event to the read that found the sheet, no read in
+     * between): a first read already waiting is never pushed back past this by further events.
+     */
+    const val FIRST_READ_MAX_WAIT_MILLIS = 400L
+
+    /**
      * A content change (Chrome repaints constantly) gets one read, at most this often, and never
      * restarts the re-check chain; only a window-state or windows change does (LG 10/31: the chain
      * restarted on every repaint and read the tree every 1~2 s for minutes).
@@ -55,13 +61,16 @@ object SimpleCloseEngineFeature {
     /**
      * Also right before the press (F4): TalkBack's focus is put on a page item outside the popup first,
      * so when our window (or the popup) goes away it is not left on the popup's DOM leftovers. Done
-     * before the target re-check, which still runs right before the click. Device check needed.
+     * before the target re-check, which still runs right before the click. F13: for the person's own
+     * press it is done before our window is removed, so TalkBack never falls back into the popup in
+     * between. Device check needed.
      */
     const val FOCUS_PAGE_BEFORE_CLICK = true
 
     /**
-     * F12: after the person's own press, the result card waits this long after the focus move, so
-     * TalkBack has read the newly focused item and then says "닫았어요" (LG 10/31: it was not heard).
+     * F12: the result card waits this long after a focus move made after the close, so TalkBack has
+     * read the newly focused item and then says "닫았어요" (LG 10/31: it was not heard). F13: no wait
+     * when the focus was kept.
      */
     const val RESULT_AFTER_FOCUS_MILLIS = 600L
 
@@ -80,6 +89,12 @@ object SimpleCloseEngineFeature {
      * talking; false = the short kind sentence only, and [내용 다시 읽기] reads the full text on request.
      */
     const val READ_POPUP_TEXT_ON_PROMPT = false
+
+    /**
+     * F13 (one voice): a notice's first words are shown in the prompt's first item, so TalkBack reads
+     * them with the summary and the question; at most this many characters, cut at a space.
+     */
+    const val PROMPT_EXCERPT_CHARS = 50
 
     /** The same popup (same fingerprint in the same window) is not handled again for this long. */
     const val SAME_POPUP_COOLDOWN_MILLIS = 10_000L

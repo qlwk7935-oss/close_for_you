@@ -237,10 +237,12 @@ internal class OverlayWindowKeeper<W : Any>(
      * Passes a tap or voice [answer] on, only if its generation is current. When [closesWindow],
      * the window is closed first; if it could not be removed the choice becomes
      * [PromptAnswer.Lost], so nothing reaches B or A while a stale window may still be on screen.
+     * [beforeClose] (F13) runs right before a current window is removed.
      */
-    fun deliver(answer: PromptAnswer, closesWindow: Boolean, onAnswer: (PromptAnswer) -> Unit) {
+    fun deliver(answer: PromptAnswer, closesWindow: Boolean, beforeClose: () -> Unit = {}, onAnswer: (PromptAnswer) -> Unit) {
         if (!isCurrent(answer.generation)) return
         if (closesWindow) {
+            beforeClose()
             closeOpen()
             if (stuck != null) {
                 onAnswer(PromptAnswer.Lost(answer.generation))

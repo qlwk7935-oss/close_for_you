@@ -62,40 +62,45 @@ enum class FocusTargetKind { OVERLAPS_OLD_POPUP, WEBVIEW_ROOT, PAGE_HEADING, PAG
 data class FocusCandidate(val bounds: ScreenBounds, val leftover: Boolean, val heading: Boolean, val above: Boolean = false)
 
 /**
- * Where TalkBack's focus goes after a close (F4/F9, LG 10/31: it read the closed popup again; at
- * 22:29 every candidate overlapped the old popup, so nothing moved). In order:
- * 1. a page item that is not a popup leftover, the highest on the screen (tree order breaks ties);
- * 2. ([fallback]) an item wholly above the old popup, even if it shares words with it ([FocusTargetKind.ABOVE_OLD_POPUP]);
- * 3. ([fallback]) the WebView itself, named or not;
- * 4. ([fallback]) the first named item outside the WebView: Chrome's toolbar ([Pick.toolbar], the caller searches).
- * Without [fallback] only 1 is used.
+ * Where TalkBack's focus goes, as an ordered list of targets: the caller tries each until one takes
+ * the focus. F13 (LG 11/1 11번가: the focus was moved before the press and again after the close, and
+ * TalkBack read the popup text twice in between): one move per handling, onto something that is
+ * still there after the close.
  *
- * [beforeClick] (F12, LG 10/31 23:0x: with the person's press, TalkBack still began reading the popup
- * again after the close): right before the press, while the popup is still there, the focus goes
- * straight to a place that will survive the close and is surely not the popup: an item wholly above
- * it, else the WebView itself, else the toolbar. Page items beside or below the popup are skipped then.
+ * [beforeClick] (right before our window goes away and the press, popup still on screen):
+ * 1. Chrome's toolbar ([Pick.toolbar], only with a WebView; native, survives any DOM change);
+ * 2. the highest heading wholly above the popup that is not part of it;
+ * 3. the highest item wholly above the popup that is not part of it ([FocusTargetKind.ABOVE_OLD_POPUP]).
+ * Never the WebView itself (TalkBack reads the whole page, the popup's DOM included) and never a
+ * leftover of the popup (its words, place or area, the dim and the sheet).
+ *
+ * After the close, only when the focus was lost or is still in the old popup:
+ * 1. the highest page item that is not a leftover (the top of the page);
+ * 2. the toolbar (with a WebView);
+ * 3. the WebView itself, last.
  * Pure; JVM tested.
  */
 object PageFocusRules {
     data class Pick(val index: Int?, val kind: FocusTargetKind, val webViewRoot: Boolean = false, val toolbar: Boolean = false)
 
-    fun pick(candidates: List<FocusCandidate>, webViewPresent: Boolean, fallback: Boolean = true, beforeClick: Boolean = false): Pick {
-        if (beforeClick) {
-            val above = candidates.withIndex().filter { it.value.above }.minByOrNull { it.value.bounds.top }
-            return when {
-                above != null -> Pick(above.index, FocusTargetKind.ABOVE_OLD_POPUP)
-                webViewPresent -> Pick(null, FocusTargetKind.WEBVIEW_ROOT, webViewRoot = true)
-                else -> Pick(null, FocusTargetKind.TOOLBAR_ITEM, toolbar = true)
-            }
-        }
-        val best = candidates.withIndex().filter { !it.value.leftover }.minByOrNull { it.value.bounds.top }
-        if (best != null) return Pick(best.index, if (best.value.heading) FocusTargetKind.PAGE_HEADING else FocusTargetKind.PAGE_ITEM)
-        if (!fallback) return Pick(null, if (candidates.isEmpty()) FocusTargetKind.NONE else FocusTargetKind.OVERLAPS_OLD_POPUP)
-        val above = candidates.withIndex().firstOrNull { it.value.above }
-        return when {
-            above != null -> Pick(above.index, FocusTargetKind.ABOVE_OLD_POPUP)
-            webViewPresent -> Pick(null, FocusTargetKind.WEBVIEW_ROOT, webViewRoot = true)
-            else -> Pick(null, FocusTargetKind.TOOLBAR_ITEM, toolbar = true)
+    private val TOOLBAR = Pick(null, FocusTargetKind.TOOLBAR_ITEM, toolbar = true)
+    private val WEBVIEW = Pick(null, FocusTargetKind.WEBVIEW_ROOT, webViewRoot = true)
+
+    fun plan(candidates: List<FocusCandidate>, webViewPresent: Boolean, beforeClick: Boolean = false): List<Pick> {
+        val page = candidates.withIndex().filter { !it.value.leftover }
+        return if (beforeClick) {
+            val above = page.filter { it.value.above }
+            listOfNotNull(
+                TOOLBAR.takeIf { webViewPresent },
+                above.filter { it.value.heading }.minByOrNull { it.value.bounds.top }?.let { Pick(it.index, FocusTargetKind.PAGE_HEADING) },
+                above.minByOrNull { it.value.bounds.top }?.let { Pick(it.index, FocusTargetKind.ABOVE_OLD_POPUP) },
+            ).distinct()
+        } else {
+            listOfNotNull(
+                page.minByOrNull { it.value.bounds.top }?.let { Pick(it.index, if (it.value.heading) FocusTargetKind.PAGE_HEADING else FocusTargetKind.PAGE_ITEM) },
+                TOOLBAR.takeIf { webViewPresent },
+                WEBVIEW.takeIf { webViewPresent },
+            )
         }
     }
 }

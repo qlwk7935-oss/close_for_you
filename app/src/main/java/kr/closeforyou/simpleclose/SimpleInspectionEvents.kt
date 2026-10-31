@@ -6,7 +6,14 @@ internal enum class SimpleInspectionEvent { WINDOW, CONTENT, TALKBACK_FOCUS }
 
 /** The service's event scheduling boundary, shared with JVM regressions. No Android event is kept.
  * appInScope is a cheap scheduling filter; full authorization belongs to the collector's worker.
- * The engine job, prompt and settings are read again, not cached across a service connection. */
+ * The engine job, prompt and settings are read again, not cached across a service connection.
+ *
+ * F13 (LG 11/1 11번가: DETECT_LATENCY 6.4 s, no read at all in between): Chrome repaints every
+ * ~100 ms and each content event cancelled and re-armed the 200 ms debounce, so the first read only
+ * ran once the page went quiet. A first read already waiting for the same app is now kept: a content
+ * event never replaces it, and a window event re-arms it only up to
+ * [SimpleCloseEngineFeature.FIRST_READ_MAX_WAIT_MILLIS] after it was first armed. Only waits change;
+ * every read still passes [appInScope] here and the worker's full check. */
 internal class SimpleInspectionEvents(
     private val jobs: () -> EngineJobs,
     private val promptShowing: () -> Boolean,
@@ -20,7 +27,14 @@ internal class SimpleInspectionEvents(
 ) {
     private var lastFocusEventReadAt = 0L
 
-    fun resetConnection() { lastFocusEventReadAt = 0L }
+    /** F13: when the first read now waiting was first armed ([NOT_PENDING] = none), for which app. */
+    private var pendingSince = NOT_PENDING
+    private var pendingPackage: String? = null
+
+    fun resetConnection() {
+        lastFocusEventReadAt = 0L
+        pendingSince = NOT_PENDING
+    }
 
     fun onEvent(eventPackage: String?, kind: SimpleInspectionEvent) {
         val activeJobs = jobs()
@@ -43,6 +57,7 @@ internal class SimpleInspectionEvents(
         onAccepted()
         if (kind == SimpleInspectionEvent.TALKBACK_FOCUS) {
             lastFocusEventReadAt = now()
+            pendingSince = NOT_PENDING
             activeJobs.scheduleInspection {
                 // Immediate scheduling, no debounce. Full authorization still runs in the worker.
                 if (!activeJobs.busy && !promptShowing() && !inspect(expectedPackage, DetectTrigger.TALKBACK_FOCUS)) {
@@ -51,9 +66,21 @@ internal class SimpleInspectionEvents(
             }
             return
         }
+        val at = now()
+        val pending = activeJobs.inspecting && pendingSince != NOT_PENDING && pendingPackage == expectedPackage
+        // F13: the read already waiting will see this change too.
+        if (pending && kind == SimpleInspectionEvent.CONTENT) {
+            log.trace(SimpleTrace.EVENT_COALESCED)
+            return
+        }
+        val since = if (pending) pendingSince else at
+        val firstWait = minOf(SimpleCloseEngineFeature.DEBOUNCE_MILLIS, since + SimpleCloseEngineFeature.FIRST_READ_MAX_WAIT_MILLIS - at).coerceAtLeast(0L)
+        pendingSince = since
+        pendingPackage = expectedPackage
         if (kind == SimpleInspectionEvent.CONTENT) {
             activeJobs.scheduleInspection {
-                delay(SimpleCloseEngineFeature.DEBOUNCE_MILLIS)
+                delay(firstWait)
+                pendingSince = NOT_PENDING
                 if (!activeJobs.busy && !promptShowing() && !inspect(expectedPackage, DetectTrigger.CONTENT_EVENT)) {
                     onSearchExhausted()
                 }
@@ -61,7 +88,8 @@ internal class SimpleInspectionEvents(
             return
         }
         activeJobs.scheduleInspection {
-            delay(SimpleCloseEngineFeature.DEBOUNCE_MILLIS)
+            delay(firstWait)
+            pendingSince = NOT_PENDING
             for (wait in listOf(0L) + SimpleCloseEngineFeature.RECHECK_DELAYS_MILLIS) {
                 if (wait > 0) {
                     log.trace(SimpleTrace.RECHECK_SCHEDULED)
@@ -72,5 +100,9 @@ internal class SimpleInspectionEvents(
             }
             onSearchExhausted()
         }
+    }
+
+    private companion object {
+        const val NOT_PENDING = Long.MIN_VALUE
     }
 }

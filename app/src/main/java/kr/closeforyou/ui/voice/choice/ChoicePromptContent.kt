@@ -85,11 +85,25 @@ fun ChoicePromptContent(
                     modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
                 )
             } else {
-                Text(
-                    text = stringResource(prompt.summary.textRes()),
-                    style = MaterialTheme.typography.titleMedium,
-                    modifier = if (takeover) Modifier.testTag(TakeoverFocusTarget.FIRST_ITEM.tag) else Modifier,
-                )
+                // F13 (one voice): with the takeover and no popup text for our TTS, the first item is the
+                // summary, a notice's first words and the question, merged into one node TalkBack reads.
+                val oneVoice = takeover && TalkBackTakeoverPlan.oneVoice(prompt)
+                Column(
+                    modifier = if (oneVoice) {
+                        Modifier.semantics(mergeDescendants = true) {}.testTag(TakeoverFocusTarget.FIRST_ITEM.tag)
+                    } else {
+                        Modifier
+                    },
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    Text(
+                        text = stringResource(prompt.summary.textRes()),
+                        style = MaterialTheme.typography.titleMedium,
+                        modifier = if (takeover && !oneVoice) Modifier.testTag(TakeoverFocusTarget.FIRST_ITEM.tag) else Modifier,
+                    )
+                    prompt.shownExcerpt?.let { Text(text = it) }
+                    if (oneVoice) Text(text = stringResource(R.string.ui_choice_takeover_question))
+                }
                 val countdown = prompt.countdownSeconds
                 if (countdown != null) {
                     Text(text = stringResource(R.string.ui_choice_video_ad_wait, countdown))

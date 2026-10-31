@@ -53,6 +53,12 @@ class AccessibilityChoiceOverlay(
     private val revalidatingEnabled: Boolean = RevalidatingFeature.enabled,
     /** [TalkBackTakeoverFeature]; read once per new window (setting and TalkBack may change). */
     private val takeoverActive: () -> Boolean = { TalkBackTakeoverFeature.isActive(service) },
+    /**
+     * F13: called with a current window's answer right before that window is removed, so the caller
+     * can put TalkBack's focus somewhere else first (removed under the focus, our window let TalkBack
+     * fall back into the popup). Main thread; nothing from a stale window reaches it.
+     */
+    private val beforeClose: (PromptAnswer) -> Unit = {},
 ) : ChoicePromptPresenter {
     /** One prompt's voice controller and coroutine scope; [onTap] carries its generation. */
     private class PromptSession(
@@ -144,11 +150,15 @@ class AccessibilityChoiceOverlay(
         val onOption: (PromptOption, ChoiceOrigin) -> Unit = { option, origin ->
             when (val selection = ChoicePromptPlanner.select(prompt, option)) {
                 // Press and keep close the prompt first; READ_CONTENT keeps it open.
-                is PromptSelection.Choice -> keeper.deliver(
-                    PromptAnswer.Picked(selection.choice, origin, generation),
-                    closesWindow = selection.choice.kind != ChoiceKind.READ_CONTENT,
-                    onAnswer = onAnswer,
-                )
+                is PromptSelection.Choice -> {
+                    val answer = PromptAnswer.Picked(selection.choice, origin, generation)
+                    keeper.deliver(
+                        answer,
+                        closesWindow = selection.choice.kind != ChoiceKind.READ_CONTENT,
+                        onAnswer = onAnswer,
+                        beforeClose = { safely { beforeClose(answer) } },
+                    )
+                }
                 // Close first so the moved focus lands on the app, not on us.
                 is PromptSelection.MoveToButton ->
                     keeper.deliver(PromptAnswer.Move(selection.request, origin, generation), closesWindow = true, onAnswer = onAnswer)
