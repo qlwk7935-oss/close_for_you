@@ -77,9 +77,10 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
     private var screenVersion = 0L
     private var inputMethods: Set<String> = emptySet()
 
-    /** The popup the prompt on screen is about, and when each fingerprint was last handled. */
+    /** The popup the prompt on screen is about, and when each popup key was last seen on screen. */
     private var prompted: SimplePopup? = null
-    private val handledAt = LinkedHashMap<String, Long>()
+    private val seenAt = LinkedHashMap<String, Long>()
+    private val denied = LinkedHashSet<String>()
 
     private val preferences by lazy { UiVoicePreferences.get(this) }
     private val corePreferences by lazy { CorePreferences.get(this) }
@@ -112,11 +113,8 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         if (event == null || overlay == null || event.eventType !in WINDOW_EVENTS) return
         val eventPackage = event.packageName?.toString()
-        if (eventPackage == packageName) {
-            // Our own prompt window and TTS: never a popup to handle.
-            log.trace(SimpleTrace.EVENT_OWN_WINDOW_IGNORED)
-            return
-        }
+        // Our own prompt window and TTS: never a popup to handle (not logged: it would drown the rest).
+        if (eventPackage == packageName) return
         if (!SimpleAppAllowance.allows(eventPackage, packageName, preferences.current(), corePreferences.currentSettings().allowedPackages, inputMethods)) {
             log.trace(SimpleTrace.SKIPPED_NOT_ALLOWED_APP)
             return
@@ -142,23 +140,26 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
             promptGone()
             return
         }
+        val popup = SimplePopupAnalysis.build(read.nodes, root, read.packageName, read.windowId, read.screen, screenVersion, SystemClock.uptimeMillis())
+        val key = popup.coarseKey
+        val now = SystemClock.uptimeMillis()
+        // The popup the prompt is about is still there: nothing to do, quietly.
+        val shown = prompted
+        if (shown != null && shown.coarseKey == key && overlay?.isShowing == true) return
+        if (shown != null && shown.coarseKey != key) promptGone()
+        // Seen within the cooldown (it stayed on screen, or was just handled): once is enough, quietly.
+        val last = seenAt[key]
+        seenAt[key] = now
+        if (seenAt.size > 32) seenAt.remove(seenAt.keys.first())
+        if (last != null && now - last < SimpleCloseEngineFeature.SAME_POPUP_COOLDOWN_MILLIS) {
+            log.trace(SimpleTrace.SAME_POPUP_COOLDOWN)
+            return
+        }
         log.trace(when (root.kind) {
             PopupRootKind.ALERT_DIALOG -> SimpleTrace.DETECTED_ALERTDIALOG
             PopupRootKind.DIALOG_WINDOW -> SimpleTrace.DETECTED_DIALOG_WINDOW
             PopupRootKind.DIM_OVERLAY -> SimpleTrace.DETECTED_DIM_OVERLAY
         })
-        val popup = SimplePopupAnalysis.build(read.nodes, root, read.packageName, read.windowId, read.screen, screenVersion, SystemClock.uptimeMillis())
-        val shown = prompted
-        if (shown != null && shown.fingerprint == popup.fingerprint && overlay?.isShowing == true) return
-        if (shown != null && shown.fingerprint != popup.fingerprint) promptGone()
-        val now = SystemClock.uptimeMillis()
-        val last = handledAt[popup.fingerprint]
-        if (last != null && now - last < SimpleCloseEngineFeature.SAME_POPUP_COOLDOWN_MILLIS) {
-            log.trace(SimpleTrace.SAME_POPUP_COOLDOWN)
-            return
-        }
-        handledAt[popup.fingerprint] = now
-        if (handledAt.size > 32) handledAt.remove(handledAt.keys.first())
 
         val classification = classifier.classify(popup.analysis)
         val suspicious = RememberChoiceRules.suspiciousByB(popup.analysis)
@@ -185,11 +186,13 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
             }
             SimpleDecision.DenyDecision -> {
                 log.trace(SimpleTrace.DECIDED_DENY_DECISION)
+                if (!denyOnce(key)) return
                 val deny = ActionDecision(analysis.token, ActionAuthorization.DENY, persistentSetOf(SafetyReason.IMPORTANT_DECISION), null, DecisionSource.PRESET, NextStep.DENY)
                 handlingListener?.onHandled(HandlingReport(analysis.token, classification, deny))
             }
             SimpleDecision.DenySuspicious -> {
                 log.trace(SimpleTrace.DECIDED_DENY_SUSPICIOUS)
+                if (!denyOnce(key)) return
                 val deny = ActionDecision(analysis.token, ActionAuthorization.DENY, persistentSetOf(SafetyReason.SUSPICIOUS_CONTENT), null, DecisionSource.PRESET, NextStep.DENY)
                 handlingListener?.onHandled(HandlingReport(analysis.token, classification, deny))
             }
@@ -198,6 +201,13 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
                 ask(classified, classification)
             }
         }
+    }
+
+    /** A deny sentence ("확인이 필요한 팝업이에요", the scam warning) is said once per popup key per session (LG 10/31: it looped). */
+    private fun denyOnce(key: String): Boolean {
+        if (!denied.add(key)) return false
+        if (denied.size > 64) denied.remove(denied.first())
+        return true
     }
 
     private fun ask(popup: SimplePopup, classification: PopupClassification) {
@@ -268,8 +278,9 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
         try {
             val fresh = collector.read()
             val freshRoot = fresh?.let { PopupRootFinder.find(it.nodes, it.screen, it.activeWindowBounded) }
+            // Same popup (window, root kind and place); its content may have repainted meanwhile.
             val same = fresh != null && freshRoot != null && fresh.packageName == token.packageName &&
-                SimplePopupAnalysis.build(fresh.nodes, freshRoot, fresh.packageName, fresh.windowId, fresh.screen, screenVersion, SystemClock.uptimeMillis()).fingerprint == popup.fingerprint
+                "${fresh.windowId}:${freshRoot.key}" == popup.coarseKey
             val target = fresh?.nodes?.firstOrNull { it.path == candidate.nodePath }
             val sameName = target != null && CloseButtonFinder.nameOf(target, fresh.nodes) == candidate.label && SimpleLabelRules.roleOf(candidate.label) == candidate.role
             if (!same || target == null || !sameName) {
@@ -293,7 +304,7 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
                 after.packageName != token.packageName -> ClickOutcome.LEFT_APP
                 else -> {
                     val root = PopupRootFinder.find(after.nodes, after.screen, after.activeWindowBounded)
-                    val still = root != null && SimplePopupAnalysis.build(after.nodes, root, after.packageName, after.windowId, after.screen, screenVersion, SystemClock.uptimeMillis()).fingerprint == popup.fingerprint
+                    val still = root != null && "${after.windowId}:${root.key}" == popup.coarseKey
                     if (still) ClickOutcome.STILL_PRESENT else ClickOutcome.CLOSED_CONFIRMED
                 }
             }
@@ -357,7 +368,8 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
         handlingListener = null
         tts?.close()
         tts = null
-        handledAt.clear()
+        seenAt.clear()
+        denied.clear()
         scope.cancel()
     }
 
@@ -369,12 +381,18 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
     }
 }
 
-/** Debug builds only: one enum name per step under `CfySimple` (no text, no ids, no packages). */
+/**
+ * Debug builds only: one enum name per step under `CfySimple` (no text, no ids, no packages). The
+ * same code in a row is written once (Chrome sends dozens of own-window and not-allowed events).
+ */
 private class DebugSimpleLog(service: AccessibilityService) : SimpleTraceSink {
     private val enabled = service.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0
+    private var last: SimpleTrace? = null
 
     override fun trace(code: SimpleTrace) {
-        if (enabled) Log.d(TAG, code.name)
+        if (!enabled || code == last) return
+        last = code
+        Log.d(TAG, code.name)
     }
 
     private companion object {

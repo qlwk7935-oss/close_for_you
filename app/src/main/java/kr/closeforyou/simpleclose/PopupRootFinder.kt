@@ -16,6 +16,9 @@ enum class PopupRootKind {
 /** The popup's own subtree: every node at [path] or below it. */
 data class PopupRoot(val path: String, val bounds: ScreenBounds, val kind: PopupRootKind) {
     fun contains(node: NodeSnapshot): Boolean = node.path == path || node.path.startsWith("$path/")
+
+    /** "The same popup" while it is on screen, whatever its content repaints (carousel, countdown). */
+    val key: String get() = "$kind:$path:${bounds.left},${bounds.top},${bounds.right},${bounds.bottom}"
 }
 
 /**
@@ -60,24 +63,35 @@ object PopupRootFinder {
     }
 
     /**
-     * A clickable node covering most of the screen (the dim background), not the tree root, with a
-     * bounded card either among its children or among its siblings. The root is the smallest
-     * subtree holding both: the dim node itself, or its parent.
+     * An app's own overlay, recognised only when all of these hold (an ordinary web page has a
+     * clickable near-screen container too, so each one is needed):
+     * - the dim: clickable, covers [DIM_MIN_AREA_RATIO] of the screen, not the tree root, has no text
+     *   of its own, and is either a leaf (nothing drawn inside it) or describes itself as a close
+     *   ("배경을 눌러 닫기");
+     * - the card: a bounded non-clickable container next to the dim (sibling) or inside it (child);
+     * - a close/skip button ([SimpleLabelRules]) inside the card, or inside the dim for the child form.
+     * The root is the smallest subtree holding dim and card: the dim itself, or their parent.
      */
     private fun dimOverlayRoot(nodes: List<NodeSnapshot>, screen: ScreenBounds): PopupRoot? {
         val screenArea = area(screen)
         if (screenArea <= 0) return null
         val byPath = nodes.associateBy { it.path }
-        val dims = nodes.filter { it.path != "0" && it.clickable && area(it.bounds).toDouble() / screenArea >= DIM_MIN_AREA_RATIO }
+        val dims = nodes.filter {
+            it.path != "0" && it.clickable && it.text.isNullOrBlank() && area(it.bounds).toDouble() / screenArea >= DIM_MIN_AREA_RATIO
+        }
         for (dim in dims.asReversed()) {
             val children = nodes.filter { it.path.startsWith("${dim.path}/") }
-            if (children.any { isCard(it, screenArea) }) return PopupRoot(dim.path, dim.bounds, PopupRootKind.DIM_OVERLAY)
-            // A dim background next to its card is a leaf; a scrolling list that fills the screen is not.
+            val selfDescribed = SimpleLabelRules.roleOf(dim.contentDescription) != null
+            if (!selfDescribed && children.isNotEmpty()) continue
+            if (selfDescribed && children.any { isCard(it, screenArea) } && children.any(::isCloseButton)) {
+                return PopupRoot(dim.path, dim.bounds, PopupRootKind.DIM_OVERLAY)
+            }
             if (children.isNotEmpty()) continue
             val parentPath = dim.path.substringBeforeLast('/', missingDelimiterValue = "")
             val parent = byPath[parentPath] ?: continue
-            val siblings = nodes.filter { it.path != dim.path && it.path.startsWith("$parentPath/") && !it.path.startsWith("${dim.path}/") }
-            if (siblings.any { isCard(it, screenArea) }) return PopupRoot(parent.path, parent.bounds, PopupRootKind.DIM_OVERLAY)
+            val siblings = nodes.filter { it.path != dim.path && it.path.startsWith("$parentPath/") }
+            val card = siblings.firstOrNull { isCard(it, screenArea) } ?: continue
+            if (siblings.any { card.contains(it) && isCloseButton(it) }) return PopupRoot(parent.path, parent.bounds, PopupRootKind.DIM_OVERLAY)
         }
         return null
     }
@@ -87,6 +101,11 @@ object PopupRootFinder {
         val a = area(node.bounds)
         return a > 0 && a.toDouble() / screenArea < CARD_MAX_AREA_RATIO && !node.clickable
     }
+
+    private fun isCloseButton(node: NodeSnapshot): Boolean =
+        node.clickable && (SimpleLabelRules.roleOf(node.text) != null || SimpleLabelRules.roleOf(node.contentDescription) != null)
+
+    private fun NodeSnapshot.contains(other: NodeSnapshot): Boolean = other.path.startsWith("$path/")
 
     private fun area(b: ScreenBounds): Long = b.width.toLong() * b.height.toLong()
 }

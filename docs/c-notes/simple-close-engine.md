@@ -61,6 +61,11 @@
 7. 옥션 `m.auction.co.kr`(봇 확인 화면이 아니면): `DETECTED_ALERTDIALOG` → `CLASSIFIED_AD` → `DECIDED_AUTO_CLOSE` → `CLICKED` → `CLOSED_CONFIRMED` → "광고를 닫았어요".
 8. 안 되면 `NO_POPUP_ROOT`(루트 못 찾음) / `TREE_UNAVAILABLE`(크롬이 웹 노드를 안 줌) / `SKIPPED_NOT_ALLOWED_APP`(도와줄 앱 설정) 중 어느 코드에서 멈추는지.
 
+## 5-1. LG 1차 결과 (10/31 18:47, 657577d)
+
+- ✅ 크롬 시크릿 11번가: `DETECTED_ALERTDIALOG` → 선택 창 → 두 번 탭 → `USER_CHOSE_PRESS` → `CLICKED` → `CLOSED_CONFIRMED`, 실제 팝업 닫힘.
+- ❌ 고친 것(다음 커밋): ① 팝업 없는 본 화면을 덮개로 오감지해 2초마다 `DECIDED_DENY_DECISION` → 덮개 판정 강화(글자 없는 클릭 가능 배경이 leaf이거나 "닫기"류 설명 + 카드 안에 닫기/건너뛰기 버튼 필수). ② 같은 팝업(창 + 루트 종류·path·bounds 키)은 화면에 남아 있는 동안 한 번만 처리·안내, 반복 감지는 조용히(`SAME_POPUP_COOLDOWN`). ③ 연속 같은 로그 코드는 한 번만, 우리 창 이벤트는 로그 안 함. ④ 결정·사기 DENY 문장은 같은 팝업 키에 세션당 1회(`denied`). TTS는 원래 QUEUE_FLUSH라 새 문장이 이전 문장을 대체(큐 안 쌓임); 문장은 "확인이 필요한 팝업이에요. 직접 확인해 주세요." 한 줄.
+
 ## 6. 남은 위험·미확인
 
 - 크롬이 실기기에서 `AlertDialog` 노드를 주는지(10/30 LG 확인됨), 두 번째 서비스에서도 주는지.

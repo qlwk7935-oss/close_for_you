@@ -24,6 +24,9 @@ data class SimplePopup(
 ) {
     /** Same popup later: same window, same root kind, same structure under the root. */
     val fingerprint: String get() = "${snapshot.token.windowId}:${root.kind}:${snapshot.token.structureDigest}"
+
+    /** Same popup while it stays on screen: same window and [PopupRoot.key], whatever repaints inside. */
+    val coarseKey: String get() = "${snapshot.token.windowId}:${root.key}"
 }
 
 /**
