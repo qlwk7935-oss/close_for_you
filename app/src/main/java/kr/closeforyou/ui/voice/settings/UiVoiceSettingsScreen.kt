@@ -28,6 +28,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.rememberUpdatedState
@@ -60,6 +61,7 @@ import kr.closeforyou.core.contract.PopupRuleRepository
 import kr.closeforyou.core.model.ChoiceKind
 import kr.closeforyou.core.model.PopupRule
 import kr.closeforyou.core.model.RuleKey
+import kr.closeforyou.simpleclose.SharedPrefsRememberedPopups
 import kr.closeforyou.simpleclose.SimpleCloseEngineFeature
 import kr.closeforyou.ui.voice.command.AndroidMicrophoneAccess
 import kr.closeforyou.ui.voice.command.SpeakButtonPolicy
@@ -145,8 +147,12 @@ fun UiVoiceSettingsRoute(
         microphoneDenied = !granted
         microphoneState = micState()
     }
+    // F22-2 E: the engine's own remembered popups (C's store), counted on every return to this screen.
+    val engineRemembered = remember { SharedPrefsRememberedPopups(context) }
+    var engineRememberedCount by remember { mutableIntStateOf(engineRemembered.all().size) }
     // The person may change the permission in system settings and come back.
     LifecycleResumeEffect(Unit) {
+        engineRememberedCount = engineRemembered.all().size
         microphoneState = micState()
         now = clock.millis()
         serviceOn = setupStatus.serviceEnabled()
@@ -163,6 +169,11 @@ fun UiVoiceSettingsRoute(
         coreAllowedPackages = coreSettings.allowedPackages,
         // Plan-B engine: it works whenever its service is on (A's start/pause is in the developer screen).
         collectionEnabled = if (SimpleCloseEngineFeature.enabled) serviceOn else coreSettings.collectionEnabled,
+        engineRememberedCount = engineRememberedCount.takeIf { SimpleCloseEngineFeature.enabled },
+        onClearEngineRemembered = {
+            engineRemembered.clear()
+            engineRememberedCount = 0
+        },
         rules = rules,
         appName = { appNames[it] ?: unknownApp },
         onAutoCloseChange = preferences::setAutoClose,
@@ -247,6 +258,12 @@ fun UiVoiceSettingsScreen(
     onOpenCoreSettings: (() -> Unit)? = null,
     /** [처음 설정 다시 하기]; null hides it. */
     onRestartSetup: (() -> Unit)? = null,
+    /**
+     * F22-2 E (F12 REVOKE_RULE): how many popups the simple close engine remembers ("앞으로 항상 닫기" on an X,
+     * [kr.closeforyou.simpleclose.RememberedPopups]); null hides the line. [모두 해제] forgets them all.
+     */
+    engineRememberedCount: Int? = null,
+    onClearEngineRemembered: () -> Unit = {},
 ) {
     var confirmDeleteAll by rememberSaveable { mutableStateOf(false) }
     Column(
@@ -263,7 +280,8 @@ fun UiVoiceSettingsScreen(
             Box(Modifier.semantics(mergeDescendants = true) { liveRegion = LiveRegionMode.Polite }) { ServiceStateBox(serviceOn) }
             if (!serviceOn) {
                 val appName = stringResource(R.string.app_name)
-                HelpText(stringResource(R.string.ui_setup_service_how, appName))
+                // F22-2 E (onboarding F1~F8 feedback, as on the first-run page since LG 10/31): no "how" line above
+                // the button; [서비스 켜기] opens the guide that says it.
                 BrandButton(stringResource(R.string.ui_setup_service_turn_on), onOpenServiceSettings)
                 if (serviceOpenFailed) BodyText(stringResource(R.string.ui_setup_service_open_failed, appName))
             }
@@ -395,6 +413,19 @@ fun UiVoiceSettingsScreen(
                 stringResource(R.string.ui_settings_rules_delete_all_failed),
                 modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
             )
+        }
+
+        if (engineRememberedCount != null) {
+            // Hashes and places only are kept, so they are counted, not listed by name; all go at once.
+            Text(
+                stringResource(R.string.ui_settings_engine_remembered, engineRememberedCount),
+                modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
+            )
+            if (engineRememberedCount > 0) {
+                OutlinedButton(onClick = onClearEngineRemembered, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) {
+                    Text(stringResource(R.string.ui_settings_engine_remembered_clear))
+                }
+            }
         }
 
         if (onRestartSetup != null) {

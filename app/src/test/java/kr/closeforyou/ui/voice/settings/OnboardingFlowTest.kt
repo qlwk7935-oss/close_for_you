@@ -355,7 +355,7 @@ class ServiceGuideTextTest {
 
     /** The service's name in system settings is A's app_name, so the guide takes it as an argument. */
     @Test fun guideNamesTheAppThroughAnArgument() {
-        listOf("ui_setup_guide_find", "ui_setup_guide_find_talkback", "ui_setup_service_how", "ui_setup_service_open_failed").forEach {
+        listOf("ui_setup_guide_find", "ui_setup_guide_find_talkback", "ui_setup_service_open_failed").forEach {
             assertTrue(it, text(it).contains("%1\$s"))
             assertFalse(it, text(it).contains("팝업처리도우미"))
         }

@@ -302,7 +302,6 @@
     <string name="ui_setup_service_local">화면 내용은 휴대폰 밖으로 보내지 않아요.</string>
     <string name="ui_setup_service_never_press">결제, 구매, 동의, 구독, 삭제 같은 중요한 버튼은 절대 대신 누르지 않아요.</string>
     <string name="ui_setup_service_excluded">은행·결제 앱과 보호된 화면은 살펴보지 않아요.</string>
-    <string name="ui_setup_service_how">서비스 켜기를 누르면 어디서 무엇을 누를지 먼저 알려 드리고 휴대폰 접근성 설정을 열어요. 목록에서 %1$s 항목을 켠 뒤 뒤로 가기로 돌아오면 켜졌는지 확인해요.</string>
     <string name="ui_setup_service_turn_on">서비스 켜기</string>
     <string name="ui_setup_service_state_off">접근성 서비스: 꺼짐</string>
     <string name="ui_setup_service_state_on">접근성 서비스: 켜짐</string>
@@ -359,6 +358,9 @@
     <string name="ui_position_top">위쪽</string>
     <string name="ui_position_middle">가운데</string>
     <string name="ui_position_bottom">아래쪽</string>
+    <!-- F22: 단순 닫기 엔진이 "앞으로 항상 닫기"로 기억한 팝업(해시만 저장해 이름 없이 개수만) -->
+    <string name="ui_settings_engine_remembered">팝업처리도우미가 \'앞으로 항상 닫기\'로 기억한 팝업: %1$d개</string>
+    <string name="ui_settings_engine_remembered_clear">기억한 팝업 모두 해제</string>
     <!-- F19: 도와줄 앱을 아직 안 골랐을 때 설정 맨 위 -->
     <string name="ui_help_apps_unset_warning">아직 도와줄 앱을 고르지 않아서 지금은 어떤 앱의 팝업도 찾지 않아요.</string>
 </resources>
