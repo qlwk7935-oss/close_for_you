@@ -1,0 +1,71 @@
+# 단순 닫기 엔진 (플랜 B) — C 메모
+
+- 담당 C(재호), 브랜치 `c/simple-close-engine` (← origin/main 365a784), 2026-10-31.
+- 근거: AGENTS.md 6-0 시연 모드, 9장 C 11/1 "크롬 1개 사이트에서 감지 → 선택 → 닫힘".
+- 상태: **JVM 시험만 통과. 실기기 미검증.** A·B·D·core 코드는 바꾸지 않았다(새 파일만).
+
+## 1. 무엇인가
+
+우리 앱(`kr.closeforyou`) 안의 **두 번째 접근성 서비스** "팝업처리도우미 (단순 엔진)". debug 빌드에만 선언된다
+(`app/src/debug/AndroidManifest.xml`). 접근성 설정에서 **"닫아줄게"(A)와 둘 중 하나만 켠다.**
+
+```
+창 이벤트(도와줄 앱) → 300ms 뒤 활성 창 트리 읽기(보이는 노드만)
+→ 팝업 루트 찾기: ① Dialog 클래스 노드(크롬 role=dialog → android.app.AlertDialog)
+                 ② 같은 앱의 큰 창 위에 뜬 작은 대화상자 창
+                 ③ 화면을 덮는 클릭 가능한 배경(leaf) + 그 옆/안의 카드
+→ 루트 안 글자·버튼으로 PopupAnalysis 만들기 → B DecisionPopupClassifier 그대로
+→ 결정: 결정·사기 → 설명만 / 프리셋이 닫는 종류 + 자동 닫기 스위치 + 닫기 버튼 1개 → 바로 클릭
+        / 그 밖(쿠폰·공지·판단 불가·버튼 0개 또는 2개 이상) → C 선택 창
+→ 클릭 직전 같은 루트·같은 이름·같은 역할인지 다시 읽기 → ACTION_CLICK 1회(클릭 불가면 루트 안 조상까지만)
+→ 1.5초 뒤 다시 읽기: 같은 지문 없음 → 닫았어요 / 있음 → 확인하지 못했어요 / 다른 앱 → LEFT_APP 문장
+```
+
+## 2. 파일
+
+| 위치 | 역할 |
+|---|---|
+| `simpleclose/SimpleCloseEngineFeature.kt` (main) | 스위치 한 곳: `enabled`, `demoLabelRulesV2`, `helpAllAppsWhenUnset`, 시간 상수 |
+| `simpleclose/SimpleLabelRules.kt` | 공용 `ButtonLabelRules` 먼저 → 시연 v2("○○ 닫기", "웹으로 볼래요", "배경을 눌러 닫기") → 금지어는 항상 우선. `SimpleLabelPolicy`로 C 프롬프트에 꽂음 |
+| `simpleclose/PopupRootFinder.kt` | 팝업 루트 ①②③ (순수) |
+| `simpleclose/CloseButtonFinder.kt` | 루트 안 클릭 가능 노드 → `CloseCandidate`(id `node:<path>`). 이름 없는 클릭 칸은 안쪽 글자로 이름 |
+| `simpleclose/SimplePopupAnalysis.kt` | 노드 → `PopupSnapshot`/`PopupAnalysis` 어댑터, 지문 |
+| `simpleclose/SimpleCloseDecider.kt` | AUTO_CLOSE / ASK / DENY_DECISION / DENY_SUSPICIOUS. 동의는 `UiVoiceSettings.autoCloseKinds(live = true)` |
+| `simpleclose/SimpleAppAllowance.kt` | "도와줄 앱" 설정 해석 + 시스템·권한 패키지 제외 |
+| `simpleclose/SimpleTrace.kt` | 로그 코드(enum만) |
+| `debug/.../simpleclose/SimpleTreeCollector.kt` | Android 노드 → DTO, path로 다시 찾기 |
+| `debug/.../simpleclose/SimpleCloseAccessibilityService.kt` | 서비스 본체 + C 부품 조립 |
+| `debug/res/xml/ui_simple_close_service.xml`, `debug/res/values/ui_voice_debug_strings.xml` | 서비스 설정·이름 |
+
+## 3. 끝까지 지키는 것 (6-0)
+
+- 금지어(구매·결제·주문·동의·허용·권한·설치·구독·삭제·로그인·가입·쿠폰 받기·자세히·오늘 하루·보지 않기·취소…)가 든 버튼은 **어떤 모드에서도 안 누른다.** "○○ 닫기" 형태만 "설치"를 설명어로 허용("앱설치 안내 레이어 닫기").
+- USER_DECISION·사기 의심은 B 판단 그대로 설명만(`SpeechHandlingListener` DENY 문장).
+- 라벨 없는 X는 후보가 아니다(선택 창에서 "대신 닫을 수 없어요").
+- 클릭 1회, 재시도·좌표 탭 없음. 클릭 직전 재확인.
+- 로그는 `CfySimple` 태그에 enum 이름만. 화면 글자·패키지 원값 없음.
+
+## 4. 시연 모드 완화 (PR에 "시연 모드 완화")
+
+- 라벨 v2(위), 처음 보는 팝업도 프리셋+스위치면 묻지 않고 닫기(A AutoEligibility 없음), 도와줄 앱 미선택 시 모든 앱.
+- 끄려면 `SimpleCloseEngineFeature`의 상수를 false로.
+
+## 5. LG 확인 순서 (메인 세션)
+
+1. `adb install -r app/build/outputs/apk/debug/app-debug.apk`
+2. 설정 → 접근성 → "닫아줄게" **끄기** → "팝업처리도우미 (단순 엔진)" **켜기**. (TalkBack은 켜 둠)
+3. 우리 앱 처음 설정에서 프리셋 선택 + 자동 닫기 스위치 ON (바로 닫기를 보려면). 끄면 모두 선택 창.
+4. `adb logcat -s CfySimple` 띄워 두기.
+5. 크롬 시크릿 탭 → `m.11st.co.kr`.
+6. 기대 로그: `SERVICE_CONNECTED` → `DETECTED_ALERTDIALOG` → `CLASSIFIED_*` → `BLOCKED_FORBIDDEN`(앱에서 확인) → `CANDIDATE_FOUND` → `DECIDED_ASK`(닫기 버튼 2개) → `ASKED` → 선택 창 "'앱설치 안내 레이어 닫기' 버튼 눌러 주기" / "'모바일 웹으로 볼래요' 버튼 눌러 주기" → 두 번 탭 → `USER_CHOSE_PRESS` → `CLICKED` → `CLOSED_CONFIRMED` + "닫았어요".
+7. 옥션 `m.auction.co.kr`(봇 확인 화면이 아니면): `DETECTED_ALERTDIALOG` → `CLASSIFIED_AD` → `DECIDED_AUTO_CLOSE` → `CLICKED` → `CLOSED_CONFIRMED` → "광고를 닫았어요".
+8. 안 되면 `NO_POPUP_ROOT`(루트 못 찾음) / `TREE_UNAVAILABLE`(크롬이 웹 노드를 안 줌) / `SKIPPED_NOT_ALLOWED_APP`(도와줄 앱 설정) 중 어느 코드에서 멈추는지.
+
+## 6. 남은 위험·미확인
+
+- 크롬이 실기기에서 `AlertDialog` 노드를 주는지(10/30 LG 확인됨), 두 번째 서비스에서도 주는지.
+- 두 서비스를 동시에 켜면 이벤트·선택 창이 겹친다 — 하나만 켜기.
+- `rootInActiveWindow`가 크롬 큰 페이지에서 2,500 노드 한도 안에 팝업을 포함하는지(네이버).
+- B main 분류가 11번가 설치 시트를 광고로 보지 않아(판단 불가) 묻는다 — B 브랜치 `feature/decision-web-overlay` 병합 뒤 광고 → 바로 닫기로 바뀜.
+- 올리브영 ③ 덮개 규칙은 덤프 구조 설명만으로 짠 것. 실제 노드 구조 확인 필요.
+- 선택 창 띄운 뒤 팝업이 사라졌을 때(사용자가 직접 닫음) 창 닫기: 다음 창 이벤트에서 `POPUP_GONE_PROMPT_DISMISSED`.

@@ -53,4 +53,8 @@
     <string name="ui_debug_voice_not_understood">명령을 알아듣지 못했어요. 다시 눌러 말해 주세요.</string>
     <string name="ui_debug_voice_cannot_press">이 팝업은 대신 누를 버튼이 없어요. (명령 %1$s)</string>
     <string name="ui_debug_voice_not_here">%1$s 명령은 아직 C 화면에서 처리하지 않아요.</string>
+
+    <!-- C 단순 닫기 엔진 (플랜 B, debug 전용 두 번째 접근성 서비스) -->
+    <string name="ui_simple_close_service_label">팝업처리도우미 (단순 엔진)</string>
+    <string name="ui_simple_close_service_description">시연용 단순 닫기 엔진입니다. 도와줄 앱의 팝업을 찾아 광고는 설정대로 닫고, 그 밖에는 선택 창으로 물어봅니다. 결제·동의·권한 같은 중요한 버튼은 대신 누르지 않습니다. 닫아줄게 서비스와 함께 켜지 마세요.</string>
 </resources>

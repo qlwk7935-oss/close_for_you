@@ -1,0 +1,116 @@
+package kr.closeforyou.simpleclose
+
+import android.accessibilityservice.AccessibilityService
+import android.graphics.Rect
+import android.view.WindowManager
+import android.view.accessibility.AccessibilityNodeInfo
+import android.view.accessibility.AccessibilityWindowInfo
+import kotlinx.collections.immutable.toPersistentSet
+import kr.closeforyou.core.model.NodeAction
+import kr.closeforyou.core.model.NodeSnapshot
+import kr.closeforyou.core.model.ScreenBounds
+
+/** One read of the active window's tree as DTOs. Framework nodes are released before it returns. */
+class TreeRead(
+    val packageName: String,
+    val windowId: Int,
+    val nodes: List<NodeSnapshot>,
+    val screen: ScreenBounds,
+    /** The active window is a bounded dialog window over a larger window of the same app. */
+    val activeWindowBounded: Boolean,
+)
+
+/**
+ * Reads `rootInActiveWindow` into [NodeSnapshot]s with B's path form ("0/i/j"), visible nodes only
+ * (`isVisibleToUser`; a zero-size node is kept out by [PopupRootFinder.isVisible] as well). The
+ * walk stops at [SimpleCloseEngineFeature.MAX_NODES]; Chrome pages are large, but a popup's dialog
+ * node is a child of the WebView near the top of its subtree. Nothing is logged here.
+ */
+class SimpleTreeCollector(private val service: AccessibilityService) {
+    fun read(): TreeRead? {
+        val root = service.rootInActiveWindow ?: return null
+        val windows = mutableListOf<AccessibilityWindowInfo>()
+        try {
+            val packageName = root.packageName?.toString() ?: return null
+            val screen = screenBounds()
+            windows += service.windows.orEmpty()
+            val nodes = ArrayList<NodeSnapshot>(256)
+            walk(root, "0", 0, nodes)
+            return TreeRead(packageName, root.windowId, nodes, screen, activeWindowBounded(windows, root.windowId, packageName, screen))
+        } catch (e: RuntimeException) {
+            // A stale node or a binder failure: this read is simply unavailable.
+            return null
+        } finally {
+            windows.forEach(::release)
+            release(root)
+        }
+    }
+
+    /** Follows a path from the active root to the live node, or null when the tree changed. Caller releases. */
+    fun nodeAt(path: String): AccessibilityNodeInfo? {
+        val root = service.rootInActiveWindow ?: return null
+        val indices = path.split('/').drop(1).map { it.toIntOrNull() ?: return null }
+        var node = root
+        for (index in indices) {
+            val child = try { node.getChild(index) } catch (e: RuntimeException) { null }
+            release(node)
+            node = child ?: return null
+        }
+        return node
+    }
+
+    private fun walk(node: AccessibilityNodeInfo, path: String, depth: Int, out: MutableList<NodeSnapshot>) {
+        if (out.size >= SimpleCloseEngineFeature.MAX_NODES || depth > SimpleCloseEngineFeature.MAX_DEPTH) return
+        if (node.isVisibleToUser) {
+            val bounds = Rect().also(node::getBoundsInScreen)
+            val ids = node.actionList.map { it.id }
+            out += NodeSnapshot(
+                path = path,
+                viewId = node.viewIdResourceName,
+                className = node.className?.toString(),
+                text = node.text?.toString(),
+                contentDescription = node.contentDescription?.toString(),
+                clickable = node.isClickable,
+                enabled = node.isEnabled,
+                bounds = ScreenBounds(bounds.left, bounds.top, maxOf(bounds.right, bounds.left), maxOf(bounds.bottom, bounds.top)),
+                actions = buildSet {
+                    if (AccessibilityNodeInfo.ACTION_CLICK in ids) add(NodeAction.CLICK)
+                    if (AccessibilityNodeInfo.ACTION_DISMISS in ids) add(NodeAction.DISMISS)
+                }.toPersistentSet(),
+            )
+        }
+        for (index in 0 until node.childCount) {
+            val child = node.getChild(index) ?: continue
+            try {
+                walk(child, "$path/$index", depth + 1, out)
+            } finally {
+                release(child)
+            }
+        }
+    }
+
+    private fun activeWindowBounded(windows: List<AccessibilityWindowInfo>, activeId: Int, packageName: String, screen: ScreenBounds): Boolean {
+        val screenArea = screen.width.toLong() * screen.height
+        if (screenArea <= 0) return false
+        val active = windows.firstOrNull { it.id == activeId } ?: return false
+        val activeBounds = Rect().also(active::getBoundsInScreen)
+        val activeArea = activeBounds.width().toLong() * activeBounds.height()
+        if (activeArea.toDouble() / screenArea >= 0.96) return false
+        return windows.any { other ->
+            other.id != activeId && other.type == AccessibilityWindowInfo.TYPE_APPLICATION &&
+                other.root?.let { r -> val same = r.packageName?.toString() == packageName; release(r); same } == true &&
+                Rect().also(other::getBoundsInScreen).let { it.width().toLong() * it.height() > activeArea }
+        }
+    }
+
+    private fun screenBounds(): ScreenBounds {
+        val bounds = service.getSystemService(WindowManager::class.java).maximumWindowMetrics.bounds
+        return ScreenBounds(bounds.left, bounds.top, bounds.right, bounds.bottom)
+    }
+
+    @Suppress("DEPRECATION")
+    private fun release(node: AccessibilityNodeInfo) { node.recycle() }
+
+    @Suppress("DEPRECATION")
+    private fun release(window: AccessibilityWindowInfo) { window.recycle() }
+}
