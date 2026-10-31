@@ -20,6 +20,25 @@ object SimpleAppAllowance {
         "com.samsung.android.permissioncontroller", "com.lge.permissioncontroller",
     )
 
+    /** Cheap event scheduling filter only. Passing this never authorizes node collection.
+     * No PackageManager/label lookup, saved metadata or allowed-result cache. */
+    internal fun isInScope(
+        packageName: String?,
+        ownPackage: String,
+        settings: UiVoiceSettings,
+        coreAllowed: Set<String>,
+        inputMethods: Set<String> = emptySet(),
+    ): Boolean {
+        if (packageName.isNullOrBlank() || !PACKAGE.matches(packageName) || packageName == ownPackage ||
+            packageName in NEVER || packageName in inputMethods || packageName in settings.helpAppsExcluded) return false
+        if (SensitiveAppRules.looksSensitive(InstalledApp(packageName, ""))) return false
+        return when (settings.helpAppsMode) {
+            HelpAppsMode.ALL -> true
+            HelpAppsMode.CHOSEN -> packageName in coreAllowed || packageName in settings.pendingHelpPackages
+            null -> packageName in coreAllowed
+        }
+    }
+
     fun allows(
         packageName: String?,
         ownPackage: String,
@@ -28,15 +47,7 @@ object SimpleAppAllowance {
         inputMethods: Set<String> = emptySet(),
         lookup: (String) -> InstalledApp? = { null },
     ): Boolean {
-        if (packageName.isNullOrBlank() || !PACKAGE.matches(packageName) || packageName == ownPackage ||
-            packageName in NEVER || packageName in inputMethods || packageName in settings.helpAppsExcluded) return false
-        if (SensitiveAppRules.looksSensitive(InstalledApp(packageName, ""))) return false
-        val selected = when (settings.helpAppsMode) {
-            HelpAppsMode.ALL -> true
-            HelpAppsMode.CHOSEN -> packageName in coreAllowed || packageName in settings.pendingHelpPackages
-            null -> packageName in coreAllowed
-        }
-        if (!selected) return false
+        if (packageName == null || !isInScope(packageName, ownPackage, settings, coreAllowed, inputMethods)) return false
         val app = try { lookup(packageName) }
         catch (cancelled: CancellationException) { throw cancelled }
         catch (_: Exception) { null } ?: return false

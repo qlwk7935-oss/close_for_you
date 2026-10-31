@@ -98,6 +98,17 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
         inputMethods, lookup = installedApps::find,
     )
 
+    private fun eventIsInScope(pkg: String?): Boolean = SimpleAppAllowance.isInScope(
+        pkg, packageName, preferences.current(), corePreferences.currentSettings().allowedPackages, inputMethods,
+    )
+
+    private val inspectionEvents = SimpleInspectionEvents(
+        jobs = { jobs }, promptShowing = { prompted != null }, lastInspection = { lastInspectAt },
+        now = SystemClock::uptimeMillis, appInScope = ::eventIsInScope,
+        onAccepted = { screenVersion += 1 }, inspect = ::inspect,
+        log = SimpleTraceSink { log.trace(it) },
+    )
+
     override fun onServiceConnected() {
         super.onServiceConnected()
         log = DebugSimpleLog(this)
@@ -130,43 +141,7 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
         val eventPackage = event.packageName?.toString()
         // Our own prompt window and TTS: never a popup to handle (not logged: it would drown the rest).
         if (eventPackage == packageName) return
-        if (!allowsApp(eventPackage)) {
-            log.trace(SimpleTrace.SKIPPED_NOT_ALLOWED_APP)
-            return
-        }
-        val expectedPackage = eventPackage ?: return
-        screenVersion += 1
-        // A press in progress: its confirmation must not be disturbed (LG 10/31 옥션: no CLOSED_CONFIRMED).
-        if (jobs.busy) return
-        // While the prompt is up only a rare re-read is needed (to notice the popup went away): the
-        // full tree read is what made swiping through our window sluggish (LG 10/31).
-        if (prompted != null && SystemClock.uptimeMillis() - lastInspectAt < SimpleCloseEngineFeature.PROMPT_RECHECK_MILLIS) return
-        if (event.eventType == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED) {
-            // Chrome repaints constantly: one throttled read, and never a restart of the chain (which
-            // kept the tree being read every 1~2 s for minutes, LG 10/31).
-            if (SystemClock.uptimeMillis() - lastInspectAt < SimpleCloseEngineFeature.CONTENT_CHANGE_READ_MILLIS) {
-                log.trace(SimpleTrace.CONTENT_READ_THROTTLED)
-                return
-            }
-            jobs.scheduleInspection {
-                delay(SimpleCloseEngineFeature.DEBOUNCE_MILLIS)
-                if (!jobs.busy && prompted == null) inspect(expectedPackage)
-            }
-            return
-        }
-        jobs.scheduleInspection {
-            delay(SimpleCloseEngineFeature.DEBOUNCE_MILLIS)
-            // A popup still animating is missed by the first read, and Chrome may send nothing more
-            // (LG 10/31: 40 s late): read again a few times, until something is found or handled.
-            for (wait in listOf(0L) + SimpleCloseEngineFeature.RECHECK_DELAYS_MILLIS) {
-                if (wait > 0) {
-                    log.trace(SimpleTrace.RECHECK_SCHEDULED)
-                    delay(wait)
-                }
-                if (jobs.busy || prompted != null) return@scheduleInspection
-                if (inspect(expectedPackage)) return@scheduleInspection
-            }
-        }
+        inspectionEvents.onEvent(eventPackage, event.eventType == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED)
     }
 
     /**
@@ -184,6 +159,8 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
                 null -> return true
             }
         }
+        // Full package/label authorization stays off main and is repeated for the actual root
+        // before traversal. Event scope admission is not collection permission.
         val read = withContext(Dispatchers.Default) { collector.read(expectedPackage, ::allowsApp) }
         if (read == null) {
             log.trace(SimpleTrace.TREE_UNAVAILABLE)
