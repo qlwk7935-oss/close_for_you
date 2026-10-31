@@ -68,13 +68,26 @@ data class FocusCandidate(val bounds: ScreenBounds, val leftover: Boolean, val h
  * 2. ([fallback]) an item wholly above the old popup, even if it shares words with it ([FocusTargetKind.ABOVE_OLD_POPUP]);
  * 3. ([fallback]) the WebView itself, named or not;
  * 4. ([fallback]) the first named item outside the WebView: Chrome's toolbar ([Pick.toolbar], the caller searches).
- * Without [fallback] (the first try, right after the close) only 1 is used, and the caller tries again
- * a moment later with it (the page's DOM may not be back yet). Pure; JVM tested.
+ * Without [fallback] only 1 is used.
+ *
+ * [beforeClick] (F12, LG 10/31 23:0x: with the person's press, TalkBack still began reading the popup
+ * again after the close): right before the press, while the popup is still there, the focus goes
+ * straight to a place that will survive the close and is surely not the popup: an item wholly above
+ * it, else the WebView itself, else the toolbar. Page items beside or below the popup are skipped then.
+ * Pure; JVM tested.
  */
 object PageFocusRules {
     data class Pick(val index: Int?, val kind: FocusTargetKind, val webViewRoot: Boolean = false, val toolbar: Boolean = false)
 
-    fun pick(candidates: List<FocusCandidate>, webViewPresent: Boolean, fallback: Boolean = true): Pick {
+    fun pick(candidates: List<FocusCandidate>, webViewPresent: Boolean, fallback: Boolean = true, beforeClick: Boolean = false): Pick {
+        if (beforeClick) {
+            val above = candidates.withIndex().filter { it.value.above }.minByOrNull { it.value.bounds.top }
+            return when {
+                above != null -> Pick(above.index, FocusTargetKind.ABOVE_OLD_POPUP)
+                webViewPresent -> Pick(null, FocusTargetKind.WEBVIEW_ROOT, webViewRoot = true)
+                else -> Pick(null, FocusTargetKind.TOOLBAR_ITEM, toolbar = true)
+            }
+        }
         val best = candidates.withIndex().filter { !it.value.leftover }.minByOrNull { it.value.bounds.top }
         if (best != null) return Pick(best.index, if (best.value.heading) FocusTargetKind.PAGE_HEADING else FocusTargetKind.PAGE_ITEM)
         if (!fallback) return Pick(null, if (candidates.isEmpty()) FocusTargetKind.NONE else FocusTargetKind.OVERLAPS_OLD_POPUP)

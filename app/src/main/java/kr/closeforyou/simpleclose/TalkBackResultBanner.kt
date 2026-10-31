@@ -31,8 +31,11 @@ class TalkBackResultBanner(private val service: AccessibilityService) {
     /** TalkBack (touch exploration) is on: results should go through it. */
     fun talkBackOn(): Boolean = service.getSystemService(AccessibilityManager::class.java)?.isTouchExplorationEnabled == true
 
-    /** Shows [sentence]; false when the window could not be added (the caller then uses its TTS). */
-    fun show(sentence: String): Boolean {
+    /**
+     * Shows [sentence]; false when the window could not be added (the caller then uses its TTS).
+     * [onShown] says, once the text is set, whether the card is really on screen (debug log, F12).
+     */
+    fun show(sentence: String, onShown: (Boolean) -> Unit = {}): Boolean {
         dismiss()
         val density = service.resources.displayMetrics.density
         val view = TextView(service).apply {
@@ -61,7 +64,10 @@ class TalkBackResultBanner(private val service: AccessibilityService) {
             windowManager.addView(view, params)
             shown = view
             // A live region speaks a change, not the first layout: set the text once attached.
-            view.post { view.text = sentence }
+            view.post {
+                view.text = sentence
+                onShown(view.isAttachedToWindow && view.isShown)
+            }
             handler.postDelayed({ if (shown === view) dismiss() }, SHOW_MILLIS)
             true
         } catch (e: RuntimeException) {

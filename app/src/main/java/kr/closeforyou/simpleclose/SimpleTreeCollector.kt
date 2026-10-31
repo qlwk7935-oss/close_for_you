@@ -126,7 +126,7 @@ class SimpleTreeCollector(private val service: AccessibilityService) {
      * read the popup again). Nothing is clicked. Returns what was focused (debug log) and whether the
      * action was accepted. Device unverified.
      */
-    fun focusPageItem(exclude: PopupMemory, fallback: Boolean = true): Pair<FocusTargetKind, Boolean> {
+    fun focusPageItem(exclude: PopupMemory, fallback: Boolean = true, beforeClick: Boolean = false): Pair<FocusTargetKind, Boolean> {
         val root = service.rootInActiveWindow ?: return FocusTargetKind.NONE to false
         val live = mutableListOf<AccessibilityNodeInfo>()
         var webView: AccessibilityNodeInfo? = null
@@ -150,7 +150,7 @@ class SimpleTreeCollector(private val service: AccessibilityService) {
                 }
             }
             visit(webView ?: root, 0)
-            val pick = PageFocusRules.pick(candidates, webViewPresent = webView != null, fallback = fallback)
+            val pick = PageFocusRules.pick(candidates, webViewPresent = webView != null, fallback = fallback, beforeClick = beforeClick)
             pick.index?.let { return pick.kind to live[it].performAction(AccessibilityNodeInfo.ACTION_ACCESSIBILITY_FOCUS) }
             if (pick.webViewRoot && webView?.performAction(AccessibilityNodeInfo.ACTION_ACCESSIBILITY_FOCUS) == true) {
                 return pick.kind to true

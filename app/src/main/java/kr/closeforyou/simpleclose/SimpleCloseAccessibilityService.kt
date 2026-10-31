@@ -304,8 +304,8 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
      * A confirmed close. [moveFocus] (the person's own press, or TalkBack's focus was in the popup):
      * first, demo mode, at once, TalkBack's focus leaves the popup: when our window or the popup went
      * away it fell back to the popup text still in the DOM and TalkBack read it again (LG 10/31). A
-     * strict try right after the close, then one with fallbacks a moment later ([PageFocusRules]), so it
-     * always lands somewhere outside. Then the sentence the person expects ("광고를 닫았어요"), not
+     * focus already put on the page before the press is kept; otherwise it is moved at once with every
+     * fallback ([PageFocusRules]), so it always lands somewhere outside. Then the sentence the person expects ("광고를 닫았어요"), not
      * waited on: with TalkBack on through TalkBack's own queue ([TalkBackResultBanner], F11), else our TTS.
      */
     private suspend fun speakClosedThenFocusPage(popup: SimplePopup, moveFocus: Boolean) {
@@ -313,21 +313,29 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
         announcer.stop()
         if (SimpleCloseEngineFeature.FOCUS_PAGE_AFTER_CLOSE && moveFocus) {
             val memory = PopupMemory.of(popup)
-            var focus = withContext(Dispatchers.Default) { collector.focusPageItem(memory, fallback = false) }
-            if (!focus.second) {
-                log.trace(SimpleTrace.FOCUS_RETRY)
-                delay(SimpleCloseEngineFeature.FOCUS_RETRY_MILLIS)
-                focus = withContext(Dispatchers.Default) { collector.focusPageItem(memory, fallback = true) }
+            // F12: the focus put on the page before the press is still outside the old popup: leave it
+            // (moving again makes TalkBack read once more). Else move now, at once, with every fallback
+            // (the 0.3 s retry of F9 let TalkBack start the popup text again).
+            val inside = withContext(Dispatchers.Default) { collector.accessibilityFocusInside(popup.root.bounds) }
+            if (inside == false) {
+                log.trace(SimpleTrace.FOCUS_KEPT_ON_PAGE)
+            } else {
+                val focus = withContext(Dispatchers.Default) { collector.focusPageItem(memory, fallback = true) }
+                log.trace(SimpleTrace.focusTarget(focus.first))
+                log.trace(if (focus.second) SimpleTrace.FOCUS_MOVED_TO_PAGE else SimpleTrace.FOCUS_MOVE_FAILED)
             }
-            log.trace(SimpleTrace.focusTarget(focus.first))
-            log.trace(if (focus.second) SimpleTrace.FOCUS_MOVED_TO_PAGE else SimpleTrace.FOCUS_MOVE_FAILED)
         }
         val kind = AutoDecisionSpeech.kindOf(popup.analysis.classification)
         val sentence = getString(R.string.ui_auto_closed_one, getString(AutoDecisionSpeech.objectRes(kind)))
         val banner = resultBanner
-        if (banner != null && banner.talkBackOn() && banner.show(sentence)) {
-            log.trace(SimpleTrace.RESULT_VIA_TALKBACK)
-            return
+        if (banner != null && banner.talkBackOn()) {
+            // F12: after a focus move TalkBack reads the focused item first; the card comes after it,
+            // as on the automatic path where the focus was left alone (LG 10/31: heard there, not here).
+            if (moveFocus) delay(SimpleCloseEngineFeature.RESULT_AFTER_FOCUS_MILLIS)
+            if (banner.show(sentence) { shown -> log.trace(if (shown) SimpleTrace.RESULT_BANNER_SHOWN else SimpleTrace.RESULT_BANNER_NOT_SHOWN) }) {
+                log.trace(SimpleTrace.RESULT_VIA_TALKBACK)
+                return
+            }
         }
         log.trace(SimpleTrace.RESULT_VIA_TTS)
         scope.launch { announcer.announce(AnnouncementRequest(null, AnnouncementKind.ACTION_RESULT, sentence)) }
@@ -404,8 +412,10 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
         val token = popup.analysis.token
         run {
             if (SimpleCloseEngineFeature.FOCUS_PAGE_BEFORE_CLICK && moveFocus) {
-                // Before the re-check, so nothing sits between the re-check and the click.
-                val (_, moved) = withContext(Dispatchers.Default) { collector.focusPageItem(PopupMemory.of(popup)) }
+                // Before the re-check, so nothing sits between the re-check and the click. F12: straight to
+                // a place that survives the close (above the popup, the WebView, the toolbar), never beside it.
+                val (kind, moved) = withContext(Dispatchers.Default) { collector.focusPageItem(PopupMemory.of(popup), beforeClick = true) }
+                log.trace(SimpleTrace.preClickTarget(kind))
                 log.trace(if (moved) SimpleTrace.FOCUS_PRE_CLICK_MOVED else SimpleTrace.FOCUS_PRE_CLICK_FAILED)
             }
             val stillThere = withContext(Dispatchers.Default) {

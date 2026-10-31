@@ -89,4 +89,24 @@ class PopupMemoryTest {
         FocusTargetKind.entries.forEach { SimpleTrace.focusTarget(it) }
         AdHintMiss.entries.forEach { SimpleTrace.adHintMiss(it) }
     }
+
+    // ---- F12 (LG 10/31: after the person's press TalkBack began the popup text again) ----
+
+    @Test fun beforeTheClickTheFocusGoesAboveThePopupNotBesideIt() {
+        val beside = FocusCandidate(ScreenBounds(0, 1700, 300, 1800), leftover = false, heading = false)
+        val above = FocusCandidate(ScreenBounds(0, 900, 1080, 1000), leftover = false, heading = false, above = true)
+        val higher = FocusCandidate(ScreenBounds(0, 320, 1080, 420), leftover = false, heading = true, above = true)
+        assertEquals(PageFocusRules.Pick(2, FocusTargetKind.ABOVE_OLD_POPUP), PageFocusRules.pick(listOf(beside, above, higher), webViewPresent = true, beforeClick = true))
+    }
+
+    @Test fun beforeTheClickWithNothingAboveTheWebViewThenTheToolbar() {
+        val beside = listOf(FocusCandidate(ScreenBounds(0, 1700, 300, 1800), leftover = false, heading = false))
+        assertEquals(PageFocusRules.Pick(null, FocusTargetKind.WEBVIEW_ROOT, webViewRoot = true), PageFocusRules.pick(beside, webViewPresent = true, beforeClick = true))
+        assertEquals(PageFocusRules.Pick(null, FocusTargetKind.TOOLBAR_ITEM, toolbar = true), PageFocusRules.pick(beside, webViewPresent = false, beforeClick = true))
+    }
+
+    @Test fun preClickTraceNames() {
+        assertEquals(SimpleTrace.FOCUS_PRE_CLICK_WEBVIEW_ROOT, SimpleTrace.preClickTarget(FocusTargetKind.WEBVIEW_ROOT))
+        assertEquals(SimpleTrace.FOCUS_PRE_CLICK_NONE, SimpleTrace.preClickTarget(FocusTargetKind.PAGE_ITEM))
+    }
 }

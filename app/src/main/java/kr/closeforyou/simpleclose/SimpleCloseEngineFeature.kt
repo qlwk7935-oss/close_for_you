@@ -61,8 +61,11 @@ object SimpleCloseEngineFeature {
      */
     const val FOCUS_PAGE_BEFORE_CLICK = true
 
-    /** F9: a close whose first focus try found only popup leftovers tries again (with fallbacks) after this. */
-    const val FOCUS_RETRY_MILLIS = 300L
+    /**
+     * F12: after the person's own press, the result card waits this long after the focus move, so
+     * TalkBack has read the newly focused item and then says "닫았어요" (LG 10/31: it was not heard).
+     */
+    const val RESULT_AFTER_FOCUS_MILLIS = 600L
 
     /** F10: TalkBack focusing something in a helped app starts a read at once, at most this often. */
     const val FOCUS_EVENT_READ_MILLIS = 300L

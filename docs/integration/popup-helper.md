@@ -142,6 +142,18 @@ A 서비스(`CloseForYouAccessibilityService`)·`accessibility_service_config.xm
 | F10 | `DETECT_LATENCY_MS` 11번가 43296·옥션 5309, 우리 창 전에 TalkBack이 팝업을 두 번 읽음 | ① 서비스 설정에 `typeViewAccessibilityFocused` 추가: TalkBack이 도와줄 앱 안 노드에 포커스하면 디바운스 없이 즉시 1회 읽기(300ms 스로틀, 재확인 체인이 돌고 있으면 끊지 않음). ② 로그 분리: `DETECTED_BY_{WINDOW_EVENT,CONTENT_EVENT,RECHECK,TALKBACK_FOCUS}` + `DETECT_GAP_MS`(팝업 없음을 본 마지막 읽기 → 감지; 팝업이 실제로 뜬 뒤 걸린 시간의 상한) + 기존 `DETECT_LATENCY_MS`(첫 이벤트 → 감지, 페이지 로드부터라 과대) | 실기기 |
 | F11 | 옥션 자동 닫기 뒤 "광고를 닫았어요"(우리 TTS)가 TalkBack 낭독과 겹쳐 안 들림 | ① TalkBack 켜짐이면 결과 문장을 **TalkBack 큐로**: 작은 접근성 오버레이 카드(`TalkBackResultBanner`, 위쪽, 4초, 포커스 안 받음)에 polite live region으로 문장을 넣어 TalkBack이 자기 순서대로 읽게 함(`RESULT_VIA_TALKBACK`). 창을 못 띄우거나 TalkBack 꺼짐이면 기존 TTS(`RESULT_VIA_TTS`). `announceForAccessibility` 안 씀. 화면에도 글자가 보임(저시력). ② 자동 닫기: 누르기 전에 TalkBack 포커스가 팝업 안이었을 때만(`FOCUS_WAS_IN_POPUP`) 누르기 전·후 포커스 이동, 밖이면(`FOCUS_WAS_OUTSIDE/UNKNOWN`) 안 옮김 → 페이지 제목 낭독이 줄어듦. 사용자 선택 경로는 우리 창이 사라지므로 항상 옮김. 순서: 포커스 이동 → 결과 문장(polite라 TalkBack이 포커스 항목을 읽은 뒤 말함; 결과를 먼저 내고 포커스를 옮기면 포커스 낭독이 결과를 끊음) | 실기기(live region이 접근성 오버레이 창에서 TalkBack에 읽히는지가 핵심) |
 
+- **실측 10/31 23:0x (193c6b0, LG) → origin push됨.** ✅ F10: 11번가 `DETECTED_BY_CONTENT_EVENT`, TalkBack이 팝업을 1번만 읽고 우리 창. ✅ F11: 옥션 `DECIDED_AUTO_CLOSE → FOCUS_WAS_OUTSIDE → CLICKED → CLOSED_CONFIRMED → RESULT_VIA_TALKBACK`, "TalkBack 다 끝나고 '광고를 닫았어요' 들림". 🔺 F9: 11번가 사용자 누르기 `CLOSED_CONFIRMED 07.954 → FOCUS_RETRY → 08.279 FOCUS_TARGET_WEBVIEW_ROOT·FOCUS_MOVED_TO_PAGE → 08.337 RESULT_VIA_TALKBACK` — 닫은 뒤 TalkBack이 팝업 설명을 다시 읽기 시작하다 끊김, "닫았어요"는 안 들림.
+
+### 8-3. F12 (10/31 밤, JVM 시험만, 실기기 미검증)
+
+| 고친 것 | 파일 | 시험 |
+|---|---|---|
+| ① 누르기 직전 포커스를 **닫힌 뒤에도 남는 곳**으로 바로: 예전 팝업 위쪽 항목(가장 위) → WebView 자체 → 툴바. 팝업 옆·아래 항목은 그때는 안 고름(`PageFocusRules.pick(beforeClick = true)`), 로그 `FOCUS_PRE_CLICK_{ABOVE_OLD_POPUP,WEBVIEW_ROOT,TOOLBAR_ITEM,NONE}` | `PopupMemory.kt`, `SimpleTreeCollector.kt`, 서비스 | `PopupMemoryTest` 3개 |
+| ② 닫힌 뒤: TalkBack 포커스가 이미 예전 팝업 밖이면 **다시 옮기지 않음**(`FOCUS_KEPT_ON_PAGE`, 또 옮기면 한 번 더 읽음). 안이거나 모르면 **0.3초 재시도 없이** 즉시 모든 대체 단계로 이동. `FOCUS_RETRY` 삭제 | 서비스 | 실기기 |
+| ③ 결과 카드: 포커스를 옮긴 경로(사용자 누르기, 자동 닫기 중 포커스가 팝업 안이던 경우)는 0.6초 뒤 카드(`RESULT_AFTER_FOCUS_MILLIS`) → TalkBack이 포커스 항목을 읽은 다음 "닫았어요". 카드가 실제로 화면에 붙었는지 `RESULT_BANNER_SHOWN/NOT_SHOWN` | `TalkBackResultBanner.kt`, 서비스, `SimpleCloseEngineFeature.kt` | 실기기 |
+
+- 검증(F1~F12 한 빌드): 5개 Gradle 작업 통과, 단위 시험 debug 1031개·release 1016개 실패 0, lintDebug 오류 0(경고 12), INTERNET 0·새 권한 없음.
+
 - 잔여 노드 쪽 이벤트 무시: TalkBack이 무엇을 읽을지는 앱이 막을 수 없다. 대신 포커스를 잔여 노드 밖으로 옮기는 것(F9)이 할 수 있는 전부. 웹 페이지가 닫힌 팝업을 DOM에 `aria-hidden` 없이 남기는 한, 사용자가 스와이프로 다시 만날 수 있다(한계로 기록).
 - 선택 창 PROMPT도 TalkBack 큐로? 가능은 하다: 선택 창 자체(이미 접근성 오버레이)에 paneTitle이 있고 TalkBack이 창을 읽으므로, "안내 맡기기" ON이면 우리 TTS PROMPT를 끄고 paneTitle/첫 버튼 포커스 낭독에 맡기는 방식. 단, 지금 PROMPT는 TalkBack이 팝업을 읽는 도중 끊고 들어가야 시연이 빠르므로 polite로 바꾸면 늦어질 수 있다. F11 배너가 LG에서 잘 읽히면 같은 방식으로 옮길지 정하자(의견, 미구현).
 - 검증(F1~F11 한 빌드): 5개 Gradle 작업 통과, 단위 시험 debug 1028개·release 1013개 실패 0, lintDebug 오류 0(경고 12), 병합 매니페스트 INTERNET 0·새 권한 없음.
