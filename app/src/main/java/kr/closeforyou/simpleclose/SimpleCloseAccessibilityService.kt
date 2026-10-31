@@ -87,8 +87,6 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
     private var firstEventAt = 0L
     /** F10: the last read that found no popup (0 = none yet); the popup appeared after it. */
     private var lastNoRootAt = 0L
-    /** F10: which kind of read [inspect] is running now (set by [SimpleInspectionEvents] right before it). */
-    private var pendingTrigger = DetectTrigger.WINDOW_EVENT
     private var inputMethods: Set<String> = emptySet()
 
     /** The popup the prompt on screen is about, when each popup key was last seen, and keys already explained. */
@@ -115,11 +113,8 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
         onAccepted = {
             screenVersion += 1
             if (prompted == null && firstEventAt == 0L) firstEventAt = SystemClock.uptimeMillis()
-        },
-        inspect = ::inspect,
-        log = SimpleTraceSink { log.trace(it) },
-        onTrigger = { pendingTrigger = it },
-        onSearchEnded = { firstEventAt = 0L },
+        }, inspect = ::inspect,
+        log = SimpleTraceSink { log.trace(it) }, onSearchExhausted = { firstEventAt = 0L },
     )
 
     override fun onServiceConnected() {
@@ -132,6 +127,9 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
         scope.cancel()
         scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
         jobs = EngineJobs(scope)
+        inspectionEvents.resetConnection()
+        firstEventAt = 0L
+        lastNoRootAt = 0L
         serviceInfo = serviceInfo?.apply {
             flags = flags or AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS or AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS
         }
@@ -155,19 +153,19 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
         val eventPackage = event.packageName?.toString()
         // Our own prompt window and TTS: never a popup to handle (not logged: it would drown the rest).
         if (eventPackage == packageName) return
-        if (event.eventType == AccessibilityEvent.TYPE_VIEW_ACCESSIBILITY_FOCUSED) {
-            // F10: TalkBack focused something in the app, often the popup it is about to read.
-            inspectionEvents.onTalkBackFocus(eventPackage)
-            return
+        val kind = when (event.eventType) {
+            AccessibilityEvent.TYPE_VIEW_ACCESSIBILITY_FOCUSED -> SimpleInspectionEvent.TALKBACK_FOCUS
+            AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED -> SimpleInspectionEvent.CONTENT
+            else -> SimpleInspectionEvent.WINDOW
         }
-        inspectionEvents.onEvent(eventPackage, event.eventType == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED)
+        inspectionEvents.onEvent(eventPackage, kind)
     }
 
     /**
      * Reads the screen once (off the main thread) and acts on what it finds. Main thread. Returns
      * false only when nothing was there to act on (no tree, no popup root), so the caller may read again.
      */
-    private suspend fun inspect(expectedPackage: String): Boolean {
+    private suspend fun inspect(expectedPackage: String, trigger: DetectTrigger): Boolean {
         lastInspectAt = SystemClock.uptimeMillis()
         val shownBefore = prompted
         if (shownBefore != null) {
@@ -210,7 +208,7 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
         })
         // F10: first event -> here overstates when the page itself loaded first; the gap since the last
         // read that saw no popup bounds when the popup really appeared. Which trigger caught it, too.
-        log.trace(pendingTrigger.trace)
+        log.trace(trigger.trace)
         if (firstEventAt != 0L) log.latency("DETECT_LATENCY_MS", now - firstEventAt)
         if (lastNoRootAt != 0L) log.latency("DETECT_GAP_MS", now - lastNoRootAt)
         firstEventAt = 0L

@@ -164,6 +164,7 @@ A 서비스(`CloseForYouAccessibilityService`)·`accessibility_service_config.xm
 - 우진 시험 `SimpleInspectionEventsTest`의 시간 값(300ms 디바운스, 0.5/1/2/3초)은 F5에서 200ms·0.2/0.5/1/2/3초로 바뀐 상태라, 숫자를 `SimpleCloseEngineFeature` 상수에서 계산하도록만 바꿈(검사하는 안전 조건은 그대로). F10 시험 3개 추가(포커스 즉시 읽기, 스로틀·체인 안 끊음, 민감 앱·선택 창이면 안 읽음).
 - ⚠️ 동작 변화: 도와줄 앱을 고르지 않은 상태(처음 설정에서 [나중에 고르기])면 이제 크롬도 `SKIPPED_NOT_ALLOWED_APP`. 시연 기기는 처음 설정에서 "모든 앱" 또는 크롬을 골라 둘 것.
 - 검증(F1~F12 + #65): 5개 Gradle 작업 통과, 단위 시험 debug 1066개·release 1051개 실패 0, lintDebug 오류 0(경고 12), INTERNET 0·새 권한 없음.
+- #65 갱신(ab75a32) 재병합: `SimpleInspectionEvents`·시험과 서비스의 이벤트 분기·`inspect(expectedPackage, trigger)`·`resetConnection()`은 우진 버전(위의 `onTalkBackFocus`·`onTrigger`·`onSearchEnded`는 `onEvent(…, TALKBACK_FOCUS)`·trigger 매개변수·`onSearchExhausted`로 대체), F12(누르기 전 포커스, `FOCUS_KEPT_ON_PAGE`, 결과 카드 0.6초 뒤)는 우리 버전 유지.
 
 - 잔여 노드 쪽 이벤트 무시: TalkBack이 무엇을 읽을지는 앱이 막을 수 없다. 대신 포커스를 잔여 노드 밖으로 옮기는 것(F9)이 할 수 있는 전부. 웹 페이지가 닫힌 팝업을 DOM에 `aria-hidden` 없이 남기는 한, 사용자가 스와이프로 다시 만날 수 있다(한계로 기록).
 - 선택 창 PROMPT도 TalkBack 큐로? 가능은 하다: 선택 창 자체(이미 접근성 오버레이)에 paneTitle이 있고 TalkBack이 창을 읽으므로, "안내 맡기기" ON이면 우리 TTS PROMPT를 끄고 paneTitle/첫 버튼 포커스 낭독에 맡기는 방식. 단, 지금 PROMPT는 TalkBack이 팝업을 읽는 도중 끊고 들어가야 시연이 빠르므로 polite로 바꾸면 늦어질 수 있다. F11 배너가 LG에서 잘 읽히면 같은 방식으로 옮길지 정하자(의견, 미구현).
