@@ -265,7 +265,7 @@ internal object ManualDisplayContinuity {
     fun assess(original: PopupSnapshot, fresh: F9Scene, nativeOverlayId: Int, probe: ManualDisplayProbe? = null,
         listing: ManualDisplayListing = ManualDisplayListing.LISTED,
         demoBoundsCandidates: List<CloseCandidate>? = null,
-        originalActions: kr.closeforyou.accessibility.NativeNodeActions? = null): ManualDisplayVerdict {
+        originalActions: kr.closeforyou.accessibility.NativeNodeActions? = null, strictActions: Boolean = false): ManualDisplayVerdict {
         probe?.point = ManualDisplayPoint.COMPARISON
         fun reject(detail: ManualDisplayDetail, verdict: ManualDisplayVerdict = ManualDisplayVerdict.UNAVAILABLE): ManualDisplayVerdict {
             probe?.reject(detail); return verdict
@@ -287,9 +287,9 @@ internal object ManualDisplayContinuity {
             probe?.nodesChanged(original, fresh)
             return reject(ManualDisplayDetail.NODES_CHANGED, ManualDisplayVerdict.CHANGED)
         }
-        // Only a selected Debug Demo read has these metadata requirements. Ordinary strict
-        // reads (including Release) never infer action absence and keep their original policy.
-        if (demoBoundsCandidates != null) {
+        // Selected Debug Demo and pre-stabilized Debug presentation reads require the exact
+        // native sets, also on equal DTOs. Release keeps its original strict comparison.
+        if (demoBoundsCandidates != null || strictActions) {
             ManualDemoBoundsPolicy.nativeActionFailure(original, fresh, originalActions)?.let { reason ->
                 probe?.recordDemoBounds(reason)
                 return if (reason == ManualDemoBoundsReason.POLICY_NATIVE_ACTIONS_CHANGED)

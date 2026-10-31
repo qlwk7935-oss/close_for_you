@@ -152,7 +152,7 @@ class P01SamsungSequenceRegressionTest {
         })
         private val gate = ChoicePresentationGate(::now, { source.currentToken() == it }, barrier::permits,
             { true }, { baseline, checkpoint -> checkpoint(); EvidenceSnapshotComparison.firstMismatch(baseline, offered) == EvidenceMismatch.NONE }, {})
-        private val budget = ChoiceReviewBudget()
+        private val budget = ChoiceReviewBudget(boundGeometryRecovery = ManualPresentationStabilityFeature.enabled)
         private val flow = PopupChoiceFlow(wiring.source, object : EvidenceExtractor {
             override suspend fun extract(snapshot: PopupSnapshot): PopupAnalysis {
                 val analysis = wiring.extractor.extract(snapshot); check(gate.awaitReady(snapshot.token)); return analysis
@@ -225,10 +225,12 @@ class P01SamsungSequenceRegressionTest {
                         NodeAction.CLICK -> android.view.accessibility.AccessibilityNodeInfo.ACTION_CLICK
                         NodeAction.DISMISS -> android.view.accessibility.AccessibilityNodeInfo.ACTION_DISMISS
                     } }) }
-                    val displayRead = if (demoCandidates == null) scene else scene.copy(
+                    val exactNative = demoCandidates != null || ManualPresentationStabilityFeature.enabled
+                    val displayRead = if (!exactNative) scene else scene.copy(
                         nativeActions = NativeNodeActions.forNodeSummaries(scene.nodes, states(scene.nodes)))
                     ManualDisplayContinuity.assess(offered, displayRead, identity.window, probe, identity.listing, demoCandidates,
-                        if (demoCandidates == null) null else NativeNodeActions.forSnapshotSummaries(offered, states(offered.nodes)))
+                        if (!exactNative) null else NativeNodeActions.forSnapshotSummaries(offered, states(offered.nodes)),
+                        strictActions = ManualPresentationStabilityFeature.enabled)
                 }
             }, remove = {
                 valid = false; guarded.revoke(); lifetime.clear()
@@ -236,6 +238,132 @@ class P01SamsungSequenceRegressionTest {
             })
         }
     }
+    private fun actualTargetScene(r: Rig, snapshot: PopupSnapshot, nodes: List<NodeSnapshot> = snapshot.nodes) =
+        r.f.before.copy(packageName = snapshot.token.packageName, windowId = snapshot.token.windowId,
+            screen = snapshot.screenBounds, nodes = nodes, visiblePaths = nodes.map { it.path }.toSet(),
+            windows = snapshot.windows + WindowSnapshot(r.nativeId, WindowType.ACCESSIBILITY_OVERLAY,
+                snapshot.screenBounds, false, false, 4))
+
+    @Test fun reviewStableFirstHundredMillisDoesNotIgnoreTargetMovementAt130To140Millis() = runTest {
+        for (eventAt in listOf(130L, 135L, 140L)) {
+            val r = Rig(this); var reads = 0
+            val start = testScheduler.currentTime
+            val stable = requireNotNull(PrePresentationStability.collect(P01StabilityFixture.sample(0, r.now()), r::now,
+                { r.valid && r.barrier.ready }, { yield(); true }, { check ->
+                    check(); val captured = r.now(); advanceTimeBy(20)
+                    P01StabilityFixture.sample(++reads, captured)
+                }, contract = PresentationAssurance.OBSERVATION_ONLY_DEMO))
+            assertEquals(40L, testScheduler.currentTime - start)
+            assertTrue(r.show(stable.snapshot))
+            advanceTimeBy(eventAt - (testScheduler.currentTime - start)); runCurrent()
+            val changed = P01StabilityFixture.sample(9, r.now(), expanded = true).snapshot
+            val stops = r.order.count { it == "TTS_STOP" }
+            assertEquals(ManualDisplayVerdict.CHANGED, r.review(demoScene = actualTargetScene(r, changed)))
+            runCurrent(); assertFalse(r.guarded.isShowing); assertNull(r.rawToken)
+            assertTrue(r.order.count { it == "TTS_STOP" } > stops)
+            assertEquals(0, r.f.clicks); assertEquals(0, r.decisionCalls)
+        }
+    }
+    @Test fun reviewButtonsAndTextMoving135MillisAfterCShowStillRemovePromptAndNeverClick() = runTest {
+        val r = Rig(this); var reads = 0
+        val stable = requireNotNull(PrePresentationStability.collect(P01StabilityFixture.sample(0), r::now,
+            { true }, { yield(); true }, { P01StabilityFixture.sample(++reads, r.now()) }, contract = PresentationAssurance.OBSERVATION_ONLY_DEMO))
+        assertTrue(r.show(stable.snapshot)); val shownAt = testScheduler.currentTime
+        advanceTimeBy(135); runCurrent(); assertEquals(135L, testScheduler.currentTime - shownAt)
+        val changed = P01StabilityFixture.sample(9, r.now(), expanded = true).snapshot
+        assertEquals(ManualDisplayVerdict.CHANGED, r.review(demoScene = actualTargetScene(r, changed)))
+        runCurrent(); assertFalse(r.guarded.isShowing); assertNull(r.rawToken); assertEquals(0, r.f.clicks)
+    }
+    @Test fun reviewLateDeliveryOfAnOlderGeometryEventStillReadsTheCurrentTarget() = runTest {
+        val r = Rig(this); var reads = 0
+        val stable = requireNotNull(PrePresentationStability.collect(P01StabilityFixture.sample(0), r::now,
+            { true }, { yield(); true }, { P01StabilityFixture.sample(++reads, r.now()) }, contract = PresentationAssurance.OBSERVATION_ONLY_DEMO))
+        assertTrue(r.show(stable.snapshot)); advanceTimeBy(135); runCurrent()
+        val changedAt135 = P01StabilityFixture.sample(9, r.now(), expanded = true).snapshot
+        advanceTimeBy(200); runCurrent() // Event delivery is deliberately late; no event-time exemption.
+        assertEquals(ManualDisplayVerdict.CHANGED, r.review(demoScene = actualTargetScene(r, changedAt135)))
+        runCurrent(); assertFalse(r.guarded.isShowing); assertEquals(0, r.f.clicks)
+    }
+
+    @Test fun serviceVariantContractControlsTheSharedStabilityToRealBAndCPath() = runTest {
+        val r = Rig(this); var reads = 0
+        val accepted = PrePresentationStability.collect(P01StabilityFixture.sample(0), r::now,
+            { r.valid && r.barrier.ready }, { yield(); true },
+            { check -> check(); P01StabilityFixture.sample(++reads, r.now()) },
+            contract = ManualPresentationStabilityFeature.contract)
+        if (ManualPresentationStabilityFeature.enabled) {
+            assertEquals(PresentationAssurance.OBSERVATION_ONLY_DEMO, ManualPresentationStabilityFeature.contract)
+            assertNotNull(accepted); assertEquals(2, reads)
+            assertTrue(r.show(requireNotNull(accepted).snapshot)); runCurrent()
+            assertEquals(1, r.shows)
+        } else {
+            assertEquals(PresentationAssurance.STRICT_GENERATION_REQUIRED, ManualPresentationStabilityFeature.contract)
+            assertNull(accepted); assertEquals(0, reads); assertEquals(0, r.shows)
+        }
+        assertEquals(0, r.f.clicks); assertEquals(0, r.decisionCalls)
+    }
+
+    @Test fun observedDisplayCannotResurrectExpiredExecutionEvidenceOrBypassFreshF0Failure() = runTest {
+        val r = Rig(this); var reads = 0
+        val accepted = requireNotNull(PrePresentationStability.collect(P01StabilityFixture.sample(0), r::now,
+            { true }, { yield(); true }, { P01StabilityFixture.sample(++reads, r.now()) },
+            contract = PresentationAssurance.OBSERVATION_ONLY_DEMO))
+        val originalToken = accepted.snapshot.token; val originalTime = accepted.snapshot.capturedAtUptimeMillis
+        assertTrue(r.show(accepted.snapshot)); advanceTimeBy(700); runCurrent()
+        r.completeSpeech(); runCurrent(); advanceTimeBy(5_400); r.expireOriginal()
+        assertNull(r.rawToken); assertTrue(r.guarded.isShowing)
+        assertEquals(originalToken, accepted.snapshot.token); assertEquals(originalTime, accepted.snapshot.capturedAtUptimeMillis)
+        r.collection = { null }
+        r.choose(); runCurrent(); assertTrue(r.removal()); r.quiet.complete(Unit)
+        runCurrent(); advanceTimeBy(1_500); runCurrent()
+        assertEquals(1, r.freshReads); assertEquals(0, r.decisionCalls); assertEquals(0, r.f.clicks)
+        assertTrue(r.results.none { it.attempted })
+    }
+
+    @Test fun boundedFreshStabilityUsesRealBAndCFlowOnceAndDoesNotAutoClick() = runTest {
+        val r = Rig(this)
+        val seed = P01StabilityFixture.sample(0)
+        var reads = 0
+        val accepted = PrePresentationStability.collect(seed, r::now, { r.valid && r.barrier.ready },
+            { yield(); true }, { check -> check(); P01StabilityFixture.sample(++reads, r.now(), expanded = true) }, contract = PresentationAssurance.OBSERVATION_ONLY_DEMO)
+        assertNotNull(accepted); assertEquals(2, reads); assertEquals(0, r.shows)
+        assertTrue(r.show(requireNotNull(accepted).snapshot)); runCurrent()
+        assertEquals(1, r.shows); assertEquals(accepted.snapshot.token, r.prompt?.token)
+        assertEquals(accepted.snapshot.nodes.last().bounds,
+            DecisionCandidateAttacher().attach(PopupEvent.Candidate(accepted.snapshot,
+                PopupDetection(accepted.snapshot.token, persistentSetOf(PopupSignal.NEW_WINDOW))),
+                PopupAnalysis(accepted.snapshot.token, texts = F9CollectedSource.texts(accepted.snapshot))).closeCandidates.single().bounds)
+        advanceTimeBy(700); runCurrent(); r.completeSpeech(); runCurrent()
+        assertTrue(ManualSpeechState.COMPLETED in r.speech)
+        assertTrue(r.guarded.isShowing); assertEquals(0, r.f.clicks); assertEquals(0, r.decisionCalls)
+    }
+    @Test fun unstableFreshGeometryNeverReachesRealCOrTtsAndCleanupPendingBlocksAdmission() = runTest {
+        val r = Rig(this); var reads = 0
+        val accepted = PrePresentationStability.collect(P01StabilityFixture.sample(0), r::now, { r.valid && r.barrier.ready },
+            { yield(); true }, { P01StabilityFixture.sample(++reads, r.now(), expanded = reads % 2 == 0) }, contract = PresentationAssurance.OBSERVATION_ONLY_DEMO)
+        assertNull(accepted); assertEquals(3, reads); assertEquals(0, r.shows)
+        assertFalse("TTS_START" in r.order); assertEquals(0, r.f.clicks)
+        r.barrier.fail(); reads = 0
+        assertNull(PrePresentationStability.collect(P01StabilityFixture.sample(0), r::now, { r.barrier.ready },
+            { true }, { reads++; P01StabilityFixture.sample(reads) }, contract = PresentationAssurance.OBSERVATION_ONLY_DEMO))
+        assertEquals(0, reads); assertEquals(0, r.shows)
+    }
+    @Test fun laterTargetMovementAfterFreshStabilityStillRemovesRealCAndStopsItsSpeech() = runTest {
+        val r = Rig(this); var reads = 0
+        val accepted = requireNotNull(PrePresentationStability.collect(P01StabilityFixture.sample(0), r::now,
+            { true }, { yield(); true }, { P01StabilityFixture.sample(++reads, r.now()) }, contract = PresentationAssurance.OBSERVATION_ONLY_DEMO))
+        assertTrue(r.show(accepted.snapshot)); advanceTimeBy(700); runCurrent()
+        assertTrue("TTS_START" in r.order)
+        val s = accepted.snapshot
+        val moved = s.nodes.map { if(it.path == s.nodes.last().path) it.copy(bounds =
+            it.bounds.copy(left = it.bounds.left + 1, right = it.bounds.right + 1)) else it }
+        val scene = r.f.before.copy(packageName = s.token.packageName, windowId = s.token.windowId,
+            screen = s.screenBounds, nodes = moved, windows = s.windows + WindowSnapshot(r.nativeId, WindowType.ACCESSIBILITY_OVERLAY, s.screenBounds, false, false, 4))
+        assertEquals(ManualDisplayVerdict.CHANGED, r.review(demoScene = scene))
+        runCurrent(); assertFalse(r.guarded.isShowing); assertTrue("TTS_STOP" in r.order)
+        assertEquals(0, r.f.clicks)
+    }
+
     @Test fun fullP01FlowCompletesSpeechWaitsForRealCleanupAndQuietThenRevalidatesAndClicksOnce() = runTest {
         val r = Rig(this); assertTrue(r.show()); advanceTimeBy(700); runCurrent(); r.completeSpeech(); runCurrent()
         assertTrue(ManualSpeechState.COMPLETED in r.speech)

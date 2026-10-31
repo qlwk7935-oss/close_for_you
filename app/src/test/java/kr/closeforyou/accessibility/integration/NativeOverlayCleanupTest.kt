@@ -21,8 +21,11 @@ class NativeOverlayCleanupTest {
         assertEquals(1, refresh); assertTrue(b.ready)
     }
 
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
     @Test fun removalReturnOrAbsenceWithoutActualDetachCannotRelease() = runTest {
-        val session = Any(); val n = native(session); val b = OverlayCleanupBarrier(10)
+        // The 10 ms deadline must use the same virtual clock as runTest; host scheduling
+        // latency is not a native-detach observation and must not make this test flaky.
+        val session = Any(); val n = native(session); val b = OverlayCleanupBarrier(10, clock = { testScheduler.currentTime })
         b.retiring(null, 1, 10, n, session); b.removalReturned(true); n.removalReturned(true)
         assertFalse(b.nativeProcessed(n, true) { error("NO_QUERY_BEFORE_DETACH") })
         assertTrue(b.pending); assertNull(b.permit())

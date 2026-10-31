@@ -132,7 +132,7 @@ internal suspend fun awaitChoicePresentationTurn(post: (Runnable) -> Boolean, re
  * an unchanged interrupted popup instead of suppressing that read. No authorization or TTL grant. */
 internal enum class ManualReviewAdmission { FIRST_OFFER, UNCHANGED_RECOVERY, IDENTITY_CHANGED, EXHAUSTED }
 internal enum class ManualReviewChange { UNKNOWN, INITIAL, UNCHANGED, APP_CHANGED, WINDOW_CHANGED, STRUCTURE_CHANGED, CONTENT_CHANGED, STRUCTURE_AND_CONTENT_CHANGED }
-internal class ChoiceReviewBudget {
+internal class ChoiceReviewBudget(private val boundGeometryRecovery: Boolean = false) {
     private data class Identity(val app: String, val window: Int, val structure: String, val content: String) {
         override fun toString() = "ReviewIdentity(redacted)"
     }
@@ -155,8 +155,18 @@ internal class ChoiceReviewBudget {
             else -> ManualReviewChange.UNCHANGED
         }
         if (identity != key) {
-            lastAdmission = if (identity == null) ManualReviewAdmission.FIRST_OFFER else ManualReviewAdmission.IDENTITY_CHANGED
-            identity = key; offered = 0
+            // Debug B rollout: bounds are part of structureDigest, so layout churn must not
+            // reopen the first+one recovery budget. This is a DENIAL context, not popup identity;
+            // every offered snapshot still requires complete fresh F0/F1/B and the final Gate.
+            val sameContext = previous != null && previous.app == key.app && previous.window == key.window && previous.content == key.content
+            val preserveBudget = boundGeometryRecovery && sameContext
+            lastAdmission = when {
+                identity == null -> ManualReviewAdmission.FIRST_OFFER
+                preserveBudget -> ManualReviewAdmission.UNCHANGED_RECOVERY
+                else -> ManualReviewAdmission.IDENTITY_CHANGED
+            }
+            identity = key
+            if (!preserveBudget) offered = 0
         } else lastAdmission = ManualReviewAdmission.UNCHANGED_RECOVERY
         if (offered >= 2) { lastAdmission = ManualReviewAdmission.EXHAUSTED; return false } // first + one recovery
         offered++

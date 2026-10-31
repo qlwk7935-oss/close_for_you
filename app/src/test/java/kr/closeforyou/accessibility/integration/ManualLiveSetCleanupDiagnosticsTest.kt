@@ -163,6 +163,21 @@ class ManualLiveSetCleanupDiagnosticsTest {
         assertEquals(listOf("CLASSIFY", "OBSERVE", "HANDLER", "CLASSIFY", "FAIL", "OBSERVE", "HANDLER"), r.order)
         assertEquals(listOf(CleanupFailure.RETIRED_ID_EVENT), r.failures); assertFalse(r.barrier.ready)
     }
+    @Test fun queuedAddedAfterStateWaitFailsBeforeLaterRemovalAndNeverReleasesANewPresentation() {
+        val r = Cleanup()
+        assertNull(r.deliver(E.TYPE_WINDOW_STATE_CHANGED)); assertTrue(r.barrier.pending)
+        assertNull(r.deliver(E.TYPE_WINDOWS_CHANGED, E.WINDOWS_CHANGE_ADDED))
+        assertEquals(CleanupFailure.RETIRED_ID_EVENT, r.failures.first())
+        val added = r.events.last()
+        assertEquals(ManualWindowMask.ADDED, added.mask)
+        assertEquals(ManualCleanupEventResult.REJECTED, added.result)
+        assertEquals(CleanupNativeProgress.WAITING_WINDOW_ABSENCE, added.native)
+        assertFalse(r.barrier.ready); assertNull(r.barrier.permit())
+        assertNull(r.deliver(E.TYPE_WINDOWS_CHANGED, E.WINDOWS_CHANGE_REMOVED))
+        assertFalse(r.barrier.nativeProcessed(r.native, true) { CleanupWindowPresence.ABSENT })
+        assertFalse(r.barrier.ready); assertNull(r.barrier.permit())
+    }
+
     @Test fun eventTypeRejectionNeverClaimsPackageOrNativeCheckWasPerformed() {
         val code = inspectNativeCleanupRetirement(E.TYPE_WINDOWS_CHANGED, E.WINDOWS_CHANGE_ADDED,
             { error("NO_DISPLAY") }, { error("NO_PACKAGE") }, { error("NO_NATIVE") })

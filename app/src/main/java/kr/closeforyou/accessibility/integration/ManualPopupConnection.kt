@@ -27,13 +27,14 @@ internal class ManualPopupConnection(
     private val health: ChoicePresentationHealth, private val tts: TtsPopupAnnouncer,
     private val batcher: AnnouncementBatcher, private val clearHistory: () -> Unit,
     private val interacting: () -> Boolean, private val epoch: () -> Long,
-    private val verify: (PopupSnapshot) -> Boolean, private val review: () -> Unit,
+    private val verify: (PopupSnapshot, kr.closeforyou.accessibility.NativeNodeActions?) -> Boolean, private val review: () -> Unit,
     private val collectForChoice: (PopupSnapshot, () -> Unit) -> PopupSnapshot?,
     private val awaitInteractionEnd: suspend () -> Unit, private val intentInteracting: () -> Boolean,
     private val speechReadiness: StateFlow<SpeechReadiness>,
-    private val verifyDisplay: (PopupSnapshot, ManualDisplayIdentity, () -> Unit, ManualDisplayProbe) -> ManualDisplayVerdict,
+    private val verifyDisplay: (PopupSnapshot, ManualDisplayIdentity, () -> Unit, ManualDisplayProbe, kr.closeforyou.accessibility.NativeNodeActions?) -> ManualDisplayVerdict,
     private val trace: ManualPromptTrace? = null,
     private val verifyBoundsDisplay: ((PopupSnapshot, ManualDisplayIdentity, () -> Unit, ManualDisplayProbe, List<CloseCandidate>, kr.closeforyou.accessibility.NativeNodeActions?) -> ManualDisplayVerdict)? = null,
+    private val presentationRejected: () -> Unit = review,
 ) {
     private val handler = Handler(Looper.getMainLooper())
     private val promptLifetime = ManualPromptLifetime(SystemClock::uptimeMillis)
@@ -59,7 +60,7 @@ internal class ManualPopupConnection(
     private var selectedAction: ManualActionTrace? = null
     private var endCause = ManualPromptCause.UNKNOWN
     private var completedKey: Triple<String, Int, String>? = null
-    private val reviews = ChoiceReviewBudget()
+    private val reviews = ChoiceReviewBudget(boundGeometryRecovery = ManualPresentationStabilityFeature.enabled)
     private val cleanupReviews = ManualCleanupReview()
     private val speechRequests = ManualSpeechRequests()
     private val eventDiagnostic = OverlayEventDiagnostic { category, reason, detail, _, _, _, _, _, scan, relation, _ ->
@@ -129,10 +130,14 @@ internal class ManualPopupConnection(
         current = { !closed && !health.failed && !interacting() && AccessibilityRuntime.currentToken() == it },
         cleanupCurrent = cleanup::permits,
         nextTurn = { awaitChoicePresentationTurn(handler::post, handler::removeCallbacks) },
-        verify = { baseline, checkpoint -> checkpoint(); verify(baseline).also { checkpoint() } },
+        verify = { baseline, checkpoint ->
+            checkpoint()
+            val source = original?.takeIf { it.token == baseline.token }
+            (source != null && verify(source, originalNativeActions)).also { checkpoint() }
+        },
         reject = {
             trace?.record(ManualPromptPoint.ADMISSION_REJECTED, ManualPromptCause.PRESENTATION_GATE_REJECTED)
-            AccessibilityRuntime.manualBoundary("ADMISSION_REJECTED"); review()
+            AccessibilityRuntime.manualBoundary("ADMISSION_REJECTED"); presentationRejected()
         })
     private fun recordPresentation(point: ManualReviewPoint, prompt: ChoicePrompt) {
         val t = trace ?: return
@@ -369,7 +374,7 @@ internal class ManualPopupConnection(
                     try { readOwned(read) } finally { probe.ownedRead = read.code() }
                 }, probe)
             verifyRegisteredManualDisplay(probe, ::checkpoint, ::owned) { identity ->
-                if (boundsCandidates == null) verifyDisplay(source, identity, ::checkpoint, probe)
+                if (boundsCandidates == null) verifyDisplay(source, identity, ::checkpoint, probe, originalNativeActions)
                 else requireNotNull(verifyBoundsDisplay)(source, identity, ::checkpoint, probe, boundsCandidates, originalNativeActions)
             }
         }, remove = {

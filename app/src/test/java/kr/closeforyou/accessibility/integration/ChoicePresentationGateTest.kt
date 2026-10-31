@@ -41,6 +41,30 @@ class ChoicePresentationGateTest {
         fun runTurn() { queued.removeFirst().run() }
     }
 
+    @Test fun geometryDigestChurnMustNotReopenBoundedPresentationRecovery() {
+        val token = P01StabilityFixture.sample(0).snapshot.token
+        val budget = ChoiceReviewBudget(boundGeometryRecovery = true)
+        assertTrue(budget.admit(token))
+        assertTrue(budget.admit(token.copy(structureDigest = "synthetic-geometry-2")))
+        assertFalse(budget.admit(token.copy(structureDigest = "synthetic-geometry-3")))
+    }
+
+    @Test fun newWindowContentOrAppGetsAnIndependentDenialBudgetButNeverAPopupIdentityGrant() {
+        val token = P01StabilityFixture.sample(0).snapshot.token
+        for (next in listOf(token.copy(windowId = 9), token.copy(contentDigest = "new-body"), token.copy(packageName = "kr.synthetic.other"))) {
+            val budget = ChoiceReviewBudget(boundGeometryRecovery = true)
+            assertTrue(budget.admit(token)); assertTrue(budget.admit(token)); assertFalse(budget.admit(token))
+            assertTrue(budget.admit(next)); assertTrue(budget.admit(next)); assertFalse(budget.admit(next))
+        }
+    }
+    @Test fun originalStrictReleaseBudgetStillDistinguishesStructureChanges() {
+        val token = P01StabilityFixture.sample(0).snapshot.token
+        val budget = ChoiceReviewBudget(boundGeometryRecovery = false)
+        assertTrue(budget.admit(token)); assertTrue(budget.admit(token)); assertFalse(budget.admit(token))
+        assertTrue(budget.admit(token.copy(structureDigest = "other-structure")))
+        assertEquals(ManualReviewAdmission.IDENTITY_CHANGED, budget.lastAdmission)
+    }
+
     @Test fun stableScreenRequiresPostedTurnAndFreshF0ThenKeepsOriginalTokenAndDeadline() = runTest {
         val d = Driver(); val ready = async { d.gate.awaitReady(d.original.token) }; runCurrent()
         assertFalse(ready.isCompleted); assertFalse(d.calls.contains("F0"))

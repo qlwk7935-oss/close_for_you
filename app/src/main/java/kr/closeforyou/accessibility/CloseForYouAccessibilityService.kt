@@ -97,7 +97,12 @@ class CloseForYouAccessibilityService : AccessibilityService() {
             policyChanged = { invalidate(clearBaseline = true, permissionOrInteraction = true, cause = ManualPromptCause.POLICY_CHANGED) },
             epoch = { freshness.version }, verifyPresentation = ::verifyForChoice,
             collectForChoice = ::collectForManualChoice, awaitInteractionEnd = { touchState.first { !it } },
-            intentInteracting = { touching && !unattributedTouch }).also { it.start() }
+            intentInteracting = { touching && !unattributedTouch },
+            presentationRejected = {
+                // One bounded admission operation. A late mismatch retires the candidate;
+                // only a real subsequent event/confirmed cleanup may request another read.
+                invalidate(clearBaseline = true, permissionOrInteraction = true, cause = ManualPromptCause.PRESENTATION_GATE_REJECTED)
+            }).also { it.start() }
         invalidate(clearBaseline = true)
         settingsObserver = serviceScope.launch {
             preferences.state.collect {
@@ -229,10 +234,40 @@ class CloseForYouAccessibilityService : AccessibilityService() {
         }
     }
 
-    private fun capture(epoch: Long, trigger: PopupTrigger, eventWindowId: Int) {
+    private suspend fun capture(epoch: Long, trigger: PopupTrigger, eventWindowId: Int) {
         if (f9?.observationReady != true) return
-        val trace = CaptureDiagnostics.trace(eventWindowId, epoch)
-        when (val result = collector.capture(this, epoch, trigger, ::packageBlock, trace = trace)) {
+        var trace = CaptureDiagnostics.trace(eventWindowId, epoch)
+        val initial = collector.capture(this, epoch, trigger, ::packageBlock, trace = trace)
+        // Stabilize BEFORE Runtime.begin/F1/evidence/B can create a candidate from old geometry.
+        val result = if (initial is CollectionResult.Ready &&
+            kr.closeforyou.accessibility.integration.ManualPresentationStabilityFeature.enabled &&
+            kr.closeforyou.accessibility.integration.PrePresentationStability.applies(initial.frame)) {
+            val owner = f9 ?: return
+            val permit = owner.awaitObservationPermit()
+            kr.closeforyou.accessibility.integration.PrePresentationStability.collect(initial,
+                now = android.os.SystemClock::uptimeMillis,
+                current = { connected && f9 === owner && !touching && freshness.isCurrent(epoch) &&
+                    owner.permitsObservation(permit) && packageBlock(initial.snapshot.token.packageName) == null },
+                nextTurn = {
+                    val handler = android.os.Handler(Looper.getMainLooper())
+                    kr.closeforyou.accessibility.integration.awaitChoicePresentationTurn(handler::post, handler::removeCallbacks)
+                }, read = { check ->
+                    // Each real collection owns its diagnostic attempt. F1/evidence below use
+                    // the final read's trace, never merge new rows into the discarded seed.
+                    trace = CaptureDiagnostics.trace(eventWindowId, epoch)
+                    collector.capture(this, epoch, trigger, ::packageBlock,
+                        trace = trace, freshPresentation = true, checkpoint = check).also { attempt ->
+                        if (attempt is CollectionResult.Blocked && connected && f9 === owner && freshness.isCurrent(epoch)) {
+                            owner.reviewRejected(ManualPromptCause.COLLECTION_BLOCKED)
+                            detector.clear(); AccessibilityRuntime.block(attempt.reason, epoch)
+                        }
+                    }
+                },
+                report = kr.closeforyou.accessibility.integration.ManualPresentationStabilityFeature::report,
+                contract = kr.closeforyou.accessibility.integration.ManualPresentationStabilityFeature.contract)
+                ?: return
+        } else initial
+        when (result) {
             is CollectionResult.Blocked -> {
                 f9?.reviewRejected(ManualPromptCause.COLLECTION_BLOCKED)
                 detector.clear()
@@ -321,14 +356,17 @@ class CloseForYouAccessibilityService : AccessibilityService() {
     }
 
     /** A fresh F0 read, including after native C removal; original collection age is never renewed. */
-    private fun verifyForChoice(snapshot: PopupSnapshot): Boolean {
+    private fun verifyForChoice(snapshot: PopupSnapshot, nativeActions: NativeNodeActions?): Boolean {
         val now = android.os.SystemClock.uptimeMillis()
         if (!connected || touching || now < snapshot.capturedAtUptimeMillis ||
             now - snapshot.capturedAtUptimeMillis >= SNAPSHOT_TTL_MILLIS || packageBlock(snapshot.token.packageName) != null) return false
-        return when (val fresh = collector.capture(this, freshness.version, snapshot.trigger, ::packageBlock)) {
+        return when (val fresh = collector.capture(this, freshness.version, snapshot.trigger, ::packageBlock,
+            freshPresentation = kr.closeforyou.accessibility.integration.ManualPresentationStabilityFeature.enabled)) {
             is CollectionResult.Blocked -> false
             is CollectionResult.Ready -> {
-                EvidenceSnapshotComparison.firstMismatch(snapshot, fresh.snapshot) == EvidenceMismatch.NONE
+                if (kr.closeforyou.accessibility.integration.ManualPresentationStabilityFeature.enabled)
+                    kr.closeforyou.accessibility.integration.PrePresentationStability.sameExact(snapshot, nativeActions, fresh.snapshot, fresh.nativeActions)
+                else EvidenceSnapshotComparison.firstMismatch(snapshot, fresh.snapshot) == EvidenceMismatch.NONE
             }
         }
     }

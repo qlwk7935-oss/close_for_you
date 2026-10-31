@@ -54,10 +54,10 @@ internal class AndroidF9ScreenPort(
      * THIS native C generation/ownership before and after the entire bounded operation. */
     fun verifyDisplayedPopup(source: PopupSnapshot, identity: ManualDisplayIdentity, checkpoint: () -> Unit,
         probe: ManualDisplayProbe? = null, boundsCandidates: List<CloseCandidate>? = null,
-        originalActions: kr.closeforyou.accessibility.NativeNodeActions? = null): ManualDisplayVerdict {
+        originalActions: kr.closeforyou.accessibility.NativeNodeActions? = null, strictActions: Boolean = false): ManualDisplayVerdict {
         val demoCandidates = boundsCandidates.takeIf { kr.closeforyou.accessibility.integration.ManualDemoBoundsFeature.enabled }
-        val verdict = scan(checkpoint, null, DisplayRead(source, identity, probe, demoCandidates != null), F9ReadPurpose.DISPLAY_REVIEW) { scene, _ ->
-            ManualDisplayContinuity.assess(source, scene, identity.window, probe, identity.listing, demoCandidates, originalActions)
+        val verdict = scan(checkpoint, null, DisplayRead(source, identity, probe, demoCandidates != null || strictActions), F9ReadPurpose.DISPLAY_REVIEW) { scene, _ ->
+            ManualDisplayContinuity.assess(source, scene, identity.window, probe, identity.listing, demoCandidates, originalActions, strictActions)
         }
         if (!healthy || verdict == null) {
             probe?.screenUnavailable(resourceFailure = !healthy)

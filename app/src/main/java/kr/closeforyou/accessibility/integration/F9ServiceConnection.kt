@@ -21,9 +21,10 @@ internal class F9ServiceConnection(
     service: AccessibilityService, private val scope: CoroutineScope,
     connected: () -> Boolean, userInteracting: () -> Boolean,
     private val requestObservation: () -> Unit, private val policyChanged: () -> Unit,
-    epoch: () -> Long, verifyPresentation: (PopupSnapshot) -> Boolean,
+    epoch: () -> Long, verifyPresentation: (PopupSnapshot, kr.closeforyou.accessibility.NativeNodeActions?) -> Boolean,
     collectForChoice: (PopupSnapshot, () -> Unit) -> PopupSnapshot?,
     awaitInteractionEnd: suspend () -> Unit, intentInteracting: () -> Boolean,
+    presentationRejected: () -> Unit,
 ) {
     private val trace = ManualPromptLog.create()
     private val core = CorePreferences.get(service)
@@ -68,10 +69,11 @@ internal class F9ServiceConnection(
     private val manual = ManualPopupConnection(service, scope, session, cleanup, presentationHealth, tts, batcher,
         history::clear, userInteracting, epoch, verifyPresentation, requestObservation,
         collectForChoice, awaitInteractionEnd, intentInteracting, speechEngine.readiness,
-        { source, identity, check, probe -> screen.verifyDisplayedPopup(source, identity, check, probe) }, trace,
-        verifyBoundsDisplay = if (ManualDemoBoundsFeature.enabled) { source, identity, check, probe, candidates, actions ->
+        { source, identity, check, probe, actions -> screen.verifyDisplayedPopup(source, identity, check, probe,
+            originalActions = actions, strictActions = ManualPresentationStabilityFeature.enabled) }, trace,
+        verifyBoundsDisplay = if (ManualDemoBoundsFeature.enabled && !ManualPresentationStabilityFeature.enabled) { source, identity, check, probe, candidates, actions ->
             screen.verifyDisplayedPopup(source, identity, check, probe, candidates, actions)
-        } else null)
+        } else null, presentationRejected = if (ManualPresentationStabilityFeature.enabled) presentationRejected else requestObservation)
     val observationReady: Boolean get() = !closed && manual.canObserve()
     fun hasPrompt() = manual.hasPrompt()
     fun hasPendingPresentation() = manual.hasPendingPresentation()
