@@ -35,6 +35,7 @@ class PopupScenarioActivity : Activity() {
     private lateinit var scenarioId: String
     private var dialog: Dialog? = null
     private val handler = Handler(Looper.getMainLooper())
+    private var moa: MoaMarketScenes? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -69,6 +70,7 @@ class PopupScenarioActivity : Activity() {
             "P22" -> suspiciousDialog(R.string.infected_title, R.string.infected_body, R.id.btn_scan_now, R.string.scan_now)
             "P23" -> delayedCloseCoupon()
             "P24" -> webViewModal("ad-risky-back")
+            in ScenarioCatalog.MOA_MARKET_IDS -> showMoaMarket()
             ScenarioCatalog.BUTTON_MOVED_NOTICE_ID -> textNotice(scenario.note, closeOnTop = true)
             else -> if (scenario.kind == PopupKind.NOTICE) textNotice(scenario.note)
         }
@@ -76,6 +78,8 @@ class PopupScenarioActivity : Activity() {
 
     override fun onDestroy() {
         handler.removeCallbacksAndMessages(null)
+        moa?.release()
+        moa = null
         dialog?.dismiss()
         dialog = null
         super.onDestroy()
@@ -543,6 +547,14 @@ class PopupScenarioActivity : Activity() {
         handler.postDelayed({
             content.addView(button(R.id.btn_close, getString(R.string.close)) { dismiss() })
         }, ScenarioCatalog.DELAYED_CLOSE_SECONDS * 1_000L)
+    }
+
+    /** 시연 영상 "모아마켓" 화면(P25~P32): 홈 화면 위에 팝업이 뜬다. */
+    private fun showMoaMarket() {
+        val scenes = MoaMarketScenes(this, handler, { record(it) }) { moa?.release(); openAdLanding() }
+        moa = scenes
+        setContentView(scenes.home())
+        scenes.show(scenarioId)
     }
 
     private fun resultDialog(message: String) {

@@ -150,7 +150,7 @@ class ScenarioCatalogTest {
     fun int1GapsAreListedAndExplained() {
         assertEquals(all.map { it.id }.toSet(), ScenarioCatalog.int1.keys)
         val gaps = all.filter { ScenarioCatalog.int1.getValue(it.id).kind != humanInt1(it.kind) }.map { it.id }.toSet()
-        assertEquals(setOf("P02", "P03", "P05", "P07", "P18", "P24"), gaps)
+        assertEquals(setOf("P02", "P03", "P05", "P07", "P18", "P24", "P25", "P26", "P27", "P29", "P31"), gaps)
         gaps.forEach { assertTrue(it, ScenarioCatalog.int1.getValue(it).reason.isNotBlank()) }
     }
 
@@ -180,14 +180,14 @@ class ScenarioCatalogTest {
 
     @Test
     fun couponScenariosAreTheClaimableBenefits() {
-        assertEquals(setOf("P01", "P02", "P12", "P13", "P23", "P24"), all.filter { it.kind == PopupKind.COUPON }.map { it.id }.toSet())
+        assertEquals(setOf("P01", "P02", "P12", "P13", "P23", "P24", "P27"), all.filter { it.kind == PopupKind.COUPON }.map { it.id }.toSet())
     }
 
     /** S18: 사기 의심은 어떤 프리셋에서도 앱이 누르지 않는다. */
     @Test
     fun suspiciousPopupsAreNeverAutomatable() {
         val suspicious = all.filter { it.kind == PopupKind.SUSPICIOUS }
-        assertEquals(setOf("P21", "P22"), suspicious.map { it.id }.toSet())
+        assertEquals(setOf("P21", "P22", "P32"), suspicious.map { it.id }.toSet())
         suspicious.forEach { s ->
             assertEquals(s.id, ExpectedHandling.AUTO_FORBIDDEN, s.expected)
             assertNull(s.id, s.appAllowedTargetId)
@@ -220,6 +220,30 @@ class ScenarioCatalogTest {
         assertEquals(Int1Path.A_SUMMARY, p24.path)
         assertEquals(Int1Kind.COUPON, ScenarioCatalog.int1.getValue("P13").kind)
         assertNull(ScenarioCatalog.find("P24")!!.appAllowedTargetId)
+    }
+
+    /** 시연 영상 장면은 모두 재현 앱 시나리오가 있고, 모아마켓 화면만 쓴다. */
+    @Test
+    fun demoScenesUseTheMoaMarketScreens() {
+        assertTrue(ScenarioCatalog.demoScenes.isNotEmpty())
+        ScenarioCatalog.demoScenes.forEach { (scene, ids) ->
+            ids.forEach { id ->
+                assertNotNull(scene, ScenarioCatalog.find(id))
+                assertTrue(scene, id in ScenarioCatalog.MOA_MARKET_IDS)
+            }
+        }
+        ScenarioCatalog.MOA_MARKET_IDS.forEach { assertNotNull(it, ScenarioCatalog.find(it)) }
+    }
+
+    /** 라벨 있는 X(P25)만 앱 허용 버튼이고, 라벨 없는 X(P26)는 아니다. '오늘 하루 보지 않기'는 어느 쪽도 금지. */
+    @Test
+    fun labeledAndUnlabeledXAreBothThere() {
+        val labeled = ScenarioCatalog.find("P25")!!
+        val unlabeled = ScenarioCatalog.find("P26")!!
+        assertEquals("btn_close", labeled.appAllowedTargetId)
+        assertNull(unlabeled.appAllowedTargetId)
+        assertEquals(CloseEvidence.E3_UNLABELED_CLICKABLE, unlabeled.closeEvidence)
+        listOf(labeled, unlabeled).forEach { assertTrue(it.id, "btn_hide_today" in it.forbiddenTargetIds) }
     }
 
     @Test
