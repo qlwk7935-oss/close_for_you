@@ -49,6 +49,7 @@
 
 - 라벨 v2(위), 처음 보는 팝업도 프리셋+스위치면 묻지 않고 닫기(A AutoEligibility 없음), 도와줄 앱 미선택 시 모든 앱.
 - 끄려면 `SimpleCloseEngineFeature`의 상수를 false로.
+- **시연 모드 6-0 완화: 전부 자동 닫기에서 안전 조건을 모두 만족한 판단 불가 팝업 닫기 (재호 결정 10/31, F7, 통합 브랜치 `integration/popup-helper`).** 프리셋 "전부 자동 닫기" + 자동 닫기 스위치 ON일 때만, B가 UNKNOWN으로 본 팝업을 ① 금지어 버튼(결제·구매·동의·권한·구독·삭제·설치·앱에서 열기…) 0개 ② 검증된 버튼이 라벨 있는 닫기 정확히 1개(라벨 없는 X 제외, 6-3) ③ 사기 의심 아님 ④ USER_DECISION 아님일 때 묻지 않고 닫는다(클릭 직전 재확인 그대로). "광고·쿠폰 닫기"·"광고만 닫기"는 계속 묻는다. 결과 "팝업을 닫았어요", 로그 `DECIDED_AUTO_CLOSE_UNKNOWN`. 끄기: `DemoUnknownAutoClose.ENABLED = false`. AGENTS 6장 2번은 고치지 않음.
 
 ## 5. LG 확인 순서 (메인 세션)
 

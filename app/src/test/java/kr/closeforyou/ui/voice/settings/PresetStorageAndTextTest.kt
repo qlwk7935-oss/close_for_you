@@ -1,6 +1,7 @@
 package kr.closeforyou.ui.voice.settings
 
 import android.content.SharedPreferences
+import kr.closeforyou.R
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -120,6 +121,17 @@ class PresetStorageAndTextTest {
                 assertFalse("$name: $line", line.contains(it))
             }
         }
+    }
+
+    @Test fun closeAllGetsItsOwnUnknownLineOnlyWithTheDemoSwitch() {
+        assertEquals(R.string.ui_preset_decision_fixed_close_all, PresetText.decisionLineRes(HandlingPreset.CLOSE_ALL, unknownAutoClose = true))
+        assertEquals(R.string.ui_preset_decision_fixed, PresetText.decisionLineRes(HandlingPreset.CLOSE_ALL, unknownAutoClose = false))
+        assertEquals(R.string.ui_preset_decision_fixed, PresetText.decisionLineRes(HandlingPreset.CLOSE_ADS_ONLY, unknownAutoClose = true))
+        assertEquals(R.string.ui_preset_decision_fixed, PresetText.decisionLineRes(null, unknownAutoClose = true))
+        val line = text("ui_preset_decision_fixed_close_all")
+        assertTrue(line.contains("결제") && line.contains("동의") && line.contains("항상") && line.contains("버튼이 하나뿐"))
+        assertTrue(R.string.ui_preset_consent_unknown_all in ConsentText.bodyRes(HandlingPreset.CLOSE_ALL, live = true, unknownAutoClose = true))
+        assertFalse(R.string.ui_preset_consent_unknown_all in ConsentText.bodyRes(HandlingPreset.CLOSE_ADS_AND_COUPONS, live = true, unknownAutoClose = true))
     }
 
     @Test fun decisionLineSaysImportantPopupsAreAlwaysChecked() {

@@ -8,6 +8,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import kr.closeforyou.R
+import kr.closeforyou.simpleclose.DemoUnknownAutoClose
 
 /**
  * The three presets as one radio group (first-run screen and settings). Each row is one large card
@@ -31,7 +32,7 @@ fun HandlingPresetGroup(
                 PresetRow(preset, selected = preset == selected, onClick = { onSelect(preset) })
             }
         }
-        HelpText(stringResource(R.string.ui_preset_decision_fixed))
+        HelpText(stringResource(PresetText.decisionLineRes(selected)))
         if (notLiveLine && !PresetAutoCloseFeature.live) HelpText(stringResource(R.string.ui_preset_not_live))
     }
 }
@@ -55,6 +56,14 @@ private fun PresetRow(preset: HandlingPreset, selected: Boolean, onClick: () -> 
 
 /** String resources per preset, separate so a JVM test can check every preset has its text. */
 internal object PresetText {
+    /**
+     * The fixed line under the presets. "무엇인지 알 수 없는 팝업도 물어봐요" is not true for "전부 자동 닫기"
+     * while [DemoUnknownAutoClose] is on (demo mode 6-0, F7), so that preset gets its own line.
+     */
+    fun decisionLineRes(selected: HandlingPreset?, unknownAutoClose: Boolean = DemoUnknownAutoClose.ENABLED) =
+        if (unknownAutoClose && selected == HandlingPreset.CLOSE_ALL) R.string.ui_preset_decision_fixed_close_all
+        else R.string.ui_preset_decision_fixed
+
     fun labelRes(preset: HandlingPreset) = when (preset) {
         HandlingPreset.CLOSE_ALL -> R.string.ui_preset_close_all
         HandlingPreset.CLOSE_ADS_AND_COUPONS -> R.string.ui_preset_close_ads_and_coupons

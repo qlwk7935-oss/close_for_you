@@ -46,9 +46,56 @@ class SimpleCloseDeciderTest {
         assertEquals(SimpleDecision.Ask, SimpleCloseDecider.decide(PopupClassification.UNKNOWN, false, listOf(close("node:1")), adsOnly))
     }
 
-    @Test fun unknownIsAskedEvenWhenEveryKindIsInThePreset() {
+    @Test fun unknownIsAskedInEveryPresetWhenTheDemoSwitchIsOff() {
+        HandlingPreset.entries.forEach { preset ->
+            assertEquals(preset.name, SimpleDecision.Ask,
+                SimpleCloseDecider.decide(PopupClassification.UNKNOWN, false, listOf(close("node:1")), preset.autoCloseKinds(), unknownEnabled = false))
+        }
+    }
+
+    // ---- F7 (재호 10/31, demo mode 6-0): "전부 자동 닫기" closes a safe UNKNOWN popup ----
+
+    private fun skip(id: String) = close(id).copy(label = "건너뛰기", role = ButtonRole.SKIP)
+
+    /** Three presets × (all conditions met / a forbidden button / two close buttons / suspicious). */
+    @Test fun unknownPopupMatrix() {
+        val one = listOf(close("node:1"))
+        val two = listOf(close("node:1"), close("node:2"))
+        HandlingPreset.entries.forEach { preset ->
+            val kinds = preset.autoCloseKinds()
+            fun decide(candidates: List<CloseCandidate>, forbidden: Int = 0, suspicious: Boolean = false) =
+                SimpleCloseDecider.decide(PopupClassification.UNKNOWN, suspicious, candidates, kinds, forbidden, unknownEnabled = true)
+            val expectedClean = if (preset == HandlingPreset.CLOSE_ALL) SimpleDecision.AutoClose(close("node:1"), unknown = true) else SimpleDecision.Ask
+            assertEquals("${preset.name} clean", expectedClean, decide(one))
+            assertEquals("${preset.name} forbidden", SimpleDecision.Ask, decide(one, forbidden = 1))
+            assertEquals("${preset.name} two close", SimpleDecision.Ask, decide(two))
+            assertEquals("${preset.name} suspicious", SimpleDecision.DenySuspicious, decide(one, suspicious = true))
+        }
+    }
+
+    @Test fun unknownNeedsTheOnlyButtonToBeAClose() {
         val all = HandlingPreset.CLOSE_ALL.autoCloseKinds()
-        assertEquals(SimpleDecision.Ask, SimpleCloseDecider.decide(PopupClassification.UNKNOWN, false, listOf(close("node:1")), all))
+        assertEquals(SimpleDecision.Ask, SimpleCloseDecider.decide(PopupClassification.UNKNOWN, false, listOf(skip("node:1")), all, unknownEnabled = true))
+        assertEquals(SimpleDecision.Ask, SimpleCloseDecider.decide(PopupClassification.UNKNOWN, false, listOf(close("node:1"), skip("node:2")), all, unknownEnabled = true))
+        assertEquals(SimpleDecision.Ask, SimpleCloseDecider.decide(PopupClassification.UNKNOWN, false, emptyList(), all, unknownEnabled = true))
+        // A decision is never closed, whatever the switch.
+        assertEquals(SimpleDecision.DenyDecision, SimpleCloseDecider.decide(PopupClassification.USER_DECISION, false, listOf(close("node:1")), all, unknownEnabled = true))
+    }
+
+    @Test fun unknownNeedsTheLiveConsentNotJustThePreset() {
+        val closeAll = UiVoiceSettings(handlingPreset = HandlingPreset.CLOSE_ALL, onboardingDone = true, autoCloseConsent = true, autoCloseConsentPreset = HandlingPreset.CLOSE_ALL)
+        assertTrue(SimpleCloseDecider.decide(PopupClassification.UNKNOWN, false, listOf(close("node:1")), closeAll) is SimpleDecision.AutoClose)
+        assertEquals(SimpleDecision.Ask, SimpleCloseDecider.decide(PopupClassification.UNKNOWN, false, listOf(close("node:1")), closeAll.copy(autoCloseConsent = false)))
+        assertEquals(SimpleDecision.Ask, SimpleCloseDecider.decide(PopupClassification.UNKNOWN, false, listOf(close("node:1")), closeAll, forbiddenCount = 1))
+    }
+
+    @Test fun elevenStreetSheetStaysAskedUnderCloseAll() = runTest {
+        // "11번가 앱에서 확인" is a forbidden button and there are two closes: asked even if B said UNKNOWN.
+        val nodes = SimpleNodes.elevenStreet()
+        val popup = SimplePopupAnalysis.build(nodes, PopupRootFinder.find(nodes, SCREEN)!!, "com.android.chrome", 7, SCREEN, 1L, 1000L)
+        assertTrue(popup.scan.forbiddenCount > 0)
+        val all = HandlingPreset.CLOSE_ALL.autoCloseKinds()
+        assertEquals(SimpleDecision.Ask, SimpleCloseDecider.decide(PopupClassification.UNKNOWN, false, popup.scan.candidates, all, popup.scan.forbiddenCount, unknownEnabled = true))
     }
 
     @Test fun noOrSeveralCloseButtonsAsk() {

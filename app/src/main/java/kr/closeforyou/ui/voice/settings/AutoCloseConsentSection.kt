@@ -28,6 +28,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.delay
 import kr.closeforyou.R
+import kr.closeforyou.simpleclose.DemoUnknownAutoClose
 
 /**
  * Preset radio group + the separate "자동 닫기" switch (first-run step 1 and settings).
@@ -181,8 +182,10 @@ internal object ConsentText {
     }
 
     /** What the preset closes, the safety line, and (not live) that the app still asks first. */
-    fun bodyRes(preset: HandlingPreset, live: Boolean): List<Int> = buildList {
+    fun bodyRes(preset: HandlingPreset, live: Boolean, unknownAutoClose: Boolean = DemoUnknownAutoClose.ENABLED): List<Int> = buildList {
         add(kindsRes(preset))
+        // Demo mode 6-0 (F7): "전부 자동 닫기" also closes a safe unknown popup; say so where it is agreed to.
+        if (unknownAutoClose && preset == HandlingPreset.CLOSE_ALL) add(R.string.ui_preset_consent_unknown_all)
         add(R.string.ui_preset_consent_safety)
         if (!live) add(R.string.ui_preset_consent_not_live)
     }

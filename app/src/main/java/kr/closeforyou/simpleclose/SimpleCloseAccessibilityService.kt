@@ -234,9 +234,9 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
 
         val analysis = popup.analysis.copy(classification = classification)
         val classified = popup.copy(analysis = analysis)
-        when (val decision = SimpleCloseDecider.decide(classification, suspicious, popup.scan.candidates, preferences.current())) {
+        when (val decision = SimpleCloseDecider.decide(classification, suspicious, popup.scan.candidates, preferences.current(), popup.scan.forbiddenCount)) {
             is SimpleDecision.AutoClose -> {
-                log.trace(SimpleTrace.DECIDED_AUTO_CLOSE)
+                log.trace(if (decision.unknown) SimpleTrace.DECIDED_AUTO_CLOSE_UNKNOWN else SimpleTrace.DECIDED_AUTO_CLOSE)
                 val approval = ActionDecision(analysis.token, ActionAuthorization.ALLOW_ONCE, persistentSetOf(), decision.candidate.id, DecisionSource.PRESET, NextStep.EXECUTE)
                 // Its own job: the inspection this runs in is replaced by the next window event.
                 jobs.runAction {

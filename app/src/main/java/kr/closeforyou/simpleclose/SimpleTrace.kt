@@ -26,6 +26,8 @@ enum class SimpleTrace {
     BLOCKED_FORBIDDEN,
     UNLABELED_SKIPPED,
     DECIDED_AUTO_CLOSE,
+    /** F7: an UNKNOWN popup closed under [DemoUnknownAutoClose] ("전부 자동 닫기" only). */
+    DECIDED_AUTO_CLOSE_UNKNOWN,
     DECIDED_ASK,
     DECIDED_DENY_DECISION,
     DECIDED_DENY_SUSPICIOUS,

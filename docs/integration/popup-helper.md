@@ -121,5 +121,12 @@ A 서비스(`CloseForYouAccessibilityService`)·`accessibility_service_config.xm
 | F5 | `SimpleCloseEngineFeature.kt`, 서비스 | 로그 `DETECT_LATENCY_MS=<숫자>`(도와줄 앱 첫 이벤트 → DETECTED; 찾지 못하고 끝난 검색·같은 팝업 쿨다운에서는 초기화). 디바운스 300 → 200ms, 재확인 0.5/1/2/3초 → 0.2/0.5/1/2/3초(체인 총 6.8초 → 6.9초, 상한 유지) | 실기기(로그 시각을 TalkBack 낭독 시작과 비교) |
 | F6 | `simpleclose/ImageDialogAdHint.kt`, 서비스 | `check()`가 처음 실패한 조건을 돌려줌 → 로그 `AD_HINT_MISS_{SCAM,NOT_DIALOG_ROOT,NO_VERIFIED_CLOSE,IMAGE_TOO_SMALL,TOO_MUCH_TEXT}`(B가 이미 분류한 경우 NOT_UNKNOWN은 안 찍음). 완화: 이미지 40% → **25%**, 이미지 자체가 클릭 가능하지 않아도 됨(링크 안 `<img>`), 루트 종류에 덮개(DIM_OVERLAY)도 포함, 이미지의 대체 글은 본문 글자 수에서 뺌. 결정·사기·B가 분류한 팝업은 계속 제외 | `ImageDialogAdHintTest` 4개 추가 |
 
-- 검증: 5개 Gradle 작업 통과, 단위 시험 debug 1018개·release 1003개 실패 0, lintDebug 오류 0(경고 12, 이전과 같음), 병합 매니페스트 INTERNET 0·새 권한 없음.
-- 위험: F6 완화로 이미지로 그린 공지·안내도 광고로 닫힐 수 있다(엔진 규칙, B 판단 아님). F4 누르기 전 포커스 이동이 TalkBack 낭독을 한 번 더 부를 수 있다 — 체감 나쁘면 `FOCUS_PAGE_BEFORE_CLICK = false`.
+- 검증(F1~F7 한 빌드): 5개 Gradle 작업 통과, 단위 시험 debug 1023개·release 1008개 실패 0, lintDebug 오류 0(경고 12, 이전과 같음), 병합 매니페스트 INTERNET 0·새 권한 없음.
+- **F7 — 시연 모드 6-0 완화: 전부 자동 닫기에서 안전 조건을 모두 만족한 판단 불가 팝업 닫기 (재호 결정 10/31).**
+  - 조건(모두): 프리셋 "전부 자동 닫기" + 자동 닫기 스위치 ON(처음 설정 완료), B 분류 UNKNOWN, 금지어 버튼(`SimpleLabelReject.FORBIDDEN`: 결제·구매·동의·권한·구독·삭제·설치·앱에서·열기…) 0개, 검증된 버튼이 라벨 있는 닫기 정확히 1개(라벨 없는 X는 후보가 아님, 6-3), 사기 의심 아님, USER_DECISION 아님. 클릭 직전 재확인·1회 클릭은 그대로.
+  - "광고·쿠폰 닫기"·"광고만 닫기"는 UNKNOWN을 계속 묻는다. 결과 문장 "팝업을 닫았어요."(`ui_auto_obj_other`). 로그 `DECIDED_AUTO_CLOSE_UNKNOWN`.
+  - 파일: `simpleclose/SimpleCloseDecider.kt`(`DemoUnknownAutoClose.ENABLED = true`로 끔/켬), 서비스(금지어 수 전달·로그), `SimpleTrace.kt`.
+  - 문구: "전부 자동 닫기"를 골랐을 때만 프리셋 아래 고정 문장을 `ui_preset_decision_fixed_close_all`("…알 수 없는 팝업은 위험한 버튼이 없고 닫는 버튼이 하나뿐일 때만 닫고, 그 밖에는 물어봐요")로, 자동 닫기 확인 창에 `ui_preset_consent_unknown_all` 한 줄 추가. 다른 프리셋 문구는 그대로("…알 수 없는 팝업도 물어봐요").
+  - AGENTS 6장 2번은 고치지 않음(6-0 우선).
+  - 시험: `SimpleCloseDeciderTest` 세 프리셋 × (조건 충족 / 금지어 / 닫기 2개 / 사기) 매트릭스 + 건너뛰기만 있음·버튼 없음·결정·스위치 꺼짐·동의 꺼짐·11번가 시트, `PresetStorageAndTextTest` 문구 선택. 기존 시험 `unknownIsAskedEvenWhenEveryKindIsInThePreset`는 규칙이 바뀌어 "스위치 끄면 모든 프리셋에서 묻기"로 바꿈.
+- 위험: F7로 "전부 자동 닫기"에서는 B가 판단하지 못한 팝업도 닫힌다(닫기 버튼 1개·금지어 0개일 때). F6 완화로 이미지로 그린 공지·안내도 광고로 닫힐 수 있다(엔진 규칙, B 판단 아님). F4 누르기 전 포커스 이동이 TalkBack 낭독을 한 번 더 부를 수 있다 — 체감 나쁘면 `FOCUS_PAGE_BEFORE_CLICK = false`.
