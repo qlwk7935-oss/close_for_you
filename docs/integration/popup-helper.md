@@ -2,7 +2,7 @@
 
 - 만든 사람: C(재호) + Claude, 2026-10-31. 기준: origin/main `365a784`(#62까지).
 - 근거: AGENTS.md 6-0 시연 모드, 9장(“A가 닫기를 성공시키면 C가 모든 기술을 합치고 직접 테스트”).
-- 상태: 빌드·JVM 시험 통과(5장). `0b15105` LG 벨벳 실측 10/31 21:00(5-1장), origin에 push됨. 수정 목록(8장)은 아직 안 고침.
+- 상태: 빌드·JVM 시험 통과(5장). `0b15105` LG 벨벳 실측 10/31 21:00(5-1장), origin에 push됨. 수정 목록 F1~F6은 8-1에서 고침(JVM 시험만, **실기기 미검증**, push 전).
 
 ## 1. 목적
 
@@ -99,7 +99,7 @@ A 서비스(`CloseForYouAccessibilityService`)·`accessibility_service_config.xm
 - release APK는 서명 안 됨(`app-release-unsigned.apk`) — 시연 설치는 debug APK.
 - release 빌드에서는 단순 엔진 로그가 안 찍힌다(debuggable 아닐 때 꺼짐) — 현장 문제 추적은 debug APK로.
 
-## 8. 수정 목록 (10/31 21:00 실측에서, 아직 안 고침 — 사용자 시작 지시 후)
+## 8. 수정 목록 (10/31 21:00 실측에서) — 8-1에서 고침, 실기기 미검증
 
 | # | 크기 | 내용 | 고칠 방향 |
 |---|---|---|---|
@@ -109,3 +109,17 @@ A 서비스(`CloseForYouAccessibilityService`)·`accessibility_service_config.xm
 | F4 | 중 | 11번가 닫은 뒤 TalkBack 재낭독 여전(로그 순서·속도는 목표대로) | 원인 구분용 debug 로그: 포커스 대상 종류 enum(팝업 노드와 겹침 여부 / WebView 루트 / 헤더 등, 글자 없음). 포커스 대상이 팝업 잔여 DOM인지, TalkBack의 창 변화 자체 낭독인지 |
 | F5 | 중 | 11번가: 우리 창이 뜨기 전에 TalkBack이 팝업을 2번 읽음(감지 20:57:59.175) | debug 로그: 첫 창 이벤트 수신 → `DETECTED` 차이 ms. TalkBack 낭독 시작 시각과 비교 |
 | F6 | 중, 시연 후보 | 옥션 `CLASSIFIED_UNKNOWN → ASK`, 이미지 광고 힌트 미충족. 사용자: "옥션은 TalkBack이 말을 많이 안 하고 딱 좋음, 인식만 되면 시연 예시" | 힌트 조건 중 어디서 빠졌는지 enum 로그 추가 → 조건 조정 |
+
+### 8-1. 고친 내용 (F1~F6 한 빌드, 시연 모드 완화 포함)
+
+| # | 파일 | 고친 것 | 시험 |
+|---|---|---|---|
+| F1 | `ui/voice/settings/UiVoiceOnboardingScreen.kt` | 2단계 [서비스 켜기] 위 "어떻게 켜는지" 문구 삭제(설정 화면 쪽 문구는 그대로) | 실기기 |
+| F2 | `settings/AutoCloseConsentSection.kt`, `settings/OnboardingDesign.kt` | 자동 닫기 확인 창(켜기·범위 넓히기)이 닫히면 TalkBack 포커스를 자동 닫기 스위치로 되돌림: 0.5초 뒤 1회, 0.7초 뒤 잃었으면 1회 더. TalkBack 켜져 있을 때만, 접근성 포커스만. 처음 설정 3단계와 설정 화면 공통. `SwitchCard`에 `tag` 매개변수 추가 | 실기기(시간 값 확인 필요) |
+| F3 | `ui/voice/choice/ButtonNameDisplay.kt`, `choice/ChoicePromptContent.kt` | 누를 버튼이 **2개 이상이면 줄이지 않고 원래 이름**. 1개일 때만 긴 닫기 이름 → "닫기". [내용 다시 읽기]의 "원래 이름은 …" 줄도 같은 규칙 | `ButtonNameDisplayTest` 3개 추가(11번가 두 이름 유지, 단독은 "닫기", 원래 이름 줄 없음) |
+| F4 | `simpleclose/PopupMemory.kt`(+`FocusTargetKind`·`PageFocusRules`), `SimpleTreeCollector.kt`, 서비스 | ① 닫힌 뒤 포커스 대상: 예전 팝업 루트 **영역과 겹치는** 노드도 제외(루트가 화면 70% 이상인 덮개면 영역 대신 글자·bounds만), 남은 것 중 **화면 가장 위쪽** 항목, 없으면 이름 있는 WebView 자체. ② 로그 `FOCUS_TARGET_{OVERLAPS_OLD_POPUP,WEBVIEW_ROOT,PAGE_HEADING,PAGE_ITEM,NONE}`. ③ `FOCUS_PAGE_BEFORE_CLICK`: 누르기 직전(대상 재확인 **전**)에도 같은 규칙으로 페이지 항목에 포커스, 로그 `FOCUS_PRE_CLICK_MOVED/FAILED`. 재확인 → 클릭 사이에는 아무것도 없음 | `PopupMemoryTest` 4개 추가 |
+| F5 | `SimpleCloseEngineFeature.kt`, 서비스 | 로그 `DETECT_LATENCY_MS=<숫자>`(도와줄 앱 첫 이벤트 → DETECTED; 찾지 못하고 끝난 검색·같은 팝업 쿨다운에서는 초기화). 디바운스 300 → 200ms, 재확인 0.5/1/2/3초 → 0.2/0.5/1/2/3초(체인 총 6.8초 → 6.9초, 상한 유지) | 실기기(로그 시각을 TalkBack 낭독 시작과 비교) |
+| F6 | `simpleclose/ImageDialogAdHint.kt`, 서비스 | `check()`가 처음 실패한 조건을 돌려줌 → 로그 `AD_HINT_MISS_{SCAM,NOT_DIALOG_ROOT,NO_VERIFIED_CLOSE,IMAGE_TOO_SMALL,TOO_MUCH_TEXT}`(B가 이미 분류한 경우 NOT_UNKNOWN은 안 찍음). 완화: 이미지 40% → **25%**, 이미지 자체가 클릭 가능하지 않아도 됨(링크 안 `<img>`), 루트 종류에 덮개(DIM_OVERLAY)도 포함, 이미지의 대체 글은 본문 글자 수에서 뺌. 결정·사기·B가 분류한 팝업은 계속 제외 | `ImageDialogAdHintTest` 4개 추가 |
+
+- 검증: 5개 Gradle 작업 통과, 단위 시험 debug 1018개·release 1003개 실패 0, lintDebug 오류 0(경고 12, 이전과 같음), 병합 매니페스트 INTERNET 0·새 권한 없음.
+- 위험: F6 완화로 이미지로 그린 공지·안내도 광고로 닫힐 수 있다(엔진 규칙, B 판단 아님). F4 누르기 전 포커스 이동이 TalkBack 낭독을 한 번 더 부를 수 있다 — 체감 나쁘면 `FOCUS_PAGE_BEFORE_CLICK = false`.

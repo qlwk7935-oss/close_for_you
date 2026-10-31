@@ -23,6 +23,14 @@ object ButtonNameDisplay {
     /** Longest label kept as written (after the shared normalization): "광고 건너뛰기", "close ad". */
     const val MAX_KEPT_LENGTH = 8
 
+    /**
+     * [roleNameRes] for one button among [pressButtonCount] the prompt offers. Only a lone button is
+     * shortened: with two or more, each keeps its own name so they stay apart (LG 10/31, 11번가:
+     * "앱설치 안내 레이어 닫기" and "모바일 웹으로 볼래요" both read "'닫기' 버튼 눌러 주기").
+     */
+    fun roleNameRes(label: String?, role: ButtonRole?, pressButtonCount: Int): Int? =
+        if (pressButtonCount >= 2) null else roleNameRes(label, role)
+
     /** Null = show [label] as it is; otherwise the string resource of the role name. */
     fun roleNameRes(label: String?, role: ButtonRole?): Int? {
         val roleRes = when (role) {
@@ -42,11 +50,12 @@ object ButtonNameDisplay {
      */
     fun realNames(analysis: PopupAnalysis, labelPolicy: PressableLabelPolicy = SharedLabelPolicy): List<RealName> {
         val texts = analysis.texts.map { ButtonLabelRules.normalize(it.text) }
-        return analysis.closeCandidates.mapNotNull { c ->
-            val label = c.label?.trim()?.takeIf { it.isNotEmpty() } ?: return@mapNotNull null
-            // Only labels a press button could carry; the others never appear shortened.
-            if (labelPolicy.roleOf(label) != c.role) return@mapNotNull null
-            val res = roleNameRes(label, c.role) ?: return@mapNotNull null
+        // Only labels a press button could carry; the others never appear shortened.
+        val pressable = analysis.closeCandidates.mapNotNull { c ->
+            c.label?.trim()?.takeIf { it.isNotEmpty() && labelPolicy.roleOf(it) == c.role }?.let { it to c.role }
+        }
+        return pressable.mapNotNull { (label, role) ->
+            val res = roleNameRes(label, role, pressable.size) ?: return@mapNotNull null
             if (ButtonLabelRules.normalize(label) in texts) null else RealName(res, label)
         }.distinctBy { it.label }
     }

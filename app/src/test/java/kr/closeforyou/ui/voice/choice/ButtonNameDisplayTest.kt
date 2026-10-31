@@ -87,6 +87,26 @@ class ButtonNameDisplayTest {
         assertTrue(ButtonNameDisplay.realNames(analysis(listOf("특가"), listOf("앱설치 안내 레이어 닫기"))).isEmpty())
     }
 
+    // ---- F3 (LG 10/31, 11번가): two press buttons both read "'닫기' 버튼 눌러 주기" ----
+
+    @Test fun twoPressButtonsKeepTheirOwnNames() {
+        assertNull(ButtonNameDisplay.roleNameRes("앱설치 안내 레이어 닫기", close, pressButtonCount = 2))
+        assertNull(ButtonNameDisplay.roleNameRes("모바일 웹으로 볼래요", close, pressButtonCount = 2))
+        assertNull(ButtonNameDisplay.roleNameRes("5초 후 광고 건너뛰기", skip, pressButtonCount = 3))
+    }
+
+    @Test fun aLonePressButtonIsStillShortened() {
+        assertEquals(R.string.ui_choice_role_close, ButtonNameDisplay.roleNameRes("앱설치 안내 레이어 닫기", close, pressButtonCount = 1))
+        assertNull(ButtonNameDisplay.roleNameRes("닫기", close, pressButtonCount = 1))
+    }
+
+    @Test fun twoPressButtonsNeedNoRealNameLine() {
+        val names = ButtonNameDisplay.realNames(
+            analysis(listOf("앱에서만 제공되는 혜택"), listOf("앱설치 안내 레이어 닫기", "모바일 웹으로 볼래요")), acceptAll,
+        )
+        assertTrue(names.isEmpty())
+    }
+
     @Test fun toStringHidesTheLabel() =
         assertFalse(ButtonNameDisplay.RealName(R.string.ui_choice_role_close, "비밀 이름").toString().contains("비밀"))
 

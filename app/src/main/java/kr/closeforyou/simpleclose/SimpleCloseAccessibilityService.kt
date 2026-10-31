@@ -82,6 +82,8 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
     private var jobs = EngineJobs(scope)
     private var screenVersion = 0L
     private var lastInspectAt = 0L
+    /** F5: when the first helped-app event of the current search came (0 = none pending); debug latency only. */
+    private var firstEventAt = 0L
     private var inputMethods: Set<String> = emptySet()
 
     /** The popup the prompt on screen is about, when each popup key was last seen, and keys already explained. */
@@ -134,6 +136,7 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
         // While the prompt is up only a rare re-read is needed (to notice the popup went away): the
         // full tree read is what made swiping through our window sluggish (LG 10/31).
         if (prompted != null && SystemClock.uptimeMillis() - lastInspectAt < SimpleCloseEngineFeature.PROMPT_RECHECK_MILLIS) return
+        if (prompted == null && firstEventAt == 0L) firstEventAt = SystemClock.uptimeMillis()
         if (event.eventType == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED) {
             // Chrome repaints constantly: one throttled read, and never a restart of the chain (which
             // kept the tree being read every 1~2 s for minutes, LG 10/31).
@@ -143,7 +146,7 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
             }
             jobs.scheduleInspection {
                 delay(SimpleCloseEngineFeature.DEBOUNCE_MILLIS)
-                if (!jobs.busy && prompted == null) inspect()
+                if (!jobs.busy && prompted == null && !inspect()) firstEventAt = 0L
             }
             return
         }
@@ -159,6 +162,7 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
                 if (jobs.busy || prompted != null) return@scheduleInspection
                 if (inspect()) return@scheduleInspection
             }
+            firstEventAt = 0L
         }
     }
 
@@ -196,6 +200,7 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
         if (seenAt.size > 32) seenAt.remove(seenAt.keys.first())
         if (last != null && now - last < SimpleCloseEngineFeature.SAME_POPUP_COOLDOWN_MILLIS) {
             log.trace(SimpleTrace.SAME_POPUP_COOLDOWN)
+            firstEventAt = 0L
             return true
         }
         log.trace(when (root.kind) {
@@ -203,12 +208,17 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
             PopupRootKind.DIALOG_WINDOW -> SimpleTrace.DETECTED_DIALOG_WINDOW
             PopupRootKind.DIM_OVERLAY -> SimpleTrace.DETECTED_DIM_OVERLAY
         })
+        if (firstEventAt != 0L) log.latency(now - firstEventAt)
+        firstEventAt = 0L
 
         val byB = classifier.classify(popup.analysis)
         val suspicious = RememberChoiceRules.suspiciousByB(popup.analysis)
         // Demo hint: an image-only dialog with a close button that B cannot judge from words (옥션).
-        val hinted = SimpleCloseEngineFeature.IMAGE_DIALOG_AD_HINT && ImageDialogAdHint.applies(popup, byB, suspicious)
+        val miss = if (SimpleCloseEngineFeature.IMAGE_DIALOG_AD_HINT) ImageDialogAdHint.check(popup, byB, suspicious) else AdHintMiss.NOT_UNKNOWN
+        val hinted = SimpleCloseEngineFeature.IMAGE_DIALOG_AD_HINT && miss == null
         if (hinted) log.trace(SimpleTrace.AD_HINT_IMAGE_DIALOG)
+        // F6: why not, when B could not judge (a classified popup needs no hint, so it is not logged).
+        else if (miss != null && miss != AdHintMiss.NOT_UNKNOWN) log.trace(SimpleTrace.adHintMiss(miss))
         val classification = if (hinted) PopupClassification.ADVERTISEMENT else byB
         log.trace(when {
             suspicious -> SimpleTrace.CLASSIFIED_SUSPICIOUS
@@ -271,7 +281,8 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
         announcer.stop()
         if (SimpleCloseEngineFeature.FOCUS_PAGE_AFTER_CLOSE) {
             val memory = PopupMemory.of(popup)
-            val moved = withContext(Dispatchers.Default) { collector.focusFirstPageItem(memory) }
+            val (kind, moved) = withContext(Dispatchers.Default) { collector.focusPageItem(memory) }
+            log.trace(SimpleTrace.focusTarget(kind))
             log.trace(if (moved) SimpleTrace.FOCUS_MOVED_TO_PAGE else SimpleTrace.FOCUS_MOVE_FAILED)
         }
         val kind = AutoDecisionSpeech.kindOf(popup.analysis.classification)
@@ -348,6 +359,11 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
     private suspend fun pressAndConfirm(popup: SimplePopup, candidate: CloseCandidate): ActionResult {
         val token = popup.analysis.token
         run {
+            if (SimpleCloseEngineFeature.FOCUS_PAGE_BEFORE_CLICK) {
+                // Before the re-check, so nothing sits between the re-check and the click.
+                val (_, moved) = withContext(Dispatchers.Default) { collector.focusPageItem(PopupMemory.of(popup)) }
+                log.trace(if (moved) SimpleTrace.FOCUS_PRE_CLICK_MOVED else SimpleTrace.FOCUS_PRE_CLICK_FAILED)
+            }
             val stillThere = withContext(Dispatchers.Default) {
                 collector.foregroundPackage() == token.packageName && collector.rootStillPresent(popup.root) == true && collector.targetMatches(candidate)
             }
@@ -503,6 +519,11 @@ private class DebugSimpleLog(service: AccessibilityService) : SimpleTraceSink {
 
     fun speech(kind: SpeechKind, length: Int) {
         if (enabled) Log.d(SPEECH_TAG, "${kind.name} len=$length")
+    }
+
+    /** F5: first helped-app event of this search → DETECTED, in ms (a number only). */
+    fun latency(millis: Long) {
+        if (enabled) Log.d(TAG, "DETECT_LATENCY_MS=$millis")
     }
 
     private companion object {

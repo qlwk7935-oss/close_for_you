@@ -118,31 +118,51 @@ class SimpleTreeCollector(private val service: AccessibilityService) {
     }
 
     /**
-     * Moves accessibility (TalkBack) focus to the first visible, named item of the page: inside the
-     * first WebView when there is one (so the URL bar is skipped), else the first named node. A node
-     * that was part of the closed popup ([exclude]: its texts and bounds, memory only) is skipped,
-     * because a closed web popup can stay in the DOM with the same words (LG 10/31). Nothing is
-     * clicked. Device unverified.
+     * Moves accessibility (TalkBack) focus to a visible, named item of the page: inside the first
+     * WebView when there is one (so the URL bar is skipped), else anywhere. Items that were part of the
+     * closed popup ([exclude]: its texts, bounds and area, memory only) are skipped and the highest
+     * remaining one wins ([PageFocusRules]); a closed web popup can stay in the DOM (LG 10/31). With no
+     * item, the WebView itself when it has a name. Nothing is clicked. Returns what was focused (for the
+     * debug log) and whether the action was accepted. Device unverified.
      */
-    fun focusFirstPageItem(exclude: PopupMemory): Boolean {
-        val root = service.rootInActiveWindow ?: return false
+    fun focusPageItem(exclude: PopupMemory): Pair<FocusTargetKind, Boolean> {
+        val root = service.rootInActiveWindow ?: return FocusTargetKind.NONE to false
+        val live = mutableListOf<AccessibilityNodeInfo>()
+        var webView: AccessibilityNodeInfo? = null
         try {
-            val predicate = { node: AccessibilityNodeInfo ->
-                val rect = Rect().also(node::getBoundsInScreen)
-                val bounds = ScreenBounds(rect.left, rect.top, maxOf(rect.right, rect.left), maxOf(rect.bottom, rect.top))
-                isNamedVisible(node) && !exclude.matches(node.text?.toString(), node.contentDescription?.toString(), bounds)
+            webView = firstMatch(root, 0) { it.className?.contains("WebView", ignoreCase = true) == true }
+            val candidates = mutableListOf<FocusCandidate>()
+            var visited = 0
+            fun visit(n: AccessibilityNodeInfo, depth: Int) {
+                if (depth > SimpleCloseEngineFeature.MAX_DEPTH) return
+                for (i in 0 until n.childCount) {
+                    if (visited++ >= FOCUS_MAX_VISITED || live.size >= FOCUS_MAX_CANDIDATES) return
+                    val child = n.getChild(i) ?: continue
+                    if (isNamedVisible(child)) {
+                        val rect = Rect().also(child::getBoundsInScreen)
+                        val bounds = ScreenBounds(rect.left, rect.top, maxOf(rect.right, rect.left), maxOf(rect.bottom, rect.top))
+                        val leftover = exclude.matches(child.text?.toString(), child.contentDescription?.toString(), bounds)
+                        candidates += FocusCandidate(bounds, leftover, child.isHeading)
+                        live += child
+                    } else {
+                        try { visit(child, depth + 1) } finally { release(child) }
+                    }
+                }
             }
-            val webView = firstMatch(root, 0) { it.className?.contains("WebView", ignoreCase = true) == true }
-            val target = (webView?.let { firstMatch(it, 0, predicate) ?: run { release(it); null } }
-                ?: firstMatch(root, 0, predicate)) ?: return false
-            try {
-                return target.performAction(AccessibilityNodeInfo.ACTION_ACCESSIBILITY_FOCUS)
-            } finally {
-                release(target)
-            }
+            visit(webView ?: root, 0)
+            val webViewNamed = webView?.let { !it.text.isNullOrBlank() || !it.contentDescription.isNullOrBlank() } == true
+            val pick = PageFocusRules.pick(candidates, webViewNamed)
+            val target = when {
+                pick.index != null -> live[pick.index]
+                pick.webViewRoot -> webView
+                else -> null
+            } ?: return pick.kind to false
+            return pick.kind to target.performAction(AccessibilityNodeInfo.ACTION_ACCESSIBILITY_FOCUS)
         } catch (e: RuntimeException) {
-            return false
+            return FocusTargetKind.NONE to false
         } finally {
+            live.forEach(::release)
+            webView?.let(::release)
             release(root)
         }
     }
@@ -233,6 +253,8 @@ class SimpleTreeCollector(private val service: AccessibilityService) {
 
     private companion object {
         const val LIVE_NAME_MAX_NODES = 60
+        const val FOCUS_MAX_VISITED = 400
+        const val FOCUS_MAX_CANDIDATES = 40
     }
 
     @Suppress("DEPRECATION")

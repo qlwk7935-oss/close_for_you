@@ -342,7 +342,7 @@ private fun ServiceStep(serviceOn: Boolean) {
     // Polite: when the person comes back from settings, TalkBack reads "켜짐" once; focus stays.
     Box(Modifier.semantics(mergeDescendants = true) { liveRegion = LiveRegionMode.Polite }) { ServiceStateBox(serviceOn) }
     if (!serviceOn) {
-        HelpText(stringResource(R.string.ui_setup_service_how, appName))
+        // No "how" line above the button (LG 10/31): [서비스 켜기] opens the guide that says it.
         BrandButton(stringResource(R.string.ui_setup_service_turn_on), turnOn)
         if (openFailed) {
             Text(
