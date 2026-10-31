@@ -85,6 +85,12 @@
 - 고친 것: ① 닫힌 뒤 포커스 대상은 팝업 노드의 글자·bounds(`PopupMemory`, 메모리만)와 겹치지 않고 `isVisibleToUser`·넓이>0인 항목만. ② 순서: `CLOSED_CONFIRMED` → 우리 RESULT 문장을 바로, 끝까지 말함("광고를/공지를/팝업을 닫았어요", `ui_auto_closed_one`, 2초 묶음 없이) → 그 뒤 포커스 이동(TalkBack 낭독과 겹치지 않음).
 - B 분류 메모(바꾸지 않음): 11번가 앱설치 유도 시트("앱에서만 제공되는 혜택…", "지금 바로 … 확인해보세요")는 B main `DecisionKinds`에서 **NOTICE**("안내" 단어). 사용자는 "광고 닫았어요"를 기대. B 브랜치 `feature/decision-web-overlay`의 `extraAdKo`(앱에서만+혜택, 앱 열기/설치/다운로드)가 들어오면 ADVERTISEMENT가 되고, 프리셋 "광고만 닫기"에서도 묻지 않고 닫힘. B(준영) 판단 사항.
 
+## 5-5. LG 옥션 자동 닫기 (10/31 20:01, 3e47eee) → 같은 빌드에 수정
+
+- ✅ 실제로 닫힘(`CLASSIFIED_AD → DECIDED_AUTO_CLOSE → CLICKED`). ❌ `CLOSED_CONFIRMED`·RESULT 없음.
+- 원인: 자동 닫기가 **검사(inspection) 코루틴 안에서** 실행됐고, 클릭 200ms 뒤 들어온 다른 패키지 이벤트가 그 코루틴을 취소(`pending?.cancel()`)해 확인 폴링이 중간에 죽음. 사용자 선택 경로는 별도 `launch`라 멀쩡했음.
+- 고친 것: `EngineJobs`(순수) — 검사 작업과 실행 작업을 분리. 이벤트는 검사만 교체하고 실행 작업은 절대 취소하지 않으며, 실행 중에는 이벤트를 무시한다. 자동·사용자 누르기 모두 `runAction`. JVM 시험 4개(`EngineJobsTest`: 다른 패키지 이벤트 뒤에도 확인·RESULT 1회 등).
+
 ## 6. 남은 위험·미확인
 
 - 크롬이 실기기에서 `AlertDialog` 노드를 주는지(10/30 LG 확인됨), 두 번째 서비스에서도 주는지.

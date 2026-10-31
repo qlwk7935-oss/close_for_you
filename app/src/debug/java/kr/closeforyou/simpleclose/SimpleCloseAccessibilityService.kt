@@ -12,7 +12,6 @@ import android.view.inputmethod.InputMethodManager
 import kotlinx.collections.immutable.persistentSetOf
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
@@ -79,8 +78,8 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
     private var overlay: AccessibilityChoiceOverlay? = null
     private var batcher: AnnouncementBatcher? = null
     private var handlingListener: SpeechHandlingListener? = null
-    private var pending: Job? = null
-    private var busy = false
+    /** Inspection vs action jobs; an event never cancels a running press ([EngineJobs]). */
+    private var jobs = EngineJobs(scope)
     private var screenVersion = 0L
     private var lastInspectAt = 0L
     private var inputMethods: Set<String> = emptySet()
@@ -102,6 +101,7 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
         }
         scope.cancel()
         scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+        jobs = EngineJobs(scope)
         serviceInfo = serviceInfo?.apply {
             flags = flags or AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS or AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS
         }
@@ -129,11 +129,12 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
             return
         }
         screenVersion += 1
+        // A press in progress: its confirmation must not be disturbed (LG 10/31 옥션: no CLOSED_CONFIRMED).
+        if (jobs.busy) return
         // While the prompt is up only a rare re-read is needed (to notice the popup went away): the
         // full tree read is what made swiping through our window sluggish (LG 10/31).
         if (prompted != null && SystemClock.uptimeMillis() - lastInspectAt < SimpleCloseEngineFeature.PROMPT_RECHECK_MILLIS) return
-        pending?.cancel()
-        pending = scope.launch {
+        jobs.scheduleInspection {
             delay(SimpleCloseEngineFeature.DEBOUNCE_MILLIS)
             // A popup still animating is missed by the first read, and Chrome may send nothing more
             // (LG 10/31: 40 s late): read again a few times, until something is found or handled.
@@ -142,8 +143,8 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
                     log.trace(SimpleTrace.RECHECK_SCHEDULED)
                     delay(wait)
                 }
-                if (busy || prompted != null) return@launch
-                if (inspect()) return@launch
+                if (jobs.busy || prompted != null) return@scheduleInspection
+                if (inspect()) return@scheduleInspection
             }
         }
     }
@@ -210,12 +211,15 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
             is SimpleDecision.AutoClose -> {
                 log.trace(SimpleTrace.DECIDED_AUTO_CLOSE)
                 val approval = ActionDecision(analysis.token, ActionAuthorization.ALLOW_ONCE, persistentSetOf(), decision.candidate.id, DecisionSource.PRESET, NextStep.EXECUTE)
-                val result = pressAndConfirm(classified, decision.candidate)
-                if (PressSuccess.isConfirmed(result)) {
-                    speakClosedThenFocusPage(classified)
-                } else {
-                    tts?.stop()
-                    handlingListener?.onHandled(HandlingReport(analysis.token, classification, approval, result))
+                // Its own job: the inspection this runs in is replaced by the next window event.
+                jobs.runAction {
+                    val result = pressAndConfirm(classified, decision.candidate)
+                    if (PressSuccess.isConfirmed(result)) {
+                        speakClosedThenFocusPage(classified)
+                    } else {
+                        tts?.stop()
+                        handlingListener?.onHandled(HandlingReport(analysis.token, classification, approval, result))
+                    }
                 }
             }
             SimpleDecision.DenyDecision -> {
@@ -296,7 +300,7 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
                 val candidate = popup.scan.candidates.firstOrNull { it.id == choice.candidateId } ?: return
                 // Nothing waits for the prompt's speech: stop it and press right away.
                 tts?.stop()
-                scope.launch {
+                jobs.runAction {
                     val result = pressAndConfirm(popup, candidate)
                     if (PressSuccess.isConfirmed(result)) speakClosedThenFocusPage(popup) else speakOwnPress(result)
                 }
@@ -324,8 +328,7 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
      */
     private suspend fun pressAndConfirm(popup: SimplePopup, candidate: CloseCandidate): ActionResult {
         val token = popup.analysis.token
-        busy = true
-        try {
+        run {
             val stillThere = withContext(Dispatchers.Default) {
                 collector.foregroundPackage() == token.packageName && collector.rootStillPresent(popup.root) == true && collector.targetMatches(candidate)
             }
@@ -368,8 +371,6 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
                 else -> SimpleTrace.NOT_CLOSED
             })
             return ActionResult(token, ActionStatus.MECHANICAL_SUCCESS, null, attempted = true, outcome = outcome)
-        } finally {
-            busy = false
         }
     }
 
@@ -396,7 +397,7 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
     }
 
     override fun onInterrupt() {
-        pending?.cancel()
+        jobs.cancelAll()
         promptGone()
     }
 
@@ -411,8 +412,7 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
     }
 
     private fun shutdown() {
-        pending?.cancel()
-        pending = null
+        jobs.cancelAll()
         prompted = null
         overlay?.dismiss()
         overlay = null
