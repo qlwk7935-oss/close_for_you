@@ -150,7 +150,7 @@ class ScenarioCatalogTest {
     fun int1GapsAreListedAndExplained() {
         assertEquals(all.map { it.id }.toSet(), ScenarioCatalog.int1.keys)
         val gaps = all.filter { ScenarioCatalog.int1.getValue(it.id).kind != humanInt1(it.kind) }.map { it.id }.toSet()
-        assertEquals(setOf("P02", "P03", "P05", "P07", "P18", "P24"), gaps)
+        assertEquals(setOf("P02", "P05", "P07", "P18", "P24"), gaps)
         gaps.forEach { assertTrue(it, ScenarioCatalog.int1.getValue(it).reason.isNotBlank()) }
     }
 

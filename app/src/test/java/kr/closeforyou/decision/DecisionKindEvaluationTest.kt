@@ -103,12 +103,13 @@ class DecisionKindEvaluationTest {
 
     private companion object {
         // 2026-10-23 after the independent review: 73/80, all on the cautious side (AUTO_CLOSE.md 6절).
-        // The first run (72/80) also had de-06 as UNKNOWN and cp-07 as COUPON.
+        // The first run (72/80) also had de-06 as UNKNOWN and cp-07 as COUPON. 2026-10-30: 74/80 after the
+        // app-install advertisement words from the real 11번가 web sheet (WEB_OVERLAY.md 3-2); ad-19 is no
+        // longer an independent held-out result.
         val RECORDED_ERRORS = listOf(
             "cp-02:COUPON->USER_DECISION", // "구매 고객" is a decision word outside a benefit condition
             "cp-07:COUPON->NOTICE", // "쿠폰이 내일 만료됩니다": an expiry is a service notice (told, closed only by ①)
             "cp-08:COUPON->UNKNOWN", // "5천 포인트" with no giving verb
-            "ad-19:ADVERTISEMENT->UNKNOWN", // install banner without an ad word
             "no-05:NOTICE->UNKNOWN", "no-07:NOTICE->UNKNOWN", "no-09:NOTICE->UNKNOWN", // no notice word
         )
         const val RECORDED_STUDY =

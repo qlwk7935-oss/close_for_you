@@ -75,11 +75,12 @@ class DecisionEmulatorDumpTest {
         assertEquals(PopupClassification.USER_DECISION, s.classification)
     }
 
-    @Test fun p03BottomBannerHasNoCandidateAndNoClearKind() {
+    @Test fun p03BottomBannerHasNoCandidateButIsAnAdvertisement() {
         val s = screen("p03_bottom_banner.xml", PopupSignal.SAME_WINDOW_OVERLAY)
+        // No Dialog node, so no popup scope and no candidate.
         assertTrue(s.candidates.isEmpty())
-        // "앱 설치하고 혜택 받기" has no advertisement word in B's dictionary.
-        assertEquals(PopupClassification.UNKNOWN, s.classification)
+        // "앱 설치하고 혜택 받기" is an app-install advertisement since 10/30 (WEB_OVERLAY.md 3-2).
+        assertEquals(PopupClassification.ADVERTISEMENT, s.classification)
     }
 
     @Test fun p04UnlabeledXIsNotACandidate() {

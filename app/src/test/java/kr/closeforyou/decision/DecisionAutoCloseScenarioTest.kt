@@ -210,7 +210,7 @@ class DecisionAutoCloseScenarioTest {
         const val RECORDED_THROUGH_A = """
             P01: tree | COUPON | ① btn_close ② btn_close ③ KIND_NOT_IN_PRESET
             P02: tree | USER_DECISION | ① KIND_NEVER_CLOSED ② KIND_NEVER_CLOSED ③ KIND_NEVER_CLOSED
-            P03: tree | UNKNOWN | ① KIND_NEVER_CLOSED ② KIND_NEVER_CLOSED ③ KIND_NEVER_CLOSED
+            P03: tree | ADVERTISEMENT | ① WAITING_FOR_TARGET ② WAITING_FOR_TARGET ③ WAITING_FOR_TARGET
             P04: A blocked
             P05: tree | UNKNOWN | ① KIND_NEVER_CLOSED ② KIND_NEVER_CLOSED ③ KIND_NEVER_CLOSED
             P06: tree | ADVERTISEMENT | ① btn_close ② btn_close ③ btn_close
@@ -243,7 +243,7 @@ class DecisionAutoCloseScenarioTest {
         const val RECORDED_RAW = """
             P01: raw | COUPON | ① btn_close ② btn_close ③ KIND_NOT_IN_PRESET
             P02: raw | USER_DECISION | ① KIND_NEVER_CLOSED ② KIND_NEVER_CLOSED ③ KIND_NEVER_CLOSED
-            P03: raw | UNKNOWN | ① KIND_NEVER_CLOSED ② KIND_NEVER_CLOSED ③ KIND_NEVER_CLOSED
+            P03: raw | ADVERTISEMENT | ① WAITING_FOR_TARGET ② WAITING_FOR_TARGET ③ WAITING_FOR_TARGET
             P04: raw | ADVERTISEMENT | ① WAITING_FOR_TARGET ② WAITING_FOR_TARGET ③ WAITING_FOR_TARGET
             P05: raw | UNKNOWN | ① KIND_NEVER_CLOSED ② KIND_NEVER_CLOSED ③ KIND_NEVER_CLOSED
             P06: raw | ADVERTISEMENT | ① btn_close ② btn_close ③ btn_close

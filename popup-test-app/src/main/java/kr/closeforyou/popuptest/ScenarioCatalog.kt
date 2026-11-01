@@ -388,7 +388,7 @@ object ScenarioCatalog {
         "P01" to Int1Expectation(Int1Kind.COUPON, Int1Path.TREE),
         "P02" to Int1Expectation(Int1Kind.USER_DECISION, Int1Path.TREE,
             "제목 '신규 가입 이벤트'의 '가입'. 10자 이하라 B가 혜택 조건(R1)으로 보지 않음"),
-        "P03" to Int1Expectation(Int1Kind.UNKNOWN, Int1Path.TREE, "'설치하고 혜택 받기'에 B 광고·쿠폰 단어가 없음"),
+        "P03" to Int1Expectation(Int1Kind.ADVERTISEMENT, Int1Path.TREE),
         "P04" to Int1Expectation(Int1Kind.ADVERTISEMENT, Int1Path.TREE),
         "P05" to Int1Expectation(Int1Kind.UNKNOWN, Int1Path.TREE, "글자 노드 없음(그림만)"),
         "P06" to Int1Expectation(Int1Kind.ADVERTISEMENT, Int1Path.TREE),
