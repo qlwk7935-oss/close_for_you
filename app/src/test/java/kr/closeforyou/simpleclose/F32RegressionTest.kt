@@ -31,9 +31,8 @@ class F32RegressionTest {
         // The Dialog's touchable region is the whole screen: its window says full, and the activity below is left out.
         val dialog = WindowShape(16, WindowKind.APPLICATION, 21, true, lg, card)
         assertNull(WindowBoundsRules.activeBounded(dialog, listOf(status, dialog, nav), lg))
-        // Before F32 this was the answer: no wider window of the same app listed.
-        assertEquals(ActiveWindowReject.NO_WIDER_SAME_APP_WINDOW,
-            WindowBoundsRules.activeBounded(dialog.copy(window = card), listOf(status, dialog.copy(window = card), nav), lg))
+        // F32 still refused it when the window came with its own size (nothing wider listed); F33 takes a floating window.
+        assertNull(WindowBoundsRules.activeBounded(dialog.copy(window = card), listOf(status, dialog.copy(window = card), nav), lg))
     }
 
     @Test fun bothWindowsListed() {
@@ -46,6 +45,34 @@ class F32RegressionTest {
         // The activity active (TalkBack's focus stayed there): not a popup window itself, the Dialog is read as the window above.
         assertEquals(ActiveWindowReject.NOT_BOUNDED, WindowBoundsRules.activeBounded(base, listOf(base, nav), lg))
         assertTrue(WindowBoundsRules.bounded(lg, card, lg))
+    }
+
+    @Test fun f33TheDialogWithItsOwnSizeAndNothingElseOfTheApp() {
+        // LG fbc54ae: `WINDOWS app=1 [S?:wPrN A*S:wPrP] active=NO_WIDER_SAME_APP_WINDOW` — a system bar, then the Dialog
+        // (window and root both the card), the activity not listed.
+        val dialog = WindowShape(16, WindowKind.APPLICATION, 21, true, card, card)
+        val shapes = listOf(status, dialog)
+        assertEquals("WINDOWS app=1 [S?:wPrN A*S:wPrP] active=BOUNDED above=-",
+            WindowBoundsRules.line(shapes, 16, lg, WindowBoundsRules.activeBounded(dialog, shapes, lg), emptyList()))
+        assertNull(WindowBoundsRules.activeBounded(dialog, shapes, lg))
+        // With the surface insets in the window's bounds, too.
+        assertNull(WindowBoundsRules.activeBounded(dialog.copy(window = withInsets), listOf(status, dialog.copy(window = withInsets)), lg))
+    }
+
+    @Test fun f33NotAFloatingDialog() {
+        fun alone(b: ScreenBounds) = WindowShape(9, WindowKind.APPLICATION, 20, true, b, b).let { WindowBoundsRules.activeBounded(it, listOf(it), lg) }
+        // Split screen halves (top / bottom, left / right in landscape terms).
+        assertEquals(ActiveWindowReject.NO_WIDER_SAME_APP_WINDOW, alone(ScreenBounds(0, 0, 1080, 1200)))
+        assertEquals(ActiveWindowReject.NO_WIDER_SAME_APP_WINDOW, alone(ScreenBounds(0, 1260, 1080, 2460)))
+        assertEquals(ActiveWindowReject.NO_WIDER_SAME_APP_WINDOW, alone(ScreenBounds(0, 0, 540, 2460)))
+        // Picture in picture: small, in a corner.
+        assertEquals(ActiveWindowReject.NO_WIDER_SAME_APP_WINDOW, alone(ScreenBounds(600, 1900, 1040, 2150)))
+        // A small banner window at the top, a bottom sheet window.
+        assertEquals(ActiveWindowReject.NO_WIDER_SAME_APP_WINDOW, alone(ScreenBounds(0, 80, 1080, 300)))
+        assertEquals(ActiveWindowReject.NO_WIDER_SAME_APP_WINDOW, alone(ScreenBounds(0, 1600, 1080, 2460)))
+        // A keyboard is not an application window.
+        val ime = WindowShape(3, WindowKind.INPUT_METHOD, 25, null, ScreenBounds(0, 1500, 1080, 2340), null)
+        assertEquals(ActiveWindowReject.NOT_APPLICATION, WindowBoundsRules.activeBounded(ime, listOf(ime), lg))
     }
 
     @Test fun ordinaryWindowsStayOrdinary() {

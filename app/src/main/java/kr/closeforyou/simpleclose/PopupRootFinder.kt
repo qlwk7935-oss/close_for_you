@@ -364,10 +364,29 @@ object WindowBoundsRules {
         if (!bounded(active.window, active.root, screen)) return ActiveWindowReject.NOT_BOUNDED
         val root = active.root
         if (root != null && area(root) > 0 && area(active.window) > area(root) * TOUCH_MODAL_RATIO) return null
+        // F33 (LG 11/1, fbc54ae: `WINDOWS app=1 [S?:wPrN A*S:wPrP] active=NO_WIDER_SAME_APP_WINDOW`): the Dialog came with
+        // its own size and nothing else of the app was listed. A floating window in the middle of the screen is a dialog.
+        if (floating(shown(active.window, active.root), screen)) return null
         val shownArea = area(shown(active.window, active.root))
         val wider = all.any { it.id != active.id && it.kind == WindowKind.APPLICATION && it.samePackage == true && area(it.window) > shownArea }
         return if (wider) null else ActiveWindowReject.NO_WIDER_SAME_APP_WINDOW
     }
+
+    /**
+     * F33: [FLOATING_MIN_RATIO]~[FLOATING_MAX_RATIO] of the screen, its middle within 10% (across) and 20% (down) of the
+     * screen's middle. Not a split-screen half (off-centre one way), a PiP (a corner, small), a top banner or a bottom
+     * sheet (off-centre down); a keyboard or a toast is not an application window at all.
+     */
+    fun floating(b: ScreenBounds, screen: ScreenBounds): Boolean {
+        val ratio = area(b).toDouble() / maxOf(1L, area(screen))
+        if (ratio < FLOATING_MIN_RATIO || ratio > FLOATING_MAX_RATIO) return false
+        val dx = kotlin.math.abs((b.left + b.right) / 2 - (screen.left + screen.right) / 2)
+        val dy = kotlin.math.abs((b.top + b.bottom) / 2 - (screen.top + screen.bottom) / 2)
+        return dx <= screen.width * 0.1 && dy <= screen.height * 0.2
+    }
+
+    const val FLOATING_MIN_RATIO = 0.1
+    const val FLOATING_MAX_RATIO = 0.85
 
     /** A window reporting this much more than its root view shows takes touches outside its content (touch-modal). */
     const val TOUCH_MODAL_RATIO = 1.2
