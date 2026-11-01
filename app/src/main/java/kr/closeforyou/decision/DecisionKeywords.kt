@@ -65,6 +65,26 @@ internal object DecisionKeywords {
             """|$EN_START(when|if)\s+you\s+(sign up|subscribe|buy|purchase|pay|log in|sign in)$EN_END""",
         RegexOption.IGNORE_CASE,
     )
+    // B_DEMO_RULES.md 1-7 (재호 11/1, LG 올리브영): a benefit *of* paying, named as a noun ("결제 혜택", "결제 할인",
+    // "카드 결제 캐시백"), is a promotion of a payment method, not a payment step. Only the phrase is left out.
+    private val paymentBenefit = Regex("""((카드|간편|계좌|현금|앱|[가-힣a-z]+페이)\s?)?결제\s?(시\s?)?(혜택|할인|적립|캐시백|이벤트|프로모션|쿠폰|리워드)""")
+
+    /** [text] without its benefit conditions (R1) and payment-benefit phrases; meaningful only for a mention. */
+    private fun stripBenefitConditions(text: String): String = paymentBenefit.replace(conditionedDecision.replace(text, " "), " ")
+
+    /** [text] as the decision checks should read it: benefit conditions left out only when it is a mention. */
+    fun withoutBenefitConditions(text: String): String = if (isBenefitMention(text)) stripBenefitConditions(text) else text
+
+    // The payment method named in front goes with it ("카드 결제 시 10% 할인"): the method is what is promoted.
+    private val paymentCondition = Regex("""((카드|간편|계좌|현금|앱|[가-힣a-z]+페이)\s?)?결제\s?(하면|하시면|할 때|하실 때|시(?=[\s,.!]|$))""")
+
+    /**
+     * [text] without payment-method benefits only ("결제 혜택", "카드 결제 시 할인"), for a mention. Purchase and
+     * membership conditions ("지금 구매하면 쿠폰", over-warning de-08) stay: they urge the decision itself.
+     */
+    fun withoutPaymentBenefits(text: String): String =
+        if (isBenefitMention(text)) paymentBenefit.replace(paymentCondition.replace(text, " "), " ") else text
+
     private val benefitWord = Regex("""할인|쿠폰|포인트|혜택|이벤트|특가|무료|증정|적립|배송|$EN_START(off|free|bonus|coupon)$EN_END""", RegexOption.IGNORE_CASE)
     // A question or A's fixed summary ("결제 선택 필요") is always a decision, never a mention.
     private val asksForDecision = Regex("""\?|하시겠|할까요|시겠어요|필요""")
@@ -77,7 +97,7 @@ internal object DecisionKeywords {
      */
     fun isBenefitMention(text: String): Boolean {
         if (text.length <= 10 || !benefitWord.containsMatchIn(text) || asksForDecision.containsMatchIn(text)) return false
-        val rest = conditionedDecision.replace(text, " ")
+        val rest = stripBenefitConditions(text)
         return rest != text && !isUserDecision(rest)
     }
 
@@ -167,7 +187,7 @@ internal object DecisionKeywords {
         val folded = fold(text)
         fun decisionWord(f: String) = isUserDecision(f) || decisionEn.containsMatchIn(f)
         val word = if (isBenefitMention(folded)) {
-            guardForms(conditionedDecision.replace(folded, " ")).any(::decisionWord)
+            guardForms(stripBenefitConditions(folded)).any(::decisionWord)
         } else {
             forms.any(::decisionWord)
         }
