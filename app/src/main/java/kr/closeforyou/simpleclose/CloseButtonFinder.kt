@@ -58,7 +58,9 @@ object CloseButtonFinder {
             }
             if ((label == null || SimpleLabelRules.isXMark(label)) && looksLikeX(node, root)) xShaped += node
             val verdict = SimpleLabelRules.judge(label)
-            val role = verdict.role
+            // B review 11/1: a box named by the words inside it is a close only by a complete close phrase.
+            val namedByChildren = node.text.isNullOrBlank() && node.contentDescription.isNullOrBlank()
+            val role = verdict.role?.takeIf { !namedByChildren || SimpleLabelRules.roleOfExactPhrase(label) == it }
             if (role != null) {
                 candidates += CloseCandidate(
                     id = "node:${node.path}",
@@ -71,6 +73,7 @@ object CloseButtonFinder {
                 )
             } else {
                 when (verdict.reject) {
+                    null -> other++
                     SimpleLabelReject.FORBIDDEN -> forbidden++
                     SimpleLabelReject.NO_LABEL -> unlabeled++
                     else -> other++
