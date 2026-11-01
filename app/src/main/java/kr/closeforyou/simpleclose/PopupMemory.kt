@@ -17,6 +17,8 @@ class PopupMemory(
      * page item would "overlap" and only [texts]/[bounds] are used (LG 10/31 21:00, F4).
      */
     private val area: ScreenBounds? = null,
+    /** F29: the popup root's own bounds when it was found (null in old callers: never "in place"). */
+    private val rootBounds: ScreenBounds? = null,
 ) {
     fun matches(text: String?, description: String?, nodeBounds: ScreenBounds): Boolean =
         sameTextOrPlace(text, description, nodeBounds) || overlapsArea(nodeBounds)
@@ -32,12 +34,27 @@ class PopupMemory(
      * found after the close is this popup again when it is in the same place (its area, when known) and one of
      * its named nodes has the same words or exactly the same place as one of ours.
      */
-    fun reappeared(root: PopupRoot, nodes: List<NodeSnapshot>): Boolean {
-        if (area != null && !overlaps(area, root.bounds)) return false
-        return nodes.any { node ->
+    fun reappeared(root: PopupRoot, nodes: List<NodeSnapshot>, screen: ScreenBounds? = null): Boolean = reappearance(root, nodes, screen) != null
+
+    /**
+     * F29 (LG 11/1 11번가 웹: the sheet closed, but 220 ms later it was still sliding out and counted as back): where
+     * the popup found again is, or null when it is not this popup. Only nodes on screen with a size count ([screen]).
+     * [Reappearance.inPlace]: its root and every matched node sit exactly where they were before the press.
+     */
+    fun reappearance(root: PopupRoot, nodes: List<NodeSnapshot>, screen: ScreenBounds? = null): Reappearance? {
+        if (area != null && !overlaps(area, root.bounds)) return null
+        if (screen != null && !(root.bounds.width > 0 && root.bounds.height > 0 && overlaps(root.bounds, screen))) return null
+        val matched = nodes.filter { node ->
             root.contains(node) && (!node.text.isNullOrBlank() || !node.contentDescription.isNullOrBlank()) &&
+                (screen == null || PopupRootFinder.isVisible(node, screen)) &&
                 sameTextOrPlace(node.text, node.contentDescription, node.bounds)
         }
+        if (matched.isEmpty()) return null
+        val places = matched.map { it.bounds }
+        return Reappearance(
+            inPlace = rootBounds != null && root.bounds == rootBounds && places.all { it in bounds },
+            signature = listOf(root.bounds) + places.sortedWith(compareBy({ it.top }, { it.left }, { it.bottom }, { it.right })),
+        )
     }
 
     /** Wholly above the popup's area (F9 fallback ①); false when the area is unknown. */
@@ -56,12 +73,35 @@ class PopupMemory(
                 inside.flatMap { listOfNotNull(it.text, it.contentDescription) }.filter { it.isNotBlank() }.toSet(),
                 inside.map { it.bounds }.toSet(),
                 popup.root.bounds.takeIf { screenArea > 0 && rootArea < screenArea * FULL_SCREEN_SHARE },
+                popup.root.bounds,
             )
         }
 
         /** Strict overlap (touching edges do not count). */
         fun overlaps(a: ScreenBounds, b: ScreenBounds): Boolean =
             a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom
+    }
+}
+
+/** F29: the closed popup seen again: exactly where it was ([inPlace]), and where it is now ([signature]: root, then matched nodes). */
+data class Reappearance(val inPlace: Boolean, val signature: List<ScreenBounds>)
+
+/** F29: one strict re-check read's verdict. */
+enum class RecheckVerdict { CLOSED, BACK, MOVING }
+
+/**
+ * F29 (LG 11/1 11번가 웹, c750177: CLOSE_REAPPEARED on a sheet that did close): a popup that is leaving slides or
+ * shrinks, so where it is changes from read to read; a popup that is really back sits still. Not found = closed.
+ * Found exactly where it was before the press = back (the F20 11번가 failure, an 옥션 popup shown again). Found
+ * elsewhere twice at the same place = back (it settled there). Found elsewhere and still moving = read again; the
+ * caller counts it as back when its time runs out (never a false "closed"). Pure; JVM tested.
+ */
+object RecheckRules {
+    fun verdict(found: Reappearance?, previous: Reappearance?): RecheckVerdict = when {
+        found == null -> RecheckVerdict.CLOSED
+        found.inPlace -> RecheckVerdict.BACK
+        previous != null && previous.signature == found.signature -> RecheckVerdict.BACK
+        else -> RecheckVerdict.MOVING
     }
 }
 

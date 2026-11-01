@@ -211,6 +211,10 @@ enum class SimpleTrace {
     VIDEO_SKIP_DENIED_BY_B,
     /** F28 (LG 11/1 14:29): the popup's app is no longer on screen (another app, ours too): our prompt closed, the analysis dropped. */
     CHOICE_DISMISSED_APP_LEFT,
+    /** F29: the strict re-check found the popup elsewhere (leaving: sliding, shrinking): read again. */
+    CLOSE_RECHECK_MOVING,
+    /** F29: still moving when the re-check's time ran out: counted as not closed (asked). */
+    CLOSE_RECHECK_STILL_MOVING,
 
     // F6: why the image-dialog ad hint did not apply ([AdHintMiss]).
     AD_HINT_MISS_SCAM,

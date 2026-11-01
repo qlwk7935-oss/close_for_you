@@ -91,6 +91,13 @@ object SimpleCloseEngineFeature {
     const val CLOSE_RECHECK_MILLIS = 220L
 
     /**
+     * F29 (LG 11/1 11번가 웹: a closing sheet still sliding out 220 ms after the click counted as back): a popup found
+     * again at another place is read again every [CLOSE_RECHECK_MILLIS] until it is gone or still; past this from the
+     * first re-check it counts as not closed. A popup back in its place is a failure at the first read, as before.
+     */
+    const val CLOSE_RECHECK_SETTLE_MILLIS = 1_200L
+
+    /**
      * Window events settle before the tree is read (Chrome paints web nodes a little late). 300 → 200 ms
      * (F5, LG 10/31 21:00: TalkBack read the 11번가 sheet twice before our window came); a read that comes
      * too early is caught by the first re-check.

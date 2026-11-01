@@ -1095,17 +1095,40 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
                 // when the popup was gone): the probe alone; no popup found by it = closed. Nothing is spoken meanwhile.
                 log.trace(SimpleTrace.CLOSED_CONFIRMED)
                 val recheckStart = SystemClock.uptimeMillis()
-                delay(SimpleCloseEngineFeature.CLOSE_RECHECK_MILLIS)
-                val back = withContext(Dispatchers.Default) {
-                    // F27 (review #1): a popup a whole read found is re-checked with a whole read (the probe may not see it).
-                    val again = collector.read(token.packageName, ::allowsApp, wholeIfProbeMisses = !popup.foundByProbe,
-                        capMillis = if (popup.foundByProbe) RECHECK_CAP_MILLIS else WholeReadCap.MAX_MILLIS,
-                        appWindows = popup.root.kind == PopupRootKind.APP_WINDOW, lookUpAddress = false)
-                        ?: return@withContext false
-                    val root = PopupRootFinder.find(again.nodes, again.screen, again.activeWindowBounded) ?: return@withContext false
-                    PopupMemory.of(popup).reappeared(root, again.nodes)
+                val memory = PopupMemory.of(popup)
+                // F29 (LG 11/1 11번가 웹: the sheet closed, but 220 ms later it was still sliding out): a popup found again
+                // somewhere else is read again until it is gone, back in place, or still at one place ([RecheckRules]).
+                var previous: Reappearance? = null
+                var reads = 0
+                var back: Boolean
+                while (true) {
+                    delay(SimpleCloseEngineFeature.CLOSE_RECHECK_MILLIS)
+                    val found = withContext(Dispatchers.Default) {
+                        // F27 (review #1): a popup a whole read found is re-checked with a whole read (the probe may not see it).
+                        val again = collector.read(token.packageName, ::allowsApp, wholeIfProbeMisses = !popup.foundByProbe,
+                            capMillis = if (popup.foundByProbe) RECHECK_CAP_MILLIS else WholeReadCap.MAX_MILLIS,
+                            appWindows = popup.root.kind == PopupRootKind.APP_WINDOW, lookUpAddress = false)
+                            ?: return@withContext null
+                        val root = PopupRootFinder.find(again.nodes, again.screen, again.activeWindowBounded) ?: return@withContext null
+                        memory.reappearance(root, again.nodes, again.screen)
+                    }
+                    reads += 1
+                    val verdict = RecheckRules.verdict(found, previous)
+                    if (verdict != RecheckVerdict.MOVING) {
+                        back = verdict == RecheckVerdict.BACK
+                        break
+                    }
+                    log.trace(SimpleTrace.CLOSE_RECHECK_MOVING)
+                    if (SystemClock.uptimeMillis() - recheckStart >= SimpleCloseEngineFeature.CLOSE_RECHECK_SETTLE_MILLIS) {
+                        // Still moving when the time is up: never a false "closed" (AGENTS 6-5); asked, as a failure.
+                        log.trace(SimpleTrace.CLOSE_RECHECK_STILL_MOVING)
+                        back = true
+                        break
+                    }
+                    previous = found
                 }
                 log.latency("CLOSE_RECHECK_MS", SystemClock.uptimeMillis() - recheckStart)
+                log.latency("CLOSE_RECHECK_READS", reads.toLong())
                 if (back) {
                     log.trace(SimpleTrace.CLOSE_REAPPEARED)
                     outcome = ClickOutcome.STILL_PRESENT
