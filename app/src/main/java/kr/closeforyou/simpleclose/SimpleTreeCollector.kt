@@ -250,6 +250,26 @@ class SimpleTreeCollector(private val service: AccessibilityService) {
         }
     }
 
+    /**
+     * F31 (B_DEMO_RULES.md 6-1): the visible nodes of [root]'s own subtree now (its window when it has one), and the
+     * screen. Null when the popup is gone, the walk hit [capMillis], or a part was too deep: the caller does not press.
+     */
+    fun readPopupAgain(root: PopupRoot, capMillis: Long): Pair<List<NodeSnapshot>, ScreenBounds>? {
+        val node = nodeAt(root.path, root.windowId) ?: return null
+        try {
+            val screen = screenBounds()
+            val nodes = ArrayList<NodeSnapshot>(64)
+            val count = WalkCount(maxVisited = WholeReadCap.MAX_NODES, deadline = SystemClock.uptimeMillis() + capMillis)
+            walk(node, root.path, root.path.count { it == '/' }, nodes, screen, count)
+            if (count.aborted || count.depthCut.isNotEmpty() || nodes.isEmpty()) return null
+            return nodes to screen
+        } catch (e: RuntimeException) {
+            return null
+        } finally {
+            release(node)
+        }
+    }
+
     /** The package of the active window right now, or null when there is none. */
     fun foregroundPackage(): String? {
         val root = service.rootInActiveWindow ?: return null

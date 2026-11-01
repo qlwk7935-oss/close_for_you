@@ -217,6 +217,18 @@ enum class SimpleTrace {
     CLOSE_RECHECK_STILL_MOVING,
     /** F30: the popup window reported the whole screen; its root view showed the card ([WindowBoundsRules]). */
     WINDOW_BOUNDS_FROM_ROOT,
+    /** F31 (B_DEMO_RULES.md 6-1): the automatic press was stopped right before it; the reason follows as PRE_PRESS_STOPPED_*. */
+    PRE_PRESS_RECHECK_STOPPED,
+    PRE_PRESS_STOPPED_BECAME_DECISION_OR_SCAM,
+    PRE_PRESS_STOPPED_RISKY_BUTTON_APPEARED,
+    PRE_PRESS_STOPPED_KIND_CHANGED,
+    /** F31: the popup could not be read again in time (gone, or past the cap): not pressed. */
+    PRE_PRESS_STOPPED_UNREAD,
+    PRE_PRESS_RECHECK_PASSED,
+    /** F31 (B_DEMO_RULES.md 6-2): an automatic close asked instead, too many in this app within a minute. */
+    CHAIN_GUARD_ASKED_RATE,
+    /** F31: an automatic close asked instead, another popup appeared right after our own press. */
+    CHAIN_GUARD_ASKED_NEW_POPUP_AFTER_PRESS,
 
     // F6: why the image-dialog ad hint did not apply ([AdHintMiss]).
     AD_HINT_MISS_SCAM,

@@ -98,6 +98,24 @@ object SimpleCloseEngineFeature {
     const val CLOSE_RECHECK_SETTLE_MILLIS = 1_200L
 
     /**
+     * F31 (B_DEMO_RULES.md 6-1): right before an automatic press the popup's own subtree is read again and B judges it
+     * again ([PrePressRecheck]); a decision, a scam, a new risky button or a kind the preset does not close stops the
+     * press and the person is asked. The read stops at [PRE_PRESS_READ_CAP_MILLIS] (an unfinished read also stops).
+     */
+    const val PRE_PRESS_RECHECK: Boolean = true
+    const val PRE_PRESS_READ_CAP_MILLIS = 250L
+
+    /**
+     * F31 (B_DEMO_RULES.md 6-2, numbers to be checked on the LG with 11번가-like chains): more than [CHAIN_MAX_AUTO]
+     * automatic closes in one app within [CHAIN_WINDOW_MILLIS] are asked (`CHAIN_GUARD_ASKED_RATE`), and so is another
+     * popup that appears within [CHAIN_NEW_POPUP_AFTER_PRESS_MILLIS] of our own press (`CHAIN_GUARD_ASKED_NEW_POPUP_AFTER_PRESS`).
+     */
+    const val CHAIN_GUARD: Boolean = true
+    const val CHAIN_MAX_AUTO = 3
+    const val CHAIN_WINDOW_MILLIS = 60_000L
+    const val CHAIN_NEW_POPUP_AFTER_PRESS_MILLIS = 1_500L
+
+    /**
      * Window events settle before the tree is read (Chrome paints web nodes a little late). 300 → 200 ms
      * (F5, LG 10/31 21:00: TalkBack read the 11번가 sheet twice before our window came); a read that comes
      * too early is caught by the first re-check.

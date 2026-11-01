@@ -525,6 +525,33 @@ F26 자동 확인: 옥션 웹 감지 1.3초·재확인 308ms·`READ_DUTY_PCT` 7.
 - **위험:** 뿌리 뷰가 화면보다 작은 일반 활동 창(창 모드 등)이 같은 앱의 더 큰 창 위에 있으면 대화상자 창으로 볼 수 있다. 이 경우에도 누르는 것은 닫기 후보뿐이고, 결정·위험 버튼 규칙은 그대로다.
 - 검증(F30): 5개 Gradle 작업 통과, 단위 시험 debug 1248개·release 1233개 실패 0(건너뜀 1), lintDebug 오류 0(경고 14), INTERNET 0. 시험 추가: `F30RegressionTest` 5개(창 영역 규칙, P01·P04·P05·P06 Dialog 창, W02·W03 웹).
 
+### 8-22. F31 — B 새 커밋 병합, 누르기 직전 B 재판단·연속 팝업 연결 (JVM 시험만, 실기기 미검증)
+
+- **병합**(`1fa7861`, 자동, 충돌 없음):
+  - B 6afa87f: "결제 혜택·결제 할인"을 결정 근거에서 뺀다(B_DEMO_RULES 1-7, 올리브영 서랍 배너 오분류). B의 `isRisky` 변경은 우리 `isDecision`에 들어갔다. F24 이후 `isRisky`가 부르는 곳이라 묻기 근거와 [버튼으로 이동] 모두 같은 기준이다.
+  - B 6e8b7a6: `OverlayExecutionRules.kt`(`PrePressRecheck`, `ChainGuard`).
+- **누르기 직전 B 재판단**(`PRE_PRESS_RECHECK`, B 6-1):
+  - 자동 누르기만 해당한다(B 문서·`PrePressBlock` 설명대로). 사용자가 고른 누르기에는 적용하지 않는다.
+  - `pressAndConfirm`의 자리·버튼 확인(stillThere) 바로 뒤에서 팝업 범위만 다시 읽는다(마감 250ms).
+  - 다시 만든 분석으로 B가 판단한다. 구매 홍보 수는 결정 때와 같은 문(`PromoPurchaseGate`)을 거친다.
+  - 아래면 누르지 않는다(`PRE_PRESS_RECHECK_STOPPED` + `PRE_PRESS_STOPPED_*`):
+    - 결정·사기로 바뀜
+    - 위험 버튼이 새로 생김
+    - 지금 처리 방식이 닫지 않는 종류로 바뀜. 강력 모드와 기억 규칙은 결정·사기 말고 모두 닫으므로 해당 없음.
+    - 다시 못 읽음(`_UNREAD`: 사라짐·마감 넘김·깊이 잘림)
+  - 멈춘 뒤에는 지금 모습으로 묻는다. 결정이면 [버튼으로 이동]만 있다. 사기 의심이면 묻지 않는다.
+  - 비용은 `PRE_PRESS_RECHECK_MS`로 남는다. 통과하면 `PRE_PRESS_RECHECK_PASSED`.
+- **연속 팝업**(`CHAIN_GUARD`, B 6-2): 자동 닫기로 정해진 직후 `check`, 누른 뒤 `pressed`를 부른다(사람 누름은 횟수에 안 셈).
+  - 한 앱에서 1분에 3번을 넘으면 묻는다(`CHAIN_GUARD_ASKED_RATE`).
+  - 우리가 누른 뒤 1.5초 안에 **다른** 팝업이 뜨면 묻는다(`CHAIN_GUARD_ASKED_NEW_POPUP_AFTER_PRESS`).
+  - 숫자는 `SimpleCloseEngineFeature.CHAIN_MAX_AUTO`·`CHAIN_WINDOW_MILLIS`·`CHAIN_NEW_POPUP_AFTER_PRESS_MILLIS`에 있다.
+  - "다른 팝업"은 글자 지문(창 id + 글자 요약)으로 가린다. 움직이거나 다시 그려진 같은 팝업은 다른 팝업이 아니다.
+- **위험:**
+  - 11번가처럼 시트를 닫은 뒤 쿠폰 팝업이 1.5초 안에 뜨는 사이트에서는 두 번째가 묻기로 바뀐다. LG에서 보고 숫자를 정해야 한다.
+  - 팝업 범위가 큰 화면(덮개 안 내용이 많음)에서 재판단 읽기가 250ms를 넘으면 `_UNREAD`로 안 누르고 묻는다.
+  - 누르기까지 재판단 읽기만큼 늦어진다.
+- 검증(F31): 5개 Gradle 작업 통과, 단위 시험 debug 1262개·release 1247개 실패 0(건너뜀 1), lintDebug 오류 0(경고 14), INTERNET 0. 시험 추가: `F31RegressionTest` 4개. B 시험 `OverlayExecutionRulesTest`·`DecisionPaymentBenefitTest`도 통과.
+
 - 잔여 노드 쪽 이벤트 무시: TalkBack이 무엇을 읽을지는 앱이 막을 수 없다. 대신 포커스를 잔여 노드 밖으로 옮기는 것(F9)이 할 수 있는 전부. 웹 페이지가 닫힌 팝업을 DOM에 `aria-hidden` 없이 남기는 한, 사용자가 스와이프로 다시 만날 수 있다(한계로 기록).
 - 선택 창 PROMPT도 TalkBack 큐로? 가능은 하다: 선택 창 자체(이미 접근성 오버레이)에 paneTitle이 있고 TalkBack이 창을 읽으므로, "안내 맡기기" ON이면 우리 TTS PROMPT를 끄고 paneTitle/첫 버튼 포커스 낭독에 맡기는 방식. 단, 지금 PROMPT는 TalkBack이 팝업을 읽는 도중 끊고 들어가야 시연이 빠르므로 polite로 바꾸면 늦어질 수 있다. F11 배너가 LG에서 잘 읽히면 같은 방식으로 옮길지 정하자(의견, 미구현).
 - 검증(F1~F11 한 빌드): 5개 Gradle 작업 통과, 단위 시험 debug 1028개·release 1013개 실패 0, lintDebug 오류 0(경고 12), 병합 매니페스트 INTERNET 0·새 권한 없음.

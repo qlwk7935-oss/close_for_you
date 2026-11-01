@@ -162,6 +162,10 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
 
     /** The popup the prompt on screen is about, when each popup key was last seen, and keys already explained. */
     private var prompted: SimplePopup? = null
+    /** F31 (B_DEMO_RULES.md 6-2): automatic closes per app and our last press; memory only, no screen text. */
+    private val chainGuard = ChainGuard(
+        SimpleCloseEngineFeature.CHAIN_MAX_AUTO, SimpleCloseEngineFeature.CHAIN_WINDOW_MILLIS, SimpleCloseEngineFeature.CHAIN_NEW_POPUP_AFTER_PRESS_MILLIS,
+    )
     /** F28: the "is the popup's app still on screen?" look-up in flight (the latest event's). */
     private var appLeftCheck: Job? = null
     private val seenAt = LinkedHashMap<String, Long>()
@@ -516,6 +520,13 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
         if (rememberedButton != null) log.trace(SimpleTrace.REMEMBERED_AUTO_CLOSE)
         val decided = rememberedButton?.let { SimpleDecision.AutoClose(it) }
             ?: SimpleCloseDecider.decide(classification, suspicious, popup.scan.candidates, preferences.current(), popup.scan.forbiddenCount, popup.scan.riskCount, promoBuy)
+        // F31 (B_DEMO_RULES.md 6-2): a chain of automatic closes in one app, or a popup right after our own press, is asked.
+        // The popup's key is its words (a popup that moves or repaints is not "another" one).
+        val chainBlock = if (decided is SimpleDecision.AutoClose && SimpleCloseEngineFeature.CHAIN_GUARD) {
+            chainGuard.check(read.packageName, words, SystemClock.uptimeMillis())
+        } else {
+            null
+        }
         // F20: an automatic close failed on this popup before: never pressed automatically again (AGENTS 6-6), asked.
         val decision = when {
             decided is SimpleDecision.AutoClose && words in autoFailed -> {
@@ -525,6 +536,13 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
             // F27 (review #7): a part of the popup was too deep to read: a risky button could hide there.
             decided is SimpleDecision.AutoClose && popup.depthCut -> {
                 log.trace(SimpleTrace.DEPTH_CUT_ASKED)
+                SimpleDecision.Ask
+            }
+            chainBlock != null -> {
+                log.trace(when (chainBlock) {
+                    ChainBlock.RATE_LIMIT -> SimpleTrace.CHAIN_GUARD_ASKED_RATE
+                    ChainBlock.OPENED_BY_OUR_PRESS -> SimpleTrace.CHAIN_GUARD_ASKED_NEW_POPUP_AFTER_PRESS
+                })
                 SimpleDecision.Ask
             }
             else -> decided
@@ -554,12 +572,31 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
                     // F22-2 D: with the result card taking the focus, no toolbar stop before the click (one sentence).
                     val preClickMove = moveFocus && (SimpleCloseEngineFeature.AUTO_PRE_CLICK_MOVE_WITH_BANNER ||
                         !SimpleCloseEngineFeature.RESULT_BANNER_TAKES_FOCUS || resultBanner?.talkBackOn() != true)
+                    // F31 (B_DEMO_RULES.md 6-1): B judges the popup again right before the press (automatic presses only).
+                    var stopped: PrePressStop? = null
+                    val closable = when {
+                        decision.strong || rememberedButton != null -> STRONG_KINDS
+                        decision.unknown -> preferences.current().autoCloseKinds(live = true) + PopupClassification.UNKNOWN
+                        else -> preferences.current().autoCloseKinds(live = true)
+                    }
+                    val prePress: (suspend () -> Boolean)? = if (SimpleCloseEngineFeature.PRE_PRESS_RECHECK) {
+                        { prePressStop(classified, byB, closable).also { stopped = it } != null }
+                    } else {
+                        null
+                    }
                     val result = try {
-                        pressAndConfirm(classified, decision.candidate, preClickMove, watchFocus = moveFocus)
+                        pressAndConfirm(classified, decision.candidate, preClickMove, watchFocus = moveFocus, prePress = prePress)
                     } finally {
                         if (pressing == words) pressing = null
                     }
-                    if (PressSuccess.isConfirmed(result)) {
+                    if (result.attempted) chainGuard.pressed(read.packageName, words, SystemClock.uptimeMillis(), automatic = true)
+                    val stop = stopped
+                    if (stop != null) {
+                        // Not pressed. A scam is never asked (as [SimpleDecision.DenySuspicious]); otherwise the person is
+                        // asked about the popup as it is now (a decision gets [버튼으로 이동] only).
+                        tts?.stop()
+                        if (!stop.suspicious && prompted == null && stop.fresh != null) ask(stop.fresh, stop.kind, talkBackReadIt = false)
+                    } else if (PressSuccess.isConfirmed(result)) {
                         noteClosed(words, decision.candidate)
                         // F24: the page settles after a close; no fast re-reads of it.
                         inspectionEvents.backOff()
@@ -798,6 +835,8 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
                 jobs.runAction {
                     // Our window goes away under TalkBack's focus: it must land on the page, not the popup's leftovers.
                     val result = pressAndConfirm(popup, candidate, moveFocus = !focusedAlready, watchFocus = true)
+                    // F31 (B_DEMO_RULES.md 6-2): the person's press may open the next popup too; not counted as automatic.
+                    if (result.attempted) chainGuard.pressed(popup.snapshot.token.packageName, keyOf(popup), SystemClock.uptimeMillis(), automatic = false)
                     when {
                         PressSuccess.isConfirmed(result) -> {
                             noteClosed(keyOf(popup), candidate)
@@ -1025,7 +1064,14 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
      * root every [SimpleCloseEngineFeature.CONFIRM_POLL_MILLIS] for up to
      * [SimpleCloseEngineFeature.CONFIRM_DELAY_MILLIS]: gone = closed, another app = left app.
      */
-    private suspend fun pressAndConfirm(popup: SimplePopup, candidate: CloseCandidate, moveFocus: Boolean, watchFocus: Boolean): ActionResult {
+    private suspend fun pressAndConfirm(
+        popup: SimplePopup,
+        candidate: CloseCandidate,
+        moveFocus: Boolean,
+        watchFocus: Boolean,
+        /** F31: true = do not press (B's verdict changed right before it, [prePressStop]). */
+        prePress: (suspend () -> Boolean)? = null,
+    ): ActionResult {
         val token = popup.analysis.token
         var target = preClickTarget
         preClickTarget = null
@@ -1050,6 +1096,10 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
                 endReclaim(null)
                 log.trace(SimpleTrace.RECHECK_TARGET_GONE)
                 return ActionResult(token, ActionStatus.STALE, SafetyReason.STALE_SCREEN, attempted = false)
+            }
+            if (prePress != null && prePress()) {
+                endReclaim(null)
+                return ActionResult(token, ActionStatus.BLOCKED, SafetyReason.STALE_SCREEN, attempted = false)
             }
             // F17: the watch is on before the click (the person's press armed it as our window went).
             if (watchFocus && SimpleCloseEngineFeature.FOCUS_RECLAIM_AFTER_CLOSE && reclaim == null) {
@@ -1222,6 +1272,39 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
         }
     }
 
+    /** F31: why an automatic press was stopped: the popup as read again ([fresh], null when unread), B's kind of it. */
+    private class PrePressStop(val fresh: SimplePopup?, val kind: PopupClassification, val suspicious: Boolean)
+
+    /**
+     * F31 (B_DEMO_RULES.md 6-1): the popup's own subtree read again right before an automatic press and judged by B
+     * again ([PrePressRecheck]). Null = press. The read's cost is logged (`PRE_PRESS_RECHECK_MS`), never its words.
+     */
+    private suspend fun prePressStop(popup: SimplePopup, decidedByB: PopupClassification, closable: Set<PopupClassification>): PrePressStop? {
+        val start = SystemClock.uptimeMillis()
+        val again = withContext(Dispatchers.Default) { collector.readPopupAgain(popup.root, SimpleCloseEngineFeature.PRE_PRESS_READ_CAP_MILLIS) }
+        log.latency("PRE_PRESS_RECHECK_MS", SystemClock.uptimeMillis() - start)
+        if (again == null) {
+            log.trace(SimpleTrace.PRE_PRESS_RECHECK_STOPPED)
+            log.trace(SimpleTrace.PRE_PRESS_STOPPED_UNREAD)
+            val still = withContext(Dispatchers.Default) { collector.rootStillPresent(popup.root) } == true
+            return PrePressStop(popup.takeIf { still }, popup.analysis.classification, suspicious = false)
+        }
+        val (nodes, screen) = again
+        val built = withContext(Dispatchers.Default) {
+            SimplePopupAnalysis.build(nodes, popup.root, popup.snapshot.token.packageName, popup.snapshot.token.windowId, screen, screenVersion, SystemClock.uptimeMillis())
+        }
+        val kind = classifier.classify(built.analysis)
+        val promoBuy = PromoPurchaseGate.allowed(DecisionDemoRules.PROMO_PURCHASE, kind, false, built.analysis.texts, built.scan.promoBuyCount)
+        val fresh = built.copy(scan = built.scan.copy(promoBuyCount = promoBuy))
+        val block = PrePressRecheck.check(decidedByB, fresh, closable) ?: run {
+            log.trace(SimpleTrace.PRE_PRESS_RECHECK_PASSED)
+            return null
+        }
+        log.trace(SimpleTrace.PRE_PRESS_RECHECK_STOPPED)
+        log.trace(SimpleTrace.valueOf("PRE_PRESS_STOPPED_${block.name}"))
+        return PrePressStop(fresh.copy(analysis = fresh.analysis.copy(classification = kind)), kind, RememberChoiceRules.suspiciousByB(fresh.analysis))
+    }
+
     /**
      * F28 (LG 11/1 14:29 올리브영: a DECISION_ASKED prompt stayed on screen over our own app): when no application
      * window of the popup's app is on screen any more (another app, ours included, came to the front), the prompt
@@ -1306,6 +1389,8 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
         const val REAPPEAR_WINDOW_MILLIS = 5_000L
         /** F26 (LG 11/1 올리브영 앱: CLOSE_RECHECK_MS 905): the strict re-check's read has this much, probe included. */
         const val RECHECK_CAP_MILLIS = 250L
+        /** F31: what 강력 모드 (and a remembered rule) closes: every kind but decisions and scams. */
+        val STRONG_KINDS = setOf(PopupClassification.ADVERTISEMENT, PopupClassification.COUPON, PopupClassification.NOTICE, PopupClassification.UNKNOWN)
         /** F28: a burst of window events settles this long before the look-up. */
         const val APP_LEFT_SETTLE_MILLIS = 150L
         /** F28: events after which the popup's app may have left the screen. */
