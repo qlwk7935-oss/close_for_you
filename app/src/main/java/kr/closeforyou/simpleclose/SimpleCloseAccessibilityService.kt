@@ -162,6 +162,8 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
 
     /** The popup the prompt on screen is about, when each popup key was last seen, and keys already explained. */
     private var prompted: SimplePopup? = null
+    /** F32: the last windows debug line logged ([WindowBoundsRules.line]). */
+    private var lastWindowsLine: String? = null
     /** F31 (B_DEMO_RULES.md 6-2): automatic closes per app and our last press; memory only, no screen text. */
     private val chainGuard = ChainGuard(
         SimpleCloseEngineFeature.CHAIN_MAX_AUTO, SimpleCloseEngineFeature.CHAIN_WINDOW_MILLIS, SimpleCloseEngineFeature.CHAIN_NEW_POPUP_AFTER_PRESS_MILLIS,
@@ -365,6 +367,8 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
         var videoAdWaiting = false
         if (read.appWindowIgnored) log.trace(SimpleTrace.APP_WINDOW_IGNORED)
         if (read.boundsFromRoot) log.trace(SimpleTrace.WINDOW_BOUNDS_FROM_ROOT)
+        // F32: the windows of the read as one code line, only when it changed (not per event).
+        read.windowsLine?.takeIf { it != lastWindowsLine }?.let { lastWindowsLine = it; log.line(it) }
         // F22 (LG 11/1: VIDEO_AD_MARKER_FOUND ×64 in a shopping app, a banner's "AD"): video ads only in YouTube.
         val videoContext = VideoAdSkip.isVideoContext(read.packageName, read.nodes)
         // F23: YouTube in a browser: keep its reads whole for a minute (the address bar scrolls away, the skip is no popup).
@@ -1467,6 +1471,11 @@ private class DebugSimpleLog(service: AccessibilityService) : SimpleTraceSink {
 
     fun speech(kind: SpeechKind, length: Int) {
         if (enabled) Log.d(SPEECH_TAG, "${kind.name} len=$length")
+    }
+
+    /** F32: a line of codes and size classes only ([WindowBoundsRules.line]); never a package or screen text. */
+    fun line(codes: String) {
+        if (enabled) Log.d(TAG, codes)
     }
 
     /** F5: first helped-app event of this search → DETECTED, in ms (a number only). */

@@ -280,7 +280,71 @@ object WindowBoundsRules {
     }
 
     fun area(b: ScreenBounds): Long = maxOf(0, b.width).toLong() * maxOf(0, b.height)
+
+    /**
+     * F32 (LG 11/1 16:00, 시험 앱 P04 still NO_POPUP_ROOT after F30, no WINDOW_BOUNDS_FROM_ROOT): Android drops from
+     * `getWindows()` a window wholly covered by the touchable regions above it, and a touch-modal Dialog's touchable
+     * region is the whole screen, so the activity window under it is not listed at all. The active window is a
+     * bounded popup window when it is an application window whose shown part ([shown]) is bounded, and either
+     * - it reports more than its root view shows ([TOUCH_MODAL_RATIO]: a touch-modal Dialog), or
+     * - a wider application window of the same app is listed (F12: a Dialog over its activity, as before).
+     * A split-screen or freeform app (window = root, nothing wider of its own) stays a normal window.
+     * Null = bounded; otherwise why not (debug code only).
+     */
+    fun activeBounded(active: WindowShape, all: List<WindowShape>, screen: ScreenBounds): ActiveWindowReject? {
+        if (active.kind != WindowKind.APPLICATION) return ActiveWindowReject.NOT_APPLICATION
+        if (!bounded(active.window, active.root, screen)) return ActiveWindowReject.NOT_BOUNDED
+        val root = active.root
+        if (root != null && area(root) > 0 && area(active.window) > area(root) * TOUCH_MODAL_RATIO) return null
+        val shownArea = area(shown(active.window, active.root))
+        val wider = all.any { it.id != active.id && it.kind == WindowKind.APPLICATION && it.samePackage == true && area(it.window) > shownArea }
+        return if (wider) null else ActiveWindowReject.NO_WIDER_SAME_APP_WINDOW
+    }
+
+    /** A window reporting this much more than its root view shows takes touches outside its content (touch-modal). */
+    const val TOUCH_MODAL_RATIO = 1.2
+
+    /** F32: a size class for the debug line, never the bounds themselves. */
+    fun grade(b: ScreenBounds?, screen: ScreenBounds): String {
+        if (b == null) return "N"
+        val a = area(b)
+        val s = area(screen)
+        return when {
+            a <= 0 || s <= 0 -> "Z"
+            a.toDouble() / s >= BOUNDED_MAX_RATIO -> "F"
+            else -> "P"
+        }
+    }
+
+    /**
+     * F32: one debug line about the windows of a read, codes only (no package, no text): how many application windows of
+     * the app, then each window topmost first as kind (A application, I input method, S system, O our overlay, X other),
+     * `*` for the active one, S/O/? for same app / other app / unknown, window and root size class (F full, P part,
+     * Z zero, N none), then why the active window is not a popup window and why app windows above were left.
+     */
+    fun line(shapes: List<WindowShape>, activeId: Int, screen: ScreenBounds, activeReject: ActiveWindowReject?, appRejects: List<AppWindowReject>): String {
+        val apps = shapes.count { it.kind == WindowKind.APPLICATION && it.samePackage == true }
+        val windows = shapes.sortedByDescending { it.layer }.joinToString(" ") { w ->
+            val same = when (w.samePackage) { true -> "S"; false -> "O"; null -> "?" }
+            "${w.kind.code}${if (w.id == activeId) "*" else ""}$same:w${grade(w.window, screen)}r${grade(w.root, screen)}"
+        }
+        val active = activeReject?.name ?: "BOUNDED"
+        val above = if (appRejects.isEmpty()) "-" else appRejects.joinToString(",") { it.name }
+        return "WINDOWS app=$apps [$windows] active=$active above=$above"
+    }
 }
+
+/** F32: an accessibility window's kind, as the debug line and [WindowBoundsRules.activeBounded] need it. */
+enum class WindowKind(val code: String) { APPLICATION("A"), INPUT_METHOD("I"), SYSTEM("S"), ACCESSIBILITY_OVERLAY("O"), OTHER("X") }
+
+/** F32: one window of a read: its kind, z-order, whether its root is the read app's, its bounds and its root view's. Memory only. */
+data class WindowShape(val id: Int, val kind: WindowKind, val layer: Int, val samePackage: Boolean?, val window: ScreenBounds, val root: ScreenBounds?)
+
+/** F32: why the active window is not taken as a bounded popup window (debug code only). */
+enum class ActiveWindowReject { NOT_LISTED, NOT_APPLICATION, NOT_BOUNDED, NO_WIDER_SAME_APP_WINDOW }
+
+/** F32: why an application window above the active one was not read as the popup (debug code only). */
+enum class AppWindowReject { NO_ROOT, OTHER_PACKAGE, NOT_BOUNDED, NOT_POPUP, CUT }
 
 object AppWindowRules {
     private const val MIN_AREA_RATIO = 0.1

@@ -552,6 +552,30 @@ F26 자동 확인: 옥션 웹 감지 1.3초·재확인 308ms·`READ_DUTY_PCT` 7.
   - 누르기까지 재판단 읽기만큼 늦어진다.
 - 검증(F31): 5개 Gradle 작업 통과, 단위 시험 debug 1262개·release 1247개 실패 0(건너뜀 1), lintDebug 오류 0(경고 14), INTERNET 0. 시험 추가: `F31RegressionTest` 4개. B 시험 `OverlayExecutionRulesTest`·`DecisionPaymentBenefitTest`도 통과.
 
+### 8-23. F32 — F30이 LG에서 안 먹힘: 활동 창이 창 목록에서 빠짐 (JVM 시험만, 실기기 미검증)
+
+- **증상**(LG 16시, 2e5537e): 시험 앱 P04가 여전히 `NO_POPUP_ROOT`였다. `WINDOW_BOUNDS_FROM_ROOT`, `APP_WINDOW_*`는 0줄이었다.
+- dumpsys 결과: 대화상자는 TYPE_APPLICATION 996×637, DIM_BEHIND, 터치 모달(NOT_TOUCH_MODAL 없음)이다. 그 아래에 같은 Activity의 BASE_APPLICATION 창(1080×2460)이 있다.
+- **원인(추정, 로그와 맞음):** Android는 위 창들의 터치 영역에 완전히 가려진 창을 `getWindows()`에서 뺀다. 터치 모달 대화상자의 터치 영역은 화면 전체라서, 그 아래 활동 창이 목록에 아예 없다.
+  - F30까지의 "대화상자 창" 조건은 "같은 앱의 더 넓은 창이 목록에 있음"을 요구했다. 그래서 활성 창(대화상자)이 대화상자 창으로 인정되지 않았다.
+  - F30 진단 코드는 인정된 뒤에만 찍혀서 0줄이었다.
+  - 앱 창 경로도 활성 창 위에 다른 창이 없어서 돌지 않았다(`APP_WINDOW_*` 0).
+- **고침**(`WindowBoundsRules.activeBounded`): 활성 창이 앱 창이고 보이는 부분이 화면보다 작을 때, 아래 둘 중 하나면 대화상자 창으로 본다.
+  - 창 영역이 뿌리 뷰보다 1.2배 넘게 큼(터치 모달)
+  - 같은 앱의 더 넓은 창이 목록에 있음(전과 같음)
+  - 화면 분할·창 모드 앱(창 = 뿌리, 같은 앱의 더 넓은 창 없음)은 그대로 일반 창이다.
+- 한 트리로 합쳐 오는 경우는 기존 `MODAL_CARD`가 잡는다(시험). 범위는 "모든 앱"에서 시험 앱이 통과하고, 제외는 `kr.closeforyou`와 정확히 같을 때만이다(시험).
+- **진단:** 읽을 때마다 창 목록을 코드 한 줄로 만들고, 바뀔 때만 남긴다. 예: `WINDOWS app=1 [S?:wPrN A*S:wFrP] active=BOUNDED above=-`.
+  - 같은 앱 창 수
+  - 위에서부터 창 종류(A 앱, I 키보드, S 시스템, O 우리 오버레이, X 기타)와 활성 표시 `*`
+  - 같은 앱 S / 다른 앱 O / 모름 ?
+  - 창·뿌리 크기 등급(F 전체, P 일부, Z 0, N 없음)
+  - 활성 창이 대화상자 창이 아닌 이유(`active=NOT_LISTED|NOT_APPLICATION|NOT_BOUNDED|NO_WIDER_SAME_APP_WINDOW`)
+  - 위 앱 창을 버린 이유(`above=NO_ROOT|OTHER_PACKAGE|NOT_BOUNDED|NOT_POPUP|CUT`)
+  - 패키지·글자·좌표는 남기지 않는다.
+- 뿌리 노드는 앱 창에서만 가져온다(읽기마다 binder 호출을 늘리지 않으려고).
+- 검증(F32): 5개 Gradle 작업 통과, 단위 시험 debug 1268개·release 1253개 실패 0(건너뜀 1), lintDebug 오류 0(경고 14), INTERNET 0. 시험 추가: `F32RegressionTest` 6개(창 목록 모양 3가지, 일반 창, 진단 줄, 합쳐진 트리, 범위).
+
 - 잔여 노드 쪽 이벤트 무시: TalkBack이 무엇을 읽을지는 앱이 막을 수 없다. 대신 포커스를 잔여 노드 밖으로 옮기는 것(F9)이 할 수 있는 전부. 웹 페이지가 닫힌 팝업을 DOM에 `aria-hidden` 없이 남기는 한, 사용자가 스와이프로 다시 만날 수 있다(한계로 기록).
 - 선택 창 PROMPT도 TalkBack 큐로? 가능은 하다: 선택 창 자체(이미 접근성 오버레이)에 paneTitle이 있고 TalkBack이 창을 읽으므로, "안내 맡기기" ON이면 우리 TTS PROMPT를 끄고 paneTitle/첫 버튼 포커스 낭독에 맡기는 방식. 단, 지금 PROMPT는 TalkBack이 팝업을 읽는 도중 끊고 들어가야 시연이 빠르므로 polite로 바꾸면 늦어질 수 있다. F11 배너가 LG에서 잘 읽히면 같은 방식으로 옮길지 정하자(의견, 미구현).
 - 검증(F1~F11 한 빌드): 5개 Gradle 작업 통과, 단위 시험 debug 1028개·release 1013개 실패 0, lintDebug 오류 0(경고 12), 병합 매니페스트 INTERNET 0·새 권한 없음.
