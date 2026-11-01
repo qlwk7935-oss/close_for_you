@@ -162,6 +162,9 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
 
     /** The popup the prompt on screen is about, when each popup key was last seen, and keys already explained. */
     private var prompted: SimplePopup? = null
+    /** F32 (e): the app that last opened an activity named like a popup, and when (memory only). */
+    private var popupActivityPackage: String? = null
+    private var popupActivityAt = 0L
     /** F32: the last windows debug line logged ([WindowBoundsRules.line]). */
     private var lastWindowsLine: String? = null
     /** F31 (B_DEMO_RULES.md 6-2): automatic closes per app and our last press; memory only, no screen text. */
@@ -266,6 +269,12 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
         val eventPackage = event.packageName?.toString()
         // F28 (LG 11/1 14:29): our own app's window counts too, so this comes before the own-package return.
         if (event.eventType in APP_SWITCH_EVENTS) prompted?.let(::checkPromptedAppStillShown)
+        // F32 (e): a new activity whose class is named like a popup ("…PopupActivity", "…Dialog…", "…Ads…").
+        if (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED && PopupActivityName.looksLikePopup(event.className?.toString())) {
+            popupActivityPackage = event.packageName?.toString()
+            popupActivityAt = SystemClock.uptimeMillis()
+            log.trace(SimpleTrace.POPUP_ACTIVITY_HINT)
+        }
         // Our own prompt window and TTS: never a popup to handle (not logged: it would drown the rest).
         if (eventPackage == packageName) return
         if (eventPackage == VideoAdSkip.YOUTUBE_APP) {
@@ -406,7 +415,9 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
             }
         }
         // F16: an app popup window's tree has its own window for the live look-ups.
-        val root = PopupRootFinder.find(read.nodes, read.screen, read.activeWindowBounded)?.let { found ->
+        // F32 (e): the app just opened an activity named like a popup (the name is compared in memory, never logged).
+        val popupActivity = read.packageName == popupActivityPackage && SystemClock.uptimeMillis() - popupActivityAt < POPUP_ACTIVITY_HINT_MILLIS
+        val root = PopupRootFinder.find(read.nodes, read.screen, read.activeWindowBounded, popupActivityHint = popupActivity)?.let { found ->
             val windowId = read.popupWindowId ?: return@let found
             found.copy(windowId = windowId, kind = if (found.kind == PopupRootKind.DIALOG_WINDOW) PopupRootKind.APP_WINDOW else found.kind)
         }
@@ -436,6 +447,7 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
             PopupRootKind.BOTTOM_SHEET -> SimpleTrace.DETECTED_BOTTOM_SHEET
             PopupRootKind.APP_WINDOW -> SimpleTrace.DETECTED_APP_WINDOW
             PopupRootKind.MODAL_CARD -> SimpleTrace.DETECTED_MODAL_CARD
+            PopupRootKind.DIM_WINDOW -> SimpleTrace.DETECTED_DIM_WINDOW
         })
         // F10: first event -> here overstates when the page itself loaded first; the gap since the last
         // read that saw no popup bounds when the popup really appeared. Which trigger caught it, too.
@@ -800,7 +812,11 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
             }.toImmutableList(),
         )
         if (withRemember !== withX) log.trace(SimpleTrace.REMEMBER_OFFERED)
-        val shown = SimplePromptOptions.adjust(withRemember, popup.scan.riskButtons, failedButtons[keyOf(popup)].orEmpty(), failedNow)
+        // F32 (LG 11/1 11번가 app: a decision popup, "로그인하러 가기" + an unnamed round X): where the X is not a press option
+        // (a decision, or a risky button beside it), it is still a place to go: [X 모양 닫기 버튼으로 이동], never pressed by us.
+        val xMove = popup.scan.xButton?.takeIf { x == null }?.copy(label = getString(R.string.ui_simple_x_button))
+        if (xMove != null) log.trace(SimpleTrace.X_BUTTON_MOVE_OFFERED)
+        val shown = SimplePromptOptions.adjust(withRemember, listOfNotNull(xMove) + popup.scan.riskButtons, failedButtons[keyOf(popup)].orEmpty(), failedNow)
         prompted = popup
         focusedBeforeClose = false
         val result = presenter.present(shown) { answer -> onAnswer(popup, answer) }
@@ -887,7 +903,8 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
      */
     private fun moveToButton(popup: SimplePopup, candidateId: String) {
         log.trace(SimpleTrace.USER_CHOSE_MOVE)
-        val candidate = (popup.scan.riskButtons + popup.scan.candidates).firstOrNull { it.id == candidateId } ?: return
+        val x = popup.scan.xButton?.copy(label = getString(R.string.ui_simple_x_button))
+        val candidate = (popup.scan.riskButtons + popup.scan.candidates + listOfNotNull(x)).firstOrNull { it.id == candidateId } ?: return
         val path = candidate.nodePath ?: return
         if (resultBanner?.talkBackOn() == true) {
             lastOwnFocusAt = SystemClock.uptimeMillis()
@@ -1395,6 +1412,8 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
         const val RECHECK_CAP_MILLIS = 250L
         /** F31: what 강력 모드 (and a remembered rule) closes: every kind but decisions and scams. */
         val STRONG_KINDS = setOf(PopupClassification.ADVERTISEMENT, PopupClassification.COUPON, PopupClassification.NOTICE, PopupClassification.UNKNOWN)
+        /** F32 (e): how long an activity named like a popup counts as a hint for its app's reads. */
+        const val POPUP_ACTIVITY_HINT_MILLIS = 10_000L
         /** F28: a burst of window events settles this long before the look-up. */
         const val APP_LEFT_SETTLE_MILLIS = 150L
         /** F28: events after which the popup's app may have left the screen. */

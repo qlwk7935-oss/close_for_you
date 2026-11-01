@@ -23,6 +23,12 @@ enum class PopupRootKind {
      * (11번가 app "앱 전용 혜택 안내"). The X is offered to the person, never pressed by itself (6-3).
      */
     MODAL_CARD,
+    /**
+     * F32 (LG 11/1 16:33, 11번가 app `AdsOneDayPopupActivity`: a transparent activity that dims by its window flag, so
+     * no dim node; NO_POPUP_ROOT ×24): a screen-sized window whose visible content is one small centred block, the
+     * rest empty, with something to close it ([PopupRootFinder.dimWindowRoot]).
+     */
+    DIM_WINDOW,
 }
 
 /**
@@ -57,6 +63,8 @@ object PopupRootFinder {
         screen: ScreenBounds,
         activeWindowBounded: Boolean = false,
         frontLayers: Boolean = SimpleCloseEngineFeature.FIND_FRONT_LAYERS,
+        /** F32 (e): the window's activity is named like a popup (*Popup*, *Dialog*, *Ads*): no close needed to count. */
+        popupActivityHint: Boolean = false,
     ): PopupRoot? {
         val visible = nodes.filter { isVisible(it, screen) }
         dialogRoot(visible)?.let { return it }
@@ -66,8 +74,68 @@ object PopupRootFinder {
         }
         dimOverlayRoot(visible, screen)?.let { return it }
         if (!frontLayers) return null
-        return frontLayerRoot(visible, screen) ?: modalCardRoot(visible, screen)
+        return frontLayerRoot(visible, screen) ?: modalCardRoot(visible, screen) ?: dimWindowRoot(visible, screen, popupActivityHint)
     }
+
+    /**
+     * F32 (d): a window as big as the screen whose visible content (every node smaller than the screen) fits in one
+     * centred block of [DIM_WINDOW_MIN_RATIO]~[DIM_WINDOW_MAX_RATIO] of it, the rest empty: a transparent window
+     * (an activity or a Dialog decor) showing a card. Also needed:
+     * - at least one clickable and fewer than [MENU_MIN_CLICKABLES], no text input (a form is a screen, not a popup),
+     *   no "쿠키";
+     * - something that closes it: a named close, or exactly one small unnamed (or X-mark) clickable anywhere in the
+     *   block (11번가 puts its round X under the card). With [hint] (the activity's own name says popup) not needed.
+     * The root is the deepest node holding all the content (often a screen-sized container; its own bounds are kept
+     * for the live checks). Nothing here makes the X pressable without the person (6-3).
+     */
+    private fun dimWindowRoot(nodes: List<NodeSnapshot>, screen: ScreenBounds, hint: Boolean): PopupRoot? {
+        val screenArea = area(screen)
+        if (screenArea <= 0) return null
+        val top = nodes.firstOrNull { it.path == "0" } ?: return null
+        if (area(top.bounds) < screenArea * DIM_WINDOW_SCREEN_RATIO) return null
+        val content = nodes.filter { area(it.bounds) < screenArea * DIM_WINDOW_SCREEN_RATIO }
+        if (content.isEmpty()) return null
+        val block = ScreenBounds(content.minOf { it.bounds.left }, content.minOf { it.bounds.top }, content.maxOf { it.bounds.right }, content.maxOf { it.bounds.bottom })
+        val ratio = area(block).toDouble() / screenArea
+        if (ratio < DIM_WINDOW_MIN_RATIO || ratio > DIM_WINDOW_MAX_RATIO) return null
+        if (kotlin.math.abs((block.left + block.right) / 2 - (screen.left + screen.right) / 2) > screen.width * 0.1) return null
+        val clickables = content.filter { it.clickable && it.enabled }
+        if (clickables.isEmpty() || clickables.size >= MENU_MIN_CLICKABLES) return null
+        if (content.any { it.className?.contains("EditText", ignoreCase = true) == true } || content.any(::mentionsCookies)) return null
+        if (!hint) {
+            val namedClose = clickables.any { SimpleLabelRules.roleOf(CloseButtonFinder.nameOf(it, content)) == ButtonRole.CLOSE }
+            val side = maxOf(120, (minOf(block.width, block.height) * 0.2).toInt())
+            val xs = clickables.filter { node ->
+                val name = CloseButtonFinder.nameOf(node, content)
+                val n = node.bounds
+                (name == null || SimpleLabelRules.isXMark(name)) && n.width in 1..side && n.height in 1..side && n.width.toDouble() / n.height in 0.5..2.0
+            }
+            if (!namedClose && xs.size != 1) return null
+        }
+        val rootNode = deepestHolding(nodes, content) ?: return null
+        return PopupRoot(rootNode.path, rootNode.bounds, PopupRootKind.DIM_WINDOW)
+    }
+
+    /** The deepest node whose path is a prefix of every content node's path. */
+    private fun deepestHolding(nodes: List<NodeSnapshot>, content: List<NodeSnapshot>): NodeSnapshot? {
+        val byPath = nodes.associateBy { it.path }
+        var common = content.first().path.split('/')
+        for (node in content.drop(1)) {
+            val parts = node.path.split('/')
+            common = common.zip(parts).takeWhile { (a, b) -> a == b }.map { it.first }
+        }
+        // A content node itself may be the deepest holder only when it holds the others; else its parent chain.
+        for (length in common.size downTo 1) {
+            val path = common.take(length).joinToString("/")
+            val node = byPath[path] ?: continue
+            if (content.all { it.path == path || it.path.startsWith("$path/") }) return node
+        }
+        return null
+    }
+
+    private const val DIM_WINDOW_SCREEN_RATIO = 0.96
+    private const val DIM_WINDOW_MIN_RATIO = 0.05
+    private const val DIM_WINDOW_MAX_RATIO = 0.6
 
     /**
      * F22 (LG 11/1 07:0x, 11번가 app: dim + white box + an X TalkBack calls only "버튼" + "혜택 받으러 가기";
@@ -331,6 +399,20 @@ object WindowBoundsRules {
         val active = activeReject?.name ?: "BOUNDED"
         val above = if (appRejects.isEmpty()) "-" else appRejects.joinToString(",") { it.name }
         return "WINDOWS app=$apps [$windows] active=$active above=$above"
+    }
+}
+
+/**
+ * F32 (e): an activity class named like a popup ("…AdsOneDayPopupActivity", "…DialogActivity", "…AdActivity"), from
+ * TYPE_WINDOW_STATE_CHANGED's class name. Compared in memory only, never logged.
+ */
+object PopupActivityName {
+    private val WORDS = Regex("(Popup|Dialog|Ads?)(?=[A-Z]|Activity|$)")
+
+    fun looksLikePopup(className: String?): Boolean {
+        val simple = className?.substringAfterLast('.') ?: return false
+        if (!simple.endsWith("Activity")) return false
+        return WORDS.containsMatchIn(simple)
     }
 }
 

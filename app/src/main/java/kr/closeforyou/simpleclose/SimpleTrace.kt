@@ -181,6 +181,12 @@ enum class SimpleTrace {
     APP_WINDOW_IGNORED,
     /** F22: a centred box over a screen-covering layer with an unnamed corner X ([PopupRootKind.MODAL_CARD]). */
     DETECTED_MODAL_CARD,
+    /** F32: a screen-sized transparent window showing one centred card ([PopupRootKind.DIM_WINDOW]). */
+    DETECTED_DIM_WINDOW,
+    /** F32 (e): the app opened an activity named like a popup (the name itself is never logged). */
+    POPUP_ACTIVITY_HINT,
+    /** F32: the unnamed X was offered as [버튼으로 이동] only (a decision, or a risky button beside it). */
+    X_BUTTON_MOVE_OFFERED,
     /** F22: the popup the person remembered with "앞으로 항상 닫기", closed again by itself. */
     REMEMBERED_AUTO_CLOSE,
     REMEMBERED_SAVED,
