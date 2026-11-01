@@ -45,8 +45,18 @@ enum class PopupRootKind {
  * The popup's own subtree: every node at [path] or below it. [windowId]: the window whose tree the
  * path is in when it is not the active window (F16 [PopupRootKind.APP_WINDOW]); null = the active window.
  */
-data class PopupRoot(val path: String, val bounds: ScreenBounds, val kind: PopupRootKind, val windowId: Int? = null) {
-    fun contains(node: NodeSnapshot): Boolean = node.path == path || node.path.startsWith("$path/")
+data class PopupRoot(
+    val path: String,
+    val bounds: ScreenBounds,
+    val kind: PopupRootKind,
+    val windowId: Int? = null,
+    /**
+     * F36 (a flat [PopupRootKind.BOTTOM_BANNER]): the popup's own nodes when no node holds them all (the banner's layout is
+     * not in the tree). Then [path] and [bounds] are its close button's, for the live checks; null = the subtree at [path].
+     */
+    val members: Set<String>? = null,
+) {
+    fun contains(node: NodeSnapshot): Boolean = members?.let { node.path in it } ?: (node.path == path || node.path.startsWith("$path/"))
 
     /** "The same popup" while it is on screen, whatever its content repaints (carousel, countdown). */
     val key: String get() = "$kind:$path:${bounds.left},${bounds.top},${bounds.right},${bounds.bottom}"
@@ -84,8 +94,49 @@ object PopupRootFinder {
         }
         dimOverlayRoot(visible, screen)?.let { return it }
         if (!frontLayers) return null
-        return frontLayerRoot(visible, screen) ?: modalCardRoot(visible, screen) ?: dimWindowRoot(visible, screen, popupActivityHint)
+        return frontLayerRoot(visible, screen) ?: modalCardRoot(visible, screen) ?: dimWindowRoot(visible, screen, popupActivityHint) ?:
+            (flatBanner(visible, screen) as? FlatBanner.Found)?.root
     }
+
+    /**
+     * F36 (LG 11/2 시험 앱 P03: NO_POPUP_ROOT ×10, no BOTTOM_BANNER): the banner's LinearLayout is not in the service's
+     * tree (no FLAG_INCLUDE_NOT_IMPORTANT_VIEWS), so its text, "설치" and "닫기" hang from the window root with the page.
+     * A row at the bottom is the banner when all of these hold ([BannerMiss] names the first that failed):
+     * - a named close in the bottom 20% of the screen; the row is every node beside it (half its height or more shared,
+     *   none taller than 15% of the screen, none screen-sized);
+     * - two nodes or more, spanning at least 60% of the width, at most 15% of the height;
+     * - nothing visible below it (it is the bottom-most content);
+     * - at most [BANNER_MAX_CLICKABLES] clickables (a tab bar has more and no close);
+     * - promotion words in it ([mentionsPromotion]).
+     * The root is the close's path and bounds (the live checks look at that node); [PopupRoot.members] is the row.
+     */
+    fun flatBanner(visible: List<NodeSnapshot>, screen: ScreenBounds): FlatBanner? {
+        val screenArea = area(screen)
+        if (screenArea <= 0) return null
+        val close = visible.filter { node ->
+            node.clickable && node.enabled && node.bounds.top >= screen.top + screen.height * 0.8 &&
+                SimpleLabelRules.roleOf(CloseButtonFinder.nameOf(node, visible)) == ButtonRole.CLOSE
+        }.maxByOrNull { it.bounds.bottom } ?: return null
+        val c = close.bounds
+        val row = visible.filter { node ->
+            val b = node.bounds
+            val shared = minOf(b.bottom, c.bottom) - maxOf(b.top, c.top)
+            node.path != "0" && area(b) < screenArea * CARD_MAX_AREA_RATIO && b.height <= screen.height * 0.15 &&
+                shared * 2 >= minOf(b.height, c.height)
+        }
+        if (row.size < 2) return FlatBanner.Miss(BannerMiss.ROW_ALONE)
+        val band = ScreenBounds(row.minOf { it.bounds.left }, row.minOf { it.bounds.top }, row.maxOf { it.bounds.right }, row.maxOf { it.bounds.bottom })
+        if (band.width < screen.width * 0.6) return FlatBanner.Miss(BannerMiss.TOO_NARROW)
+        if (band.height > screen.height * 0.15) return FlatBanner.Miss(BannerMiss.TOO_TALL)
+        if (visible.any { it !in row && it.bounds.top >= band.bottom - 2 && area(it.bounds) < screenArea * CARD_MAX_AREA_RATIO }) {
+            return FlatBanner.Miss(BannerMiss.NOT_BOTTOM_MOST)
+        }
+        if (row.count { it.clickable } > BANNER_MAX_CLICKABLES) return FlatBanner.Miss(BannerMiss.TOO_MANY_BUTTONS)
+        if (row.none(::mentionsPromotion)) return FlatBanner.Miss(BannerMiss.NO_PROMOTION)
+        return FlatBanner.Found(PopupRoot(close.path, close.bounds, PopupRootKind.BOTTOM_BANNER, members = row.mapTo(LinkedHashSet()) { it.path }))
+    }
+
+    private const val BANNER_MAX_CLICKABLES = 4
 
     /**
      * F32 (d): a window as big as the screen whose visible content (every node smaller than the screen) fits in one
@@ -505,6 +556,15 @@ object WindowBoundsRules {
         return "WINDOWS app=$apps [$windows] active=$active above=$above"
     }
 }
+
+/** F36: [PopupRootFinder.flatBanner]'s answer. */
+sealed interface FlatBanner {
+    data class Found(val root: PopupRoot) : FlatBanner
+    data class Miss(val why: BannerMiss) : FlatBanner
+}
+
+/** F36: why a row with a close at the bottom was not a banner (debug `BANNER_MISS_*`, codes only). */
+enum class BannerMiss { ROW_ALONE, TOO_NARROW, TOO_TALL, NOT_BOTTOM_MOST, TOO_MANY_BUTTONS, NO_PROMOTION }
 
 /**
  * F32 (e): an activity class named like a popup ("…AdsOneDayPopupActivity", "…DialogActivity", "…AdActivity"), from

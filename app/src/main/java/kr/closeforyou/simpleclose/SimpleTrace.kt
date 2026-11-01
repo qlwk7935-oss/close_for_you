@@ -212,6 +212,23 @@ enum class SimpleTrace {
     VIDEO_SKIP_WAIT_ANNOUNCED,
     /** F35 (B_DEMO_RULES.md 8-5 B안): a promotion's login invitation no longer keeps the popup asked. */
     PROMO_LOGIN_NOT_ASKED,
+    /** F36: a flat bottom banner found ([PopupRootFinder.flatBanner]), or why a bottom row with a close was not one. */
+    BANNER_FLAT_FOUND,
+    BANNER_MISS_ROW_ALONE,
+    BANNER_MISS_TOO_NARROW,
+    BANNER_MISS_TOO_TALL,
+    BANNER_MISS_NOT_BOTTOM_MOST,
+    BANNER_MISS_TOO_MANY_BUTTONS,
+    BANNER_MISS_NO_PROMOTION,
+    /** F36: a video ad cover outside YouTube: counting down, its skip shown, or why not ([VideoCoverMiss]). */
+    VIDEO_COVER_WAITING,
+    VIDEO_COVER_SHOWN,
+    VIDEO_COVER_MISS_NO_AD_MARK,
+    VIDEO_COVER_MISS_SEVERAL_SKIPS,
+    VIDEO_COVER_MISS_NO_SKIP_OR_COUNTDOWN,
+    VIDEO_COVER_MISS_NO_HOLDER,
+    /** F36: a counting-down cover is read again in a second, not left to the page's repaints. */
+    VIDEO_COVER_REREAD,
     /** F32 (e): the app opened an activity named like a popup (the name itself is never logged). */
     POPUP_ACTIVITY_HINT,
     /** F32: the unnamed X was offered as [버튼으로 이동] only (a decision, or a risky button beside it). */

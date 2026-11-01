@@ -49,6 +49,9 @@ sealed interface VideoCover {
     data object Waiting : VideoCover
 }
 
+/** F36: why a screen with a video surface had no video ad cover (debug `VIDEO_COVER_MISS_*`). */
+enum class VideoCoverMiss { NO_AD_MARK, SEVERAL_SKIPS, NO_SKIP_OR_COUNTDOWN, NO_HOLDER }
+
 /** One read's verdict: [result] to act on (null = nothing), [diag] for the log, [adMarker] for the log too. */
 class VideoAdScan(val result: VideoAdSkipResult?, val diag: VideoAdDiag, val adMarker: Boolean)
 
@@ -142,23 +145,29 @@ object VideoAdSkip {
      * cover is the deepest node holding them, not the tree root, at least [COVER_MIN_RATIO] of the screen. The engine asks
      * (the skip is a press option of the prompt); nothing here presses.
      */
-    fun cover(nodes: List<NodeSnapshot>, screen: ScreenBounds): VideoCover? {
+    fun cover(nodes: List<NodeSnapshot>, screen: ScreenBounds): VideoCover? = coverCheck(nodes, screen).first
+
+    /**
+     * F36 (LG 11/2 P16: VIDEO_SKIP_WAITING ×3, then nothing): [cover] with why not ([VideoCoverMiss], debug
+     * `VIDEO_COVER_MISS_*`); both null = no video surface on screen (not logged).
+     */
+    fun coverCheck(nodes: List<NodeSnapshot>, screen: ScreenBounds): Pair<VideoCover?, VideoCoverMiss?> {
         val visible = nodes.filter { PopupRootFinder.isVisible(it, screen) }
-        val surface = visible.firstOrNull(::isVideoSurface) ?: return null
+        val surface = visible.firstOrNull(::isVideoSurface) ?: return null to null
         val marks = visible.filter { node -> listOfNotNull(node.text, node.contentDescription).any(::isAdMark) }
-        if (marks.isEmpty()) return null
+        if (marks.isEmpty()) return null to VideoCoverMiss.NO_AD_MARK
         val skips = visible.filter { it.clickable && it.enabled && isSkip(CloseButtonFinder.nameOf(it, visible)) }
-        if (skips.size > 1) return null
+        if (skips.size > 1) return null to VideoCoverMiss.SEVERAL_SKIPS
         val countdown = visible.firstOrNull { node ->
             listOfNotNull(node.text, node.contentDescription).any { text -> COUNTDOWN.any { it.containsMatchIn(ButtonLabelRules.normalize(text)) } }
         }
-        val anchor = skips.singleOrNull() ?: countdown ?: return null
+        val anchor = skips.singleOrNull() ?: countdown ?: return null to VideoCoverMiss.NO_SKIP_OR_COUNTDOWN
         val byPath = nodes.associateBy { it.path }
         val screenArea = screen.width.toLong() * screen.height
         val holder = marks.mapNotNull { mark -> holding(byPath, listOf(surface, anchor, mark)) }
             .filter { it.path != "0" && it.bounds.width.toLong() * it.bounds.height >= screenArea * COVER_MIN_RATIO }
-            .maxByOrNull { it.path.count { c -> c == '/' } } ?: return null
-        return if (skips.size == 1) VideoCover.Shown(PopupRoot(holder.path, holder.bounds, PopupRootKind.VIDEO_COVER)) else VideoCover.Waiting
+            .maxByOrNull { it.path.count { c -> c == '/' } } ?: return null to VideoCoverMiss.NO_HOLDER
+        return (if (skips.size == 1) VideoCover.Shown(PopupRoot(holder.path, holder.bounds, PopupRootKind.VIDEO_COVER)) else VideoCover.Waiting) to null
     }
 
     private const val COVER_MIN_RATIO = 0.4

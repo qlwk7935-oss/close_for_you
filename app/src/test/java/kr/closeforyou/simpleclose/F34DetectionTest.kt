@@ -116,9 +116,9 @@ class F34DetectionTest {
         // A snackbar with "닫기" and no promotion words is not a banner.
         val snackbar = nodes.map { if (it.path == "0/1/0") it.copy(text = "저장했어요") else it }.filterNot { it.path == "0/1/1" }
         assertNull(PopupRootFinder.find(snackbar, lg))
-        // Flat (the strip's layout dropped, as on the device without it): nothing to call its root, still not found.
+        // Flat (the strip's layout dropped, as on the device): F36 finds it as a row ([PopupRootFinder.flatBanner]).
         val flat = nodes.filterNot { it.path == "0/1" || it.path == "0/0" }.map { it.copy(path = it.path.replace("0/1/", "0/9")) }
-        assertNull(PopupRootFinder.find(flat, lg))
+        assertEquals(setOf("0/90", "0/91", "0/92"), PopupRootFinder.find(flat, lg)?.members)
     }
 
     /** P16 as read on the device: the black cover is clickable, the corner's layout is dropped. */

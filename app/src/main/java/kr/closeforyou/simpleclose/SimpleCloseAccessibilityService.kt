@@ -143,6 +143,11 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
     private var lastClosedMemory: PopupMemory? = null
     /** F18: skip buttons already pressed (window + path), not pressed again for [SimpleCloseEngineFeature.SAME_POPUP_COOLDOWN_MILLIS]. */
     private val skippedAt = LinkedHashMap<String, Long>()
+    /** F36: the app whose video cover is counting down, until when it is re-read, and the re-read pending. */
+    private var coverWaitPackage: String? = null
+    private var coverWaitUntil = 0L
+    private var coverWaitSeenAt = 0L
+    private var coverReread: Job? = null
     /** F35: the video ad (app and window) whose wait was said, and when; one sentence per ad. */
     private var videoWaitAnnounced: Pair<String, Long>? = null
     /**
@@ -432,8 +437,23 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
         val found = PopupRootFinder.find(read.nodes, read.screen, read.activeWindowBounded, popupActivityHint = popupActivity)
             ?.let { PopupRootFinder.bindWindow(it, read.popupWindowId, read.windowId) }
         // F34 (시험 앱 P16): outside YouTube a video ad's own cover is asked about once its skip shows; before it, waited for.
-        val cover = if (found == null && !youtube && SimpleCloseEngineFeature.VIDEO_AD_SKIP) VideoAdSkip.cover(read.nodes, read.screen) else null
-        if (cover == VideoCover.Waiting) videoAdWaiting = true
+        val (cover, coverMiss) = if (found == null && !youtube && SimpleCloseEngineFeature.VIDEO_AD_SKIP) VideoAdSkip.coverCheck(read.nodes, read.screen) else null to null
+        coverMiss?.let { log.trace(SimpleTrace.valueOf("VIDEO_COVER_MISS_${it.name}")) }
+        when (cover) {
+            VideoCover.Waiting -> {
+                videoAdWaiting = true
+                log.trace(SimpleTrace.VIDEO_COVER_WAITING)
+                rereadCoverSoon(read.packageName)
+            }
+            is VideoCover.Shown -> log.trace(SimpleTrace.VIDEO_COVER_SHOWN)
+            null -> Unit
+        }
+        // F36: a bottom row with a close that was not taken for a banner: why (codes only).
+        if (found?.kind == PopupRootKind.BOTTOM_BANNER && found.members != null) log.trace(SimpleTrace.BANNER_FLAT_FOUND)
+        if (found == null && cover == null) {
+            (PopupRootFinder.flatBanner(read.nodes.filter { PopupRootFinder.isVisible(it, read.screen) }, read.screen) as? FlatBanner.Miss)
+                ?.let { log.trace(SimpleTrace.valueOf("BANNER_MISS_${it.why.name}")) }
+        }
         val root = found ?: (cover as? VideoCover.Shown)?.root?.let { PopupRootFinder.bindWindow(it, read.popupWindowId, read.windowId) }
         if (root == null) {
             log.trace(if (videoAdWaiting) SimpleTrace.VIDEO_SKIP_WAITING else SimpleTrace.NO_POPUP_ROOT)
@@ -1348,6 +1368,27 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
     }
 
     /**
+     * F36 (LG 11/2 P16: VIDEO_SKIP_WAITING ×3, then no read saw the skip within 12 s): while a cover counts down, it is
+     * read again in [VIDEO_COVER_REREAD_MILLIS] (one pending at a time) for at most [VIDEO_COVER_WAIT_MAX_MILLIS], as a
+     * window event (the repaint budget grows while nothing is found and may skip the moment the skip appears).
+     */
+    private fun rereadCoverSoon(packageName: String) {
+        val now = SystemClock.uptimeMillis()
+        // A new window only for another app, or after a pause with no countdown seen (another ad).
+        if (coverWaitPackage != packageName || now - coverWaitSeenAt > VIDEO_COVER_NEW_AD_GAP_MILLIS) {
+            coverWaitPackage = packageName
+            coverWaitUntil = now + VIDEO_COVER_WAIT_MAX_MILLIS
+        }
+        coverWaitSeenAt = now
+        if (coverReread?.isActive == true || now > coverWaitUntil) return
+        log.trace(SimpleTrace.VIDEO_COVER_REREAD)
+        coverReread = scope.launch {
+            delay(VIDEO_COVER_REREAD_MILLIS)
+            inspectionEvents.onEvent(packageName, SimpleInspectionEvent.WINDOW)
+        }
+    }
+
+    /**
      * F35 (B_DEMO_RULES.md 8-4): while a video ad counts down to its skip, its seconds as read on screen
      * ([VideoAdSkip.waitSeconds]) are said once per ad ("광고를 5초 뒤에 건너뛸게요"), only where the skip will be pressed for
      * the person (YouTube and the preset closes ads). TalkBack on: through TalkBack's own queue (the result card, no focus
@@ -1568,6 +1609,10 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
         const val RECHECK_CAP_MILLIS = 250L
         /** F31: what 강력 모드 (and a remembered rule) closes: every kind but decisions and scams. */
         val STRONG_KINDS = setOf(PopupClassification.ADVERTISEMENT, PopupClassification.COUPON, PopupClassification.NOTICE, PopupClassification.UNKNOWN)
+        /** F36: a counting-down video cover is read again this often, for at most this long. */
+        const val VIDEO_COVER_REREAD_MILLIS = 1_000L
+        const val VIDEO_COVER_WAIT_MAX_MILLIS = 15_000L
+        const val VIDEO_COVER_NEW_AD_GAP_MILLIS = 30_000L
         /** F35: the same app and window counts as the same video ad for this long (one wait sentence per ad). */
         const val VIDEO_WAIT_ANNOUNCE_AGAIN_MILLIS = 30_000L
         /** F34: after [LateCloseWait.MAX_WAIT_MILLIS] one more look, so a popup that never got its close is asked. */
