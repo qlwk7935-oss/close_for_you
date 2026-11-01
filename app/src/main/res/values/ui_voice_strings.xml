@@ -354,6 +354,8 @@
     <!-- F20: 자동으로 누른 닫기가 실패(안 닫힘·다시 나타남)한 뒤 바로 묻는 창 첫 줄 -->
     <string name="ui_choice_summary_auto_failed">대신 닫지 못했어요.</string>
     <!-- F34: B의 사기 의심 팝업. 대신 누르지 않고, 닫기 버튼으로 이동만 제공한다. -->
+    <!-- F35: 유튜브 광고 카운트다운을 기다릴 때 한 번만. 숫자는 화면에서 읽은 값(B DecisionVideoAd.countdownIn). -->
+    <string name="ui_video_skip_wait">광고를 %1$d초 뒤에 건너뛸게요.</string>
     <string name="ui_choice_summary_suspicious">사기일 수 있는 팝업이에요. 대신 누르지 않아요. 다른 버튼은 누르지 마세요.</string>
     <!-- F20: TalkBack이 꺼져 있을 때 [버튼으로 이동]을 고르면 위치만 알려 준다. %1$s 버튼 이름, %2$s 위치 -->
     <string name="ui_move_button_position">\'%1$s\' 버튼은 화면 %2$s에 있어요.</string>

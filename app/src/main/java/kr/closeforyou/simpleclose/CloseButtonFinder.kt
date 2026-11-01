@@ -33,6 +33,8 @@ data class ButtonScan(
      * B called the popup an advertisement or a coupon.
      */
     val promoBuyCount: Int = 0,
+    /** B_DEMO_RULES.md 8-5 B안: risky buttons that are only a promotion's login invitation; part of [riskCount], never pressed. */
+    val promoLoginCount: Int = 0,
 ) {
     val closeCandidates: List<CloseCandidate> get() = candidates.filter { it.role == ButtonRole.CLOSE }
 }
@@ -55,6 +57,7 @@ object CloseButtonFinder {
         var other = 0
         var risk = 0
         var promoBuy = 0
+        var promoLogin = 0
         val riskButtons = mutableListOf<CloseCandidate>()
         val xShaped = mutableListOf<NodeSnapshot>()
         for (node in inside) {
@@ -67,6 +70,8 @@ object CloseButtonFinder {
                 risk++
                 // B_DEMO_RULES.md 1절: counted apart so a checked promotion's "지금 구매하기" alone can stop asking.
                 if (label != null && DecisionDemoRules.isPromoPurchaseLabel(label)) promoBuy++
+                // B_DEMO_RULES.md 8-5 B안: a promotion's login invitation, counted the same way.
+                if (label != null && DecisionDemoRules.isPromoLoginLabel(label)) promoLogin++
             }
             if (SimpleLabelRules.isDecision(label)) {
                 riskButtons += CloseCandidate("node:${node.path}", node.path, node.viewId, label, node.bounds, EvidenceLevel.E2_LABELED_NODE, ButtonRole.USER_DECISION)
@@ -102,7 +107,7 @@ object CloseButtonFinder {
         // F20: plainest close first, reading order on a tie ([SimpleLabelRules.clarity]), so C's prompt offers first
         // exactly the button 강력 모드 presses ([StrongCloseRules]).
         val ordered = candidates.sortedBy { if (it.role == ButtonRole.CLOSE) SimpleLabelRules.clarity(it.label) else CLARITY_SKIP }
-        return ButtonScan(ordered.toPersistentList(), forbidden, unlabeled, other, risk, x, riskButtons.toPersistentList(), promoBuy)
+        return ButtonScan(ordered.toPersistentList(), forbidden, unlabeled, other, risk, x, riskButtons.toPersistentList(), promoBuy, promoLogin)
     }
 
     /** Small and about square, inside the popup: the shape of an X icon (a big unnamed box is an image or the dim). */

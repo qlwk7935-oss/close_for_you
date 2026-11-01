@@ -28,6 +28,8 @@ data class SimplePopup(
     val foundByProbe: Boolean = true,
     /** F27 (review #7): part of the popup lies deeper than the walk goes; a risky button there would be unseen. */
     val depthCut: Boolean = false,
+    /** F35 (B_DEMO_RULES.md 8-1): nodes beside a card-shaped root counted for the safety checks ([PopupNeighbors]). */
+    val neighborCount: Int = 0,
 ) {
     /** Same popup later: same window, same root kind, same structure under the root. */
     val fingerprint: String get() = "${snapshot.token.windowId}:${root.kind}:${snapshot.token.structureDigest}"
@@ -55,8 +57,10 @@ object SimplePopupAnalysis {
     ): SimplePopup {
         val visible = nodes.filter { PopupRootFinder.isVisible(it, screen) }
         val inside = visible.filter(root::contains)
-        val scan = CloseButtonFinder.scan(visible, root)
-        val texts = inside.flatMap { node ->
+        // B_DEMO_RULES.md 8-1: what sits right beside a card-shaped root counts for the safety checks, never as a target.
+        val neighbors = PopupNeighbors.of(visible, root, screen)
+        val scan = PopupNeighbors.withNeighbors(CloseButtonFinder.scan(visible, root), neighbors)
+        val texts = (inside + neighbors).flatMap { node ->
             listOfNotNull(node.text, node.contentDescription).filter { it.isNotBlank() }
                 .map { ExtractedText(it, node.bounds, TextSource.ACCESSIBILITY_TREE, confidence = null) }
         }
@@ -82,7 +86,7 @@ object SimplePopupAnalysis {
             // Honest: no OCR, no image model, no A eligibility; nothing here is an authorization.
             limitations = persistentSetOf(AnalysisLimit.OCR_NOT_IMPLEMENTED, AnalysisLimit.IMAGE_MODEL_NOT_IMPLEMENTED, AnalysisLimit.INCOMPLETE_EVIDENCE),
         )
-        return SimplePopup(snapshot, analysis, root, scan)
+        return SimplePopup(snapshot, analysis, root, scan, neighborCount = neighbors.size)
     }
 
     private fun sha256(fields: List<String>): String {

@@ -38,20 +38,26 @@ internal object DecisionKinds {
      * from any text and any source, in wide forms ([DecisionKeywords.guardForms]); coupons and ads
      * only from accessibility-tree text, because OCR can misread.
      */
-    fun of(analysis: PopupAnalysis, promoPurchase: Boolean = DecisionDemoRules.PROMO_PURCHASE): DecisionKind {
+    fun of(
+        analysis: PopupAnalysis,
+        promoPurchase: Boolean = DecisionDemoRules.PROMO_PURCHASE,
+        promoLogin: Boolean = DecisionDemoRules.PROMO_LOGIN,
+    ): DecisionKind {
         val texts = analysis.texts.filter { it.text.isNotBlank() }
         val tree = texts.filter { it.source == TextSource.ACCESSIBILITY_TREE }
         val treePromotion = tree.any { DecisionKeywords.isCoupon(it.text) || DecisionKeywords.isPromotion(it.text) }
         // B_DEMO_RULES.md 1절 (proposal, off by default): a promotion's own purchase button is not its decision.
         // Only the call-to-action texts are left out of step 2; every other decision signal still counts.
-        val decisionView = if (promoPurchase && DecisionDemoRules.isPromoPurchase(texts)) {
-            analysis.copy(
-                texts = analysis.texts.filterNot { DecisionDemoRules.isPromoPurchaseLabel(it.text) }.toPersistentList(),
-                closeCandidates = analysis.closeCandidates.filterNot { c -> c.label?.let(DecisionDemoRules::isPromoPurchaseLabel) == true }.toPersistentList(),
-            )
-        } else {
-            analysis
+        // B_DEMO_RULES.md 8-5 B안: the same for a promotion's own login invitation.
+        val skip: (String) -> Boolean = when {
+            promoPurchase && DecisionDemoRules.isPromoPurchase(texts) -> DecisionDemoRules::isPromoPurchaseLabel
+            promoLogin && DecisionDemoRules.isPromoLogin(texts) -> DecisionDemoRules::isPromoLoginLabel
+            else -> { _ -> false }
         }
+        val decisionView = analysis.copy(
+            texts = analysis.texts.filterNot { skip(it.text) }.toPersistentList(),
+            closeCandidates = analysis.closeCandidates.filterNot { c -> c.label?.let(skip) == true }.toPersistentList(),
+        )
         val decisionTexts = decisionView.texts.filter { it.text.isNotBlank() }
         return when {
             // 1. A scam pattern outranks everything else so C can warn about it.

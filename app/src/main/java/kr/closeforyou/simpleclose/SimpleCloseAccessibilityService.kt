@@ -143,6 +143,8 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
     private var lastClosedMemory: PopupMemory? = null
     /** F18: skip buttons already pressed (window + path), not pressed again for [SimpleCloseEngineFeature.SAME_POPUP_COOLDOWN_MILLIS]. */
     private val skippedAt = LinkedHashMap<String, Long>()
+    /** F35: the video ad (app and window) whose wait was said, and when; one sentence per ad. */
+    private var videoWaitAnnounced: Pair<String, Long>? = null
     /**
      * F20 (LG 11/1 11번가: a false "closed", the sheet found again and pressed again, TalkBack read it in a loop),
      * by the popup's words ([SnapshotToken.contentDigest], stable when the sheet moves): popups whose automatic
@@ -416,7 +418,10 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
                         return true
                     }
                 }
-                VideoAdSkipResult.Waiting -> videoAdWaiting = true
+                VideoAdSkipResult.Waiting -> {
+                    videoAdWaiting = true
+                    announceVideoWait(read)
+                }
                 null -> Unit
             }
         }
@@ -460,6 +465,11 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
             PopupRootKind.BOTTOM_BANNER -> SimpleTrace.DETECTED_BOTTOM_BANNER
             PopupRootKind.VIDEO_COVER -> SimpleTrace.DETECTED_VIDEO_COVER
         })
+        // F35 (B_DEMO_RULES.md 8-1): were the card's siblings in this read (the quick subtree read may stop at the card)?
+        if (root.kind == PopupRootKind.MODAL_CARD) {
+            if (PopupNeighbors.siblingsRead(read.nodes, root)) log.latency("NEIGHBORS_CHECKED", popup.neighborCount.toLong())
+            else log.trace(SimpleTrace.NEIGHBORS_UNREAD)
+        }
         // F10: first event -> here overstates when the page itself loaded first; the gap since the last
         // read that saw no popup bounds when the popup really appeared. Which trigger caught it, too.
         log.trace(trigger.trace)
@@ -527,8 +537,14 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
         if (wordHint != WordHint.NONE) log.trace(SimpleTrace.valueOf("WORD_HINT_${wordHint.name}"))
         val classification = if (hinted) PopupClassification.ADVERTISEMENT else wordHint.kind ?: byB
         // F28 (B_DEMO_RULES.md 1절): a "지금 구매하기" of a promotion B checked whole stops keeping it asked; never pressed.
-        val promoBuy = PromoPurchaseGate.allowed(DecisionDemoRules.PROMO_PURCHASE, byB, hinted, popup.analysis.texts, popup.scan.promoBuyCount)
-        if (promoBuy > 0 && promoBuy == popup.scan.riskCount) log.trace(SimpleTrace.PROMO_PURCHASE_NOT_ASKED)
+        val promoPurchase = PromoPurchaseGate.allowed(DecisionDemoRules.PROMO_PURCHASE, byB, hinted, popup.analysis.texts, popup.scan.promoBuyCount)
+        // F35 (B_DEMO_RULES.md 8-5 B안): a promotion's own "로그인하러 가기" the same way; never pressed.
+        val promoLogin = PromoLoginGate.allowed(DecisionDemoRules.PROMO_LOGIN, byB, hinted, popup.analysis.texts, popup.scan.promoLoginCount)
+        val promoBuy = promoPurchase + promoLogin
+        if (promoBuy > 0 && promoBuy == popup.scan.riskCount) {
+            if (promoPurchase > 0) log.trace(SimpleTrace.PROMO_PURCHASE_NOT_ASKED)
+            if (promoLogin > 0) log.trace(SimpleTrace.PROMO_LOGIN_NOT_ASKED)
+        }
         log.trace(when {
             suspicious -> SimpleTrace.CLASSIFIED_SUSPICIOUS
             classification == PopupClassification.ADVERTISEMENT -> SimpleTrace.CLASSIFIED_AD
@@ -551,7 +567,9 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
         val classified = popup.copy(analysis = analysis)
         // F22 (AGENTS 6-4): the person said "앞으로 항상 닫기" for this exact popup and button: closed by itself, with the
         // usual re-check right before the press. Never a decision, scam, risky-button or already-failed popup.
-        val rememberedButton = if (!suspicious && classification != PopupClassification.USER_DECISION && popup.scan.riskCount == 0 && words !in autoFailed) {
+        // B_DEMO_RULES.md 8-3: with the "자동 닫기" switch off nothing is pressed by itself, remembered popups included.
+        val rememberedButton = if (!suspicious && classification != PopupClassification.USER_DECISION && popup.scan.riskCount == 0 && words !in autoFailed &&
+            preferences.current().autoCloseKinds(live = true).isNotEmpty()) {
             withContext(Dispatchers.Default) { RememberedPopupRules.match(remembered, read.packageName, popup) }
         } else {
             null
@@ -905,7 +923,7 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
         )
         if (x != null) log.trace(SimpleTrace.X_BUTTON_OFFERED)
         // F22: "앞으로 항상 닫기" for the X: pressed once now, remembered only after the close is confirmed (AGENTS 6-4).
-        val withRemember = if (x == null || !SimpleCloseEngineFeature.REMEMBER_X_ALWAYS) withX else withX.copy(
+        val withRemember = if (x == null || !SimpleCloseEngineFeature.REMEMBER_X_ALWAYS || !RememberedPopupRules.canRemember(popup)) withX else withX.copy(
             options = withX.options.flatMap { o ->
                 if (o.kind == PromptOptionKind.PRESS_CANDIDATE && o.candidateId == x.id) listOf(o, o.copy(kind = PromptOptionKind.REMEMBER_ALWAYS)) else listOf(o)
             }.toImmutableList(),
@@ -1330,6 +1348,27 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
     }
 
     /**
+     * F35 (B_DEMO_RULES.md 8-4): while a video ad counts down to its skip, its seconds as read on screen
+     * ([VideoAdSkip.waitSeconds]) are said once per ad ("광고를 5초 뒤에 건너뛸게요"), only where the skip will be pressed for
+     * the person (YouTube and the preset closes ads). TalkBack on: through TalkBack's own queue (the result card, no focus
+     * taken); off: our TTS. No number read: nothing said.
+     */
+    private fun announceVideoWait(read: TreeRead) {
+        if (PopupClassification.ADVERTISEMENT !in preferences.current().autoCloseKinds(live = true)) return
+        val key = "${read.packageName}:${read.windowId}"
+        val now = SystemClock.uptimeMillis()
+        if (videoWaitAnnounced?.let { (k, at) -> k == key && now - at < VIDEO_WAIT_ANNOUNCE_AGAIN_MILLIS } == true) return
+        val seconds = VideoAdSkip.waitSeconds(read.nodes, read.screen) ?: return
+        videoWaitAnnounced = key to now
+        val sentence = getString(R.string.ui_video_skip_wait, seconds)
+        log.trace(SimpleTrace.VIDEO_SKIP_WAIT_ANNOUNCED)
+        val banner = resultBanner
+        if (banner != null && banner.talkBackOn() && banner.show(sentence)) return
+        val announcer = tts ?: return
+        scope.launch { announcer.announce(AnnouncementRequest(null, AnnouncementKind.ACTION_RESULT, sentence)) }
+    }
+
+    /**
      * F18: a video ad's skip button ([VideoAdSkip]), only in a preset that closes ads (the person's live
      * consent), re-checked right before one click on that very node (no ancestor, nothing else on the
      * player), then "광고를 건너뛰었어요" once when the button went away. Not pressed again for a while.
@@ -1431,7 +1470,8 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
             SimplePopupAnalysis.build(nodes, popup.root, popup.snapshot.token.packageName, popup.snapshot.token.windowId, screen, screenVersion, SystemClock.uptimeMillis())
         }
         val kind = classifier.classify(built.analysis)
-        val promoBuy = PromoPurchaseGate.allowed(DecisionDemoRules.PROMO_PURCHASE, kind, false, built.analysis.texts, built.scan.promoBuyCount)
+        val promoBuy = PromoPurchaseGate.allowed(DecisionDemoRules.PROMO_PURCHASE, kind, false, built.analysis.texts, built.scan.promoBuyCount) +
+            PromoLoginGate.allowed(DecisionDemoRules.PROMO_LOGIN, kind, false, built.analysis.texts, built.scan.promoLoginCount)
         val fresh = built.copy(scan = built.scan.copy(promoBuyCount = promoBuy))
         val block = PrePressRecheck.check(decidedByB, fresh, closable) ?: run {
             log.trace(SimpleTrace.PRE_PRESS_RECHECK_PASSED)
@@ -1528,6 +1568,8 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
         const val RECHECK_CAP_MILLIS = 250L
         /** F31: what 강력 모드 (and a remembered rule) closes: every kind but decisions and scams. */
         val STRONG_KINDS = setOf(PopupClassification.ADVERTISEMENT, PopupClassification.COUPON, PopupClassification.NOTICE, PopupClassification.UNKNOWN)
+        /** F35: the same app and window counts as the same video ad for this long (one wait sentence per ad). */
+        const val VIDEO_WAIT_ANNOUNCE_AGAIN_MILLIS = 30_000L
         /** F34: after [LateCloseWait.MAX_WAIT_MILLIS] one more look, so a popup that never got its close is asked. */
         const val LATE_CLOSE_LAST_LOOK_MILLIS = 100L
         /** F32 (e): how long an activity named like a popup counts as a hint for its app's reads. */

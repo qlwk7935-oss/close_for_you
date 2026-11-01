@@ -203,6 +203,15 @@ enum class SimpleTrace {
     WORD_HINT_AD,
     WORD_HINT_NOTICE,
     WORD_HINT_DENIED,
+    /**
+     * F35 (B_DEMO_RULES.md 8-1): a modal card whose siblings were not in the read (the quick subtree read): the buttons
+     * beside it could not be checked. With them read, the count is `NEIGHBORS_CHECKED` (a number line).
+     */
+    NEIGHBORS_UNREAD,
+    /** F35: a waiting video ad's seconds said once ("광고를 n초 뒤에 건너뛸게요"). */
+    VIDEO_SKIP_WAIT_ANNOUNCED,
+    /** F35 (B_DEMO_RULES.md 8-5 B안): a promotion's login invitation no longer keeps the popup asked. */
+    PROMO_LOGIN_NOT_ASKED,
     /** F32 (e): the app opened an activity named like a popup (the name itself is never logged). */
     POPUP_ACTIVITY_HINT,
     /** F32: the unnamed X was offered as [버튼으로 이동] only (a decision, or a risky button beside it). */

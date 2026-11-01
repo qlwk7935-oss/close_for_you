@@ -61,6 +61,20 @@ object PromoPurchaseGate {
 }
 
 /**
+ * F35 (B_DEMO_RULES.md 8-5 B안, 재호 결정): [PromoPurchaseGate] for a promotion's login invitation ("로그인하러 가기"):
+ * B called the popup an ad or a coupon and [DecisionDemoRules.isPromoLogin] holds (promotion words beside it, no
+ * decision urged in the body, no payment·consent·password·terms trace). Those buttons then stop keeping it asked;
+ * they are never pressed.
+ */
+object PromoLoginGate {
+    fun allowed(enabled: Boolean, byB: PopupClassification, hinted: Boolean, texts: List<ExtractedText>, promoLoginCount: Int): Int {
+        if (!enabled || hinted || promoLoginCount <= 0) return 0
+        if (byB != PopupClassification.ADVERTISEMENT && byB != PopupClassification.COUPON) return 0
+        return if (DecisionDemoRules.isPromoLogin(texts)) promoLoginCount else 0
+    }
+}
+
+/**
  * F28 (LG 11/1 14:29): whether the app a prompt is about has left the screen, from the packages of the application
  * windows on screen ([SimpleTreeCollector.applicationPackages]). Our own app's window is one of them like any
  * other (its activity in front means the popup's app left); our prompt overlay is not. Null (not known): no.

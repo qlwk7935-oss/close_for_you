@@ -48,6 +48,16 @@ interface RememberedPopupStore {
 object RememberedPopupRules {
     const val MAX_RULES = 50
 
+    /**
+     * B_DEMO_RULES.md 8-2: only a popup with words of its own beside its buttons can be remembered. An image-only popup
+     * has one hash for every picture in that layout, so "the same popup" could not be told apart next time
+     * ([kr.closeforyou.ui.voice.choice.RememberChoiceRules.offers] says the same for named buttons).
+     */
+    fun canRemember(popup: SimplePopup): Boolean {
+        val buttons = popup.scan.candidates.mapNotNull { it.label }.toSet() + listOfNotNull(popup.scan.xButton?.label)
+        return popup.analysis.texts.any { it.text.isNotBlank() && it.text !in buttons }
+    }
+
     fun ruleFor(packageName: String, popup: SimplePopup, button: CloseCandidate): RememberedPopup? {
         val path = button.nodePath ?: return null
         return RememberedPopup(RememberedPopup.keyOf(packageName, popup), popup.root.bounds, path, button.bounds)

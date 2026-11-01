@@ -30,6 +30,25 @@ object DecisionDemoRules {
         RegexOption.IGNORE_CASE,
     )
 
+    /**
+     * B_DEMO_RULES.md 8-5 B안 (11/1, 재호 결정): a promotion popup whose only decision signal is its own login invitation
+     * ("로그인하러 가기", "로그인하고 혜택 받기") is a promotion, like [PROMO_PURCHASE]. Same four conditions ([isPromoLogin]).
+     * The login button itself is never pressed; only the popup's close may be. "로그인이 필요한 서비스입니다" (no promotion
+     * words) stays a decision.
+     */
+    const val PROMO_LOGIN: Boolean = true
+
+    // Whole label only: a login invitation with nothing else in it ("로그인하고 구매하기", "로그인 후 결제" are not).
+    private val promoLoginLabel = Regex(
+        """^(지금|바로)?\s?로그인\s?(하기|하러\s?가기|하고\s?(혜택|쿠폰|할인|적립금?|포인트|특가)\s?(받기|받으러\s?가기|보기|확인하기)?)?\s?[>›»]?$|^(log\s?in|sign\s?in)( now)?\s?[>›»]?$""",
+    )
+
+    fun isPromoLoginLabel(text: String): Boolean =
+        DecisionKeywords.guardForms(text).any { promoLoginLabel.matches(it.trim()) }
+
+    /** [isPromoPurchase]'s four conditions, with a login invitation as the call to action. */
+    fun isPromoLogin(texts: List<ExtractedText>): Boolean = isPromoCallToAction(texts, ::isPromoLoginLabel)
+
     fun isPromoPurchaseLabel(text: String): Boolean =
         DecisionKeywords.guardForms(text).any { promoPurchaseLabel.matches(it.trim()) }
 
@@ -38,9 +57,11 @@ object DecisionDemoRules {
      * purchase call to action, a promotion or coupon wording in the other tree texts, and no checkout
      * signal in any text. The decision check then skips only the call-to-action texts.
      */
-    fun isPromoPurchase(texts: List<ExtractedText>): Boolean {
+    fun isPromoPurchase(texts: List<ExtractedText>): Boolean = isPromoCallToAction(texts, ::isPromoPurchaseLabel)
+
+    private fun isPromoCallToAction(texts: List<ExtractedText>, isCallToAction: (String) -> Boolean): Boolean {
         val tree = texts.filter { it.source == TextSource.ACCESSIBILITY_TREE && it.text.isNotBlank() }
-        val (cta, rest) = tree.partition { isPromoPurchaseLabel(it.text) }
+        val (cta, rest) = tree.partition { isCallToAction(it.text) }
         if (cta.isEmpty()) return false
         if (rest.none { DecisionKeywords.isPromotion(it.text) || DecisionKeywords.isCoupon(it.text) }) return false
         // The popup's own words may not urge the decision either, not even as a benefit condition ("지금 구매하면
