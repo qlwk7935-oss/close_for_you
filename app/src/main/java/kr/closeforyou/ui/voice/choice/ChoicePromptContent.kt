@@ -175,10 +175,11 @@ private fun PromptControls(
     }
     // Status line and hint exist only while they have words: an empty Text would still be a node
     // TalkBack can land on. The Row above has no semantics, so it is not a node either (LG check 10/23).
+    // F38: a sentence our TTS already said keeps no liveRegion, so TalkBack does not read it twice.
     controls.messageRes?.let {
         Text(
             text = stringResource(it),
-            modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
+            modifier = if (controls.messageSpoken) Modifier else Modifier.semantics { liveRegion = LiveRegionMode.Polite },
         )
     }
     controls.hintRes?.let {

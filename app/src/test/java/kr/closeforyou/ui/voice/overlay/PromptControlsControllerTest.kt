@@ -54,8 +54,10 @@ class PromptControlsControllerTest {
         var stops = 0
         var repeats = 0
         var announces = 0
+        val requests = mutableListOf<AnnouncementRequest>()
         override suspend fun announce(request: AnnouncementRequest): AnnouncementReceipt {
             announces++
+            requests += request
             return AnnouncementReceipt(AnnouncementState.TTS_COMPLETED)
         }
         override suspend fun repeatLast(): AnnouncementReceipt {
@@ -76,13 +78,90 @@ class PromptControlsControllerTest {
         PopupClassification.ADVERTISEMENT,
     )
 
-    private class Harness(scope: TestScope, speak: SpeakButtonState = SpeakButtonState.SHOWN, prompt: kr.closeforyou.ui.voice.choice.ChoicePrompt) {
+    private class Harness(
+        scope: TestScope,
+        speak: SpeakButtonState = SpeakButtonState.SHOWN,
+        prompt: kr.closeforyou.ui.voice.choice.ChoicePrompt,
+        sentence: ((Int) -> String)? = null,
+    ) {
         val input = FakeInput()
         val announcer = FakeAnnouncer()
         val picked = mutableListOf<PromptOption>()
         val controller = PromptControlsController(
-            prompt, scope.backgroundScope, PromptControlsSupport(announcer, input) { speak }, onVoiceOption = { picked += it },
+            prompt, scope.backgroundScope, PromptControlsSupport(announcer, input, { speak }, sentence), onVoiceOption = { picked += it },
         )
+    }
+
+    /** Stands in for context.getString: a fixed sentence per resource, never the heard words. */
+    private val fixed: (Int) -> String = { "fixed-$it" }
+
+    @Test fun f38SaySentenceIsSpokenOnceAndTheLineDropsItsLiveRegion() = runTest {
+        val h = Harness(this, prompt = prompt, sentence = fixed)
+        h.controller.onSpeak()
+        h.input.results.emit(VoiceUtterance.Refused)
+        runCurrent()
+        assertEquals(1, h.announcer.announces)
+        val request = h.announcer.requests.single()
+        assertEquals(kr.closeforyou.core.contract.AnnouncementKind.ACTION_RESULT, request.kind)
+        assertEquals("fixed-${R.string.ui_voice_refused}", request.text)
+        assertEquals(prompt.token, request.token)
+        assertEquals(R.string.ui_voice_refused, h.controller.state.value.messageRes)
+        assertTrue(h.controller.state.value.messageSpoken)
+    }
+
+    @Test fun f38EverySaySentenceIsSpoken() = runTest {
+        val h = Harness(this, prompt = prompt, sentence = fixed)
+        val said = listOf(
+            VoiceUtterance.NotUnderstood to R.string.ui_voice_not_understood,
+            VoiceUtterance.NeedsTapConfirm to R.string.ui_voice_pick_on_screen,
+            VoiceUtterance.Unavailable to R.string.ui_voice_unavailable,
+        )
+        for ((utterance, res) in said) {
+            h.controller.onSpeak()
+            h.input.results.emit(utterance)
+            runCurrent()
+            assertEquals(res, h.controller.state.value.messageRes)
+            assertEquals("fixed-$res", h.announcer.requests.last().text)
+        }
+        assertEquals(said.size, h.announcer.announces)
+    }
+
+    @Test fun f38ChooseAndQuietSayNothing() = runTest {
+        val h = Harness(this, prompt = prompt, sentence = fixed)
+        h.controller.onSpeak()
+        h.input.results.emit(VoiceUtterance.Command(VoiceCommand.CLOSE))
+        runCurrent()
+        h.controller.onSpeak()
+        h.input.results.emit(VoiceUtterance.Silent)
+        runCurrent()
+        assertEquals(0, h.announcer.announces)
+        assertFalse(h.controller.state.value.messageSpoken)
+        assertEquals(1, h.picked.size)
+    }
+
+    @Test fun f38CancelAndUnavailableAtPressAreSpokenButListeningIsNot() = runTest {
+        val h = Harness(this, prompt = prompt, sentence = fixed)
+        h.controller.onSpeak()
+        runCurrent()
+        assertEquals(0, h.announcer.announces) // "듣고 있어요" would reach the microphone
+        assertFalse(h.controller.state.value.messageSpoken)
+        h.controller.onSpeak() // cancel
+        runCurrent()
+        assertEquals("fixed-${R.string.ui_voice_listen_cancelled}", h.announcer.requests.single().text)
+        h.input.availability = VoiceAvailability.ON_DEVICE_UNAVAILABLE
+        h.controller.onSpeak()
+        runCurrent()
+        assertEquals("fixed-${R.string.ui_voice_unavailable}", h.announcer.requests.last().text)
+        assertEquals(2, h.announcer.announces)
+    }
+
+    @Test fun f38WithoutASentenceSourceTheLineKeepsItsLiveRegion() = runTest {
+        val h = Harness(this, prompt = prompt)
+        h.controller.onSpeak()
+        h.input.results.emit(VoiceUtterance.Refused)
+        runCurrent()
+        assertEquals(0, h.announcer.announces)
+        assertFalse(h.controller.state.value.messageSpoken)
     }
 
     @Test fun speakStopsOurTtsThenListens() = runTest {

@@ -717,6 +717,23 @@ F26 자동 확인: 옥션 웹 감지 1.3초·재확인 308ms·`READ_DUTY_PCT` 7.
   - **결론:** 대안 없음. 기록하고 조용히 둔다. 사용자가 원하면 스스로 닫는다.
 - 검증(F37): 5개 Gradle 작업 통과, 단위 시험 debug 1305개·release 1290개 실패 0, lintDebug 오류 0(경고 14), INTERNET 0. 시험 추가: `F37Test` 1개(평평한 말풍선, 상자 말풍선, 상자 배너).
 
+### 8-29. F38 — 음성 명령 결과 문구를 앱 TTS로도 말함 (JVM 시험만, 실기기 미검증)
+
+- **측정**(우진, 삼성 SM-F966N, 70a5caf debug): P04에서 [말하기] 뒤 "허용해" → 선택 창에 "그 버튼은 대신 누를 수 없어요"가 표시만 되고 소리가 없었다. TalkBack을 켜도 꺼도 같았다.
+- **원인:** 음성 시도 뒤 고정 문구(`VoiceOutcome.Say`)는 상태 줄 글자만 바꾸고 liveRegion에 맡겼다. TalkBack이 꺼져 있으면 liveRegion은 아무 소리도 내지 않는다. 켜져 있을 때 안 읽힌 이유는 아직 모른다(실기기 확인 필요).
+- **고침:** `PromptControlsController.say()`가 문구를 화면에 보이고, 우리 TTS(`PopupAnnouncer`, `AnnouncementKind.ACTION_RESULT`)로 한 번 말한다.
+  - 대상: Say 결과 전부(`ui_voice_refused`·`pick_on_screen`·`not_understood`·`not_here`·`ui_choice_cannot_press`·`ui_voice_unavailable`)와 [말하기] 누름 직후 문구(`listen_cancelled`·`unavailable`·`permission_hint`).
+  - 말하지 않는 것: "듣고 있어요"(마이크에 들어감), 선택(Choose, 누르기 경로가 결과를 말함), 조용히 끝남(Quiet), 들은 말.
+  - 말할 문구는 문자열 리소스뿐이다. 들은 말·화면 글자는 말하지도 로그에 남기지도 않는다.
+- **두 번 읽기 막기 — 방식:** TTS로 말한 줄은 liveRegion을 끈다(`PromptControlsState.messageSpoken`). TalkBack 켜짐 여부로 나누지 않고 언제나 TTS 한 길만 쓴다.
+  - 이유 1: 삼성에서 TalkBack을 켜도 liveRegion이 들리지 않았으므로, liveRegion에 기대는 쪽은 믿을 수 없다.
+  - 이유 2: 첫 안내·결과 안내가 이미 같은 TTS로 나가므로 목소리·속도가 같다.
+  - 이유 3: TalkBack 상태를 읽는 분기가 없어 시험·설명이 단순하다. 글자는 화면에 남아 TalkBack 사용자가 스와이프로 다시 읽을 수 있다.
+  - 같은 선택 창의 다른 상태 줄("다시 확인했어요" 등 음성 시도가 아닌 것)은 그대로 liveRegion이다.
+- **남은 점:** 이 문구도 안내 기록에 남으므로, 바로 뒤 [다시 듣기]는 팝업 안내가 아니라 이 문구를 다시 말한다.
+- **"닫아"로 닫힌 경우 로그 확인:** 음성 선택은 탭과 같은 경로다. `adb logcat -s CfySimple`에서 `ASKED` → `USER_CHOSE_PRESS` → `CLICKED_LABELED_CLOSE` → `CLOSED_CONFIRMED` 순서면 정상이다. 로그만으로 음성과 탭은 구분되지 않는다.
+- 검증(F38): 5개 Gradle 작업 통과, 단위 시험 debug 1310개·release 1295개 실패 0, lintDebug 오류 0(경고 14), INTERNET 0. 시험 추가 5개(`PromptControlsControllerTest`의 `f38*`).
+
 - 잔여 노드 쪽 이벤트 무시: TalkBack이 무엇을 읽을지는 앱이 막을 수 없다. 대신 포커스를 잔여 노드 밖으로 옮기는 것(F9)이 할 수 있는 전부. 웹 페이지가 닫힌 팝업을 DOM에 `aria-hidden` 없이 남기는 한, 사용자가 스와이프로 다시 만날 수 있다(한계로 기록).
 - 선택 창 PROMPT도 TalkBack 큐로? 가능은 하다: 선택 창 자체(이미 접근성 오버레이)에 paneTitle이 있고 TalkBack이 창을 읽으므로, "안내 맡기기" ON이면 우리 TTS PROMPT를 끄고 paneTitle/첫 버튼 포커스 낭독에 맡기는 방식. 단, 지금 PROMPT는 TalkBack이 팝업을 읽는 도중 끊고 들어가야 시연이 빠르므로 polite로 바꾸면 늦어질 수 있다. F11 배너가 LG에서 잘 읽히면 같은 방식으로 옮길지 정하자(의견, 미구현).
 - 검증(F1~F11 한 빌드): 5개 Gradle 작업 통과, 단위 시험 debug 1028개·release 1013개 실패 0, lintDebug 오류 0(경고 12), 병합 매니페스트 INTERNET 0·새 권한 없음.

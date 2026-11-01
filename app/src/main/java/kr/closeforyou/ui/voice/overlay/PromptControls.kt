@@ -10,6 +10,8 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kr.closeforyou.R
+import kr.closeforyou.core.contract.AnnouncementKind
+import kr.closeforyou.core.contract.AnnouncementRequest
 import kr.closeforyou.core.contract.PopupAnnouncer
 import kr.closeforyou.core.contract.VoiceAvailability
 import kr.closeforyou.ui.voice.choice.ChoicePrompt
@@ -34,8 +36,13 @@ data class PromptControlsState(
     val listening: Boolean = false,
     /** [다시 듣기]·[그만 말하기] need C's announcer. */
     val speechButtons: Boolean = false,
-    /** Fixed sentence after a voice attempt; announced politely (liveRegion), never the heard words. */
+    /** Fixed sentence after a voice attempt or the first status line; never the heard words. */
     @StringRes val messageRes: Int? = null,
+    /**
+     * F38: our TTS already said [messageRes], so the line drops its liveRegion (TalkBack would read it a
+     * second time). False = the line announces itself politely (liveRegion), as before.
+     */
+    val messageSpoken: Boolean = false,
     /** False while REVALIDATING: the buttons stay (TalkBack reads them as unavailable) but do nothing. */
     val enabled: Boolean = true,
 ) {
@@ -55,16 +62,21 @@ class PromptControlsSupport(
     val voiceInput: SpeakButtonVoiceInput?,
     /** Read on every show, so a settings or permission change applies to the next prompt. */
     val speakButtonState: () -> SpeakButtonState,
+    /** F38: string resource → sentence for the announcer; null = the status line only shows (liveRegion). */
+    val sentence: ((Int) -> String)? = null,
 ) {
     companion object {
-        val NONE = PromptControlsSupport(null, null) { SpeakButtonState.TURNED_OFF }
+        val NONE = PromptControlsSupport(null, null, { SpeakButtonState.TURNED_OFF })
 
         fun create(context: Context, announcer: PopupAnnouncer): PromptControlsSupport {
             val microphone = AndroidMicrophoneAccess(context)
             val preferences = UiVoicePreferences.get(context)
-            return PromptControlsSupport(announcer, OnDeviceVoiceCommandInput(context)) {
-                SpeakButtonPolicy.state(VoiceButtonFeature.enabled, preferences.current().voiceCommandsEnabled, microphone)
-            }
+            return PromptControlsSupport(
+                announcer,
+                OnDeviceVoiceCommandInput(context),
+                { SpeakButtonPolicy.state(VoiceButtonFeature.enabled, preferences.current().voiceCommandsEnabled, microphone) },
+                context::getString,
+            )
         }
     }
 }
@@ -113,20 +125,20 @@ class PromptControlsController(
         if (!mutableState.value.speakVisible) return
         if (mutableState.value.listening) {
             input.cancel()
-            mutableState.update { it.copy(listening = false, messageRes = R.string.ui_voice_listen_cancelled) }
+            say(R.string.ui_voice_listen_cancelled)
             return
         }
         support.announcer?.stop()
         val message = when (input.startFromSpeakButton(prompt.token)) {
             VoiceAvailability.READY -> {
                 speakPressed = true
-                mutableState.update { it.copy(listening = true, messageRes = R.string.ui_voice_listening) }
+                mutableState.update { it.copy(listening = true, messageRes = R.string.ui_voice_listening, messageSpoken = false) }
                 return
             }
             VoiceAvailability.MICROPHONE_PERMISSION_REQUIRED -> R.string.ui_voice_permission_hint
             else -> R.string.ui_voice_unavailable
         }
-        mutableState.update { it.copy(listening = false, messageRes = message) }
+        say(message)
     }
 
     fun onRepeat() {
@@ -151,7 +163,21 @@ class PromptControlsController(
     private fun cancelListening() {
         if (!mutableState.value.listening) return
         support.voiceInput?.cancel()
-        mutableState.update { it.copy(listening = false, messageRes = null) }
+        mutableState.update { it.copy(listening = false, messageRes = null, messageSpoken = false) }
+    }
+
+    /**
+     * F38: a fixed sentence after a voice attempt is shown and also spoken by our TTS, so it is heard
+     * with TalkBack off (a liveRegion alone says nothing then). Only the resource sentence is spoken,
+     * never what was heard; the line then has no liveRegion, so TalkBack does not read it twice.
+     */
+    private fun say(@StringRes res: Int) {
+        val announcer = support.announcer
+        val text = announcer?.let { support.sentence?.invoke(res) }?.takeIf { it.isNotBlank() }
+        mutableState.update { it.copy(listening = false, messageRes = res, messageSpoken = text != null) }
+        if (announcer != null && text != null) {
+            scope.launch { announcer.announce(AnnouncementRequest(prompt.token, AnnouncementKind.ACTION_RESULT, text)) }
+        }
     }
 
     private fun onResult(utterance: VoiceUtterance) {
@@ -159,11 +185,11 @@ class PromptControlsController(
         if (disposed || !mutableState.value.listening) return
         when (val outcome = VoicePolicy.decide(utterance, prompt)) {
             is VoiceOutcome.Choose -> {
-                mutableState.update { it.copy(listening = false, messageRes = null) }
+                mutableState.update { it.copy(listening = false, messageRes = null, messageSpoken = false) }
                 onVoiceOption(outcome.option)
             }
-            is VoiceOutcome.Say -> mutableState.update { it.copy(listening = false, messageRes = outcome.textRes) }
-            VoiceOutcome.Quiet -> mutableState.update { it.copy(listening = false, messageRes = null) }
+            is VoiceOutcome.Say -> say(outcome.textRes)
+            VoiceOutcome.Quiet -> mutableState.update { it.copy(listening = false, messageRes = null, messageSpoken = false) }
         }
     }
 }
