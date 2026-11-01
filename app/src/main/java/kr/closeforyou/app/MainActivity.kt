@@ -47,6 +47,7 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kr.closeforyou.accessibility.AccessibilityRuntime
+import kr.closeforyou.accessibility.AEngineState
 import kr.closeforyou.ui.voice.settings.UiVoiceAppRoot
 
 class MainActivity : ComponentActivity() {
@@ -69,6 +70,7 @@ class MainActivity : ComponentActivity() {
 private fun CoreSetupScreen(context: Context, preferences: CorePreferences) {
     val settings by preferences.state.collectAsStateWithLifecycle()
     val coreStatus by AccessibilityRuntime.status.collectAsStateWithLifecycle()
+    val engineStatus by AccessibilityRuntime.engineActivity.status.collectAsStateWithLifecycle()
     var serviceEnabled by remember { mutableStateOf(isServiceEnabled(context)) }
     var packageInput by rememberSaveable { mutableStateOf("") }
     var message by rememberSaveable { mutableStateOf<String?>(null) }
@@ -181,15 +183,16 @@ private fun CoreSetupScreen(context: Context, preferences: CorePreferences) {
                 }
             }
             Text(
-                when {
-                    !settings.consentGranted -> "분석 중지: 수집 동의 필요"
-                    settings.paused -> "분석 일시정지 중"
-                    settings.allowedPackages.isEmpty() -> "분석 대기: 허용한 앱 없음"
-                    !serviceEnabled -> "분석 대기: 접근성 서비스 꺼짐"
-                    else -> "허용한 앱의 팝업 후보 수집 준비됨 · 실기기 동작 미검증"
+                "A 엔진 상태: " + when (engineStatus.state) {
+                    AEngineState.YIELDING_TO_C -> "C에게 양보 중"
+                    AEngineState.COLLECTING -> "수집 중"
+                    AEngineState.PAUSED -> "일시정지"
                 },
                 modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
             )
+            Text("A 수집 시도: ${engineStatus.collectionAttempts}회 (이번 A 서비스 연결 이후)")
+            Text("수집 중은 새 이벤트 대기를 포함합니다. 횟수는 최초 수집과 재검증을 포함하며, 차단·실패한 시도도 셉니다. 이미지 글자 영역 수나 분석 성공 횟수와는 다릅니다.")
+            Text("일시정지는 서비스 미연결·엔진 상태 확인 중·수집 동의 없음·허용 앱 없음·사용자 조작 중인 경우에도 표시됩니다.")
             Button(
                 enabled = !settings.paused || (settings.consentGranted && settings.allowedPackages.isNotEmpty() && serviceEnabled),
                 onClick = { preferences.setPaused(!settings.paused) },

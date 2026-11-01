@@ -34,8 +34,10 @@ class CloseForYouAccessibilityService : AccessibilityService() {
     private var connected = false
     private var inputMethodPackages: Set<String> = emptySet()
     private val preferences by lazy { CorePreferences.get(this) }
+    private val engineActivity get() = AccessibilityRuntime.engineActivity
     private val engineExclusion by lazy {
-        AEngineExclusion(AndroidEnabledEngineSource(contentResolver), Dispatchers.IO) {
+        AEngineExclusion(AndroidEnabledEngineSource(contentResolver), Dispatchers.IO,
+            onStateObserved = engineActivity::engineObserved) {
             collector.resetGeometry()
             invalidate(clearBaseline = true)
         }
@@ -79,12 +81,14 @@ class CloseForYouAccessibilityService : AccessibilityService() {
         AccessibilityRuntime.attachCaptureCapability(screenshots)
         pipeline = CaptureOcrPipeline(screenshots, KoreanMlKitOcr(), ::isCurrent, { verifyScreen(it) })
         AccessibilityRuntime.connect()
+        engineActivity.connected(preferences.currentSettings())
         invalidate(clearBaseline = true)
         settingsObserver = serviceScope.launch {
             preferences.state.collect {
                 invalidate(clearBaseline = true)
                 if (!it.consentGranted) AccessibilityRuntime.block(PrivacyBlockReason.NO_CONSENT, freshness.version)
                 else if (it.paused) AccessibilityRuntime.block(PrivacyBlockReason.PAUSED, freshness.version)
+                engineActivity.settingsChanged(it)
             }
         }
         // Register before the first asynchronous read. Until it confirms C OFF, A stays closed.
@@ -101,17 +105,20 @@ class CloseForYouAccessibilityService : AccessibilityService() {
                 eventType == AccessibilityEvent.TYPE_TOUCH_EXPLORATION_GESTURE_START) touching = true
             if (eventType == AccessibilityEvent.TYPE_TOUCH_INTERACTION_END ||
                 eventType == AccessibilityEvent.TYPE_TOUCH_EXPLORATION_GESTURE_END) touching = false
+            engineActivity.interactionChanged(touching)
             return
         }
         val epoch = invalidate(clearBaseline = false)
         if (eventType == AccessibilityEvent.TYPE_TOUCH_INTERACTION_START ||
             eventType == AccessibilityEvent.TYPE_TOUCH_EXPLORATION_GESTURE_START) {
             touching = true
+            engineActivity.interactionChanged(touching)
             return
         }
         if (eventType == AccessibilityEvent.TYPE_TOUCH_INTERACTION_END ||
             eventType == AccessibilityEvent.TYPE_TOUCH_EXPLORATION_GESTURE_END) {
             touching = false
+            engineActivity.interactionChanged(touching)
             return
         }
         val settings = preferences.currentSettings()
@@ -148,7 +155,9 @@ class CloseForYouAccessibilityService : AccessibilityService() {
     private fun capture(epoch: Long, trigger: PopupTrigger, eventWindowId: Int) {
         if (!collectionAllowed() || !freshness.isCurrent(epoch)) return
         val trace = CaptureDiagnostics.trace(eventWindowId, epoch)
-        val result = collector.capture(this, epoch, trigger, ::packageBlock, trace = trace)
+        val result = engineActivity.collectionAttempt {
+            collector.capture(this, epoch, trigger, ::packageBlock, trace = trace)
+        }
         if (!collectionAllowed() || !freshness.isCurrent(epoch)) return
         when (result) {
             is CollectionResult.Blocked -> {
@@ -214,8 +223,10 @@ class CloseForYouAccessibilityService : AccessibilityService() {
         if (!isCurrent(snapshot.token)) return PrivacyBlockReason.UNREADABLE_TREE
         val s = preferences.currentSettings()
         val isolation = s.captureConsentGranted && snapshot.token.packageName in s.captureAllowedPackages
-        return when (val fresh = collector.capture(this, snapshot.token.captureEpoch, snapshot.trigger,
-            ::packageBlock, requireCaptureIsolation = isolation, trace = trace)) {
+        return when (val fresh = engineActivity.collectionAttempt {
+            collector.capture(this, snapshot.token.captureEpoch, snapshot.trigger,
+                ::packageBlock, requireCaptureIsolation = isolation, trace = trace)
+        }) {
             is CollectionResult.Blocked -> fresh.reason
             is CollectionResult.Ready -> {
                 if (!isCurrent(snapshot.token)) return PrivacyBlockReason.UNREADABLE_TREE
@@ -271,6 +282,7 @@ class CloseForYouAccessibilityService : AccessibilityService() {
     private fun disconnect() {
         AccessibilityRuntime.serviceLifecycle.phase(ServiceLifecyclePhase.UNBOUND)
         connected = false
+        engineActivity.disconnected()
         engineExclusion.stop()
         touching = false
         settingsObserver?.cancel()

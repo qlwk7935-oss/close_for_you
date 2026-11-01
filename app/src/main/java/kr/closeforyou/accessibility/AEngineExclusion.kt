@@ -23,6 +23,7 @@ internal interface EnabledEngineSource {
 internal class AEngineExclusion(
     private val source: EnabledEngineSource,
     private val worker: CoroutineDispatcher,
+    private val onStateObserved: (OtherEngineState) -> Unit = {},
     private val onRevoked: () -> Unit,
 ) {
     @Volatile private var allowed = false
@@ -55,6 +56,12 @@ internal class AEngineExclusion(
     private fun revoke() {
         allowed = false // Close admission before invalidating consumers or cancelling work.
         try { onRevoked() } catch (_: Exception) { broken = true }
+        reportState(OtherEngineState.UNKNOWN)
+    }
+
+    /** Observation only: a diagnostic consumer must not affect the gate or its cleanup. */
+    private fun reportState(state: OtherEngineState) {
+        try { onStateObserved(state) } catch (_: Exception) { /* No authority or retry. */ }
     }
 
     private fun changed() {
@@ -74,6 +81,7 @@ internal class AEngineExclusion(
                 if (owner != connection || scope == null || broken) return@launch
                 if (expected != revision) continue
                 allowed = state == OtherEngineState.DISABLED
+                reportState(state)
                 return@launch
             }
         }
