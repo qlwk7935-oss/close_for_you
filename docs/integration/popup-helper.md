@@ -646,7 +646,7 @@ F26 자동 확인: 옥션 웹 감지 1.3초·재확인 308ms·`READ_DUTY_PCT` 7.
     - 이미지 광고 힌트를 영상 덮개를 뺀 모든 뿌리에 적용한다.
     - B가 UNKNOWN이면 B 자신의 넓은 단어 목록(`DecisionKeywords.isCoupon`·`isPromotion`·`isStrongNotice`, 읽기만)으로 쿠폰 > 광고 > 공지를 정한다(`WordKindHint`).
     - 결정 단어·사기·위험 버튼이 있으면 정하지 않는다. B 분류기는 고치지 않았다.
-  - 연속 자동 닫기: 사용자가 "앞으로 항상 닫기"한 팝업만 1분 3번 제한에서 뺀다. 우리 누름 직후 새 팝업 규칙은 그대로다.
+  - 연속 자동 닫기: 1분 3번 그대로다. F34-2에서 "앞으로 항상 닫기" 팝업을 제한에서 뺐다가 F34-3에서 되돌렸다(총괄 측정: 22초 간격이면 정답과 일치, 측정 간격 문제였음).
 - 정책 의견(P13·P24, 연속 닫기 근거)과 B에 넘길 제안은 노트 `integration-popup-helper-F34-2026-11-01.md`에 있다.
 - 검증(F34): 두 커밋 모두 5개 Gradle 작업 통과. F34-1 단위 시험 debug 1285개·release 1270개, F34-2 debug 1291개·release 1276개, 실패 0(건너뜀 1). lintDebug 오류 0(경고 14), INTERNET 0. 시험 추가: `F34DetectionTest` 8개, `F34HandlingTest` 6개.
 
