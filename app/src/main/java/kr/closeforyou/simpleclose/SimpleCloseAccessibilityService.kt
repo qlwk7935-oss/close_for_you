@@ -725,8 +725,17 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
                             withContext(Dispatchers.Default) { remembered.remove(RememberedPopup.keyOf(read.packageName, popup)) }
                             log.trace(SimpleTrace.REMEMBERED_RULE_DROPPED)
                         }
-                        log.trace(SimpleTrace.AUTO_CLOSE_FAILED_ASKED)
-                        if (prompted == null) ask(classified, classification, talkBackReadIt = false, failedNow = true)
+                        if (classified.root.kind == PopupRootKind.BOTTOM_BANNER) {
+                            // F37 (LG 11/2 G마켓 웹: a floating "출첵" bubble's × did not close it, then a prompt): a banner
+                            // hides nothing; a failed close is only recorded (never pressed again), no prompt, no sentence,
+                            // and it is left alone while it stays.
+                            kept += words
+                            if (kept.size > 32) kept.remove(kept.first())
+                            log.trace(SimpleTrace.BANNER_CLOSE_FAILED_QUIET)
+                        } else {
+                            log.trace(SimpleTrace.AUTO_CLOSE_FAILED_ASKED)
+                            if (prompted == null) ask(classified, classification, talkBackReadIt = false, failedNow = true)
+                        }
                     } else {
                         // F27 (review #4): a press that left the app (a store page) is not pressed again on return.
                         if (result.attempted && result.outcome == ClickOutcome.LEFT_APP) {

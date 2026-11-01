@@ -122,7 +122,10 @@ object PopupRootFinder {
             val b = node.bounds
             val shared = minOf(b.bottom, c.bottom) - maxOf(b.top, c.top)
             node.path != "0" && area(b) < screenArea * CARD_MAX_AREA_RATIO && b.height <= screen.height * 0.15 &&
-                shared * 2 >= minOf(b.height, c.height)
+                shared * 2 >= minOf(b.height, c.height) &&
+                // F37 (G마켓 웹: a full-width fixed footer holding a small "출첵" bubble and the tab bar): a box around the
+                // close is a container, not part of the row; it would make a half-width bubble look full width.
+                (node === close || !(b.left <= c.left && b.top <= c.top && b.right >= c.right && b.bottom >= c.bottom))
         }
         if (row.size < 2) return FlatBanner.Miss(BannerMiss.ROW_ALONE)
         val band = ScreenBounds(row.minOf { it.bounds.left }, row.minOf { it.bounds.top }, row.maxOf { it.bounds.right }, row.maxOf { it.bounds.bottom })
@@ -386,6 +389,9 @@ object PopupRootFinder {
             if (inside.none { it.clickable && SimpleLabelRules.roleOf(CloseButtonFinder.nameOf(it, inside)) == ButtonRole.CLOSE }) continue
             // F34: a strip that small is a banner only when it says so (a snackbar or a toolbar with "닫기" is not).
             if (banner && !mentionsPromotion(layer) && inside.none(::mentionsPromotion)) continue
+            // F37 (G마켓 웹 "매일 출첵하고 혜택 받아요! ×", ~45% wide over the tab bar): a full-width box whose own content is
+            // a small floating bubble, or with the page's tab bar under it, is not a banner.
+            if (banner && !bannerContentWide(layer, inside, nodes, screen)) continue
             return PopupRoot(layer.path, layer.bounds, when {
                 banner -> PopupRootKind.BOTTOM_BANNER
                 sheet -> PopupRootKind.BOTTOM_SHEET
@@ -403,6 +409,18 @@ object PopupRootFinder {
         val ratio = area(b).toDouble() / area(screen).coerceAtLeast(1)
         return b.width >= screen.width * 0.9 && b.bottom >= screen.bottom - screen.height * 0.08 &&
             b.height <= screen.height * 0.15 && ratio >= BANNER_MIN_AREA_RATIO && ratio < SHEET_MIN_AREA_RATIO
+    }
+
+    /**
+     * F37: a container banner's content spans at least 60% of the screen width (a floating bubble does not), and nothing
+     * outside it lies below it (a bubble floats over the tab bar).
+     */
+    fun bannerContentWide(layer: NodeSnapshot, inside: List<NodeSnapshot>, nodes: List<NodeSnapshot>, screen: ScreenBounds): Boolean {
+        val content = inside.filter { area(it.bounds) < area(layer.bounds) * 0.9 }
+        if (content.isEmpty()) return false
+        if (content.maxOf { it.bounds.right } - content.minOf { it.bounds.left } < screen.width * 0.6) return false
+        return nodes.none { it.path != layer.path && !it.path.startsWith("${layer.path}/") && !layer.path.startsWith("${it.path}/") &&
+            it.bounds.top >= layer.bounds.bottom - 2 && it.bounds.height > 0 }
     }
 
     /** F34: promotion words of an app-install or ad banner (the words stay in memory). */

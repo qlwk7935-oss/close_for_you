@@ -90,3 +90,41 @@ class F36Test {
         assertEquals(null to null, VideoAdSkip.coverCheck(video.filterNot { it.path == "0/1/0" }, lg))
     }
 }
+
+/** F37 (LG 11/2 G마켓 웹 홈: a floating "매일 출첵하고 혜택 받아요! ×" bubble over the tab bar was a BOTTOM_BANNER). */
+class F37Test {
+    private val lg = ScreenBounds(0, 0, 1080, 2460)
+
+    private fun tabBar(parent: String, first: Int) = listOf("홈", "카테고리", "검색", "마이", "최근").mapIndexed { i, t ->
+        node("$parent/${first + i}", "android.view.View", text = t, clickable = true, bounds = ScreenBounds(i * 216, 2300, i * 216 + 216, 2460))
+    }
+
+    @Test fun aFloatingBubbleOverTheTabBarIsNotABanner() {
+        // Flat: the bubble's words and × inside a full-width fixed footer that also holds the tab bar.
+        val flat = listOf(
+            node("0", "android.widget.FrameLayout", bounds = lg),
+            node("0/0", "android.webkit.WebView", bounds = ScreenBounds(0, 200, 1080, 2460)),
+            node("0/0/0", text = "오늘의 특가", bounds = ScreenBounds(40, 300, 1040, 400)),
+            node("0/0/1", bounds = ScreenBounds(0, 2120, 1080, 2460)),
+            node("0/0/1/0", text = "매일 출첵하고 혜택 받아요!", bounds = ScreenBounds(300, 2130, 700, 2200)),
+            node("0/0/1/1", "android.widget.Button", text = "닫기", clickable = true, bounds = ScreenBounds(700, 2130, 780, 2200)),
+        ) + tabBar("0/0/1", 2)
+        assertNull(PopupRootFinder.find(flat, lg))
+        // As a full-width box of its own over the tab bar.
+        val boxed = listOf(
+            node("0", "android.widget.FrameLayout", bounds = lg),
+            node("0/0", "android.webkit.WebView", bounds = ScreenBounds(0, 200, 1080, 2460)),
+            node("0/0/0", bounds = ScreenBounds(0, 200, 1080, 2460)),
+            node("0/0/0/0", text = "오늘의 특가", bounds = ScreenBounds(40, 300, 1040, 400)),
+            node("0/0/1", bounds = ScreenBounds(0, 2200, 1080, 2290)),
+            node("0/0/1/0", text = "매일 출첵하고 혜택 받아요!", bounds = ScreenBounds(300, 2210, 700, 2280)),
+            node("0/0/1/1", "android.widget.Button", text = "닫기", clickable = true, bounds = ScreenBounds(700, 2210, 780, 2280)),
+        ) + tabBar("0/0", 2)
+        assertNull(PopupRootFinder.find(boxed, lg))
+        // The same full-width box with its content across the width and nothing under it is a banner (P03 form).
+        val banner = boxed.filterNot { it.path.startsWith("0/0/") && it.path.count { c -> c == '/' } == 2 && it.path != "0/0/0" && it.path != "0/0/1" }
+            .map { if (it.path == "0/0/1/0") it.copy(bounds = ScreenBounds(40, 2210, 700, 2280)) else it }
+            .map { if (it.path == "0/0/1") it.copy(bounds = ScreenBounds(0, 2370, 1080, 2460)) else if (it.path.startsWith("0/0/1/")) it.copy(bounds = ScreenBounds(it.bounds.left, 2380, it.bounds.right, 2450)) else it }
+        assertEquals(PopupRootKind.BOTTOM_BANNER, PopupRootFinder.find(banner, lg)?.kind)
+    }
+}

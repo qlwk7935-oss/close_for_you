@@ -214,6 +214,8 @@ enum class SimpleTrace {
     PROMO_LOGIN_NOT_ASKED,
     /** F36: a flat bottom banner found ([PopupRootFinder.flatBanner]), or why a bottom row with a close was not one. */
     BANNER_FLAT_FOUND,
+    /** F37: an automatic close of a bottom banner did not close it: recorded, never pressed again, nobody asked. */
+    BANNER_CLOSE_FAILED_QUIET,
     BANNER_MISS_ROW_ALONE,
     BANNER_MISS_TOO_NARROW,
     BANNER_MISS_TOO_TALL,
