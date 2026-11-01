@@ -482,7 +482,7 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
         }
         if (rememberedButton != null) log.trace(SimpleTrace.REMEMBERED_AUTO_CLOSE)
         val decided = rememberedButton?.let { SimpleDecision.AutoClose(it) }
-            ?: SimpleCloseDecider.decide(classification, suspicious, popup.scan.candidates, preferences.current(), popup.scan.forbiddenCount, popup.scan.riskCount)
+            ?: SimpleCloseDecider.decide(classification, suspicious, popup.scan.candidates, preferences.current(), popup.scan.forbiddenCount, popup.scan.riskCount, popup.scan.promoBuyCount)
         // F20: an automatic close failed on this popup before: never pressed automatically again (AGENTS 6-6), asked.
         val decision = when {
             decided is SimpleDecision.AutoClose && words in autoFailed -> {

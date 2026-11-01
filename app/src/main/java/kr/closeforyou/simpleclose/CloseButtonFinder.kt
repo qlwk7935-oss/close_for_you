@@ -7,6 +7,7 @@ import kr.closeforyou.core.model.ButtonRole
 import kr.closeforyou.core.model.CloseCandidate
 import kr.closeforyou.core.model.EvidenceLevel
 import kr.closeforyou.core.model.NodeSnapshot
+import kr.closeforyou.decision.DecisionDemoRules
 
 /** What the popup's clickable nodes gave: press targets, and counts of what was refused (for logs). */
 data class ButtonScan(
@@ -26,6 +27,12 @@ data class ButtonScan(
      * they are; they are never pressed and never in [candidates].
      */
     val riskButtons: ImmutableList<CloseCandidate> = persistentListOf(),
+    /**
+     * B_DEMO_RULES.md 1절: risky buttons that are only a promotion's purchase call to action ("지금 구매하기");
+     * part of [riskCount]. Never pressed; they stop keeping the popup asked only when the rule is on and
+     * B called the popup an advertisement or a coupon.
+     */
+    val promoBuyCount: Int = 0,
 ) {
     val closeCandidates: List<CloseCandidate> get() = candidates.filter { it.role == ButtonRole.CLOSE }
 }
@@ -47,18 +54,25 @@ object CloseButtonFinder {
         var unlabeled = 0
         var other = 0
         var risk = 0
+        var promoBuy = 0
         val riskButtons = mutableListOf<CloseCandidate>()
         val xShaped = mutableListOf<NodeSnapshot>()
         for (node in inside) {
             if (!node.clickable || !node.enabled) continue
             val label = nameOf(node, inside)
-            if (SimpleLabelRules.isRisky(label, askWhenPurchase)) risk++
+            if (SimpleLabelRules.isRisky(label, askWhenPurchase)) {
+                risk++
+                // B_DEMO_RULES.md 1절: counted apart so a checked promotion's "지금 구매하기" alone can stop asking.
+                if (label != null && DecisionDemoRules.isPromoPurchaseLabel(label)) promoBuy++
+            }
             if (SimpleLabelRules.isDecision(label)) {
                 riskButtons += CloseCandidate("node:${node.path}", node.path, node.viewId, label, node.bounds, EvidenceLevel.E2_LABELED_NODE, ButtonRole.USER_DECISION)
             }
             if ((label == null || SimpleLabelRules.isXMark(label)) && looksLikeX(node, root)) xShaped += node
             val verdict = SimpleLabelRules.judge(label)
-            val role = verdict.role
+            // B review 11/1: a box named by the words inside it is a close only by a complete close phrase.
+            val namedByChildren = node.text.isNullOrBlank() && node.contentDescription.isNullOrBlank()
+            val role = verdict.role?.takeIf { !namedByChildren || SimpleLabelRules.roleOfExactPhrase(label) == it }
             if (role != null) {
                 candidates += CloseCandidate(
                     id = "node:${node.path}",
@@ -71,6 +85,7 @@ object CloseButtonFinder {
                 )
             } else {
                 when (verdict.reject) {
+                    null -> other++
                     SimpleLabelReject.FORBIDDEN -> forbidden++
                     SimpleLabelReject.NO_LABEL -> unlabeled++
                     else -> other++
@@ -84,7 +99,7 @@ object CloseButtonFinder {
         // F20: plainest close first, reading order on a tie ([SimpleLabelRules.clarity]), so C's prompt offers first
         // exactly the button 강력 모드 presses ([StrongCloseRules]).
         val ordered = candidates.sortedBy { if (it.role == ButtonRole.CLOSE) SimpleLabelRules.clarity(it.label) else CLARITY_SKIP }
-        return ButtonScan(ordered.toPersistentList(), forbidden, unlabeled, other, risk, x, riskButtons.toPersistentList())
+        return ButtonScan(ordered.toPersistentList(), forbidden, unlabeled, other, risk, x, riskButtons.toPersistentList(), promoBuy)
     }
 
     /** Small and about square, inside the popup: the shape of an X icon (a big unnamed box is an image or the dim). */

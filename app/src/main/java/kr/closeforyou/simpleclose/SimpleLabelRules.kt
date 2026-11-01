@@ -46,6 +46,8 @@ object SimpleLabelRules {
         "쿠폰 받기", "쿠폰받기", "받기", "다운로드", "자세히", "더보기", "더 보기", "바로가기", "이동",
         "오늘 하루", "오늘하루", "하루", "보지 않기", "보지않기", "다시 보지", "일간", "취소", "저장",
         "체험", "승인", "송금", "이체", "해지", "탈퇴", "개인정보", "열기", "앱에서",
+        // B review 11/1: switching something on or signing up, in any verb form ("켜고", "수신하고", "다운받고").
+        "켜", "수신", "충전", "신청", "응모", "다운",
     )
     private val FORBIDDEN_EN = setOf(
         "buy", "purchase", "pay", "payment", "order", "agree", "accept", "allow", "permission", "install",
@@ -55,6 +57,13 @@ object SimpleLabelRules {
 
     /** "○○ 닫기": anything, then 닫기, optionally in brackets. */
     private val ENDS_WITH_CLOSE = Regex("""^.+\s*닫기\s*[\]\)>]?$""")
+
+    /**
+     * B review 11/1: "○○ 닫기" whose front is an action done first ("앱 설치하고 닫기", "알림 받고 닫기",
+     * "확인 후 닫기", "광고 보고 닫기"): the button does that action, then closes. Only a front that names
+     * what is closed ("앱설치 안내 레이어 닫기", "배너 닫기") is a close.
+     */
+    private val ACTION_THEN_CLOSE = Regex("""(고|후에?|며|서|면|및|해)\s*닫기\s*[\]\)>]?$""")
     private val WEB_STAY = listOf("모바일 웹으로 볼래요", "모바일 웹으로 볼게요", "모바일웹으로 볼래요", "모바일웹으로 볼게요",
         "웹으로 볼래요", "웹으로 볼게요", "웹으로 계속 보기", "모바일웹으로 보기", "모바일 웹으로 보기", "웹으로 보기")
     private val DIM_CLOSE = listOf("배경을 눌러 닫기", "배경을 눌러서 닫기", "배경 눌러 닫기")
@@ -93,6 +102,7 @@ object SimpleLabelRules {
         // A "○○ 닫기" label may describe an install sheet ("앱설치 안내 레이어 닫기"); only that form
         // tolerates the install word, and only when nothing else forbidden is in front.
         val closeTail = v2 && ENDS_WITH_CLOSE.matches(normalized) && normalized !in DIM_CLOSE
+        if (closeTail && ACTION_THEN_CLOSE.containsMatchIn(normalized)) return reject(SimpleLabelReject.FORBIDDEN)
         if (isForbidden(normalized, allowInstallWord = closeTail)) return reject(SimpleLabelReject.FORBIDDEN)
         // F21: "설치"/"다운로드" may only name what is closed ("앱설치 안내 레이어 닫기"), never be done ("설치하고 닫기", "설치 후 닫기").
         if (closeTail && INSTALL_ACTION.containsMatchIn(normalized)) return reject(SimpleLabelReject.FORBIDDEN)
@@ -110,7 +120,9 @@ object SimpleLabelRules {
     fun isForbidden(normalized: String, allowInstallWord: Boolean = false): Boolean {
         // F21: in "○○ 닫기" the install/download word only names what is closed ("다운로드 안내 닫기").
         val korean = if (allowInstallWord) FORBIDDEN_KO - "설치" - "다운로드" else FORBIDDEN_KO
-        if (korean.any { it in normalized }) return true
+        // F28 (PR #69 merge): B's bare "다운" ("다운받고") must not undo that for the noun "다운로드" itself.
+        val checked = if (allowInstallWord) normalized.replace("다운로드", " ") else normalized
+        if (korean.any { it in checked }) return true
         val tokens = normalized.split(NON_TOKEN).filter { it.isNotEmpty() }
         return FORBIDDEN_EN.any { phrase ->
             val words = phrase.split(' ')
@@ -126,7 +138,30 @@ object SimpleLabelRules {
         if (label.isNullOrBlank()) return false
         val normalized = ButtonLabelRules.normalize(label)
         if (ButtonLabelRules.judge(normalized).reason == LabelRejectReason.DECISION_WORD) return true
-        return "주문" in normalized || normalized.split(NON_TOKEN).any { it == "order" }
+        // B review 11/1: bare request words B's classifier reads only with an ending ("신청하기", "예약하시겠어요"),
+        // and switching something on.
+        return "주문" in normalized || normalized.split(NON_TOKEN).any { it == "order" } ||
+            RISKY_EXTRA_KO.any { it in normalized }
+    }
+
+    private val RISKY_EXTRA_KO = listOf("신청", "예약", "충전", "수신", "켜기", "켜고", "인증", "등록", "연장", "갱신", "업그레이드")
+
+    /**
+     * B review 11/1: a close role only from a complete close phrase (the contract's 14, the v3 whole phrases,
+     * staying on the web, the dim background), never the open "○○ 닫기" form. For a clickable box named by the
+     * words inside it ([CloseButtonFinder.nameOf]): "특가 상품 보러 가기" + a "닫기" label inside a link card
+     * must not read as one close button.
+     */
+    fun roleOfExactPhrase(label: String?, v2: Boolean = SimpleCloseEngineFeature.demoLabelRulesV2): ButtonRole? {
+        val normalized = label?.let(ButtonLabelRules::normalize).orEmpty()
+        if (normalized.isEmpty()) return null
+        ButtonLabelRules.roleOf(normalized)?.let { return it }
+        if (!v2) return null
+        return if ((SimpleCloseEngineFeature.demoLabelRulesV3 && v3Close(normalized)) || normalized in WEB_STAY || normalized in DIM_CLOSE) {
+            ButtonRole.CLOSE
+        } else {
+            null
+        }
     }
 
     /**
