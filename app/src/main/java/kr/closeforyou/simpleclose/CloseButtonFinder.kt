@@ -59,6 +59,9 @@ object CloseButtonFinder {
         val xShaped = mutableListOf<NodeSnapshot>()
         for (node in inside) {
             if (!node.clickable || !node.enabled) continue
+            // F34 (시험 앱 P02/P16: the clickable dim or cover is the root and holds the card's buttons): a container, not a
+            // button; named by the card's words ("가입…") it counted as a risky button and kept the popup asked.
+            if (node.path == root.path && inside.any { it !== node && it.clickable }) continue
             val label = nameOf(node, inside)
             if (SimpleLabelRules.isRisky(label, askWhenPurchase)) {
                 risk++

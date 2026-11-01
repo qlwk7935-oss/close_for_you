@@ -183,6 +183,10 @@ enum class SimpleTrace {
     DETECTED_MODAL_CARD,
     /** F32: a screen-sized transparent window showing one centred card ([PopupRootKind.DIM_WINDOW]). */
     DETECTED_DIM_WINDOW,
+    /** F34: a thin promotion strip at the bottom with a named close ([PopupRootKind.BOTTOM_BANNER]). */
+    DETECTED_BOTTOM_BANNER,
+    /** F34: a video ad's cover outside YouTube, its skip shown ([PopupRootKind.VIDEO_COVER]); asked, not skipped by itself. */
+    DETECTED_VIDEO_COVER,
     /** F32 (e): the app opened an activity named like a popup (the name itself is never logged). */
     POPUP_ACTIVITY_HINT,
     /** F32: the unnamed X was offered as [버튼으로 이동] only (a decision, or a risky button beside it). */

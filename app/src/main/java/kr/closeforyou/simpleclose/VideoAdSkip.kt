@@ -39,6 +39,15 @@ enum class VideoAdDiag {
     AD_MARK_NOT_NEAR,
 }
 
+/** F34: a video ad's cover outside YouTube ([VideoAdSkip.cover]). */
+sealed interface VideoCover {
+    /** Its skip is shown: the cover is a popup root, asked like one (never skipped by itself here). */
+    data class Shown(val root: PopupRoot) : VideoCover
+
+    /** Still counting down to its skip: nothing to ask yet, read again on the player's next change. */
+    data object Waiting : VideoCover
+}
+
 /** One read's verdict: [result] to act on (null = nothing), [diag] for the log, [adMarker] for the log too. */
 class VideoAdScan(val result: VideoAdSkipResult?, val diag: VideoAdDiag, val adMarker: Boolean)
 
@@ -64,6 +73,8 @@ object VideoAdSkip {
     private val SKIP_AD_IDS = listOf("skip_ad", "ad_skip", "skip-ad", "ad-skip", "skipad")
     private val COUNTDOWN = listOf(
         Regex("""\d+\s*초\s*후\s*(광고\s*)?건너뛰"""),
+        // F34 (시험 앱 P16 "3초 후 건너뛸 수 있어요"): "뛸" is not "뛰".
+        Regex("""\d+\s*초\s*(후|뒤)\s*(광고\s*)?건너뛸"""),
         Regex("""건너뛰기\s*가능"""),
         Regex("""skip\s*(ad|ads)?\s*in\s*\d+"""),
     )
@@ -118,6 +129,54 @@ object VideoAdSkip {
             else -> VideoAdDiag.NONE
         }
         return VideoAdScan(null, diag, adOnScreen)
+    }
+
+    /**
+     * F34 (LG 11/2 시험 앱 P16 "영상 광고 건너뛰기 카운트다운", 정답 ASK, 우리 NONE): outside YouTube the skip path does
+     * not run (F22/F28: an ad mark must be in the skip's own group). A cover that holds all three of
+     * - a video surface (VideoView, SurfaceView, TextureView, or a view id saying video/player),
+     * - an ad mark ("광고", "Ad", "스폰서"),
+     * - the ad's skip (one named skip) or its countdown ("5초 후 건너뛸 수 있어요"),
+     * is a popup (its own group, by construction): [VideoCover.Shown] with the skip, [VideoCover.Waiting] before it. The
+     * cover is the deepest node holding them, not the tree root, at least [COVER_MIN_RATIO] of the screen. The engine asks
+     * (the skip is a press option of the prompt); nothing here presses.
+     */
+    fun cover(nodes: List<NodeSnapshot>, screen: ScreenBounds): VideoCover? {
+        val visible = nodes.filter { PopupRootFinder.isVisible(it, screen) }
+        val surface = visible.firstOrNull(::isVideoSurface) ?: return null
+        val marks = visible.filter { node -> listOfNotNull(node.text, node.contentDescription).any(::isAdMark) }
+        if (marks.isEmpty()) return null
+        val skips = visible.filter { it.clickable && it.enabled && isSkip(CloseButtonFinder.nameOf(it, visible)) }
+        if (skips.size > 1) return null
+        val countdown = visible.firstOrNull { node ->
+            listOfNotNull(node.text, node.contentDescription).any { text -> COUNTDOWN.any { it.containsMatchIn(ButtonLabelRules.normalize(text)) } }
+        }
+        val anchor = skips.singleOrNull() ?: countdown ?: return null
+        val byPath = nodes.associateBy { it.path }
+        val screenArea = screen.width.toLong() * screen.height
+        val holder = marks.mapNotNull { mark -> holding(byPath, listOf(surface, anchor, mark)) }
+            .filter { it.path != "0" && it.bounds.width.toLong() * it.bounds.height >= screenArea * COVER_MIN_RATIO }
+            .maxByOrNull { it.path.count { c -> c == '/' } } ?: return null
+        return if (skips.size == 1) VideoCover.Shown(PopupRoot(holder.path, holder.bounds, PopupRootKind.VIDEO_COVER)) else VideoCover.Waiting
+    }
+
+    private const val COVER_MIN_RATIO = 0.4
+
+    private fun isVideoSurface(node: NodeSnapshot): Boolean {
+        val cls = node.className.orEmpty()
+        val id = node.viewId?.substringAfter(":id/")?.lowercase().orEmpty()
+        return cls.endsWith("VideoView") || cls.endsWith("SurfaceView") || cls.endsWith("TextureView") || "video" in id || "player" in id
+    }
+
+    /** The deepest node in the tree whose path is a prefix of all of [members]' paths. */
+    private fun holding(byPath: Map<String, NodeSnapshot>, members: List<NodeSnapshot>): NodeSnapshot? {
+        var common = members.first().path.split('/')
+        for (node in members.drop(1)) common = common.zip(node.path.split('/')).takeWhile { (a, b) -> a == b }.map { it.first }
+        for (length in common.size downTo 1) {
+            val node = byPath[common.take(length).joinToString("/")] ?: continue
+            if (members.all { it.path == node.path || it.path.startsWith("${node.path}/") }) return node
+        }
+        return null
     }
 
     /** A skip name and nothing risky in it. */

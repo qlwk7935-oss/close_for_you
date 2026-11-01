@@ -419,8 +419,12 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
         val popupActivity = read.packageName == popupActivityPackage && SystemClock.uptimeMillis() - popupActivityAt < POPUP_ACTIVITY_HINT_MILLIS
         // F16: an app popup window's tree has its own window for the live look-ups. F33: so has a popup that is the active
         // window itself (a Dialog window, a popup activity), [PopupRootFinder.bindWindow].
-        val root = PopupRootFinder.find(read.nodes, read.screen, read.activeWindowBounded, popupActivityHint = popupActivity)
+        val found = PopupRootFinder.find(read.nodes, read.screen, read.activeWindowBounded, popupActivityHint = popupActivity)
             ?.let { PopupRootFinder.bindWindow(it, read.popupWindowId, read.windowId) }
+        // F34 (시험 앱 P16): outside YouTube a video ad's own cover is asked about once its skip shows; before it, waited for.
+        val cover = if (found == null && !youtube && SimpleCloseEngineFeature.VIDEO_AD_SKIP) VideoAdSkip.cover(read.nodes, read.screen) else null
+        if (cover == VideoCover.Waiting) videoAdWaiting = true
+        val root = found ?: (cover as? VideoCover.Shown)?.root?.let { PopupRootFinder.bindWindow(it, read.popupWindowId, read.windowId) }
         if (root == null) {
             log.trace(if (videoAdWaiting) SimpleTrace.VIDEO_SKIP_WAITING else SimpleTrace.NO_POPUP_ROOT)
             lastNoRootAt = SystemClock.uptimeMillis()
@@ -448,6 +452,8 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
             PopupRootKind.APP_WINDOW -> SimpleTrace.DETECTED_APP_WINDOW
             PopupRootKind.MODAL_CARD -> SimpleTrace.DETECTED_MODAL_CARD
             PopupRootKind.DIM_WINDOW -> SimpleTrace.DETECTED_DIM_WINDOW
+            PopupRootKind.BOTTOM_BANNER -> SimpleTrace.DETECTED_BOTTOM_BANNER
+            PopupRootKind.VIDEO_COVER -> SimpleTrace.DETECTED_VIDEO_COVER
         })
         // F10: first event -> here overstates when the page itself loaded first; the gap since the last
         // read that saw no popup bounds when the popup really appeared. Which trigger caught it, too.

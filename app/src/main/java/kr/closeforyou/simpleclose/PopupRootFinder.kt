@@ -29,6 +29,16 @@ enum class PopupRootKind {
      * rest empty, with something to close it ([PopupRootFinder.dimWindowRoot]).
      */
     DIM_WINDOW,
+    /**
+     * F34 (시험 앱 P03 "작은 하단 배너", 정답 CLOSE): a thin full-width strip at the bottom over the page (3~10% of the
+     * screen, under a sheet's size), with a named close and promotion words ([PopupRootFinder.mentionsPromotion]).
+     */
+    BOTTOM_BANNER,
+    /**
+     * F34 (시험 앱 P16, outside YouTube): a cover holding a video surface, an ad mark and the ad's own skip button
+     * ([VideoAdSkip.cover]). Asked, never skipped by itself outside YouTube (B_DEMO_RULES.md 4-1).
+     */
+    VIDEO_COVER,
 }
 
 /**
@@ -99,6 +109,10 @@ object PopupRootFinder {
         val ratio = area(block).toDouble() / screenArea
         if (ratio < DIM_WINDOW_MIN_RATIO || ratio > DIM_WINDOW_MAX_RATIO) return null
         if (kotlin.math.abs((block.left + block.right) / 2 - (screen.left + screen.right) / 2) > screen.width * 0.1) return null
+        // F34 (LG 11/2 시험 앱 P14 "일반 화면 전환": DETECTED_DIM_WINDOW): an ordinary page starts at the top (its title,
+        // its toolbar) and only its first lines were short. A card floats: away from the top, its middle near the screen's.
+        if (block.top < screen.top + screen.height * DIM_WINDOW_TOP_GAP) return null
+        if (kotlin.math.abs((block.top + block.bottom) / 2 - (screen.top + screen.bottom) / 2) > screen.height * 0.2) return null
         val clickables = content.filter { it.clickable && it.enabled }
         if (clickables.isEmpty() || clickables.size >= MENU_MIN_CLICKABLES) return null
         if (content.any { it.className?.contains("EditText", ignoreCase = true) == true } || content.any(::mentionsCookies)) return null
@@ -136,6 +150,7 @@ object PopupRootFinder {
     private const val DIM_WINDOW_SCREEN_RATIO = 0.96
     private const val DIM_WINDOW_MIN_RATIO = 0.05
     private const val DIM_WINDOW_MAX_RATIO = 0.6
+    private const val DIM_WINDOW_TOP_GAP = 0.08
 
     /**
      * The window a found root is looked up in from now on (click, re-check, closed check). F16: an app popup window read
@@ -240,7 +255,10 @@ object PopupRootFinder {
         for (dim in dims.asReversed()) {
             val children = nodes.filter { it.path.startsWith("${dim.path}/") }
             val selfDescribed = SimpleLabelRules.roleOf(dim.contentDescription) != null
-            if (!selfDescribed && children.isNotEmpty()) continue
+            if (!selfDescribed && children.isNotEmpty()) {
+                if (dimHolding(dim, children, nodes, screen)) return PopupRoot(dim.path, dim.bounds, PopupRootKind.DIM_OVERLAY)
+                continue
+            }
             if (selfDescribed && children.any { isCard(it, screenArea) } && children.any(::isCloseButton)) {
                 return PopupRoot(dim.path, dim.bounds, PopupRootKind.DIM_OVERLAY)
             }
@@ -253,6 +271,35 @@ object PopupRootFinder {
         }
         return null
     }
+
+    /**
+     * F34 (LG 11/2 시험 앱 P02 "같은 창 덮개 광고": NONE): a dim that holds the card itself. Without
+     * FLAG_INCLUDE_NOT_IMPORTANT_VIEWS the card's plain layout is not in the tree, so its texts and buttons hang straight
+     * from the clickable dim (old rule: a dim with children had to describe itself as a close). Needed, all of:
+     * - the dim is full width and covers at least [DIM_HOLDER_MIN_RATIO] of the screen;
+     * - what it holds is one centred block of at most [DIM_HOLDER_BLOCK_MAX] of the dim (the rest is the dim itself);
+     * - a named close in it, fewer than [MENU_MIN_CLICKABLES] clickables, no text input, no "쿠키";
+     * - page content before it in reading order (the page it is drawn over), not one of its ancestors.
+     */
+    private fun dimHolding(dim: NodeSnapshot, children: List<NodeSnapshot>, nodes: List<NodeSnapshot>, screen: ScreenBounds): Boolean {
+        val dimArea = area(dim.bounds)
+        if (dim.bounds.width < screen.width * 0.95 || dimArea < area(screen) * DIM_HOLDER_MIN_RATIO) return false
+        val content = children.filter { area(it.bounds) < dimArea * CARD_MAX_AREA_RATIO }
+        if (content.isEmpty()) return false
+        val block = ScreenBounds(content.minOf { it.bounds.left }, content.minOf { it.bounds.top }, content.maxOf { it.bounds.right }, content.maxOf { it.bounds.bottom })
+        if (area(block) > dimArea * DIM_HOLDER_BLOCK_MAX) return false
+        if (kotlin.math.abs((block.left + block.right) / 2 - (screen.left + screen.right) / 2) > screen.width * 0.1) return false
+        if (content.count { it.clickable } >= MENU_MIN_CLICKABLES) return false
+        if (content.any { it.className?.contains("EditText", ignoreCase = true) == true } || content.any(::mentionsCookies)) return false
+        if (content.none { it.clickable && SimpleLabelRules.roleOf(CloseButtonFinder.nameOf(it, content)) == ButtonRole.CLOSE }) return false
+        val index = nodes.indexOf(dim)
+        return nodes.subList(0, index.coerceAtLeast(0)).any { under ->
+            !dim.path.startsWith("${under.path}/") && (!under.text.isNullOrBlank() || !under.contentDescription.isNullOrBlank() || under.clickable)
+        }
+    }
+
+    private const val DIM_HOLDER_MIN_RATIO = 0.7
+    private const val DIM_HOLDER_BLOCK_MAX = 0.6
 
     /**
      * F16: a popup with no Dialog mark and no dim node (web layers, aria-modal boxes Chrome does not mark,
@@ -273,7 +320,9 @@ object PopupRootFinder {
         for (layer in nodes.asReversed()) {
             if (layer.path == "0") continue
             val sheet = isSheetShape(layer.bounds, screen)
-            if (!layerSized(layer.bounds, screen, sheet)) continue
+            val sized = layerSized(layer.bounds, screen, sheet)
+            val banner = !sized && isBannerShape(layer.bounds, screen)
+            if (!sized && !banner) continue
             val index = layer.path.substringAfterLast('/').toIntOrNull() ?: continue
             val siblings = children[layer.path.substringBeforeLast('/')].orEmpty()
             val overPage = siblings.any { other ->
@@ -284,10 +333,33 @@ object PopupRootFinder {
             val inside = nodes.filter { it.path.startsWith("${layer.path}/") }
             if (looksLikeMenu(layer, inside, screen) || mentionsCookies(layer) || inside.any(::mentionsCookies)) continue
             if (inside.none { it.clickable && SimpleLabelRules.roleOf(CloseButtonFinder.nameOf(it, inside)) == ButtonRole.CLOSE }) continue
-            return PopupRoot(layer.path, layer.bounds, if (sheet) PopupRootKind.BOTTOM_SHEET else PopupRootKind.FRONT_LAYER)
+            // F34: a strip that small is a banner only when it says so (a snackbar or a toolbar with "닫기" is not).
+            if (banner && !mentionsPromotion(layer) && inside.none(::mentionsPromotion)) continue
+            return PopupRoot(layer.path, layer.bounds, when {
+                banner -> PopupRootKind.BOTTOM_BANNER
+                sheet -> PopupRootKind.BOTTOM_SHEET
+                else -> PopupRootKind.FRONT_LAYER
+            })
         }
         return null
     }
+
+    /**
+     * F34: a thin full-width strip at the bottom: [BANNER_MIN_AREA_RATIO] up to a sheet's size, at most 15% of the height,
+     * its bottom within 8% of the screen's (a navigation bar may sit under it).
+     */
+    fun isBannerShape(b: ScreenBounds, screen: ScreenBounds): Boolean {
+        val ratio = area(b).toDouble() / area(screen).coerceAtLeast(1)
+        return b.width >= screen.width * 0.9 && b.bottom >= screen.bottom - screen.height * 0.08 &&
+            b.height <= screen.height * 0.15 && ratio >= BANNER_MIN_AREA_RATIO && ratio < SHEET_MIN_AREA_RATIO
+    }
+
+    /** F34: promotion words of an app-install or ad banner (the words stay in memory). */
+    fun mentionsPromotion(node: NodeSnapshot): Boolean =
+        listOfNotNull(node.text, node.contentDescription).any { text -> PROMOTION_WORDS.any { it in text } }
+
+    private val PROMOTION_WORDS = listOf("광고", "설치", "혜택", "쿠폰", "할인", "이벤트", "다운로드", "앱에서", "특가")
+    private const val BANNER_MIN_AREA_RATIO = 0.03
 
     /** F16 size test of a front layer; shared with [PopupProbe], which has no labels (the finder decides). */
     fun layerSized(b: ScreenBounds, screen: ScreenBounds, sheet: Boolean = isSheetShape(b, screen)): Boolean {
@@ -439,7 +511,9 @@ object WindowBoundsRules {
  * TYPE_WINDOW_STATE_CHANGED's class name. Compared in memory only, never logged.
  */
 object PopupActivityName {
-    private val WORDS = Regex("(Popup|Dialog|Ads?)(?=[A-Z]|Activity|$)")
+    // F34 (LG 11/2 시험 앱 P14: "PopupScenarioActivity" counted, every scenario screen was a popup hint): the word must be
+    // the last one before "Activity" ("…AdsOneDayPopupActivity", "…EventDialogActivity", "…AdActivity").
+    private val WORDS = Regex("(Popup|Dialog|Ads?)Activity$")
 
     fun looksLikePopup(className: String?): Boolean {
         val simple = className?.substringAfterLast('.') ?: return false
