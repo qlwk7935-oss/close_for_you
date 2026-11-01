@@ -3,6 +3,7 @@ package kr.closeforyou.simpleclose
 import kr.closeforyou.core.model.ButtonLabelRules
 import kr.closeforyou.core.model.ButtonRole
 import kr.closeforyou.core.model.LabelRejectReason
+import kr.closeforyou.decision.DecisionKeywords
 import kr.closeforyou.ui.voice.choice.PressableLabelPolicy
 
 /** Why the engine will not press a button. Codes only, never the label itself. */
@@ -131,7 +132,11 @@ object SimpleLabelRules {
     fun isRisky(label: String?): Boolean {
         if (label.isNullOrBlank()) return false
         val normalized = ButtonLabelRules.normalize(label)
-        if (ButtonLabelRules.judge(normalized).reason == LabelRejectReason.DECISION_WORD) return true
+        // B_DEMO_RULES.md 1-7: a long banner link whose only decision words are benefit conditions or payment
+        // benefits ("결제 혜택 … 결제 할인까지! 리워드 받기") is judged as B judges the same text: not a decision.
+        val decisionWord = !DecisionKeywords.isBenefitMention(normalized) &&
+            ButtonLabelRules.judge(normalized).reason == LabelRejectReason.DECISION_WORD
+        if (decisionWord) return true
         // B review 11/1: bare request words B's classifier reads only with an ending ("신청하기", "예약하시겠어요"),
         // and switching something on.
         return "주문" in normalized || normalized.split(NON_TOKEN).any { it == "order" } ||

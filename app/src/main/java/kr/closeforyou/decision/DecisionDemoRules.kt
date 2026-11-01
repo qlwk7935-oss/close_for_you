@@ -44,7 +44,8 @@ object DecisionDemoRules {
         if (rest.none { DecisionKeywords.isPromotion(it.text) || DecisionKeywords.isCoupon(it.text) }) return false
         // The popup's own words may not urge the decision either, not even as a benefit condition ("지금 구매하면
         // 쿠폰 증정", over-warning study de-08, recorded as a decision): only the button may carry it.
-        if (rest.any { t -> DecisionKeywords.guardForms(t.text).any(DecisionKeywords::isUserDecision) }) return false
-        return texts.none { t -> DecisionKeywords.guardForms(t.text).any(checkoutSignal::containsMatchIn) }
+        if (rest.any { t -> DecisionKeywords.guardForms(DecisionKeywords.withoutPaymentBenefits(t.text)).any(DecisionKeywords::isUserDecision) }) return false
+        // 1-7: "결제" inside a payment benefit ("카드 결제 시 10% 할인") is not a checkout trace.
+        return texts.none { t -> DecisionKeywords.guardForms(DecisionKeywords.withoutPaymentBenefits(t.text)).any(checkoutSignal::containsMatchIn) }
     }
 }
