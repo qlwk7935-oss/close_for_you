@@ -4,6 +4,7 @@ import kotlinx.collections.immutable.ImmutableSet
 import kr.closeforyou.core.model.ButtonRole
 import kr.closeforyou.core.model.CloseCandidate
 import kr.closeforyou.core.model.PopupClassification
+import kr.closeforyou.decision.DecisionDemoRules
 import kr.closeforyou.ui.voice.settings.UiVoiceSettings
 import kr.closeforyou.ui.voice.settings.autoCloseKinds
 
@@ -41,7 +42,10 @@ object SimpleCloseDecider {
         forbiddenCount: Int = 0,
         /** F16: buttons with a decision word ([ButtonScan.riskCount]); any one keeps the popup asked. */
         riskCount: Int = 0,
-    ): SimpleDecision = decide(classification, suspicious, candidates, settings.autoCloseKinds(live = true), forbiddenCount, riskCount = riskCount)
+        /** B_DEMO_RULES.md 1절: of [riskCount], promotion purchase buttons only ([ButtonScan.promoBuyCount]). */
+        promoBuyCount: Int = 0,
+    ): SimpleDecision = decide(classification, suspicious, candidates, settings.autoCloseKinds(live = true), forbiddenCount,
+        riskCount = riskCount, promoBuyCount = promoBuyCount)
 
     fun decide(
         classification: PopupClassification,
@@ -52,11 +56,17 @@ object SimpleCloseDecider {
         unknownEnabled: Boolean = DemoUnknownAutoClose.ENABLED,
         riskCount: Int = 0,
         strongEnabled: Boolean = SimpleCloseEngineFeature.STRONG_CLOSE_ALL,
+        promoBuyCount: Int = 0,
+        promoPurchase: Boolean = DecisionDemoRules.PROMO_PURCHASE,
     ): SimpleDecision {
         if (suspicious) return SimpleDecision.DenySuspicious
         if (classification == PopupClassification.USER_DECISION) return SimpleDecision.DenyDecision
+        // B_DEMO_RULES.md 1절: B already looked at the whole popup and found no checkout, so a promotion's own
+        // "지금 구매하기" no longer keeps an ad or coupon asked. It is still never a press target.
+        val promoted = promoPurchase && classification in PROMO_KINDS
+        val risk = if (promoted) riskCount - promoBuyCount.coerceIn(0, riskCount) else riskCount
         // F16: a 결제·동의·구독·삭제·권한 button beside the close keeps the popup asked, in every preset.
-        if (riskCount > 0) return SimpleDecision.Ask
+        if (risk > 0) return SimpleDecision.Ask
         if (strongEnabled && unknownEnabled && DemoUnknownAutoClose.presetAllows(autoCloseKinds)) {
             val pick = StrongCloseRules.pick(candidates) ?: return SimpleDecision.Ask
             return SimpleDecision.AutoClose(pick, unknown = classification == PopupClassification.UNKNOWN, strong = true)
@@ -73,6 +83,8 @@ object SimpleCloseDecider {
         val single = close.singleOrNull() ?: return SimpleDecision.Ask
         return SimpleDecision.AutoClose(single)
     }
+
+    private val PROMO_KINDS = setOf(PopupClassification.ADVERTISEMENT, PopupClassification.COUPON)
 }
 
 /**

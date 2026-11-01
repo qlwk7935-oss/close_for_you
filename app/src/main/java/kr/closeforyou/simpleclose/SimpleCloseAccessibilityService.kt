@@ -371,7 +371,7 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
 
         val analysis = popup.analysis.copy(classification = classification)
         val classified = popup.copy(analysis = analysis)
-        val decided = SimpleCloseDecider.decide(classification, suspicious, popup.scan.candidates, preferences.current(), popup.scan.forbiddenCount, popup.scan.riskCount)
+        val decided = SimpleCloseDecider.decide(classification, suspicious, popup.scan.candidates, preferences.current(), popup.scan.forbiddenCount, popup.scan.riskCount, popup.scan.promoBuyCount)
         // F20: an automatic close failed on this popup before: never pressed automatically again (AGENTS 6-6), asked.
         val decision = if (decided is SimpleDecision.AutoClose && words in autoFailed) {
             log.trace(SimpleTrace.AUTO_CLOSE_SKIPPED_AFTER_FAIL)

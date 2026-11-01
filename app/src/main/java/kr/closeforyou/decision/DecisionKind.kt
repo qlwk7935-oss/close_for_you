@@ -38,17 +38,28 @@ internal object DecisionKinds {
      * from any text and any source, in wide forms ([DecisionKeywords.guardForms]); coupons and ads
      * only from accessibility-tree text, because OCR can misread.
      */
-    fun of(analysis: PopupAnalysis): DecisionKind {
+    fun of(analysis: PopupAnalysis, promoPurchase: Boolean = DecisionDemoRules.PROMO_PURCHASE): DecisionKind {
         val texts = analysis.texts.filter { it.text.isNotBlank() }
         val tree = texts.filter { it.source == TextSource.ACCESSIBILITY_TREE }
         val treePromotion = tree.any { DecisionKeywords.isCoupon(it.text) || DecisionKeywords.isPromotion(it.text) }
+        // B_DEMO_RULES.md 1절 (proposal, off by default): a promotion's own purchase button is not its decision.
+        // Only the call-to-action texts are left out of step 2; every other decision signal still counts.
+        val decisionView = if (promoPurchase && DecisionDemoRules.isPromoPurchase(texts)) {
+            analysis.copy(
+                texts = analysis.texts.filterNot { DecisionDemoRules.isPromoPurchaseLabel(it.text) }.toPersistentList(),
+                closeCandidates = analysis.closeCandidates.filterNot { c -> c.label?.let(DecisionDemoRules::isPromoPurchaseLabel) == true }.toPersistentList(),
+            )
+        } else {
+            analysis
+        }
+        val decisionTexts = decisionView.texts.filter { it.text.isNotBlank() }
         return when {
             // 1. A scam pattern outranks everything else so C can warn about it.
             texts.any { DecisionKeywords.isSuspicious(it.text) } -> DecisionKind.SUSPICIOUS
             // 2. Important decisions: today's signal, plus wide forms, requests to act, questions and
             // recurring charges, in texts and in every button label (AUTO_CLOSE.md 3절).
-            analysis.hasUserDecisionSignal() || texts.any { DecisionKeywords.isDecisionWide(it.text) } ||
-                analysis.closeCandidates.any { c -> c.label?.let(DecisionKeywords::isDecisionLabelWide) == true } -> DecisionKind.USER_DECISION
+            decisionView.hasUserDecisionSignal() || decisionTexts.any { DecisionKeywords.isDecisionWide(it.text) } ||
+                decisionView.closeCandidates.any { c -> c.label?.let(DecisionKeywords::isDecisionLabelWide) == true } -> DecisionKind.USER_DECISION
             // 3. Nothing to go on, or wording that says its own meaning is unconfirmed.
             texts.isEmpty() || texts.any { DecisionKeywords.isUncertainWide(it.text) } -> DecisionKind.UNKNOWN
             // 4. A notice about the service or the account wins over coupon and ad words next to it.
