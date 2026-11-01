@@ -533,7 +533,9 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
         val classified = popup.copy(analysis = analysis)
         // F22 (AGENTS 6-4): the person said "앞으로 항상 닫기" for this exact popup and button: closed by itself, with the
         // usual re-check right before the press. Never a decision, scam, risky-button or already-failed popup.
-        val rememberedButton = if (!suspicious && classification != PopupClassification.USER_DECISION && popup.scan.riskCount == 0 && words !in autoFailed) {
+        // B_DEMO_RULES.md 8-3: with the "자동 닫기" switch off nothing is pressed by itself, remembered popups included.
+        val rememberedButton = if (!suspicious && classification != PopupClassification.USER_DECISION && popup.scan.riskCount == 0 && words !in autoFailed &&
+            preferences.current().autoCloseKinds(live = true).isNotEmpty()) {
             withContext(Dispatchers.Default) { RememberedPopupRules.match(remembered, read.packageName, popup) }
         } else {
             null
@@ -811,7 +813,7 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
         )
         if (x != null) log.trace(SimpleTrace.X_BUTTON_OFFERED)
         // F22: "앞으로 항상 닫기" for the X: pressed once now, remembered only after the close is confirmed (AGENTS 6-4).
-        val withRemember = if (x == null || !SimpleCloseEngineFeature.REMEMBER_X_ALWAYS) withX else withX.copy(
+        val withRemember = if (x == null || !SimpleCloseEngineFeature.REMEMBER_X_ALWAYS || !RememberedPopupRules.canRemember(popup)) withX else withX.copy(
             options = withX.options.flatMap { o ->
                 if (o.kind == PromptOptionKind.PRESS_CANDIDATE && o.candidateId == x.id) listOf(o, o.copy(kind = PromptOptionKind.REMEMBER_ALWAYS)) else listOf(o)
             }.toImmutableList(),

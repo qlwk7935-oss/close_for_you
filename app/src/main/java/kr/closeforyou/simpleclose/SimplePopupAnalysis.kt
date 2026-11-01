@@ -55,8 +55,10 @@ object SimplePopupAnalysis {
     ): SimplePopup {
         val visible = nodes.filter { PopupRootFinder.isVisible(it, screen) }
         val inside = visible.filter(root::contains)
-        val scan = CloseButtonFinder.scan(visible, root)
-        val texts = inside.flatMap { node ->
+        // B_DEMO_RULES.md 8-1: what sits right beside a card-shaped root counts for the safety checks, never as a target.
+        val neighbors = PopupNeighbors.of(visible, root, screen)
+        val scan = PopupNeighbors.withNeighbors(CloseButtonFinder.scan(visible, root), neighbors)
+        val texts = (inside + neighbors).flatMap { node ->
             listOfNotNull(node.text, node.contentDescription).filter { it.isNotBlank() }
                 .map { ExtractedText(it, node.bounds, TextSource.ACCESSIBILITY_TREE, confidence = null) }
         }

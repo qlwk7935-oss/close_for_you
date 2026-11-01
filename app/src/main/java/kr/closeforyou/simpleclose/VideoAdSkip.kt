@@ -7,6 +7,7 @@ import kr.closeforyou.core.model.EvidenceLevel
 import kr.closeforyou.core.model.NodeSnapshot
 import kr.closeforyou.core.model.ScreenBounds
 import kr.closeforyou.decision.DecisionKeywords
+import kr.closeforyou.decision.DecisionVideoAd
 
 /** What [VideoAdSkip.find] saw on a video screen. */
 sealed interface VideoAdSkipResult {
@@ -119,6 +120,16 @@ object VideoAdSkip {
         }
         return VideoAdScan(null, diag, adOnScreen)
     }
+
+    /**
+     * B_DEMO_RULES.md 8-4: seconds until the skip button, for C to say once. Only a countdown actually read on screen
+     * ([DecisionVideoAd.countdownIn]: skip wording and a time in one text, no decision word, 1~300 s); null when none was
+     * read or two readings disagree. Never guessed or counted down by us.
+     */
+    fun waitSeconds(nodes: List<NodeSnapshot>, screen: ScreenBounds): Int? = nodes.asSequence()
+        .filter { PopupRootFinder.isVisible(it, screen) }
+        .flatMap { listOfNotNull(it.text, it.contentDescription) }
+        .mapNotNull(DecisionVideoAd::countdownIn).distinct().toList().singleOrNull()
 
     /** A skip name and nothing risky in it. */
     fun isSkip(name: String?): Boolean {
