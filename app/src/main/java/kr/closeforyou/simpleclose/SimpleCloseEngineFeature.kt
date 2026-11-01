@@ -111,6 +111,15 @@ object SimpleCloseEngineFeature {
      * popup that appears within [CHAIN_NEW_POPUP_AFTER_PRESS_MILLIS] of our own press (`CHAIN_GUARD_ASKED_NEW_POPUP_AFTER_PRESS`).
      */
     const val CHAIN_GUARD: Boolean = true
+
+    /** F34: wait for a close that comes late ([LateCloseWait]) instead of asking at once. */
+    const val LATE_CLOSE_WAIT: Boolean = true
+
+    /** F34: an install ad whose only button is "닫기" is asked ([InstallAdLoneClose]). */
+    const val INSTALL_AD_LONE_CLOSE_ASK: Boolean = true
+
+    /** F34: B's word lists name an UNKNOWN popup's kind ([WordKindHint]). */
+    const val WORD_KIND_HINT: Boolean = true
     const val CHAIN_MAX_AUTO = 3
     const val CHAIN_WINDOW_MILLIS = 60_000L
     const val CHAIN_NEW_POPUP_AFTER_PRESS_MILLIS = 1_500L

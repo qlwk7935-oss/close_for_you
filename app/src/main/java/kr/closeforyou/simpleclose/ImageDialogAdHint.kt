@@ -24,7 +24,8 @@ object ImageDialogAdHint {
     /** With more text than this the popup says enough for B to judge; the hint stays out of its way. */
     private const val MAX_TEXT_CHARS = 80
 
-    private val ROOT_KINDS = setOf(PopupRootKind.ALERT_DIALOG, PopupRootKind.DIM_OVERLAY)
+    // F34 (LG 11/2: AD_HINT_MISS_NOT_DIALOG_ROOT on 11번가 앱·올리브영): every popup root kind but a video cover.
+    private val ROOT_KINDS = PopupRootKind.entries.toSet() - PopupRootKind.VIDEO_COVER
 
     fun applies(popup: SimplePopup, classification: PopupClassification, suspicious: Boolean): Boolean =
         check(popup, classification, suspicious) == null

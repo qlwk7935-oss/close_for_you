@@ -63,10 +63,12 @@ class ChainGuard(
 
     /** Before an automatic close of [popupKey] in [packageName] at [now]. */
     @Synchronized
-    fun check(packageName: String, popupKey: String, now: Long): ChainBlock? {
+    fun check(packageName: String, popupKey: String, now: Long, remembered: Boolean = false): ChainBlock? {
         lastPress?.let { (pkg, key, at) ->
             if (pkg == packageName && key != popupKey && now - at in 0 until openedByPressMillis) return ChainBlock.OPENED_BY_OUR_PRESS
         }
+        // F34: a popup the person said "앞으로 항상 닫기" for is not held by the count (their own say for that exact popup).
+        if (remembered) return null
         val recent = closes[packageName]?.count { now - it in 0 until windowMillis } ?: 0
         return if (recent >= maxPerWindow) ChainBlock.RATE_LIMIT else null
     }

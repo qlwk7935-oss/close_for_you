@@ -3,6 +3,9 @@ package kr.closeforyou.simpleclose
 import kotlinx.collections.immutable.ImmutableSet
 import kr.closeforyou.core.model.ButtonRole
 import kr.closeforyou.core.model.CloseCandidate
+import kr.closeforyou.core.model.EvidenceLevel
+import kr.closeforyou.core.model.ScreenBounds
+import kr.closeforyou.decision.DecisionKeywords
 import kr.closeforyou.core.model.PopupClassification
 import kr.closeforyou.decision.DecisionDemoRules
 import kr.closeforyou.ui.voice.settings.UiVoiceSettings
@@ -85,6 +88,64 @@ object SimpleCloseDecider {
     }
 
     private val PROMO_KINDS = setOf(PopupClassification.ADVERTISEMENT, PopupClassification.COUPON)
+}
+
+/**
+ * F34 (시험 앱 P23 "닫기가 늦게 나오는 쿠폰", 정답 CLOSE, 우리 DECIDED_ASK): a popup with nothing to press yet, that the
+ * person's preset would close if it had a named close, waits up to [MAX_WAIT_MILLIS] for one instead of being asked.
+ * Never a decision or a scam, never with a risky, decision-word, unnamed or X-shaped button (the person may want those).
+ */
+object LateCloseWait {
+    const val MAX_WAIT_MILLIS = 5_000L
+
+    fun applies(classification: PopupClassification, suspicious: Boolean, scan: ButtonScan, autoCloseKinds: ImmutableSet<PopupClassification>): Boolean {
+        if (suspicious || classification == PopupClassification.USER_DECISION) return false
+        if (scan.candidates.isNotEmpty() || scan.xButton != null || scan.riskCount > 0 || scan.forbiddenCount > 0 || scan.unlabeledCount > 0) return false
+        return SimpleCloseDecider.decide(classification, false, listOf(PROBE), autoCloseKinds) is SimpleDecision.AutoClose
+    }
+
+    private val PROBE = CloseCandidate("probe", null, null, "닫기", ScreenBounds(0, 0, 1, 1), EvidenceLevel.E2_LABELED_NODE, ButtonRole.CLOSE)
+}
+
+/**
+ * F34 (시험 앱 P19 "닫기가 앱 밖으로 보내는 광고", 정답 ASK, 우리 CLICKED_LABELED_CLOSE): nothing in the tree tells this
+ * "닫기" from a real one. The one sign kept: an app-install ad ("다운로드", "설치", "앱 받기"…) whose only button is that
+ * close. An install ad with no install button may have put its store link on the close; asked, not pressed. A heuristic
+ * (B to review): an "업데이트 설치 안내" with only "닫기" is asked too.
+ */
+object InstallAdLoneClose {
+    private val INSTALL_WORDS = listOf("다운로드", "설치", "앱 받기", "앱받기", "스토어", "install", "download")
+
+    fun suspected(popup: SimplePopup, classification: PopupClassification, pick: CloseCandidate): Boolean {
+        if (classification == PopupClassification.NOTICE) return false
+        if (popup.analysis.texts.none { t -> INSTALL_WORDS.any { t.text.contains(it, ignoreCase = true) } }) return false
+        val clickables = popup.snapshot.nodes.filter { popup.root.contains(it) && it.clickable && it.enabled && it.path != popup.root.path }
+        return clickables.singleOrNull()?.path == pick.nodePath
+    }
+}
+
+/**
+ * F34 (LG 11/2: 11번가 앱 첫 화면 쿠폰 팝업, 올리브영 서랍이 CLASSIFIED_UNKNOWN): when B's four-way classifier says
+ * UNKNOWN, B's own wider word lists (read-only: [DecisionKeywords.isCoupon], [DecisionKeywords.isPromotion],
+ * [DecisionKeywords.isStrongNotice]) name the kind, coupon first. Never with a scam, a decision word anywhere in the
+ * popup ([DecisionKeywords.isDecisionWide]) or a risky button. B's classifier itself is not changed (a proposal for 준영).
+ */
+object WordKindHint {
+    fun of(byB: PopupClassification, suspicious: Boolean, texts: List<String>, riskCount: Int): WordHint {
+        if (byB != PopupClassification.UNKNOWN || texts.isEmpty()) return WordHint.NONE
+        if (suspicious || riskCount > 0 || texts.any { DecisionKeywords.isDecisionWide(it) || DecisionKeywords.isSuspicious(it) }) return WordHint.DENIED
+        return when {
+            texts.any(DecisionKeywords::isCoupon) -> WordHint.COUPON
+            texts.any(DecisionKeywords::isPromotion) -> WordHint.AD
+            texts.any(DecisionKeywords::isStrongNotice) -> WordHint.NOTICE
+            else -> WordHint.NONE
+        }
+    }
+}
+
+/** [WordKindHint]'s answer; [kind] null = B's UNKNOWN stays. Debug log `WORD_HINT_*`. */
+enum class WordHint(val kind: PopupClassification?) {
+    NONE(null), DENIED(null), COUPON(PopupClassification.COUPON), AD(PopupClassification.ADVERTISEMENT), NOTICE(PopupClassification.NOTICE)
 }
 
 /**

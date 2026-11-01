@@ -37,7 +37,8 @@ object SimplePromptOptions {
         if (!failedNow && moves.isEmpty() && kept.size == prompt.options.size) return prompt
         return prompt.copy(
             summary = if (failedNow) PromptSummary.AUTO_CLOSE_FAILED else prompt.summary,
-            cannotPressForUser = options.none { it.kind == PromptOptionKind.PRESS_CANDIDATE } && prompt.summary != PromptSummary.NEEDS_REVIEW,
+            cannotPressForUser = options.none { it.kind == PromptOptionKind.PRESS_CANDIDATE } &&
+                prompt.summary != PromptSummary.NEEDS_REVIEW && prompt.summary != PromptSummary.SUSPICIOUS,
             briefQuestion = prompt.briefQuestion && !failedNow,
             options = options.toImmutableList(),
         )

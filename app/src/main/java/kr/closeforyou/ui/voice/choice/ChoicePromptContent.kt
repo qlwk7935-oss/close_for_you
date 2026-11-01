@@ -194,6 +194,7 @@ internal fun PromptSummary.textRes(): Int = when (this) {
     PromptSummary.NEEDS_REVIEW -> R.string.ui_choice_summary_review
     PromptSummary.UNKNOWN -> R.string.ui_choice_summary_unknown
     PromptSummary.AUTO_CLOSE_FAILED -> R.string.ui_choice_summary_auto_failed
+    PromptSummary.SUSPICIOUS -> R.string.ui_choice_summary_suspicious
 }
 
 @Composable

@@ -187,6 +187,22 @@ enum class SimpleTrace {
     DETECTED_BOTTOM_BANNER,
     /** F34: a video ad's cover outside YouTube, its skip shown ([PopupRootKind.VIDEO_COVER]); asked, not skipped by itself. */
     DETECTED_VIDEO_COVER,
+    /** F34: B's scam check: the prompt says so and offers [닫기 버튼으로 이동] only. */
+    SUSPICIOUS_ASKED,
+    /** F34: nothing to press yet, the preset would close it: waited for a late close ([LateCloseWait]). */
+    LATE_CLOSE_WAITING,
+    LATE_CLOSE_WAIT_TIMEOUT,
+    LATE_CLOSE_APPEARED,
+    /** F34: an install ad whose only button is the close: asked ([InstallAdLoneClose]). */
+    INSTALL_AD_LONE_CLOSE_ASKED,
+    /** F34: an automatic press left the app: no more automatic presses in that app this session. */
+    AUTO_CLOSE_PAUSED_APP_LEFT,
+    AUTO_CLOSE_SKIPPED_APP_PAUSED,
+    /** F34: [WordKindHint] named the kind of an UNKNOWN popup, or a decision word kept it UNKNOWN. */
+    WORD_HINT_COUPON,
+    WORD_HINT_AD,
+    WORD_HINT_NOTICE,
+    WORD_HINT_DENIED,
     /** F32 (e): the app opened an activity named like a popup (the name itself is never logged). */
     POPUP_ACTIVITY_HINT,
     /** F32: the unnamed X was offered as [버튼으로 이동] only (a decision, or a risky button beside it). */

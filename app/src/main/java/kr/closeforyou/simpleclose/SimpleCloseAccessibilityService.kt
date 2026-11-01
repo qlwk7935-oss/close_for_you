@@ -37,6 +37,7 @@ import kr.closeforyou.core.model.DecisionSource
 import kr.closeforyou.core.model.HandlingReport
 import kr.closeforyou.core.model.EvidenceLevel
 import kr.closeforyou.core.model.NextStep
+import kr.closeforyou.ui.voice.choice.PromptSummary
 import kr.closeforyou.core.model.PopupClassification
 import kr.closeforyou.core.model.SafetyReason
 import kr.closeforyou.R
@@ -175,6 +176,10 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
     /** F28: the "is the popup's app still on screen?" look-up in flight (the latest event's). */
     private var appLeftCheck: Job? = null
     private val seenAt = LinkedHashMap<String, Long>()
+    /** F34: popups waited on for a late close ([LateCloseWait]), by window, kind and root path: since when. */
+    private val lateCloseSince = LinkedHashMap<String, Long>()
+    /** F34: apps where an automatic press left the app this session ([SimpleTrace.AUTO_CLOSE_PAUSED_APP_LEFT]). */
+    private val leftAppPaused = LinkedHashSet<String>()
     private val denied = LinkedHashSet<String>()
 
     private val preferences by lazy { UiVoicePreferences.get(this) }
@@ -513,7 +518,14 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
         if (hinted) log.trace(SimpleTrace.AD_HINT_IMAGE_DIALOG)
         // F6: why not, when B could not judge (a classified popup needs no hint, so it is not logged).
         else if (miss != null && miss != AdHintMiss.NOT_UNKNOWN) log.trace(SimpleTrace.adHintMiss(miss))
-        val classification = if (hinted) PopupClassification.ADVERTISEMENT else byB
+        // F34: B's UNKNOWN named by B's own wider word lists (coupon, ad, notice); a decision word keeps it UNKNOWN.
+        val wordHint = if (SimpleCloseEngineFeature.WORD_KIND_HINT && !hinted) {
+            WordKindHint.of(byB, suspicious, popup.analysis.texts.map { it.text }, popup.scan.riskCount)
+        } else {
+            WordHint.NONE
+        }
+        if (wordHint != WordHint.NONE) log.trace(SimpleTrace.valueOf("WORD_HINT_${wordHint.name}"))
+        val classification = if (hinted) PopupClassification.ADVERTISEMENT else wordHint.kind ?: byB
         // F28 (B_DEMO_RULES.md 1절): a "지금 구매하기" of a promotion B checked whole stops keeping it asked; never pressed.
         val promoBuy = PromoPurchaseGate.allowed(DecisionDemoRules.PROMO_PURCHASE, byB, hinted, popup.analysis.texts, popup.scan.promoBuyCount)
         if (promoBuy > 0 && promoBuy == popup.scan.riskCount) log.trace(SimpleTrace.PROMO_PURCHASE_NOT_ASKED)
@@ -550,7 +562,7 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
         // F31 (B_DEMO_RULES.md 6-2): a chain of automatic closes in one app, or a popup right after our own press, is asked.
         // The popup's key is its words (a popup that moves or repaints is not "another" one).
         val chainBlock = if (decided is SimpleDecision.AutoClose && SimpleCloseEngineFeature.CHAIN_GUARD) {
-            chainGuard.check(read.packageName, words, SystemClock.uptimeMillis())
+            chainGuard.check(read.packageName, words, SystemClock.uptimeMillis(), remembered = rememberedButton != null)
         } else {
             null
         }
@@ -558,6 +570,16 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
         val decision = when {
             decided is SimpleDecision.AutoClose && words in autoFailed -> {
                 log.trace(SimpleTrace.AUTO_CLOSE_SKIPPED_AFTER_FAIL)
+                SimpleDecision.Ask
+            }
+            // F34 (시험 앱 P19): an automatic press here left the app before: none more in this app this session.
+            decided is SimpleDecision.AutoClose && read.packageName in leftAppPaused -> {
+                log.trace(SimpleTrace.AUTO_CLOSE_SKIPPED_APP_PAUSED)
+                SimpleDecision.Ask
+            }
+            decided is SimpleDecision.AutoClose && rememberedButton == null && SimpleCloseEngineFeature.INSTALL_AD_LONE_CLOSE_ASK &&
+                InstallAdLoneClose.suspected(popup, classification, decided.candidate) -> {
+                log.trace(SimpleTrace.INSTALL_AD_LONE_CLOSE_ASKED)
                 SimpleDecision.Ask
             }
             // F27 (review #7): a part of the popup was too deep to read: a risky button could hide there.
@@ -573,6 +595,30 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
                 SimpleDecision.Ask
             }
             else -> decided
+        }
+        // F34 (시험 앱 P23): nothing to press yet and the preset would close it with a close: wait for one (up to 5 s),
+        // not asked meanwhile. The same popup's next read (its button appearing) is looked at again.
+        val waitKey = "${read.windowId}:${root.kind}:${root.path}"
+        if (decision == SimpleDecision.Ask && decided == SimpleDecision.Ask && SimpleCloseEngineFeature.LATE_CLOSE_WAIT &&
+            LateCloseWait.applies(classification, suspicious, popup.scan, preferences.current().autoCloseKinds(live = true))) {
+            val since = lateCloseSince.getOrPut(waitKey) { now }
+            if (lateCloseSince.size > 16) lateCloseSince.remove(lateCloseSince.keys.first())
+            if (now - since < LateCloseWait.MAX_WAIT_MILLIS) {
+                log.trace(SimpleTrace.LATE_CLOSE_WAITING)
+                seenAt.remove(key)
+                if (since == now) {
+                    val pkg = read.packageName
+                    scope.launch {
+                        delay(LateCloseWait.MAX_WAIT_MILLIS + LATE_CLOSE_LAST_LOOK_MILLIS)
+                        if (lateCloseSince[waitKey] == since) inspectionEvents.onEvent(pkg, SimpleInspectionEvent.CONTENT)
+                    }
+                }
+                return true
+            }
+            lateCloseSince.remove(waitKey)
+            log.trace(SimpleTrace.LATE_CLOSE_WAIT_TIMEOUT)
+        } else if (lateCloseSince.remove(waitKey) != null && decision is SimpleDecision.AutoClose) {
+            log.trace(SimpleTrace.LATE_CLOSE_APPEARED)
         }
         when (decision) {
             is SimpleDecision.AutoClose -> {
@@ -619,10 +665,12 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
                     if (result.attempted) chainGuard.pressed(read.packageName, words, SystemClock.uptimeMillis(), automatic = true)
                     val stop = stopped
                     if (stop != null) {
-                        // Not pressed. A scam is never asked (as [SimpleDecision.DenySuspicious]); otherwise the person is
-                        // asked about the popup as it is now (a decision gets [버튼으로 이동] only).
+                        // Not pressed. The person is asked about the popup as it is now (a decision gets [버튼으로 이동]
+                        // only; F34: a scam gets the scam prompt, [askSuspicious], as [SimpleDecision.DenySuspicious] does).
                         tts?.stop()
-                        if (!stop.suspicious && prompted == null && stop.fresh != null) ask(stop.fresh, stop.kind, talkBackReadIt = false)
+                        if (prompted == null && stop.fresh != null) {
+                            if (stop.suspicious) askSuspicious(stop.fresh) else ask(stop.fresh, stop.kind, talkBackReadIt = false)
+                        }
                     } else if (PressSuccess.isConfirmed(result)) {
                         noteClosed(words, decision.candidate)
                         // F24: the page settles after a close; no fast re-reads of it.
@@ -643,7 +691,14 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
                         if (prompted == null) ask(classified, classification, talkBackReadIt = false, failedNow = true)
                     } else {
                         // F27 (review #4): a press that left the app (a store page) is not pressed again on return.
-                        if (result.attempted && result.outcome == ClickOutcome.LEFT_APP) rememberFailed(classified, decision.candidate)
+                        if (result.attempted && result.outcome == ClickOutcome.LEFT_APP) {
+                            rememberFailed(classified, decision.candidate)
+                            // F34 (시험 앱 P19: "닫기" sent the person to the home screen): this app gets no more automatic
+                            // presses this session; its popups are asked.
+                            leftAppPaused += read.packageName
+                            if (leftAppPaused.size > 32) leftAppPaused.remove(leftAppPaused.first())
+                            log.trace(SimpleTrace.AUTO_CLOSE_PAUSED_APP_LEFT)
+                        }
                         tts?.stop()
                         handlingListener?.onHandled(HandlingReport(analysis.token, classification, approval, result))
                     }
@@ -665,8 +720,13 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
             SimpleDecision.DenySuspicious -> {
                 log.trace(SimpleTrace.DECIDED_DENY_SUSPICIOUS)
                 if (!denyOnce(key)) return true
-                val deny = ActionDecision(analysis.token, ActionAuthorization.DENY, persistentSetOf(SafetyReason.SUSPICIOUS_CONTENT), null, DecisionSource.PRESET, NextStep.DENY)
-                handlingListener?.onHandled(HandlingReport(analysis.token, classification, deny))
+                // F34 (시험 앱 P21/P22: DECIDED_DENY_SUSPICIOUS, no prompt): the warning is the prompt's first line, with
+                // [닫기 버튼으로 이동], [내용 다시 읽기], [그대로 두기]; nothing pressed for the person. No prompt possible:
+                // the spoken warning as before.
+                if (!askSuspicious(classified)) {
+                    val deny = ActionDecision(analysis.token, ActionAuthorization.DENY, persistentSetOf(SafetyReason.SUSPICIOUS_CONTENT), null, DecisionSource.PRESET, NextStep.DENY)
+                    handlingListener?.onHandled(HandlingReport(analysis.token, classification, deny))
+                }
             }
             SimpleDecision.Ask -> {
                 log.trace(SimpleTrace.DECIDED_ASK)
@@ -782,6 +842,34 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
     private fun denyOnce(key: String): Boolean {
         if (!denied.add(key)) return false
         if (denied.size > 64) denied.remove(denied.first())
+        return true
+    }
+
+    /**
+     * F34: the scam prompt. "사기일 수 있는 팝업이에요. 대신 누르지 않아요." with its close buttons (named, and the one X-shaped
+     * button) as [버튼으로 이동] only, then [내용 다시 읽기] and [그대로 두기]. Nothing here is a press; the "경품 받기"-like
+     * button is not offered at all. False when no prompt could be shown.
+     */
+    private fun askSuspicious(popup: SimplePopup): Boolean {
+        val presenter = overlay ?: return false
+        val planned = ChoicePromptPlanner.plan(
+            popup.analysis, PopupClassification.USER_DECISION, labelPolicy = SimpleLabelPolicy,
+            rememberChoicesEnabled = false, preset = preferences.current().handlingPreset,
+        )
+        val prompt = (if (SimpleCloseEngineFeature.READ_POPUP_TEXT_ON_PROMPT) planned else planned.copy(popupText = null))
+            .copy(summary = PromptSummary.SUSPICIOUS, cannotPressForUser = false)
+        val closes = popup.scan.candidates.filter { it.role == ButtonRole.CLOSE } +
+            listOfNotNull(popup.scan.xButton?.copy(label = getString(R.string.ui_simple_x_button)))
+        val shown = SimplePromptOptions.adjust(prompt, closes)
+        prompted = popup
+        focusedBeforeClose = false
+        if (presenter.present(shown) { answer -> onAnswer(popup, answer) } != PromptShowResult.SHOWN) {
+            prompted = null
+            log.trace(SimpleTrace.PROMPT_NOT_SHOWN)
+            return false
+        }
+        log.trace(SimpleTrace.SUSPICIOUS_ASKED)
+        log.trace(SimpleTrace.ASKED)
         return true
     }
 
@@ -1440,6 +1528,8 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
         const val RECHECK_CAP_MILLIS = 250L
         /** F31: what 강력 모드 (and a remembered rule) closes: every kind but decisions and scams. */
         val STRONG_KINDS = setOf(PopupClassification.ADVERTISEMENT, PopupClassification.COUPON, PopupClassification.NOTICE, PopupClassification.UNKNOWN)
+        /** F34: after [LateCloseWait.MAX_WAIT_MILLIS] one more look, so a popup that never got its close is asked. */
+        const val LATE_CLOSE_LAST_LOOK_MILLIS = 100L
         /** F32 (e): how long an activity named like a popup counts as a hint for its app's reads. */
         const val POPUP_ACTIVITY_HINT_MILLIS = 10_000L
         /** F28: a burst of window events settles this long before the look-up. */
