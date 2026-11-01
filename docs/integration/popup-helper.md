@@ -600,6 +600,17 @@ F26 자동 확인: 옥션 웹 감지 1.3초·재확인 308ms·`READ_DUTY_PCT` 7.
   - 위쪽 배너 창, 아래 시트 창
   - 키보드(앱 창 아님)
 - 검증(F33): 5개 Gradle 작업 통과, 단위 시험 debug 1274개·release 1259개 실패 0(건너뜀 1), lintDebug 오류 0(경고 14), INTERNET 0. 시험 추가 2개(LG 줄 그대로의 창 목록, 대화상자가 아닌 창 6가지). F32 시험 하나는 "F32는 거부"를 적었던 것이라 F33 동작으로 고쳤다.
+- **F33-2: 11번가 앱 `DIM_WINDOW` 거짓 실패**(LG, fbc54ae): 팝업은 바로 닫혔는데 `CLICKED → NOT_CLOSED → AUTO_CLOSE_FAILED_ASKED`였다. `CLOSED_CONFIRMED`·`CLOSE_RECHECK_MS`는 없었다.
+  - **원인(코드로 확인):** `DIM_WINDOW` 뿌리는 팝업 Activity 안의 화면만 한 노드다. 닫힘 확인은 그 경로를 그때그때의 활성 창에서 찾았다. 닫힌 뒤 활성 창은 11번가 메인 화면인데, 같은 경로에 같은 화면 크기 노드가 있어서 1.5초 내내 "그대로 있음"이 됐다.
+  - **고침**(`PopupRootFinder.bindWindow`): 창 자체가 팝업인 경우(`DIM_WINDOW`, `DIALOG_WINDOW`)는 그 창 id에 묶는다. 닫힘 확인·누르기·재확인 모두 그 창에서 찾는다. 창이 사라지면 닫힘이다.
+  - 활성 창이 잠깐 없을 때(Activity 전환 중)도 바로 실패로 보지 않는다. 마감까지 다시 본다.
+  - 실패 사유를 `NOT_CLOSED` 뒤에 남긴다: `NOT_CLOSED_STILL_THERE`, `_NO_TREE`, `_REAPPEARED`, `_STILL_MOVING`.
+  - 누른 버튼 종류를 `CLICKED` 뒤에 남긴다(`CLICKED_LABELED_CLOSE`, `_STAY_ON_WEB`, `_DIM_CLOSE`, `_HIDE_FOR_A_WHILE`, `_POLITE_NO`, `_SKIP`, `_UNLABELED_X`, `_OTHER`). 이름은 남기지 않는다.
+  - **로그인 버튼(정책은 바꾸지 않음):** 이름이 "로그인하러 가기"면 위험 버튼이다. 묻기 근거가 되고 [버튼으로 이동]만 된다(시험).
+    - LG 로그에는 `BLOCKED_RISKY`가 없고 `UNLABELED_SKIPPED`·`CLASSIFIED_UNKNOWN`이 있었다. 그래서 그 버튼은 이름 없는 이미지였을 가능성이 크다.
+    - 이름 없는 버튼은 우리가 누르지 않는다. 넓은 모양이라 X로 제안되지도 않는다(시험).
+    - 확인용 숫자를 남긴다: `POPUP_TEXTS`, `BUTTONS_RISKY`, `BUTTONS_UNLABELED`, `BUTTONS_FORBIDDEN`.
+  - 검증(F33-2): 5개 Gradle 작업 통과, 단위 시험 debug 1277개·release 1262개 실패 0(건너뜀 1), lintDebug 오류 0(경고 14), INTERNET 0. 시험 추가: `F33ClosedCheckTest` 3개.
 
 - 잔여 노드 쪽 이벤트 무시: TalkBack이 무엇을 읽을지는 앱이 막을 수 없다. 대신 포커스를 잔여 노드 밖으로 옮기는 것(F9)이 할 수 있는 전부. 웹 페이지가 닫힌 팝업을 DOM에 `aria-hidden` 없이 남기는 한, 사용자가 스와이프로 다시 만날 수 있다(한계로 기록).
 - 선택 창 PROMPT도 TalkBack 큐로? 가능은 하다: 선택 창 자체(이미 접근성 오버레이)에 paneTitle이 있고 TalkBack이 창을 읽으므로, "안내 맡기기" ON이면 우리 TTS PROMPT를 끄고 paneTitle/첫 버튼 포커스 낭독에 맡기는 방식. 단, 지금 PROMPT는 TalkBack이 팝업을 읽는 도중 끊고 들어가야 시연이 빠르므로 polite로 바꾸면 늦어질 수 있다. F11 배너가 LG에서 잘 읽히면 같은 방식으로 옮길지 정하자(의견, 미구현).

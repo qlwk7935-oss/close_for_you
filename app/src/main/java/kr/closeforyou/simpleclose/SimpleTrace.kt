@@ -187,6 +187,20 @@ enum class SimpleTrace {
     POPUP_ACTIVITY_HINT,
     /** F32: the unnamed X was offered as [버튼으로 이동] only (a decision, or a risky button beside it). */
     X_BUTTON_MOVE_OFFERED,
+    /** F33: which kind of button was pressed, right after CLICKED ([PressKind]). */
+    CLICKED_LABELED_CLOSE,
+    CLICKED_STAY_ON_WEB,
+    CLICKED_DIM_CLOSE,
+    CLICKED_HIDE_FOR_A_WHILE,
+    CLICKED_POLITE_NO,
+    CLICKED_SKIP,
+    CLICKED_UNLABELED_X,
+    CLICKED_OTHER,
+    /** F33: why a press counted as not closed, right after NOT_CLOSED. */
+    NOT_CLOSED_STILL_THERE,
+    NOT_CLOSED_NO_TREE,
+    NOT_CLOSED_REAPPEARED,
+    NOT_CLOSED_STILL_MOVING,
     /** F22: the popup the person remembered with "앞으로 항상 닫기", closed again by itself. */
     REMEMBERED_AUTO_CLOSE,
     REMEMBERED_SAVED,

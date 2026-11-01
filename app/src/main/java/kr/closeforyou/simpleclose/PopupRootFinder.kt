@@ -138,6 +138,19 @@ object PopupRootFinder {
     private const val DIM_WINDOW_MAX_RATIO = 0.6
 
     /**
+     * The window a found root is looked up in from now on (click, re-check, closed check). F16: an app popup window read
+     * as its own tree ([popupWindowId]): that window, and a Dialog window found that way is an [PopupRootKind.APP_WINDOW].
+     * F33 (LG 11/1 11번가 app: a [PopupRootKind.DIM_WINDOW] popup closed, then NOT_CLOSED): a popup that is the active
+     * window itself (a Dialog window, a popup activity) is tied to that window ([activeWindowId]); looked up in whatever
+     * window is active after the close, the app's main screen had a node at the same path and the same screen size.
+     */
+    fun bindWindow(found: PopupRoot, popupWindowId: Int?, activeWindowId: Int): PopupRoot = when {
+        popupWindowId != null -> found.copy(windowId = popupWindowId, kind = if (found.kind == PopupRootKind.DIALOG_WINDOW) PopupRootKind.APP_WINDOW else found.kind)
+        found.kind == PopupRootKind.DIM_WINDOW || found.kind == PopupRootKind.DIALOG_WINDOW -> found.copy(windowId = activeWindowId)
+        else -> found
+    }
+
+    /**
      * F22 (LG 11/1 07:0x, 11번가 app: dim + white box + an X TalkBack calls only "버튼" + "혜택 받으러 가기";
      * NO_POPUP_ROOT): a box that is
      * - centred (its middle within 10% of the screen's middle) and away from both side edges, 8~70% of the screen,

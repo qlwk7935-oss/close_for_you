@@ -35,6 +35,7 @@ import kr.closeforyou.core.model.ClickOutcome
 import kr.closeforyou.core.model.CloseCandidate
 import kr.closeforyou.core.model.DecisionSource
 import kr.closeforyou.core.model.HandlingReport
+import kr.closeforyou.core.model.EvidenceLevel
 import kr.closeforyou.core.model.NextStep
 import kr.closeforyou.core.model.PopupClassification
 import kr.closeforyou.core.model.SafetyReason
@@ -414,13 +415,12 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
                 null -> Unit
             }
         }
-        // F16: an app popup window's tree has its own window for the live look-ups.
         // F32 (e): the app just opened an activity named like a popup (the name is compared in memory, never logged).
         val popupActivity = read.packageName == popupActivityPackage && SystemClock.uptimeMillis() - popupActivityAt < POPUP_ACTIVITY_HINT_MILLIS
-        val root = PopupRootFinder.find(read.nodes, read.screen, read.activeWindowBounded, popupActivityHint = popupActivity)?.let { found ->
-            val windowId = read.popupWindowId ?: return@let found
-            found.copy(windowId = windowId, kind = if (found.kind == PopupRootKind.DIALOG_WINDOW) PopupRootKind.APP_WINDOW else found.kind)
-        }
+        // F16: an app popup window's tree has its own window for the live look-ups. F33: so has a popup that is the active
+        // window itself (a Dialog window, a popup activity), [PopupRootFinder.bindWindow].
+        val root = PopupRootFinder.find(read.nodes, read.screen, read.activeWindowBounded, popupActivityHint = popupActivity)
+            ?.let { PopupRootFinder.bindWindow(it, read.popupWindowId, read.windowId) }
         if (root == null) {
             log.trace(if (videoAdWaiting) SimpleTrace.VIDEO_SKIP_WAITING else SimpleTrace.NO_POPUP_ROOT)
             lastNoRootAt = SystemClock.uptimeMillis()
@@ -519,6 +519,11 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
             classification == PopupClassification.USER_DECISION -> SimpleTrace.CLASSIFIED_DECISION
             else -> SimpleTrace.CLASSIFIED_UNKNOWN
         })
+        // F33 (LG 11/1 11번가 app: CLASSIFIED_UNKNOWN with a "로그인하러 가기" button on screen): what the popup gave, as numbers.
+        log.latency("POPUP_TEXTS", popup.analysis.texts.size.toLong())
+        log.latency("BUTTONS_RISKY", popup.scan.riskCount.toLong())
+        log.latency("BUTTONS_UNLABELED", popup.scan.unlabeledCount.toLong())
+        log.latency("BUTTONS_FORBIDDEN", popup.scan.forbiddenCount.toLong())
         if (popup.scan.forbiddenCount > 0) log.trace(SimpleTrace.BLOCKED_FORBIDDEN)
         if (popup.scan.riskCount > 0) log.trace(SimpleTrace.BLOCKED_RISKY)
         if (popup.scan.unlabeledCount > 0) log.trace(SimpleTrace.UNLABELED_SKIPPED)
@@ -1139,9 +1144,11 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
                 return ActionResult(token, ActionStatus.ATTEMPT_FAILED, SafetyReason.UNVERIFIED_TARGET, attempted = true, outcome = ClickOutcome.UNKNOWN)
             }
             log.trace(SimpleTrace.CLICKED)
+            log.trace(SimpleTrace.valueOf("CLICKED_${SimpleLabelRules.pressKind(candidate.label, candidate.role, candidate.evidence == EvidenceLevel.E4_VISUAL_ONLY).name}"))
             focusMovesByOthers = 0
             val deadline = SystemClock.uptimeMillis() + SimpleCloseEngineFeature.CONFIRM_DELAY_MILLIS
             var outcome = ClickOutcome.STILL_PRESENT
+            var notClosedWhy = SimpleTrace.NOT_CLOSED_STILL_THERE
             while (true) {
                 delay(SimpleCloseEngineFeature.CONFIRM_POLL_MILLIS)
                 val observed = withContext(Dispatchers.Default) {
@@ -1152,6 +1159,15 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
                         collector.rootStillPresent(popup.root) == false -> ClickOutcome.CLOSED_CONFIRMED
                         else -> ClickOutcome.STILL_PRESENT
                     }
+                }
+                // F33: no active window for a moment (one activity closing, the next coming): look again, never a failure at once.
+                if (observed == ClickOutcome.UNKNOWN) {
+                    if (SystemClock.uptimeMillis() >= deadline) {
+                        outcome = ClickOutcome.UNKNOWN
+                        notClosedWhy = SimpleTrace.NOT_CLOSED_NO_TREE
+                        break
+                    }
+                    continue
                 }
                 if (observed != ClickOutcome.STILL_PRESENT) {
                     outcome = observed
@@ -1194,6 +1210,7 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
                     if (SystemClock.uptimeMillis() - recheckStart >= SimpleCloseEngineFeature.CLOSE_RECHECK_SETTLE_MILLIS) {
                         // Still moving when the time is up: never a false "closed" (AGENTS 6-5); asked, as a failure.
                         log.trace(SimpleTrace.CLOSE_RECHECK_STILL_MOVING)
+                        notClosedWhy = SimpleTrace.NOT_CLOSED_STILL_MOVING
                         back = true
                         break
                     }
@@ -1202,6 +1219,7 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
                 log.latency("CLOSE_RECHECK_MS", SystemClock.uptimeMillis() - recheckStart)
                 log.latency("CLOSE_RECHECK_READS", reads.toLong())
                 if (back) {
+                    if (notClosedWhy != SimpleTrace.NOT_CLOSED_STILL_MOVING) notClosedWhy = SimpleTrace.NOT_CLOSED_REAPPEARED
                     log.trace(SimpleTrace.CLOSE_REAPPEARED)
                     outcome = ClickOutcome.STILL_PRESENT
                 }
@@ -1212,6 +1230,7 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
                 ClickOutcome.LEFT_APP -> SimpleTrace.LEFT_APP
                 else -> SimpleTrace.NOT_CLOSED
             })
+            if (outcome != ClickOutcome.CLOSED_CONFIRMED && outcome != ClickOutcome.LEFT_APP) log.trace(notClosedWhy)
             return ActionResult(token, ActionStatus.MECHANICAL_SUCCESS, null, attempted = true, outcome = outcome)
         }
     }
@@ -1251,7 +1270,10 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
             when (clickOnce(path, path, windowId)) {
                 null -> { log.trace(SimpleTrace.CLICK_TARGET_NOT_CLICKABLE); return@runAction }
                 false -> { log.trace(SimpleTrace.CLICK_REJECTED); return@runAction }
-                true -> log.trace(SimpleTrace.CLICKED)
+                true -> {
+                    log.trace(SimpleTrace.CLICKED)
+                    log.trace(SimpleTrace.CLICKED_SKIP)
+                }
             }
             val deadline = SystemClock.uptimeMillis() + SimpleCloseEngineFeature.CONFIRM_DELAY_MILLIS
             var gone = false

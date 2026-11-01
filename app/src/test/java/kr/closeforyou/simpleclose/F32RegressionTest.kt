@@ -1,5 +1,6 @@
 package kr.closeforyou.simpleclose
 
+import kr.closeforyou.core.model.ButtonRole
 import kr.closeforyou.core.model.PopupClassification
 import kr.closeforyou.core.model.ScreenBounds
 import kr.closeforyou.simpleclose.SimpleNodes.SCREEN
@@ -212,5 +213,60 @@ class F32DimWindowTest {
         for (name in listOf("com.elevenst.intro.MainActivity", "x.y.LoadingActivity", "x.y.AddressActivity", "x.y.ReadActivity", "android.app.Dialog", null)) {
             assertFalse(name.toString(), PopupActivityName.looksLikePopup(name))
         }
+    }
+}
+
+/** F33-2 (LG 11/1 11번가 app: the DIM_WINDOW popup closed, then NOT_CLOSED → "대신 닫지 못했어요"). */
+class F33ClosedCheckTest {
+    private val lg = ScreenBounds(0, 0, 1080, 2460)
+
+    @Test fun aPopupThatIsItsOwnWindowIsLookedUpInThatWindow() {
+        val dim = PopupRoot("0/0", lg, PopupRootKind.DIM_WINDOW)
+        // Bound to the popup activity's window: after the close the main screen's "0/0" (same screen size) is another window.
+        assertEquals(42, PopupRootFinder.bindWindow(dim, null, 42).windowId)
+        val dialog = PopupRoot("0", ScreenBounds(42, 911, 1038, 1548), PopupRootKind.DIALOG_WINDOW)
+        assertEquals(42, PopupRootFinder.bindWindow(dialog, null, 42).windowId)
+        // A popup inside a page stays in the active window, as before.
+        val sheet = PopupRoot("0/1/4", ScreenBounds(0, 1632, 1080, 2337), PopupRootKind.ALERT_DIALOG)
+        assertNull(PopupRootFinder.bindWindow(sheet, null, 42).windowId)
+        // An app popup window read as its own tree: that window, a Dialog window there is an APP_WINDOW (F16).
+        val app = PopupRootFinder.bindWindow(dialog, 77, 42)
+        assertEquals(77, app.windowId)
+        assertEquals(PopupRootKind.APP_WINDOW, app.kind)
+    }
+
+    @Test fun whatWasPressedAsACode() {
+        assertEquals(PressKind.LABELED_CLOSE, SimpleLabelRules.pressKind("닫기", ButtonRole.CLOSE, false))
+        assertEquals(PressKind.LABELED_CLOSE, SimpleLabelRules.pressKind("앱설치 안내 레이어 닫기", ButtonRole.CLOSE, false))
+        assertEquals(PressKind.STAY_ON_WEB, SimpleLabelRules.pressKind("모바일 웹으로 볼래요", ButtonRole.CLOSE, false))
+        assertEquals(PressKind.HIDE_FOR_A_WHILE, SimpleLabelRules.pressKind("오늘 하루 보지 않기", ButtonRole.CLOSE, false))
+        assertEquals(PressKind.HIDE_FOR_A_WHILE, SimpleLabelRules.pressKind("7일간 보지 않기", ButtonRole.CLOSE, false))
+        assertEquals(PressKind.DIM_CLOSE, SimpleLabelRules.pressKind("배경을 눌러 닫기", ButtonRole.CLOSE, false))
+        assertEquals(PressKind.POLITE_NO, SimpleLabelRules.pressKind("괜찮아요", ButtonRole.CLOSE, false))
+        assertEquals(PressKind.SKIP, SimpleLabelRules.pressKind("건너뛰기", ButtonRole.SKIP, false))
+        assertEquals(PressKind.UNLABELED_X, SimpleLabelRules.pressKind(null, ButtonRole.CLOSE, true))
+        assertEquals(PressKind.UNLABELED_X, SimpleLabelRules.pressKind("×", ButtonRole.CLOSE, false))
+        for (k in PressKind.entries) SimpleTrace.valueOf("CLICKED_${k.name}")
+    }
+
+    @Test fun aLoginButtonIsRiskyByNameAndNeverACandidate() {
+        // When the 로그인 button has a name, it keeps the popup asked and is a [버튼으로 이동] target only.
+        assertTrue(SimpleLabelRules.isRisky("로그인하러 가기 >"))
+        assertNull(SimpleLabelRules.roleOf("로그인하러 가기 >"))
+        // When it is an image with no name (LG: CLASSIFIED_UNKNOWN, no BLOCKED_RISKY), it is unlabeled: never pressed by
+        // us, and not offered as the X (it is wide, not X-shaped).
+        val nodes = listOf(
+            node("0", "android.widget.FrameLayout", bounds = lg),
+            node("0/0", "android.view.ViewGroup", bounds = ScreenBounds(90, 640, 990, 1700)),
+            node("0/0/0", "android.widget.ImageView", bounds = ScreenBounds(90, 640, 990, 1400)),
+            node("0/0/1", "android.widget.ImageView", clickable = true, bounds = ScreenBounds(130, 1500, 950, 1640)),
+            node("0/1", "android.widget.ImageView", desc = "닫기", clickable = true, bounds = ScreenBounds(480, 1760, 600, 1880)),
+        )
+        val root = requireNotNull(PopupRootFinder.find(nodes, lg))
+        val scan = CloseButtonFinder.scan(nodes, root)
+        assertEquals(listOf("닫기"), scan.candidates.map { it.label })
+        assertEquals(0, scan.riskCount)
+        assertEquals(1, scan.unlabeledCount)
+        assertNull(scan.xButton)
     }
 }

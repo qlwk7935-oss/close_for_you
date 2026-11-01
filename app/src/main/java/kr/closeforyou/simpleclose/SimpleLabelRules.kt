@@ -94,6 +94,21 @@ object SimpleLabelRules {
 
     fun roleOf(label: String?, v2: Boolean = SimpleCloseEngineFeature.demoLabelRulesV2): ButtonRole? = judge(label, v2).role
 
+    /** F33: what kind of button a press was on (debug code `CLICKED_*` beside CLICKED), never its name. */
+    fun pressKind(label: String?, role: ButtonRole?, visualOnly: Boolean): PressKind {
+        if (visualOnly || label.isNullOrBlank() || isXMark(label)) return PressKind.UNLABELED_X
+        if (role == ButtonRole.SKIP) return PressKind.SKIP
+        val normalized = ButtonLabelRules.normalize(label)
+        return when {
+            normalized in WEB_STAY || normalized in STAY_ON_WEB -> PressKind.STAY_ON_WEB
+            normalized in DIM_CLOSE -> PressKind.DIM_CLOSE
+            normalized in HIDE_FOR_A_WHILE || DAYS_HIDE.matches(normalized) -> PressKind.HIDE_FOR_A_WHILE
+            normalized in POLITE_NO -> PressKind.POLITE_NO
+            role == ButtonRole.CLOSE -> PressKind.LABELED_CLOSE
+            else -> PressKind.OTHER
+        }
+    }
+
     fun judge(label: String?, v2: Boolean = SimpleCloseEngineFeature.demoLabelRulesV2): SimpleLabelVerdict {
         if (label == null) return reject(SimpleLabelReject.NO_LABEL)
         val normalized = ButtonLabelRules.normalize(label)
@@ -217,6 +232,9 @@ object SimpleLabelRules {
 
     private fun reject(reason: SimpleLabelReject) = SimpleLabelVerdict(null, reason)
 }
+
+/** F33: the kind of button pressed ([SimpleLabelRules.pressKind]); "오늘 하루 보지 않기" and the like are HIDE_FOR_A_WHILE. */
+enum class PressKind { LABELED_CLOSE, STAY_ON_WEB, DIM_CLOSE, HIDE_FOR_A_WHILE, POLITE_NO, SKIP, UNLABELED_X, OTHER }
 
 /** C's prompt accepts a press button only when this agrees with the candidate's role. */
 object SimpleLabelPolicy : PressableLabelPolicy {
