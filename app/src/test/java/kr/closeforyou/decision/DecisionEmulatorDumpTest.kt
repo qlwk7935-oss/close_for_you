@@ -67,12 +67,12 @@ class DecisionEmulatorDumpTest {
         assertEquals("the person's confirmed choice may reach A's gate once", ActionAuthorization.ALLOW_ONCE, decision.authorization)
     }
 
-    @Test fun p02AppDrawnOverlayIsAKnownFalseRefusalAndOverWarning() {
+    @Test fun p02AppDrawnOverlayHasNoCandidateHereAndIsACoupon() {
         val s = screen("p02_same_window_overlay.xml", PopupSignal.SAME_WINDOW_OVERLAY)
         // No Dialog node in an app-drawn overlay (checklist P8): no candidate, so nothing can be pressed.
         assertTrue(s.candidates.isEmpty())
-        // "신규 가입 이벤트" contains 가입, a decision word: over-warning (CLASSIFIER_EVAL review 6).
-        assertEquals(PopupClassification.USER_DECISION, s.classification)
+        // "신규 가입 이벤트" names a sign-up benefit, no action: not a decision since 11/2 (B_DEMO_RULES.md 9-1, over-warning ad-01).
+        assertEquals(PopupClassification.COUPON, s.classification)
     }
 
     @Test fun p03BottomBannerHasNoCandidateButIsAnAdvertisement() {

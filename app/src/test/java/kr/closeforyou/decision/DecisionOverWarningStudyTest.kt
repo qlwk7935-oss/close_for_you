@@ -169,8 +169,8 @@ class DecisionOverWarningStudyTest {
 
     private companion object {
         /** 17 before R1 (study, 2026-10-22); 7 with R1 in production. */
-        const val CURRENT_OVER_WARNINGS = 7
-        const val R1_OVER_WARNINGS = 7
-        const val R2_OVER_WARNINGS = 5
+        const val CURRENT_OVER_WARNINGS = 6
+        const val R1_OVER_WARNINGS = 6
+        const val R2_OVER_WARNINGS = 4
     }
 }

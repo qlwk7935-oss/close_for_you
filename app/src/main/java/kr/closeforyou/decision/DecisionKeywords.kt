@@ -69,8 +69,13 @@ internal object DecisionKeywords {
     // "카드 결제 캐시백"), is a promotion of a payment method, not a payment step. Only the phrase is left out.
     private val paymentBenefit = Regex("""((카드|간편|계좌|현금|앱|[가-힣a-z]+페이)\s?)?결제\s?(시\s?)?(혜택|할인|적립|캐시백|이벤트|프로모션|쿠폰|리워드)""")
 
-    /** [text] without its benefit conditions (R1) and payment-benefit phrases; meaningful only for a mention. */
-    private fun stripBenefitConditions(text: String): String = paymentBenefit.replace(conditionedDecision.replace(text, " "), " ")
+    // B_DEMO_RULES.md 9-1 (P02, real shops): a benefit *of* signing up, named as a noun ("신규 가입 이벤트", "회원가입 혜택",
+    // "첫 가입 쿠폰"), names the promotion. It asks nothing; "가입하기", "가입하시겠어요?" stay decisions.
+    private val memberBenefit = Regex("""(회원\s?)?가입\s?(이벤트|혜택|축하|쿠폰|선물|기념|포인트|적립금?)""")
+
+    /** [text] without its benefit conditions (R1), payment and sign-up benefit phrases; meaningful only for a mention. */
+    private fun stripBenefitConditions(text: String): String =
+        memberBenefit.replace(paymentBenefit.replace(conditionedDecision.replace(text, " "), " "), " ")
 
     /** [text] as the decision checks should read it: benefit conditions left out only when it is a mention. */
     fun withoutBenefitConditions(text: String): String = if (isBenefitMention(text)) stripBenefitConditions(text) else text
@@ -96,7 +101,8 @@ internal object DecisionKeywords {
      * summaries and texts no longer than a button name (10 chars).
      */
     fun isBenefitMention(text: String): Boolean {
-        if (text.length <= 10 || !benefitWord.containsMatchIn(text) || asksForDecision.containsMatchIn(text)) return false
+        // A short text is usually a button name, except a sign-up benefit named as a noun: it names no action to take.
+        if ((text.length <= 10 && !memberBenefit.containsMatchIn(text)) || !benefitWord.containsMatchIn(text) || asksForDecision.containsMatchIn(text)) return false
         val rest = stripBenefitConditions(text)
         return rest != text && !isUserDecision(rest)
     }
