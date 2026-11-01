@@ -46,6 +46,11 @@ class TreeRead(
      * kept). Looked up by its view id when the read itself did not reach the bar (a popup subtree, an app window).
      */
     val address: String? = null,
+    /**
+     * F30: the popup window reported (nearly) the whole screen as its bounds and only its root view showed it is a
+     * card (a touch-modal Dialog): the device evidence for [WindowBoundsRules].
+     */
+    val boundsFromRoot: Boolean = false,
 )
 
 /** F15: how a read went (debug log `READ_*`). F16: [APP_WINDOW], an app's own popup window above its main window. */
@@ -115,7 +120,9 @@ class SimpleTreeCollector(private val service: AccessibilityService) {
                 try {
                     val screen = screenBounds()
                     windows += service.windows.orEmpty()
-                    val bounded = activeWindowBounded(windows, root.windowId, packageName, screen)
+                    val bounded = activeWindowBounded(windows, root.windowId, boundsOf(root), packageName, screen)
+                    val activeWindow = windows.firstOrNull { it.id == root.windowId }
+                    val activeByRoot = bounded && activeWindow != null && !WindowBoundsRules.bounded(boundsOf(activeWindow), null, screen)
                     var appWindowIgnored = false
                     if (SimpleCloseEngineFeature.FIND_APP_POPUP_WINDOWS && appWindows && !bounded) {
                         // F16: a PopupWindow or non-focusable Dialog of the same app sits above the active window.
@@ -125,6 +132,9 @@ class SimpleTreeCollector(private val service: AccessibilityService) {
                             val popupRoot = window.root ?: continue
                             try {
                                 if (popupRoot.packageName?.toString() != packageName) continue
+                                // F30: a touch-modal Dialog may report the whole screen as its window; its root view is the card.
+                                if (!WindowBoundsRules.bounded(boundsOf(window), boundsOf(popupRoot), screen)) continue
+                                val windowByRoot = !WindowBoundsRules.bounded(boundsOf(window), null, screen)
                                 val nodes = ArrayList<NodeSnapshot>(64)
                                 val count = WalkCount(maxVisited = WholeReadCap.MAX_NODES, deadline = deadline)
                                 walk(popupRoot, "0", 0, nodes, screen, count)
@@ -132,7 +142,8 @@ class SimpleTreeCollector(private val service: AccessibilityService) {
                                 if (!count.aborted && AppWindowRules.isPopup(nodes, screen)) {
                                     return@collect TreeRead(packageName, window.id, nodes, screen, true, count.visited, count.skipped,
                                         TreeReadMode.APP_WINDOW, popupWindowId = window.id, depthCut = count.depthCut,
-                                        passwordSeen = count.password, address = addressOf(root, packageName, nodes, lookUpAddress))
+                                        passwordSeen = count.password, address = addressOf(root, packageName, nodes, lookUpAddress),
+                                        boundsFromRoot = windowByRoot)
                                 }
                                 appWindowIgnored = true
                             } finally {
@@ -189,7 +200,8 @@ class SimpleTreeCollector(private val service: AccessibilityService) {
                     }
                     TreeRead(packageName, root.windowId, complete, screen, bounded, probeVisited + count.visited, count.skipped, mode, probeVisited,
                         probeOutcome = outcome, appWindowIgnored = appWindowIgnored, wholeAborted = aborted || count.aborted, depthCut = count.depthCut,
-                        passwordSeen = count.password, address = addressOf(root, packageName, complete, lookUpAddress))
+                        passwordSeen = count.password, address = addressOf(root, packageName, complete, lookUpAddress),
+                        boundsFromRoot = activeByRoot)
                 } finally {
                     windows.forEach(::release)
                 }
@@ -499,14 +511,17 @@ class SimpleTreeCollector(private val service: AccessibilityService) {
      */
     /** F16: application windows above the active one, bounded (smaller than the screen), topmost first. */
     private fun appPopupWindows(windows: List<AccessibilityWindowInfo>, activeId: Int, screen: ScreenBounds): List<AccessibilityWindowInfo> {
-        val screenArea = screen.width.toLong() * screen.height
         val active = windows.firstOrNull { it.id == activeId } ?: return emptyList()
+        // F30: the size test is made in the caller, on the smaller of the window and its root view ([WindowBoundsRules]).
         return windows.filter { other ->
-            val b = Rect().also(other::getBoundsInScreen)
-            val a = b.width().toLong() * b.height()
             other.id != activeId && other.type == AccessibilityWindowInfo.TYPE_APPLICATION && other.layer > active.layer &&
-                a > 0 && a.toDouble() / screenArea < 0.96
+                WindowBoundsRules.area(boundsOf(other)) > 0
         }.sortedByDescending { it.layer }
+    }
+
+    private fun boundsOf(window: AccessibilityWindowInfo): ScreenBounds {
+        val b = Rect().also(window::getBoundsInScreen)
+        return ScreenBounds(b.left, b.top, maxOf(b.right, b.left), maxOf(b.bottom, b.top))
     }
 
     /** F16: one node's snapshot at [path] (not its subtree), visible or not; null when the path is gone. */
@@ -620,13 +635,11 @@ class SimpleTreeCollector(private val service: AccessibilityService) {
         )
     }
 
-    private fun activeWindowBounded(windows: List<AccessibilityWindowInfo>, activeId: Int, packageName: String, screen: ScreenBounds): Boolean {
-        val screenArea = screen.width.toLong() * screen.height
-        if (screenArea <= 0) return false
+    private fun activeWindowBounded(windows: List<AccessibilityWindowInfo>, activeId: Int, rootBounds: ScreenBounds, packageName: String, screen: ScreenBounds): Boolean {
         val active = windows.firstOrNull { it.id == activeId } ?: return false
-        val activeBounds = Rect().also(active::getBoundsInScreen)
-        val activeArea = activeBounds.width().toLong() * activeBounds.height()
-        if (activeArea.toDouble() / screenArea >= 0.96) return false
+        // F30 (LG 11/1 시험 앱 P04): a touch-modal Dialog may report the whole screen; its root view is the card.
+        if (!WindowBoundsRules.bounded(boundsOf(active), rootBounds, screen)) return false
+        val activeArea = WindowBoundsRules.area(WindowBoundsRules.shown(boundsOf(active), rootBounds))
         return windows.any { other ->
             other.id != activeId && other.type == AccessibilityWindowInfo.TYPE_APPLICATION &&
                 other.root?.let { r -> val same = r.packageName?.toString() == packageName; release(r); same } == true &&

@@ -360,6 +360,7 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
         // F18: a video ad's own skip button comes first (it is not a popup); a countdown waits for the next read.
         var videoAdWaiting = false
         if (read.appWindowIgnored) log.trace(SimpleTrace.APP_WINDOW_IGNORED)
+        if (read.boundsFromRoot) log.trace(SimpleTrace.WINDOW_BOUNDS_FROM_ROOT)
         // F22 (LG 11/1: VIDEO_AD_MARKER_FOUND ×64 in a shopping app, a banner's "AD"): video ads only in YouTube.
         val videoContext = VideoAdSkip.isVideoContext(read.packageName, read.nodes)
         // F23: YouTube in a browser: keep its reads whole for a minute (the address bar scrolls away, the skip is no popup).

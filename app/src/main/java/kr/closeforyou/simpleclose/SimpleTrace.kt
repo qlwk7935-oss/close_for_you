@@ -215,6 +215,8 @@ enum class SimpleTrace {
     CLOSE_RECHECK_MOVING,
     /** F29: still moving when the re-check's time ran out: counted as not closed (asked). */
     CLOSE_RECHECK_STILL_MOVING,
+    /** F30: the popup window reported the whole screen; its root view showed the card ([WindowBoundsRules]). */
+    WINDOW_BOUNDS_FROM_ROOT,
 
     // F6: why the image-dialog ad hint did not apply ([AdHintMiss]).
     AD_HINT_MISS_SCAM,

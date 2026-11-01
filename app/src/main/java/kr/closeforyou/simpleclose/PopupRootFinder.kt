@@ -259,6 +259,29 @@ object PopupRootFinder {
  * it is one by itself: at least [MIN_AREA_RATIO] of the screen, a popup root in it, and something to offer
  * (a named close or skip, an X-shaped button, or a risky button to point at). Otherwise the main window is read.
  */
+/**
+ * F30 (LG 11/1 15:37, 시험 앱 P04: a plain `Dialog`, NO_POPUP_ROOT ×192): since Android 11 a touch-modal window (a
+ * Dialog that dims and takes every touch) can report the whole screen as its window bounds, while its root view is
+ * the card. A window is judged by the smaller of the two, so such a Dialog is still a bounded popup window: as the
+ * active window ([PopupRootKind.DIALOG_WINDOW]) and above the app's main window ([PopupRootKind.APP_WINDOW]).
+ * Pure; JVM tested. Device unverified (the bounds Android reports for this Dialog were not dumped).
+ */
+object WindowBoundsRules {
+    const val BOUNDED_MAX_RATIO = 0.96
+
+    /** What the window really shows: its root view's bounds when they are smaller and not empty, else the window's. */
+    fun shown(window: ScreenBounds, root: ScreenBounds?): ScreenBounds =
+        if (root != null && area(root) > 0 && area(root) < area(window)) root else window
+
+    fun bounded(window: ScreenBounds, root: ScreenBounds?, screen: ScreenBounds): Boolean {
+        val screenArea = area(screen)
+        val shownArea = area(shown(window, root))
+        return screenArea > 0 && shownArea > 0 && shownArea.toDouble() / screenArea < BOUNDED_MAX_RATIO
+    }
+
+    fun area(b: ScreenBounds): Long = maxOf(0, b.width).toLong() * maxOf(0, b.height)
+}
+
 object AppWindowRules {
     private const val MIN_AREA_RATIO = 0.1
 
