@@ -13,7 +13,8 @@ object DecisionDemoRules {
      * button ("지금 구매하기", "바로 구매") is a promotion, not a purchase decision. The purchase button
      * itself is still never pressed; only the popup's close may be.
      */
-    const val PROMO_PURCHASE: Boolean = false
+    // F28 (11/1, 재호 승인): on for the demo. C still asks unless all four conditions of [isPromoPurchase] hold.
+    const val PROMO_PURCHASE: Boolean = true
 
     // Whole label only: a purchase call to action with nothing else in it. "구매 확정", "구매하시겠어요?",
     // "구매 동의" or "1개 구매" are not calls to action from a promotion.

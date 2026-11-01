@@ -39,6 +39,12 @@ class EngineJobs(private val scope: CoroutineScope) {
         return true
     }
 
+    /** F28: drops the inspection in flight (its analysis is of a screen that is gone); an action runs on. */
+    fun cancelInspection() {
+        inspection?.cancel()
+        inspection = null
+    }
+
     fun cancelAll() {
         inspection?.cancel()
         inspection = null

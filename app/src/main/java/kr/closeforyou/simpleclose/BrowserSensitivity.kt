@@ -28,7 +28,10 @@ enum class BrowserSensitiveReason {
  */
 object BrowserSensitivity {
     /** Address bars of Chrome, Samsung Internet, Whale and the Naver app. */
-    private val ADDRESS_BAR_IDS = listOf(":id/url_bar", ":id/location_bar_edit_text", ":id/url_field", ":id/address_bar", ":id/search_box_text")
+    val ADDRESS_BAR_IDS = listOf(":id/url_bar", ":id/location_bar_edit_text", ":id/url_field", ":id/address_bar", ":id/search_box_text")
+
+    /** F28 (C): the collector looks the bar up by these ids when its read did not reach it. */
+    fun isAddressBarId(viewId: String): Boolean = ADDRESS_BAR_IDS.any { viewId.endsWith(it) }
 
     private val HOST_PREFIXES = listOf("login.", "nid.", "auth.", "accounts.", "account.", "signin.", "member.", "members.", "secure.", "pay.", "payment.", "checkout.", "order.", "cert.")
     private val HOST_WORDS = listOf(

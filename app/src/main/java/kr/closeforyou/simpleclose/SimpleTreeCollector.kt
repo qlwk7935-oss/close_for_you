@@ -36,6 +36,16 @@ class TreeRead(
     val wholeAborted: Boolean = false,
     /** F27: paths where the walk stopped at [SimpleCloseEngineFeature.MAX_DEPTH] (a few at most). */
     val depthCut: List<String> = emptyList(),
+    /**
+     * F28 (B_DEMO_RULES.md 2-6): a visible password field (`isPassword`, size > 0, on screen) was walked. Only the
+     * flag: what is typed in it is never read.
+     */
+    val passwordSeen: Boolean = false,
+    /**
+     * F28: what a browser's address bar shows, for [BrowserSensitivity] only (compared in memory, never logged or
+     * kept). Looked up by its view id when the read itself did not reach the bar (a popup subtree, an app window).
+     */
+    val address: String? = null,
 )
 
 /** F15: how a read went (debug log `READ_*`). F16: [APP_WINDOW], an app's own popup window above its main window. */
@@ -69,6 +79,12 @@ class PageFocus(val kind: FocusTargetKind, val node: AccessibilityNodeInfo?) {
     val moved: Boolean get() = node != null
 }
 
+/** F28: browsers whose address bar [BrowserSensitivity] reads (Chrome and its channels, Samsung Internet, Whale, the Naver app). */
+private val BROWSERS = setOf(
+    "com.android.chrome", "com.chrome.beta", "com.chrome.dev", "com.chrome.canary",
+    "com.sec.android.app.sbrowser", "com.sec.android.app.sbrowser.beta", "com.naver.whale", "com.nhn.android.search",
+)
+
 class SimpleTreeCollector(private val service: AccessibilityService) {
     /** [probe] false (F20: the YouTube app, whose skip button sits outside any popup): always the whole tree. */
     /**
@@ -88,6 +104,8 @@ class SimpleTreeCollector(private val service: AccessibilityService) {
         capMillis: Long = WholeReadCap.MAX_MILLIS,
         /** F27: false (the strict re-check of a popup that was not an app window): the windows above are not walked. */
         appWindows: Boolean = true,
+        /** F28: false (the strict re-check): the address bar is not looked up apart (its cost stays out of the re-check). */
+        lookUpAddress: Boolean = true,
     ): TreeRead? =
         SimpleCollectionGuard.read(expectedPackage, { service.rootInActiveWindow },
             { it.packageName?.toString() }, packageAllowed, collect = collect@{ root, packageName ->
@@ -113,7 +131,8 @@ class SimpleTreeCollector(private val service: AccessibilityService) {
                                 aborted = aborted || count.aborted
                                 if (!count.aborted && AppWindowRules.isPopup(nodes, screen)) {
                                     return@collect TreeRead(packageName, window.id, nodes, screen, true, count.visited, count.skipped,
-                                        TreeReadMode.APP_WINDOW, popupWindowId = window.id, depthCut = count.depthCut)
+                                        TreeReadMode.APP_WINDOW, popupWindowId = window.id, depthCut = count.depthCut,
+                                        passwordSeen = count.password, address = addressOf(root, packageName, nodes, lookUpAddress))
                                 }
                                 appWindowIgnored = true
                             } finally {
@@ -147,7 +166,8 @@ class SimpleTreeCollector(private val service: AccessibilityService) {
                             if (nodes != null && !count.aborted && PopupRootFinder.find(nodes, screen) != null) {
                                 return@collect TreeRead(packageName, root.windowId, nodes, screen, false,
                                     probeVisited + count.visited, count.skipped, TreeReadMode.POPUP_SUBTREE, probeVisited, probeOutcome = outcome,
-                                    appWindowIgnored = appWindowIgnored, depthCut = count.depthCut)
+                                    appWindowIgnored = appWindowIgnored, depthCut = count.depthCut,
+                                    passwordSeen = count.password, address = addressOf(root, packageName, nodes, lookUpAddress))
                             }
                         }
                         mode = TreeReadMode.FULL_AFTER_PROBE
@@ -168,11 +188,55 @@ class SimpleTreeCollector(private val service: AccessibilityService) {
                         subtree(root, path, screen, popupCount).also { count.visited += popupCount.visited }
                     }
                     TreeRead(packageName, root.windowId, complete, screen, bounded, probeVisited + count.visited, count.skipped, mode, probeVisited,
-                        probeOutcome = outcome, appWindowIgnored = appWindowIgnored, wholeAborted = aborted || count.aborted, depthCut = count.depthCut)
+                        probeOutcome = outcome, appWindowIgnored = appWindowIgnored, wholeAborted = aborted || count.aborted, depthCut = count.depthCut,
+                        passwordSeen = count.password, address = addressOf(root, packageName, complete, lookUpAddress))
                 } finally {
                     windows.forEach(::release)
                 }
             }, release = ::release)
+
+    /**
+     * F28: the address bar's text of a browser ([BROWSERS]): from the nodes read, else looked up by its view id (a
+     * few binder calls, browsers only). Null when there is none. Memory only.
+     */
+    private fun addressOf(root: AccessibilityNodeInfo, packageName: String, nodes: List<NodeSnapshot>, lookUp: Boolean): String? {
+        nodes.firstOrNull { n -> n.viewId != null && BrowserSensitivity.isAddressBarId(n.viewId) }?.let { return it.text }
+        if (!lookUp || packageName !in BROWSERS) return null
+        for (suffix in BrowserSensitivity.ADDRESS_BAR_IDS) {
+            val found = try { root.findAccessibilityNodeInfosByViewId("$packageName$suffix").orEmpty() } catch (e: RuntimeException) { emptyList() }
+            try {
+                found.firstOrNull { it.isVisibleToUser }?.text?.toString()?.let { return it }
+            } finally {
+                found.forEach(::release)
+            }
+        }
+        return null
+    }
+
+    /**
+     * F28 (LG 11/1 14:29, a prompt stayed over our own app): the packages of the application windows on screen now
+     * (our own prompt is an accessibility overlay, not one of them). Null when it cannot be told (no windows, or a
+     * window whose root is not there): the caller then does nothing.
+     */
+    fun applicationPackages(): Set<String>? {
+        val windows = service.windows.orEmpty()
+        try {
+            val apps = windows.filter { it.type == AccessibilityWindowInfo.TYPE_APPLICATION }
+            if (apps.isEmpty()) return null
+            val packages = mutableSetOf<String>()
+            for (window in apps) {
+                val root = window.root ?: return null
+                try {
+                    packages += root.packageName?.toString() ?: return null
+                } finally {
+                    release(root)
+                }
+            }
+            return packages
+        } finally {
+            windows.forEach(::release)
+        }
+    }
 
     /** The package of the active window right now, or null when there is none. */
     fun foregroundPackage(): String? {
@@ -470,6 +534,7 @@ class SimpleTreeCollector(private val service: AccessibilityService) {
         val deadline: Long = Long.MAX_VALUE,
         var aborted: Boolean = false,
         val depthCut: MutableList<String> = mutableListOf(),
+        var password: Boolean = false,
     )
 
     /** Live nodes for [PopupProbe]; reads class, bounds, clickable and whether there is text, nothing kept. */
@@ -520,6 +585,11 @@ class SimpleTreeCollector(private val service: AccessibilityService) {
             return
         }
         if (visible) out += snapshot(node, path)
+        // F28: a password field on screen: the screen is left alone ([TreeRead.passwordSeen]); the flag only, never its text.
+        if (visible && node.isPassword && box.width > 0 && box.height > 0 &&
+            box.left < screen.right && screen.left < box.right && box.top < screen.bottom && screen.top < box.bottom) {
+            count.password = true
+        }
         for (index in 0 until node.childCount) {
             val child = node.getChild(index) ?: continue
             try {
@@ -537,7 +607,8 @@ class SimpleTreeCollector(private val service: AccessibilityService) {
             path = path,
             viewId = node.viewIdResourceName,
             className = node.className?.toString(),
-            text = node.text?.toString(),
+            // F28: a password field's text is never copied (the screen is skipped on its flag anyway).
+            text = if (node.isPassword) null else node.text?.toString(),
             contentDescription = node.contentDescription?.toString(),
             clickable = node.isClickable,
             enabled = node.isEnabled,

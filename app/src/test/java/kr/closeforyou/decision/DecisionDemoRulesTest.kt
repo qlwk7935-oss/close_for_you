@@ -26,7 +26,8 @@ class DecisionDemoRulesTest {
     private fun on(vararg texts: String) = DecisionKinds.of(analysis(*texts), promoPurchase = true)
     private fun off(vararg texts: String) = DecisionKinds.of(analysis(*texts), promoPurchase = false)
 
-    @Test fun shipsOff() = assertFalse(DecisionDemoRules.PROMO_PURCHASE)
+    // F28 (11/1, 재호 승인): switched on for the demo; the engine still asks unless all four conditions hold.
+    @Test fun shipsOnForTheDemo() = assertTrue(DecisionDemoRules.PROMO_PURCHASE)
 
     /** 모아마켓 P31 (midterm deck page 10): a sale banner with a purchase button. */
     @Test fun aSaleBannerWithItsPurchaseButtonIsAnAd() {

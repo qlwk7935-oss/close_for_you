@@ -6,6 +6,7 @@ import kr.closeforyou.core.model.CloseCandidate
 import kr.closeforyou.core.model.EvidenceLevel
 import kr.closeforyou.core.model.NodeSnapshot
 import kr.closeforyou.core.model.ScreenBounds
+import kr.closeforyou.decision.DecisionKeywords
 
 /** What [VideoAdSkip.find] saw on a video screen. */
 sealed interface VideoAdSkipResult {
@@ -34,6 +35,8 @@ enum class VideoAdDiag {
     NO_AD_MARKER,
     /** Two or more skip buttons: a guess, none pressed. */
     SEVERAL,
+    /** F28: outside YouTube, an ad mark on screen but not in the skip's own group: never pressed. */
+    AD_MARK_NOT_NEAR,
 }
 
 /** One read's verdict: [result] to act on (null = nothing), [diag] for the log, [adMarker] for the log too. */
@@ -65,8 +68,13 @@ object VideoAdSkip {
         Regex("""skip\s*(ad|ads)?\s*in\s*\d+"""),
     )
     private val NON_TOKEN = Regex("[^a-z0-9']+")
+    private val AD_LIKE = Regex("광고\\s?성")
 
-    fun find(nodes: List<NodeSnapshot>, screen: ScreenBounds): VideoAdSkipResult? = scan(nodes, screen).result
+    fun find(nodes: List<NodeSnapshot>, screen: ScreenBounds, youtube: Boolean = true): VideoAdSkipResult? = scan(nodes, screen, youtube).result
+
+    /** F28: a browser's address bar showing youtube.com (read in memory only). */
+    fun isYouTubeWeb(nodes: List<NodeSnapshot>): Boolean =
+        nodes.any { node -> node.viewId?.endsWith(":id/url_bar") == true && node.text?.contains("youtube.com", ignoreCase = true) == true }
 
     /**
      * F22 (LG 11/1: a shopping app's banner "AD" ran the video path 64 times): only the YouTube app, or a browser
@@ -74,23 +82,28 @@ object VideoAdSkip {
      */
     fun isVideoContext(packageName: String, nodes: List<NodeSnapshot>): Boolean =
         packageName == YOUTUBE_APP || nodes.any { isSkipAdId(it.viewId) } ||
-            nodes.any { node -> node.viewId?.endsWith(":id/url_bar") == true && node.text?.contains("youtube.com", ignoreCase = true) == true } ||
+            isYouTubeWeb(nodes) ||
             // F23 (m.youtube.com with the address bar scrolled away): a clickable skip whose own name says ad ("광고 건너뛰기", "Skip ad").
             nodes.any { node -> node.clickable && CloseButtonFinder.nameOf(node, nodes).let { isSkip(it) && isAdSkipName(it) } }
 
-    fun scan(nodes: List<NodeSnapshot>, screen: ScreenBounds): VideoAdScan {
+    /**
+     * [youtube] (F28, B_DEMO_RULES.md 4-1): the YouTube app or youtube.com, where an ad mark anywhere on screen
+     * counts, as before. Elsewhere (a shopping list full of "광고" labels, a tutorial's "건너뛰기") the ad mark must be
+     * in the skip's own group: the skip's name or view id, or a node under the skip's parent.
+     */
+    fun scan(nodes: List<NodeSnapshot>, screen: ScreenBounds, youtube: Boolean = true): VideoAdScan {
         val visible = nodes.filter { PopupRootFinder.isVisible(it, screen) }
         val names = visible.associateWith { CloseButtonFinder.nameOf(it, visible) }
         val adOnScreen = visible.any { node -> listOfNotNull(node.text, node.contentDescription).any(::isAdMark) || isSkipAdId(node.viewId) }
         val skipLike = visible.filter { it.clickable && it.enabled && (isSkip(names[it]) || isSkipAdId(it.viewId) && !SimpleLabelRules.isDecision(names[it])) }
-        val skips = skipLike.filter { adOnScreen || isAdSkipName(names[it]) || isSkipAdId(it.viewId) }
+        val skips = skipLike.filter { isAdSkipName(names[it]) || isSkipAdId(it.viewId) || adOnScreen && (youtube || adMarkNear(it, visible)) }
         if (skips.size == 1) {
             val node = skips.single()
             val candidate = CloseCandidate("node:${node.path}", node.path, node.viewId, names[node], node.bounds, EvidenceLevel.E2_LABELED_NODE, ButtonRole.SKIP)
             return VideoAdScan(VideoAdSkipResult.Found(candidate), VideoAdDiag.FOUND, adOnScreen)
         }
         if (skips.size > 1) return VideoAdScan(null, VideoAdDiag.SEVERAL, adOnScreen)
-        if (skipLike.isNotEmpty()) return VideoAdScan(null, VideoAdDiag.NO_AD_MARKER, adOnScreen)
+        if (skipLike.isNotEmpty()) return VideoAdScan(null, if (adOnScreen) VideoAdDiag.AD_MARK_NOT_NEAR else VideoAdDiag.NO_AD_MARKER, adOnScreen)
         val countingDown = adOnScreen && visible.any { node ->
             listOfNotNull(node.text, node.contentDescription).any { text -> COUNTDOWN.any { it.containsMatchIn(ButtonLabelRules.normalize(text)) } }
         }
@@ -115,13 +128,33 @@ object VideoAdSkip {
 
     private fun isAdSkipName(name: String?): Boolean = name != null && isAdMark(name)
 
+    /** F28: an ad mark in the skip's own group: under the skip's parent (the skip's siblings and what they hold). */
+    private fun adMarkNear(skip: NodeSnapshot, visible: List<NodeSnapshot>): Boolean {
+        if ('/' !in skip.path) return false
+        val parent = skip.path.substringBeforeLast('/')
+        return visible.any { node ->
+            node !== skip && node.path.startsWith("$parent/") && listOfNotNull(node.text, node.contentDescription).any(::isAdMark)
+        }
+    }
+
+    /**
+     * F28 (B_DEMO_RULES.md 4-1 (d)): outside YouTube, B's decision and scam words anywhere on the screen read
+     * (B's wide forms, [DecisionKeywords]) keep the skip unpressed: a sign-up's "건너뛰기" next to a consent.
+     */
+    fun deniedByB(nodes: List<NodeSnapshot>, screen: ScreenBounds): Boolean =
+        nodes.filter { PopupRootFinder.isVisible(it, screen) }
+            .flatMap { listOfNotNull(it.text, it.contentDescription) }
+            .filter { it.isNotBlank() }
+            .any { DecisionKeywords.isSuspicious(it) || DecisionKeywords.isDecisionWide(it) }
+
     fun isSkipAdId(viewId: String?): Boolean {
         val id = viewId?.substringAfter(":id/")?.lowercase() ?: return false
         return SKIP_AD_IDS.any { it in id }
     }
 
     private fun isAdMark(text: String): Boolean {
-        val normalized = ButtonLabelRules.normalize(text)
+        // F28: "광고성 정보 수신" (a consent to marketing) is not an ad's mark.
+        val normalized = ButtonLabelRules.normalize(text).replace(AD_LIKE, " ")
         return AD_MARKS_KO.any { it in normalized } || normalized.split(NON_TOKEN).any { it in AD_MARKS_EN }
     }
 }

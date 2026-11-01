@@ -197,6 +197,20 @@ enum class SimpleTrace {
     REMEMBERED_RULE_DROPPED,
     /** F27: this skip button did not go away when pressed: never pressed again this session. */
     VIDEO_SKIP_FAILED_BEFORE,
+    /** F28 (B_DEMO_RULES.md 2절): the screen was left alone right after the read ([SensitiveScreen]); nothing judged, pressed or spoken. */
+    SKIPPED_SCOPE_SENSITIVE_PASSWORD_FIELD,
+    SKIPPED_SCOPE_SENSITIVE_WEB_ADDRESS,
+    SKIPPED_SCOPE_SENSITIVE_WEB_CREDENTIAL_FORM,
+    SKIPPED_SCOPE_SENSITIVE_WEB_PAYMENT_PAGE,
+    SKIPPED_SCOPE_SENSITIVE_WEB_PERSONAL_DATA,
+    /** F28 (B_DEMO_RULES.md 1절): a checked promotion's purchase call to action no longer keeps it asked (never pressed). */
+    PROMO_PURCHASE_NOT_ASKED,
+    /** F28 (B_DEMO_RULES.md 4-1): outside YouTube, a skip with no ad mark in its own group or right next to it: not pressed. */
+    VIDEO_SKIP_AD_MARK_NOT_NEAR,
+    /** F28: outside YouTube, B's decision or scam check on the screen's words did not pass: not pressed. */
+    VIDEO_SKIP_DENIED_BY_B,
+    /** F28 (LG 11/1 14:29): the popup's app is no longer on screen (another app, ours too): our prompt closed, the analysis dropped. */
+    CHOICE_DISMISSED_APP_LEFT,
 
     // F6: why the image-dialog ad hint did not apply ([AdHintMiss]).
     AD_HINT_MISS_SCAM,

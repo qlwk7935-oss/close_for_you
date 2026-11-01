@@ -13,6 +13,7 @@ import kotlinx.collections.immutable.persistentSetOf
 import kotlinx.collections.immutable.toImmutableList
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
@@ -38,6 +39,7 @@ import kr.closeforyou.core.model.NextStep
 import kr.closeforyou.core.model.PopupClassification
 import kr.closeforyou.core.model.SafetyReason
 import kr.closeforyou.R
+import kr.closeforyou.decision.DecisionDemoRules
 import kr.closeforyou.decision.DecisionPopupClassifier
 import kr.closeforyou.ui.voice.AnnouncementBatcher
 import kr.closeforyou.ui.voice.AutoDecisionSpeech
@@ -103,6 +105,9 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
     private var searchWholeReads = 0
     /** F23: a browser showing YouTube (seen in a whole read): its reads stay whole for a while (skip button outside popups). */
     private var videoWebPackage: String? = null
+    /** F28: the browser that showed youtube.com in its address bar, and until when it counts as YouTube. */
+    private var youtubeWebPackage: String? = null
+    private var youtubeWebUntil = 0L
     private var videoWebUntil = 0L
     /** F24: a page whose whole read was slow (> 1 s): whole reads only on window changes for a while. */
     private var slowPackage: String? = null
@@ -157,6 +162,8 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
 
     /** The popup the prompt on screen is about, when each popup key was last seen, and keys already explained. */
     private var prompted: SimplePopup? = null
+    /** F28: the "is the popup's app still on screen?" look-up in flight (the latest event's). */
+    private var appLeftCheck: Job? = null
     private val seenAt = LinkedHashMap<String, Long>()
     private val denied = LinkedHashSet<String>()
 
@@ -251,6 +258,8 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
         }
         if (event.eventType !in WINDOW_EVENTS) return
         val eventPackage = event.packageName?.toString()
+        // F28 (LG 11/1 14:29): our own app's window counts too, so this comes before the own-package return.
+        if (event.eventType in APP_SWITCH_EVENTS) prompted?.let(::checkPromptedAppStillShown)
         // Our own prompt window and TTS: never a popup to handle (not logged: it would drown the rest).
         if (eventPackage == packageName) return
         if (eventPackage == VideoAdSkip.YOUTUBE_APP) {
@@ -340,6 +349,14 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
             log.trace(why)
             return false
         }
+        // F28 (B_DEMO_RULES.md 2절): a login, payment, bank or personal-data screen, or any password field on screen:
+        // nothing on it is judged, pressed or spoken, not even a video skip. A code only, never the address or the words.
+        val sensitive = withContext(Dispatchers.Default) { SensitiveScreen.reason(read.nodes, read.screen, read.passwordSeen, read.address) }
+        if (sensitive != null) {
+            log.trace(SensitiveScreen.trace(sensitive))
+            endSearch()
+            return true
+        }
         // F18: a video ad's own skip button comes first (it is not a popup); a countdown waits for the next read.
         var videoAdWaiting = false
         if (read.appWindowIgnored) log.trace(SimpleTrace.APP_WINDOW_IGNORED)
@@ -350,8 +367,15 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
             videoWebPackage = read.packageName
             videoWebUntil = SystemClock.uptimeMillis() + VIDEO_WEB_STICKY_MILLIS
         }
+        // F28 (B_DEMO_RULES.md 4-1): YouTube (app, or youtube.com seen in this browser within the minute) as before.
+        if (VideoAdSkip.isYouTubeWeb(read.nodes)) {
+            youtubeWebPackage = read.packageName
+            youtubeWebUntil = SystemClock.uptimeMillis() + VIDEO_WEB_STICKY_MILLIS
+        }
+        val youtube = read.packageName == VideoAdSkip.YOUTUBE_APP ||
+            read.packageName == youtubeWebPackage && SystemClock.uptimeMillis() < youtubeWebUntil
         if (SimpleCloseEngineFeature.VIDEO_AD_SKIP && videoContext) {
-            val video = VideoAdSkip.scan(read.nodes, read.screen)
+            val video = VideoAdSkip.scan(read.nodes, read.screen, youtube)
             // F20: why or why not, as codes (only on a screen with an ad mark, a skip-like node, or in YouTube).
             if (video.diag != VideoAdDiag.NONE || read.packageName == VideoAdSkip.YOUTUBE_APP) {
                 log.trace(if (video.adMarker) SimpleTrace.VIDEO_AD_MARKER_FOUND else SimpleTrace.VIDEO_AD_MARKER_MISSING)
@@ -359,9 +383,14 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
             }
             when (val result = video.result) {
                 is VideoAdSkipResult.Found -> {
-                    endSearch()
-                    skipVideoAd(read, result.candidate)
-                    return true
+                    // F28: outside YouTube, B's decision and scam check first; a refusal goes on to the popup search.
+                    if (!youtube && withContext(Dispatchers.Default) { VideoAdSkip.deniedByB(read.nodes, read.screen) }) {
+                        log.trace(SimpleTrace.VIDEO_SKIP_DENIED_BY_B)
+                    } else {
+                        endSearch()
+                        skipVideoAd(read, result.candidate)
+                        return true
+                    }
                 }
                 VideoAdSkipResult.Waiting -> videoAdWaiting = true
                 null -> Unit
@@ -458,6 +487,9 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
         // F6: why not, when B could not judge (a classified popup needs no hint, so it is not logged).
         else if (miss != null && miss != AdHintMiss.NOT_UNKNOWN) log.trace(SimpleTrace.adHintMiss(miss))
         val classification = if (hinted) PopupClassification.ADVERTISEMENT else byB
+        // F28 (B_DEMO_RULES.md 1절): a "지금 구매하기" of a promotion B checked whole stops keeping it asked; never pressed.
+        val promoBuy = PromoPurchaseGate.allowed(DecisionDemoRules.PROMO_PURCHASE, byB, hinted, popup.analysis.texts, popup.scan.promoBuyCount)
+        if (promoBuy > 0 && promoBuy == popup.scan.riskCount) log.trace(SimpleTrace.PROMO_PURCHASE_NOT_ASKED)
         log.trace(when {
             suspicious -> SimpleTrace.CLASSIFIED_SUSPICIOUS
             classification == PopupClassification.ADVERTISEMENT -> SimpleTrace.CLASSIFIED_AD
@@ -482,7 +514,7 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
         }
         if (rememberedButton != null) log.trace(SimpleTrace.REMEMBERED_AUTO_CLOSE)
         val decided = rememberedButton?.let { SimpleDecision.AutoClose(it) }
-            ?: SimpleCloseDecider.decide(classification, suspicious, popup.scan.candidates, preferences.current(), popup.scan.forbiddenCount, popup.scan.riskCount, popup.scan.promoBuyCount)
+            ?: SimpleCloseDecider.decide(classification, suspicious, popup.scan.candidates, preferences.current(), popup.scan.forbiddenCount, popup.scan.riskCount, promoBuy)
         // F20: an automatic close failed on this popup before: never pressed automatically again (AGENTS 6-6), asked.
         val decision = when {
             decided is SimpleDecision.AutoClose && words in autoFailed -> {
@@ -895,6 +927,7 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
         VideoAdDiag.OFFSCREEN -> SimpleTrace.VIDEO_SKIP_OFFSCREEN
         VideoAdDiag.NO_AD_MARKER -> SimpleTrace.VIDEO_SKIP_NO_AD_MARKER
         VideoAdDiag.SEVERAL -> SimpleTrace.VIDEO_SKIP_SEVERAL
+        VideoAdDiag.AD_MARK_NOT_NEAR -> SimpleTrace.VIDEO_SKIP_AD_MARK_NOT_NEAR
     }
 
     /**
@@ -1067,7 +1100,7 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
                     // F27 (review #1): a popup a whole read found is re-checked with a whole read (the probe may not see it).
                     val again = collector.read(token.packageName, ::allowsApp, wholeIfProbeMisses = !popup.foundByProbe,
                         capMillis = if (popup.foundByProbe) RECHECK_CAP_MILLIS else WholeReadCap.MAX_MILLIS,
-                        appWindows = popup.root.kind == PopupRootKind.APP_WINDOW)
+                        appWindows = popup.root.kind == PopupRootKind.APP_WINDOW, lookUpAddress = false)
                         ?: return@withContext false
                     val root = PopupRootFinder.find(again.nodes, again.screen, again.activeWindowBounded) ?: return@withContext false
                     PopupMemory.of(popup).reappeared(root, again.nodes)
@@ -1165,6 +1198,26 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
         }
     }
 
+    /**
+     * F28 (LG 11/1 14:29 올리브영: a DECISION_ASKED prompt stayed on screen over our own app): when no application
+     * window of the popup's app is on screen any more (another app, ours included, came to the front), the prompt
+     * closes and the inspection in flight is dropped (AGENTS 6-7). Our prompt is an overlay, not an application
+     * window, so it never counts as "another app". TalkBack's focus is not moved. Unknown windows: nothing done.
+     */
+    private fun checkPromptedAppStillShown(popup: SimplePopup) {
+        // The latest event wins, a burst of window events is one look-up: a leave during a look-up is not lost.
+        appLeftCheck?.cancel()
+        appLeftCheck = scope.launch {
+            delay(APP_LEFT_SETTLE_MILLIS)
+            val shown = withContext(Dispatchers.Default) { collector.applicationPackages() }
+            if (prompted !== popup || !PromptedApp.left(popup.snapshot.token.packageName, shown)) return@launch
+            prompted = null
+            jobs.cancelInspection()
+            overlay?.dismiss()
+            log.trace(SimpleTrace.CHOICE_DISMISSED_APP_LEFT)
+        }
+    }
+
     private fun promptGone() {
         if (prompted == null) return
         prompted = null
@@ -1229,6 +1282,10 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
         const val REAPPEAR_WINDOW_MILLIS = 5_000L
         /** F26 (LG 11/1 올리브영 앱: CLOSE_RECHECK_MS 905): the strict re-check's read has this much, probe included. */
         const val RECHECK_CAP_MILLIS = 250L
+        /** F28: a burst of window events settles this long before the look-up. */
+        const val APP_LEFT_SETTLE_MILLIS = 150L
+        /** F28: events after which the popup's app may have left the screen. */
+        val APP_SWITCH_EVENTS = setOf(AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED, AccessibilityEvent.TYPE_WINDOWS_CHANGED)
         val WINDOW_EVENTS = setOf(
             AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED, AccessibilityEvent.TYPE_WINDOWS_CHANGED,
             AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED, AccessibilityEvent.TYPE_VIEW_ACCESSIBILITY_FOCUSED,
