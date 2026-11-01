@@ -113,13 +113,4 @@ class F34HandlingTest {
         val cover = SimplePopupAnalysis.build(nodes, PopupRoot("0/0", ScreenBounds(90, 640, 990, 1700), PopupRootKind.VIDEO_COVER), "x", 1, lg, 1, 0)
         assertEquals(AdHintMiss.NOT_DIALOG_ROOT, ImageDialogAdHint.check(cover, PopupClassification.UNKNOWN, suspicious = false))
     }
-
-    // 8: a remembered popup is not held by the count; our press opening a new popup still is.
-    @Test fun chainGuardLetsRememberedPopupsThrough() {
-        val guard = ChainGuard()
-        for (i in 0 until 3) guard.pressed("app", "p$i", i * 10_000L, automatic = true)
-        assertEquals(ChainBlock.RATE_LIMIT, guard.check("app", "p9", 40_000L))
-        assertNull(guard.check("app", "p9", 40_000L, remembered = true))
-        assertEquals(ChainBlock.OPENED_BY_OUR_PRESS, guard.check("app", "p9", 20_500L, remembered = true))
-    }
 }

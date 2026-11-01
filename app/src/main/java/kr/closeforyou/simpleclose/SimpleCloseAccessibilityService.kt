@@ -562,7 +562,7 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
         // F31 (B_DEMO_RULES.md 6-2): a chain of automatic closes in one app, or a popup right after our own press, is asked.
         // The popup's key is its words (a popup that moves or repaints is not "another" one).
         val chainBlock = if (decided is SimpleDecision.AutoClose && SimpleCloseEngineFeature.CHAIN_GUARD) {
-            chainGuard.check(read.packageName, words, SystemClock.uptimeMillis(), remembered = rememberedButton != null)
+            chainGuard.check(read.packageName, words, SystemClock.uptimeMillis())
         } else {
             null
         }
