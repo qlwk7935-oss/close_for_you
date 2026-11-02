@@ -851,6 +851,24 @@ F26 자동 확인: 옥션 웹 감지 1.3초·재확인 308ms·`READ_DUTY_PCT` 7.
 - 진단(글자 없음): `FOCUS_RECLAIM_CARD_BY_NODE`, `FOCUS_RECLAIM_CARD_AFTER_CLEAR`, `FOCUS_RECLAIM_CARD_BY_VIEW`, (기존) `FOCUS_RECLAIM_CARD_REFUSED`, `RESULT_CARD_WINDOW_UNKNOWN`(카드마다 1회).
 - 검증(F44): 5개 Gradle 작업 통과, 단위 시험 debug 1335개·release 1320개 실패 0(`F44Test` 5개 추가), lintDebug 오류 0(경고 15: 대체 View 경로의 `AccessibilityFocus` 경고 1개 추가, 시연 모드 6-0 범위), INTERNET 0.
 - 위험: 서비스가 0.5초마다 창 목록과 초점을 묻는다(카드가 떠 있는 최대 15초 동안 호출 2회씩). 실기기 확인 필요.
+- 실측(11/2 밤, 총괄 전달): 우진 SM-F966N `ac66631`에서 직접 닫기·음성 닫기·내용 듣기 각 5/5 통과. `FOCUS_RECLAIM_CARD_AFTER_CLEAR`가 반복해서 나와 "View 표시가 남는다"는 추정을 뒷받침한다(LG에서는 0회). LG도 통과.
+
+### 8-38. F45 — [방금 닫은 내용 듣기]를 누르면 카드 시간을 다시 센다 (JVM 시험만, 실기기 미검증)
+
+- **증상**(우진 SM-F966N, `ac66631`): `RESULT_HEAR_CLOSED_READ` 직후 `RESULT_CARD_HOLD_MAX`. `ResultCardClock`이 카드가 뜬 때부터 15초를 세서, 늦게 누르면 긴 내용을 읽는 도중 카드가 사라질 수 있다. 사라질 때 F17이 초점을 페이지로 옮긴다. 낭독이 실제로 끊기는지는 실기기에서 확인하지 못했다.
+- **고침:**
+  - 누르는 순간 `ResultCardClock.restartOnRead`로 시계를 다시 시작한다.
+  - 유지 상한 `readHoldMillis` = 15초 + 글자 수 × 200ms ÷ 말 빠르기. 최대 60초이고, 카드 자체 시간(F42의 `getRecommendedTimeoutMillis` 값)보다 짧지 않다.
+  - 200ms는 1배속 한국어 TTS가 띄어쓰기 포함 초당 약 5글자를 읽는다는 **추정**이다(측정하지 않음). 말 빠르기는 우리 설정(`SpeechRates.resolve`, 시스템 TTS 빠르기 따름)이며, 0.5배보다 느리면 0.5배로 친다.
+  - 예: 100글자, 1배속이면 35초.
+  - 다시 시작한 뒤에도 초점이 카드 밖으로 나가면 2초 뒤 사라진다(F42 그대로).
+  - TalkBack이 꺼져 초점이 없으면 상한까지 남는다.
+  - 다시 누르면 다시 센다.
+  - 낭독 중인지는 묻지 않고 시간만 본다.
+  - 글자 수만 쓰고 글자는 로그에 남기지 않는다.
+- 진단: `RESULT_CARD_RESTARTED_ON_READ`, `RESULT_CARD_READ_HOLD_MS=<ms>`.
+- 검증(F45): 5개 Gradle 작업 통과, 단위 시험 debug 1340개·release 1325개 실패 0(`F45Test` 5개 추가), lintDebug 오류 0(경고 15, 그대로), INTERNET 0.
+- 한계: 60초가 넘는 긴 내용(1배속 약 225글자 이상)은 상한에서 카드가 사라진다. 낭독은 우리 TTS가 계속하지만, F17 초점 이동 때 TalkBack이 페이지 항목을 말하며 겹칠 수 있다(실기기 확인 필요).
 
 - 잔여 노드 쪽 이벤트 무시: TalkBack이 무엇을 읽을지는 앱이 막을 수 없다. 대신 포커스를 잔여 노드 밖으로 옮기는 것(F9)이 할 수 있는 전부. 웹 페이지가 닫힌 팝업을 DOM에 `aria-hidden` 없이 남기는 한, 사용자가 스와이프로 다시 만날 수 있다(한계로 기록).
 - 선택 창 PROMPT도 TalkBack 큐로? 가능은 하다: 선택 창 자체(이미 접근성 오버레이)에 paneTitle이 있고 TalkBack이 창을 읽으므로, "안내 맡기기" ON이면 우리 TTS PROMPT를 끄고 paneTitle/첫 버튼 포커스 낭독에 맡기는 방식. 단, 지금 PROMPT는 TalkBack이 팝업을 읽는 도중 끊고 들어가야 시연이 빠르므로 polite로 바꾸면 늦어질 수 있다. F11 배너가 LG에서 잘 읽히면 같은 방식으로 옮길지 정하자(의견, 미구현).

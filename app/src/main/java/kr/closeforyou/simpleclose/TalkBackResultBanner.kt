@@ -69,6 +69,10 @@ class TalkBackResultBanner(
     private var sentenceView: TextView? = null
     private var buttonView: View? = null
     private var focusMode = false
+    /** F45: the shown card's clock (null without the button), when it was shown, and its first timeout. */
+    private var clock: ResultCardClock? = null
+    private var clockStartedAt = 0L
+    private var cardTimeout = 0L
     /** F44: RESULT_CARD_WINDOW_UNKNOWN once per card. */
     private var windowUnknownLogged = false
 
@@ -160,7 +164,11 @@ class TalkBackResultBanner(
             } else {
                 val timeout = ResultCardClock.timeoutMillis(takeFocus, hasButton = true, ::recommendedTimeout)
                 timeoutMillis(timeout)
-                watch(root, ResultCardClock(timeout), SystemClock.uptimeMillis())
+                val cardClock = ResultCardClock(timeout)
+                clock = cardClock
+                clockStartedAt = SystemClock.uptimeMillis()
+                cardTimeout = timeout
+                watch(root, cardClock, clockStartedAt)
             }
             true
         } catch (e: RuntimeException) {
@@ -293,6 +301,18 @@ class TalkBackResultBanner(
         false
     }
 
+    /**
+     * F45: [방금 닫은 내용 듣기] was pressed and [chars] characters are being read at [rate]: the card's clock starts
+     * again from now ([ResultCardClock.restartOnRead]). Returns the new limit in ms (debug line), null without a card.
+     */
+    fun restartForRead(chars: Int, rate: Float?): Long? {
+        val cardClock = clock ?: return null
+        if (shown == null) return null
+        val hold = ResultCardClock.readHoldMillis(chars, rate, cardTimeout)
+        cardClock.restartOnRead(SystemClock.uptimeMillis() - clockStartedAt, hold)
+        return hold
+    }
+
     /** A card shown with the focus is on screen: the reclaim watch puts the focus back here. */
     val holdsFocusTarget: Boolean get() = shown != null && focusMode
 
@@ -308,6 +328,7 @@ class TalkBackResultBanner(
         shown = null
         sentenceView = null
         buttonView = null
+        clock = null
         if (holdsFocus) {
             try { beforeFocusedDismiss() } catch (_: RuntimeException) {}
         }

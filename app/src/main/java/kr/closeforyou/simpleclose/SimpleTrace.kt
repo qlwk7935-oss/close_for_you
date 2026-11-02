@@ -351,6 +351,11 @@ enum class SimpleTrace {
     FOCUS_RECLAIM_CARD_AFTER_CLEAR,
     FOCUS_RECLAIM_CARD_BY_VIEW,
     RESULT_CARD_WINDOW_UNKNOWN,
+    /**
+     * F45: [방금 닫은 내용 듣기] pressed: the card's clock started again from the press, its new limit the debug line
+     * `RESULT_CARD_READ_HOLD_MS=<ms>` ([ResultCardClock.readHoldMillis]).
+     */
+    RESULT_CARD_RESTARTED_ON_READ,
     ;
 
     companion object {

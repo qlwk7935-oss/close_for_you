@@ -64,6 +64,7 @@ import kr.closeforyou.ui.voice.overlay.PromptControlsSupport
 import kr.closeforyou.ui.voice.overlay.PromptShowResult
 import kr.closeforyou.ui.voice.overlay.PromptSpeech
 import kr.closeforyou.ui.voice.overlay.TalkBackTakeoverPlan
+import kr.closeforyou.ui.voice.settings.SpeechRates
 import kr.closeforyou.ui.voice.settings.UiVoicePreferences
 import kr.closeforyou.ui.voice.settings.autoCloseKinds
 
@@ -926,6 +927,14 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
         endReclaim(null)
         val content = lastClosed.current()
         log.trace(if (content != null) SimpleTrace.RESULT_HEAR_CLOSED_READ else SimpleTrace.RESULT_HEAR_CLOSED_GONE)
+        // F45: the card stays for the reading, counted from this press (the length only, never the words).
+        if (content != null) {
+            val rate = SpeechRates.resolve(preferences.current().speechRate, SpeechRates.systemRatePercent(this))
+            resultBanner?.restartForRead(content.length, rate)?.let { hold ->
+                log.trace(SimpleTrace.RESULT_CARD_RESTARTED_ON_READ)
+                log.latency("RESULT_CARD_READ_HOLD_MS", hold)
+            }
+        }
         announcer.stop()
         val request = if (content != null) {
             AnnouncementRequest(null, AnnouncementKind.CONTENT, content)
