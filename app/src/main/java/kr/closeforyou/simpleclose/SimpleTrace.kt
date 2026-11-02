@@ -341,6 +341,16 @@ enum class SimpleTrace {
      */
     BOTTOM_SHEET_WINDOW_ACCEPTED,
     BOTTOM_SHEET_REJECTED_SPLIT,
+    /**
+     * F44 ([TalkBackResultBanner.refocus], [CardFocusRules]): the focus put back on the result card through the
+     * service's node (BY_NODE), the same after clearing its stale flag (AFTER_CLEAR), or our View (BY_VIEW, the card's
+     * window not listed); refused = FOCUS_RECLAIM_CARD_REFUSED. RESULT_CARD_WINDOW_UNKNOWN: the card's overlay window
+     * was not found among the windows (focus checks fell back to the View), once per card.
+     */
+    FOCUS_RECLAIM_CARD_BY_NODE,
+    FOCUS_RECLAIM_CARD_AFTER_CLEAR,
+    FOCUS_RECLAIM_CARD_BY_VIEW,
+    RESULT_CARD_WINDOW_UNKNOWN,
     ;
 
     companion object {

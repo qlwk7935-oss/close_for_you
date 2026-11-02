@@ -831,6 +831,27 @@ F26 자동 확인: 옥션 웹 감지 1.3초·재확인 308ms·`READ_DUTY_PCT` 7.
 - 검증(F43): 5개 Gradle 작업 통과, 단위 시험 debug 1330개·release 1315개 실패 0(`F43Test` 4개 추가), lintDebug 오류 0(경고 14), INTERNET 0.
 - 위험: 시트 창이 닫히는 애니메이션 동안 목록에 남으면 엄격 재확인이 잠깐 "다시 나타남"으로 볼 수 있다(F33 가운데 Dialog와 같은 조건, LG P04에서는 문제 없었음). 실기기 확인 필요.
 
+### 8-37. F44 — 결과 카드 초점 되찾기·유지가 갤럭시에서 실패 (JVM 시험만, 실기기 미검증)
+
+- **증상**(우진 SM-F966N, c279ee3, TalkBack 켬, P04 [닫기] 직접 탭, 2회): `RESULT_BANNER_FOCUSED` → 0.9초 뒤 `FOCUS_OTHER_ON_PAGE` → `FOCUS_RECLAIM_CARD_REFUSED` → `FOCUS_RECLAIMED=0` → 10초 `RESULT_CARD_HELD_FOCUS` → 15초 `RESULT_CARD_HOLD_MAX`. 사용자는 "닫았어요" 대신 P04 본문을 들었다.
+- **원인:**
+  - 되찾기(`refocus`)와 유지 판단(`focusInside`) 둘 다 우리 프로세스 View의 접근성 초점 표시(`isAccessibilityFocused`)를 봤다.
+  - 로그로 보면, 페이지가 초점을 가져간 뒤에도 이 표시가 남아 있었다. 그래서 `View.performAccessibilityAction(ACTION_ACCESSIBILITY_FOCUS)`가 "이미 초점"으로 false를 냈고, 유지 판단은 계속 "카드 안"이라고 했다.
+  - AOSP `AccessibilityWindowManager`는 초점 창이 바뀌면(`TYPE_VIEW_ACCESSIBILITY_FOCUSED`, `mAccessibilityFocusedWindowId != windowId`) 이전 창에 `clearAccessibilityFocusLocked`를 부른다. 이 호출은 핸들러로 미뤄 실행되고, 그 창 연결의 `clearAccessibilityFocus()`를 부른다.
+  - 따라서 순정 코드라면 표시가 지워져야 한다. 갤럭시에서 이 해제가 우리 오버레이 창에 닿지 않았거나 늦은 것은 **추정**이다. 제조사 소스로 확인하지 못했다.
+- **고침(`CardFocusRules`, `TalkBackResultBanner`):**
+  - 초점이 카드에 있는지는 시스템에 묻는다. `findFocus(FOCUS_ACCESSIBILITY)`로 얻은 노드의 창이 카드의 접근성 오버레이 창인지 본다.
+  - 카드 창 찾기: `getWindows()`의 `TYPE_ACCESSIBILITY_OVERLAY` 창 중 카드 View 화면 경계와 80% 이상 서로 겹치는 창. 우리 선택 창은 크기가 달라 걸리지 않는다.
+  - 창 id는 같음·다름·모름으로만 비교하고 로그에 남기지 않는다.
+  - 되찾기: 카드 창 뿌리(문장만 있으면 뿌리, F41 버튼이 있으면 첫 자식)의 노드에 서비스 쪽 `performAction(ACTION_ACCESSIBILITY_FOCUS)`를 한다. 거절되면(남은 표시) 그 노드의 초점을 지우고(`ACTION_CLEAR_ACCESSIBILITY_FOCUS`) 한 번만 다시 요청한다. 초점 이동이지 누르기가 아니다.
+  - 카드 창을 못 찾을 때만 예전 View 경로(지운 뒤 요청)를 쓴다.
+  - 노드는 그 호출 안에서 찾고 바로 놓는다(AGENTS 5장).
+  - 유지 판단: 시스템이 "카드 안"이라고 할 때만 유지한다. 페이지로 나가면 F42 규칙대로 `RESULT_CARD_FOCUS_LEFT`가 찍히고 2초 뒤 사라진다. 카드 창을 못 찾을 때만 View 표시를 쓴다(15초 상한 그대로).
+  - 사라질 때 페이지로 초점을 옮기는 F17 판단도 같은 시스템 기준이다.
+- 진단(글자 없음): `FOCUS_RECLAIM_CARD_BY_NODE`, `FOCUS_RECLAIM_CARD_AFTER_CLEAR`, `FOCUS_RECLAIM_CARD_BY_VIEW`, (기존) `FOCUS_RECLAIM_CARD_REFUSED`, `RESULT_CARD_WINDOW_UNKNOWN`(카드마다 1회).
+- 검증(F44): 5개 Gradle 작업 통과, 단위 시험 debug 1335개·release 1320개 실패 0(`F44Test` 5개 추가), lintDebug 오류 0(경고 15: 대체 View 경로의 `AccessibilityFocus` 경고 1개 추가, 시연 모드 6-0 범위), INTERNET 0.
+- 위험: 서비스가 0.5초마다 창 목록과 초점을 묻는다(카드가 떠 있는 최대 15초 동안 호출 2회씩). 실기기 확인 필요.
+
 - 잔여 노드 쪽 이벤트 무시: TalkBack이 무엇을 읽을지는 앱이 막을 수 없다. 대신 포커스를 잔여 노드 밖으로 옮기는 것(F9)이 할 수 있는 전부. 웹 페이지가 닫힌 팝업을 DOM에 `aria-hidden` 없이 남기는 한, 사용자가 스와이프로 다시 만날 수 있다(한계로 기록).
 - 선택 창 PROMPT도 TalkBack 큐로? 가능은 하다: 선택 창 자체(이미 접근성 오버레이)에 paneTitle이 있고 TalkBack이 창을 읽으므로, "안내 맡기기" ON이면 우리 TTS PROMPT를 끄고 paneTitle/첫 버튼 포커스 낭독에 맡기는 방식. 단, 지금 PROMPT는 TalkBack이 팝업을 읽는 도중 끊고 들어가야 시연이 빠르므로 polite로 바꾸면 늦어질 수 있다. F11 배너가 LG에서 잘 읽히면 같은 방식으로 옮길지 정하자(의견, 미구현).
 - 검증(F1~F11 한 빌드): 5개 Gradle 작업 통과, 단위 시험 debug 1028개·release 1013개 실패 0, lintDebug 오류 0(경고 12), 병합 매니페스트 INTERNET 0·새 권한 없음.
