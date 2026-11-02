@@ -19,4 +19,6 @@
     <item name="btn_fake_close" type="id" />
     <item name="btn_prize_claim" type="id" />
     <item name="btn_scan_now" type="id" />
+    <item name="btn_open_app" type="id" />
+    <item name="btn_stay_web" type="id" />
 </resources>
