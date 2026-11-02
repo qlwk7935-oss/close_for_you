@@ -60,7 +60,7 @@ python tools/live_trial.py --site L06 --browser CHROME --preset CLOSE_ALL --talk
 1. 도구가 로그를 지우고 받기 시작합니다.
 2. 휴대폰에서 사이트·앱을 엽니다. 팝업 처리가 끝나면(닫혔거나, 물어봤거나, 아무 일도 없으면 10초쯤 뒤) PC에서 Enter.
 3. 도구가 팝업별로 ①찾았나(`DETECTED_*`) ②분류(`CLASSIFIED_*`) ③처리(자동 닫음/물어봄/안 함)를 보여 줍니다.
-4. 팝업마다 몇 가지만 답합니다(Enter = 기본값): 팝업 모양 번호, 이름 있는 닫기가 있었나, 실제로 사라졌나, 🚨 금지 버튼을 눌렀나, 엉뚱한 곳을 눌렀나, 안내가 맞았나, 걸린 초.
+4. 팝업마다 몇 가지만 답합니다(Enter = 기본값): 팝업 모양 번호, 사람이 보기에 무슨 팝업인지(광고·쿠폰·공지·결정·사기 의심), 이름 있는 닫기가 있었나, 실제로 사라졌나, 🚨 금지 버튼을 눌렀나, 엉뚱한 곳을 눌렀나, 안내가 맞았나, 걸린 초.
 5. `trials.csv`에 팝업 수만큼 줄이 붙고 ④맞게 했나(정답지 기준)를 바로 보여 줍니다. 원본 로그는 `live_logs/`에 남습니다.
 
 ①이 안 찍히면(팝업을 못 찾음) 도구가 "팝업이 떴나요?"만 묻고 못 찾은 이유 코드(`SKIPPED_SCOPE_*`·`NO_POPUP_ROOT` 등)를 메모에 남깁니다. 정답지 목록 밖 사이트는 `--site L90 --site-code SITE_영문이름`.
@@ -83,6 +83,7 @@ python tools/real_site_metrics.py trials.csv > real_site_report.md
 | `site_id`, `browser` ⚙ | `L01`~`L25`·`L90` / `CHROME`·`SAMSUNG`·`NAVER`·`WHALE`·`KAKAO_INAPP`·`INSTA_INAPP`·`APP`·`OTHER` | 명령에서 받음 |
 | `date`, `tester`, `device`, `android`, `app_build`, `talkback`, `preset`, `rehearsal` ⚙ | | 명령에서 받음 |
 | `popup_type` ✋ | `EVENT_POPUP`·`COUPON_POPUP`·`NOTICE_POPUP`·`APP_INSTALL_SHEET`·`OPEN_IN_APP_SHEET`·`BOTTOM_SHEET`·`BOTTOM_BANNER`·`DIM_LAYER`·`FULL_LAYER`·`INTERSTITIAL`·`UNLABELED_X_ONLY`·`VIDEO_AD`·`LOGIN_PROMO`·`PERMISSION`·`COOKIE_CONSENT`·`SURVEY`·`OTHER` | 사람이 본 모양 |
+| `human_kind` ✋ | `AD`·`COUPON`·`NOTICE`·`DECISION`·`SUSPICIOUS`·`OTHER` | 사람이 보기에 무슨 팝업인지(기본값은 모양에서 추정). 잘못 닫음 판정용 |
 | `popup_appeared` ✋ | Y/N | 팝업이 실제로 떴는지. N이면 집계에서 뺌 |
 | `detected`, `detected_code` ⚙ | Y/N, `DETECTED_*` | ①찾았나 |
 | `classified_code`, `observed_kind` ⚙ | `CLASSIFIED_*`(+`WORD_HINT_*`·`AD_HINT_IMAGE_DIALOG`) | ②분류 |
@@ -109,6 +110,7 @@ python tools/real_site_metrics.py trials.csv > real_site_report.md
 - **금지 버튼**(🚨, 안전 실패, 종료 코드 1): 정답지 행의 `forbidden_targets` + 어디서나 금지(결제·구매·주문·구독·동의·권한·삭제·로그인·경품 받기).
 - **오클릭**(🚨): 팝업이 아닌 곳·엉뚱한 버튼.
 - **"오늘 하루 보지 않기"**(금지가 아님, 닫기 다음 순서): 이름 있는 닫기가 있었는데 먼저 누르면 `HIDE_BEFORE_CLOSE`, "광고만 닫기"에서 묻지 않고 누르면 `HIDE_IN_ADS_ONLY`. 금지 클릭 수에는 넣지 않고 따로 셉니다.
+- **잘못 닫음**(`WRONG_KIND_CLOSE`, 내용을 놓침): 앱이 묻지 않고 닫았는데 사람이 본 종류가 그 처리 방식에서 닫는 대상이 아님. 전부 자동 닫기·광고와 쿠폰 닫기는 광고·쿠폰만, 광고만 닫기는 광고만 닫아도 됩니다(공지는 시연 설정상 어디서나 묻기). 공지·결정·사기 의심을 닫으면 여기에 걸립니다. 보고서에 따로 목록(사람 기준 → 앱 분류)이 나오고, 판단 불가(UNKNOWN)인데 자동으로 닫은 수(F7)도 따로 셉니다. 금지 버튼과 달리 종료 코드에는 넣지 않습니다.
 - 틀린 안내(`INFO_WRONG`), 누르고도 안 사라짐(`CLOSE_NOT_VERIFIED`), 못 찾음(`MISSED`).
 - 건너뛰기(L19 유튜브)는 닫기 성공으로 세고 **분류 정확도에서는 뺍니다**(B 분류 전에 처리될 수 있음).
 
