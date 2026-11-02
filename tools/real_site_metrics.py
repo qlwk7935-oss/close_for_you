@@ -23,6 +23,9 @@
     HIDE_BEFORE_CLOSE, "광고만 닫기"에서 묻지 않고 누르면 HIDE_IN_ADS_ONLY로 실패(금지 클릭 수에는 넣지 않음).
   - CLOSE_OR_ASK: 홍보 문구·구독 버튼 여부처럼 화면에 따라 닫기도 묻기도 맞는 행(L01 로그인 홍보, L12 언론사 등).
   - 건너뛰기(SKIP)는 닫기 성공으로 세고 분류 정확도에서는 뺀다(L19 유튜브).
+  - 잘못 닫음(WRONG_KIND_CLOSE, 11/2 준영): 앱이 묻지 않고 닫았는데 사람이 본 종류(human_kind)가 그 처리 방식에서
+    닫는 대상이 아님(공지·결정·사기 의심, "광고만 닫기"의 쿠폰 등). 내용을 놓친 경우라 실패로 세고 따로 보고한다.
+    금지 버튼과 달리 종료 코드에는 넣지 않는다.
 
 개인정보: 기록에는 사이트 ID·코드·Y/N·숫자만 적는다. notes와 clicked_target에 한글·화면 원문을 쓰면 입력 문제로 본다.
 수치는 기록된 시행에 대한 집계일 뿐 범용 성능을 뜻하지 않는다.
@@ -52,6 +55,13 @@ HANDLINGS = {"CLOSE_OK", "CLOSE_OR_ASK", "ASK", "NO_PRESS", "WARN_NO_PRESS", "NO
 APP_PRESSED = {"CLOSED_BY_APP", "USER_CONFIRMED"}
 ASKING = {"ASKED_ONLY", "USER_CONFIRMED"}
 ALWAYS_FORBIDDEN = {"BUY", "ORDER", "PAY", "SUBSCRIBE", "AGREE", "ALLOW_PERMISSION", "DELETE", "LOGIN", "PRIZE_CLAIM"}
+HUMAN_KINDS = {"", "AD", "COUPON", "NOTICE", "DECISION", "SUSPICIOUS", "OTHER"}
+# 처리 방식별로 앱이 묻지 않고 닫아도 되는 사람 기준 종류. "전부 자동 닫기"도 공지는 묻는다(11/2 시연 설정).
+AUTO_CLOSABLE = {
+    "CLOSE_ALL": {"AD", "COUPON"},
+    "CLOSE_ADS_AND_COUPONS": {"AD", "COUPON"},
+    "CLOSE_ADS_ONLY": {"AD"},
+}
 HIDE_TODAY = "HIDE_TODAY"
 SKIP = "SKIP"
 CODE = re.compile(r"^[A-Za-z0-9_;:.+\- ]*$")
@@ -99,6 +109,8 @@ def check_row(n: int, row: dict, key: dict[str, dict]) -> list[str]:
         errors.append(f"{where}: browser는 {sorted(BROWSERS)} 중 하나")
     if row.get("preset", "") not in PRESETS:
         errors.append(f"{where}: preset 값 오류")
+    if row.get("human_kind", "") not in HUMAN_KINDS:
+        errors.append(f"{where}: human_kind는 {sorted(HUMAN_KINDS - {''})} 중 하나")
     if row.get("popup_type", "") not in POPUP_TYPES:
         errors.append(f"{where}: popup_type 값 오류(docs/REAL_SITE_QA.md 3절)")
     if row.get("outcome", "") not in OUTCOMES:
@@ -126,6 +138,16 @@ def check_row(n: int, row: dict, key: dict[str, dict]) -> list[str]:
     return errors
 
 
+def wrong_kind_close(row: dict) -> bool:
+    """앱이 묻지 않고 닫았는데, 사람이 본 종류가 그 처리 방식에서 닫는 대상이 아님(내용을 놓침)."""
+    human = row.get("human_kind", "")
+    if row.get("outcome") != "CLOSED_BY_APP" or human in ("", "OTHER"):
+        return False
+    if SKIP in targets(row.get("clicked_target")):
+        return False
+    return human not in AUTO_CLOSABLE.get(row.get("preset", ""), set())
+
+
 def judge(row: dict, key_row: dict) -> tuple[str, str]:
     """(PASS|FAIL|SKIP, 사유 코드)."""
     if yn(row.get("popup_appeared")) is False or row.get("outcome") == "NOT_RUN":
@@ -145,6 +167,8 @@ def judge(row: dict, key_row: dict) -> tuple[str, str]:
             return "FAIL", "HIDE_BEFORE_CLOSE"
         if outcome == "CLOSED_BY_APP" and row.get("preset") == "CLOSE_ADS_ONLY":
             return "FAIL", "HIDE_IN_ADS_ONLY"
+    if outcome == "CLOSED_BY_APP" and wrong_kind_close(row):
+        return "FAIL", "WRONG_KIND_CLOSE"
     if yn(row.get("info_correct")) is False:
         return "FAIL", "INFO_WRONG"
     closed = yn(row.get("closed_verified")) is True
@@ -206,6 +230,8 @@ def report(rows: list[dict], key: dict[str, dict], min_trials: int) -> tuple[str
     kind_ok = sum(1 for r in kind_rows if r["observed_kind"] == key[r["site_id"]].get("expected_kind"))
     hide_before = sum(1 for _, v, why in run if why == "HIDE_BEFORE_CLOSE")
     hide_ads_only = sum(1 for _, v, why in run if why == "HIDE_IN_ADS_ONLY")
+    wrong_closes = [r for r in rows if wrong_kind_close(r)]
+    unknown_closes = [r for r in rows if r.get("outcome") == "CLOSED_BY_APP" and r.get("observed_kind") == "UNKNOWN"]
 
     lines += ["## 전체", "", "| 지표 | 값 |", "|---|---|",
               f"| 시행(전체 줄) | {len(rows)} |",
@@ -218,6 +244,8 @@ def report(rows: list[dict], key: dict[str, dict], min_trials: int) -> tuple[str
               f"| 오클릭 | {len(misclick_rows)}건 (0이어야 함) |",
               f"| 닫기가 있는데 '오늘 하루 보지 않기' 먼저 | {hide_before}건 |",
               f"| '광고만 닫기'에서 묻지 않고 '오늘 하루 보지 않기' | {hide_ads_only}건 |",
+              f"| 잘못 닫음(공지·결정 등을 묻지 않고 닫아 내용을 놓침) | {len(wrong_closes)}건 |",
+              f"| 판단 불가(UNKNOWN)인데 자동으로 닫음(F7) | {len(unknown_closes)}건 |",
               f"| 안내 정확도 | {ratio(sum(1 for r in info if yn(r['info_correct'])), len(info))} |",
               f"| 닫힘까지 걸린 시간 중앙값(통과 시행) | {f'{statistics.median(secs):.1f}초' if secs else 'N/A'} |",
               ""]
@@ -227,6 +255,15 @@ def report(rows: list[dict], key: dict[str, dict], min_trials: int) -> tuple[str
         for r in forbidden_rows + misclick_rows:
             lines.append(f"- {r['trial_id']}: {r['site_id']} {key[r['site_id']]['name']} / {r.get('browser')} / "
                          f"{r.get('popup_type') or '-'} / 누른 것 {r.get('clicked_target') or '-'}")
+        lines.append("")
+
+    if wrong_closes:
+        lines += ["## 잘못 닫음 (내용을 놓친 팝업)", "",
+                  "사람이 본 종류는 묻거나 알려야 하는데 앱이 닫은 경우입니다. B가 분류 원인을 봅니다.", ""]
+        for r in wrong_closes:
+            lines.append(f"- {r['trial_id']}: {r['site_id']} {key[r['site_id']]['name']} / {r.get('browser')} / "
+                         f"사람 {r.get('human_kind')} → 앱 {r.get('classified_code') or r.get('observed_kind') or '-'} / "
+                         f"{r.get('preset')}")
         lines.append("")
 
     missed = [r for r in appeared if not yn(r.get("detected"))]
@@ -259,14 +296,14 @@ def report(rows: list[dict], key: dict[str, dict], min_trials: int) -> tuple[str
     lines += ["", f"시연 후보 기준: 시험 {min_trials}회 이상, 실수 0회. 해당: {', '.join(ready) or '없음'}", ""]
 
     lines += ["## 시행 목록 (한 줄 = 팝업 하나)", "",
-              "| 사이트/앱 | 브라우저 | 팝업 종류 | ①찾았나 | ②분류 | ③처리 | ④맞게 했나 | ⑤잘못 누름 | 메모 |",
+              "| 사이트/앱 | 브라우저 | 팝업 종류(사람 기준) | ①찾았나 | ②분류 | ③처리 | ④맞게 했나 | ⑤잘못 누름 | 메모 |",
               "|---|---|---|---|---|---|---|---|---|"]
     for r, v, why in counted:
         found = r.get("detected_code") or ("찾음" if yn(r.get("detected")) else "못 찾음")
         wrong = "🚨 Y" if yn(r.get("forbidden_click")) or yn(r.get("misclick")) else "N"
         verdict = {"PASS": "O", "FAIL": f"X ({why})", "SKIP": "-"}[v]
-        lines.append(f"| {r['site_id']} {key[r['site_id']]['name']} | {r.get('browser')} | {r.get('popup_type') or '-'} | "
-                     f"{found} | {r.get('classified_code') or r.get('observed_kind') or '-'} | "
+        lines.append(f"| {r['site_id']} {key[r['site_id']]['name']} | {r.get('browser')} | "
+                     f"{r.get('popup_type') or '-'}({r.get('human_kind') or '-'}) | {found} | {r.get('classified_code') or r.get('observed_kind') or '-'} | "
                      f"{HANDLING_KO.get(r.get('outcome', ''), '-')} | {verdict} | {wrong} | {r.get('notes') or ''} |")
     lines.append("")
 
