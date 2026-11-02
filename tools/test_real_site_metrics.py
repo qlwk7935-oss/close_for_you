@@ -18,23 +18,28 @@ REAL_KEY = TOOLS.parent / "docs" / "templates" / "real_site_answer_key.csv"
 TEMPLATE = TOOLS.parent / "docs" / "templates" / "real_site_trials.csv"
 
 KEY = """site_id,name,platform,entry,expected_popup,human_kind,safe_target,forbidden_targets,expected_handling,expected_kind,risk,tier,status,observed_on
-L01,web a,WEB_CHROME,a.example,EVENT_POPUP,AD,CLOSE,BUY;HIDE_TODAY,CLOSE_OK,ADVERTISEMENT,MID,A,CANDIDATE,
-L02,web b,WEB_CHROME,b.example,APP_INSTALL_SHEET,AD,CLOSE,BUY,ASK,USER_DECISION,HIGH,B,CANDIDATE,
+L01,web a,WEB_CHROME,a.example,EVENT_POPUP,AD,CLOSE,INSTALL_APP,CLOSE_OK,ADVERTISEMENT,MID,A,CANDIDATE,
+L02,web b,WEB_CHROME,b.example,APP_INSTALL_SHEET,AD,CLOSE,INSTALL_APP,ASK,USER_DECISION,HIGH,B,CANDIDATE,
 L03,perm,WEB_CHROME,c.example,NOTIFICATION_PERMISSION,PERMISSION,NONE,ALLOW_PERMISSION,NO_PRESS,USER_DECISION,LOW,A,CANDIDATE,
+L04,promo,WEB_CHROME,d.example,LOGIN_PROMO,AD,CLOSE,LOGIN,CLOSE_OR_ASK,ADVERTISEMENT,LOW,A,CANDIDATE,
+L05,video,APP,e.example,VIDEO_AD_SKIP,AD,SKIP,AD_LINK,CLOSE_OK,ADVERTISEMENT,LOW,A,CANDIDATE,
 """
 
 HEADER = TEMPLATE.read_text(encoding="utf-8").splitlines()[0]
 
 
 def trial(tid: str, site: str, outcome: str, clicked: str = "CLOSE", closed: str = "Y", forbidden: str = "N",
-          misclick: str = "N", info: str = "Y", appeared: str = "Y", mode: str = "PRESET", kind: str = "",
-          seconds: str = "1.5", notes: str = "") -> str:
+          misclick: str = "N", info: str = "Y", appeared: str = "Y", detected: str = "Y", kind: str = "",
+          seconds: str = "1.5", notes: str = "", browser: str = "CHROME", preset: str = "CLOSE_ALL",
+          close_available: str = "Y", popup_type: str = "EVENT_POPUP") -> str:
     fields = {
-        "trial_id": tid, "site_id": site, "date": "2026-11-01", "tester": "C", "device": "synthetic",
-        "android": "14", "app_build": "test", "talkback": "Y", "mode": mode, "preset": "CLOSE_ALL",
-        "popup_appeared": appeared, "detected": "Y", "observed_kind": kind, "outcome": outcome,
-        "clicked_target": clicked, "closed_verified": closed, "forbidden_click": forbidden, "misclick": misclick,
-        "info_correct": info, "seconds_to_close": seconds, "rehearsal": "Y", "notes": notes,
+        "trial_id": tid, "site_id": site, "browser": browser, "date": "2026-11-02", "tester": "D",
+        "device": "synthetic", "android": "14", "app_build": "test", "talkback": "Y", "preset": preset,
+        "popup_type": popup_type, "popup_appeared": appeared, "detected": detected,
+        "detected_code": "DETECTED_DIALOG_WINDOW" if detected == "Y" else "", "classified_code": "",
+        "observed_kind": kind, "outcome": outcome, "clicked_target": clicked, "close_available": close_available,
+        "closed_verified": closed, "forbidden_click": forbidden, "misclick": misclick, "info_correct": info,
+        "seconds_to_close": seconds, "rehearsal": "Y", "notes": notes,
     }
     return ",".join(fields[c] for c in HEADER.split(","))
 
@@ -60,16 +65,46 @@ class RealSiteMetricsTest(unittest.TestCase):
         self.assertIn("닫힘 성공률(CLOSE_OK 사이트) | 100.0% (3/3)", result.stdout)
         self.assertIn("안전 판정: 통과", result.stdout)
 
-    def test_forbidden_click_fails_with_exit_1(self):
-        result = run([trial("T1", "L01", "CLOSED_BY_APP", clicked="BUY", forbidden="Y")])
+    def test_forbidden_click_fails_with_exit_1_and_is_listed(self):
+        result = run([trial("T1", "L01", "CLOSED_BY_APP", clicked="INSTALL_APP", forbidden="Y")])
         self.assertEqual(1, result.returncode)
         self.assertIn("FORBIDDEN_CLICK", result.stdout)
+        self.assertIn("🚨 잘못 누름", result.stdout)
         self.assertIn("안전 판정: 실패", result.stdout)
 
-    def test_forbidden_target_marked_N_is_an_input_problem(self):
-        result = run([trial("T1", "L01", "CLOSED_BY_APP", clicked="BUY", forbidden="N")])
+    def test_payment_words_are_forbidden_on_every_row(self):
+        result = run([trial("T1", "L01", "CLOSED_BY_APP", clicked="PAY", forbidden="N")])
         self.assertEqual(1, result.returncode)
         self.assertIn("forbidden_click=N", result.stderr)
+
+    def test_hide_today_is_not_forbidden_but_must_come_after_close(self):
+        ok = run([trial("T1", "L01", "CLOSED_BY_APP", clicked="HIDE_TODAY", close_available="N")])
+        self.assertEqual(0, ok.returncode, ok.stderr)
+        self.assertIn("금지 버튼 클릭 | 0건", ok.stdout)
+        self.assertIn("| L01 | web a | CLOSE_OK | 1 | 1 | 0 | - |", ok.stdout)
+        early = run([trial("T2", "L01", "CLOSED_BY_APP", clicked="HIDE_TODAY", close_available="Y")])
+        self.assertEqual(0, early.returncode, early.stderr)
+        self.assertIn("HIDE_BEFORE_CLOSE", early.stdout)
+        self.assertIn("'오늘 하루 보지 않기' 먼저 | 1건", early.stdout)
+
+    def test_hide_today_in_ads_only_must_be_asked(self):
+        result = run([trial("T1", "L01", "CLOSED_BY_APP", clicked="HIDE_TODAY", close_available="N",
+                            preset="CLOSE_ADS_ONLY")])
+        self.assertIn("HIDE_IN_ADS_ONLY", result.stdout)
+        asked = run([trial("T2", "L01", "USER_CONFIRMED", clicked="HIDE_TODAY", close_available="N",
+                           preset="CLOSE_ADS_ONLY")])
+        self.assertNotIn("HIDE_IN_ADS_ONLY", asked.stdout)
+
+    def test_close_or_ask_accepts_both(self):
+        result = run([trial("T1", "L04", "CLOSED_BY_APP"), trial("T2", "L04", "ASKED_ONLY", clicked="NONE", closed="N")])
+        self.assertIn("| L04 | promo | CLOSE_OR_ASK | 2 | 2 | 0 | - |", result.stdout)
+        nothing = run([trial("T3", "L04", "NO_ACTION", clicked="NONE", closed="N")])
+        self.assertIn("NOT_ASKED", nothing.stdout)
+
+    def test_skip_is_a_close_and_left_out_of_kind_accuracy(self):
+        result = run([trial("T1", "L05", "CLOSED_BY_APP", clicked="SKIP", kind="UNKNOWN")])
+        self.assertIn("| L05 | video | CLOSE_OK | 1 | 1 | 0 | - |", result.stdout)
+        self.assertIn("기대 분류와 일치(건너뛰기 제외) | N/A (0건)", result.stdout)
 
     def test_screen_text_in_notes_is_rejected(self):
         result = run([trial("T1", "L01", "CLOSED_BY_APP", notes="지금 구매하기")])
@@ -81,16 +116,23 @@ class RealSiteMetricsTest(unittest.TestCase):
         self.assertEqual(0, result.returncode)
         self.assertIn("AUTO_OUTSIDE_GOAL", result.stdout)
 
-    def test_pressing_on_no_press_site_fails(self):
-        result = run([trial("T1", "L03", "USER_CONFIRMED", clicked="CLOSE")])
-        self.assertIn("PRESSED", result.stdout)
+    def test_pressing_on_no_press_site_fails_but_missing_it_is_safe(self):
+        self.assertIn("PRESSED", run([trial("T1", "L03", "USER_CONFIRMED", clicked="CLOSE")]).stdout)
+        missed = run([trial("T2", "L03", "MISSED", clicked="NONE", detected="N", closed="N")])
+        self.assertIn("| L03 | perm | NO_PRESS | 1 | 1 | 0 | - |", missed.stdout)
 
     def test_close_without_verification_is_not_a_pass(self):
         result = run([trial("T1", "L01", "CLOSED_BY_APP", closed="N")])
         self.assertIn("CLOSE_NOT_VERIFIED", result.stdout)
 
+    def test_missed_popups_are_listed_by_browser(self):
+        result = run([trial("T1", "L01", "MISSED", clicked="NONE", detected="N", closed="N", browser="WHALE",
+                            notes="SKIPPED_SCOPE_NOT_CHOSEN")])
+        self.assertIn("- L01 web a / WHALE / EVENT_POPUP / SKIPPED_SCOPE_NOT_CHOSEN", result.stdout)
+        self.assertIn("| WHALE | 1 | 0 | 0 | 1 | MISSED |", result.stdout)
+
     def test_no_popup_rows_are_not_counted(self):
-        result = run([trial("T1", "L01", "NOT_RUN", clicked="NONE", appeared="N")])
+        result = run([trial("T1", "L01", "NOT_RUN", clicked="NONE", appeared="N", detected="N", popup_type="NONE")])
         self.assertEqual(0, result.returncode, result.stderr)
         self.assertIn("| L01 | web a | CLOSE_OK | 0 | 0 | 0 | - | N |", result.stdout)
 
@@ -102,12 +144,19 @@ class RealSiteMetricsTest(unittest.TestCase):
     def test_repository_answer_key_is_valid(self):
         with REAL_KEY.open(encoding="utf-8") as f:
             rows = list(csv.DictReader(f))
-        self.assertEqual(20, len(rows))
-        self.assertEqual([f"L{i:02d}" for i in range(1, 21)], [r["site_id"] for r in rows])
+        ids = [r["site_id"] for r in rows]
+        self.assertEqual([f"L{i:02d}" for i in range(1, 26)] + ["L90"], ids)
         for r in rows:
-            self.assertIn(r["expected_handling"], {"CLOSE_OK", "ASK", "NO_PRESS", "WARN_NO_PRESS", "NO_POPUP"})
-            self.assertNotIn(r["safe_target"], {t for t in r["forbidden_targets"].split(";")}, r["site_id"])
+            self.assertIn(r["expected_handling"], {"CLOSE_OK", "CLOSE_OR_ASK", "ASK", "NO_PRESS", "WARN_NO_PRESS", "NO_POPUP"})
+            forbidden = {t for t in r["forbidden_targets"].split(";") if t}
+            self.assertNotIn(r["safe_target"], forbidden, r["site_id"])
+            # 11/2 팀 결정: '오늘 하루 보지 않기'는 닫기 다음 순서이지 금지가 아니다.
+            self.assertNotIn("HIDE_TODAY", forbidden, r["site_id"])
             self.assertIn(r["status"], {"CANDIDATE", "OBSERVED", "REHEARSED", "DROPPED"}, r["site_id"])
+        decided = {r["site_id"]: r["expected_handling"] for r in rows}
+        self.assertEqual("CLOSE_OR_ASK", decided["L01"])  # 로그인 홍보: 홍보 문구 있으면 닫기
+        self.assertEqual("CLOSE_OR_ASK", decided["L12"])  # 구독 버튼 있으면 묻기, 리허설 때 확정
+        self.assertEqual("ASK", decided["L03"])
 
 
 if __name__ == "__main__":
