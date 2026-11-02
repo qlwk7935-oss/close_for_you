@@ -1,1 +1,1 @@
-trial_id,site_id,browser,date,tester,device,android,app_build,talkback,preset,popup_type,popup_appeared,detected,detected_code,classified_code,observed_kind,outcome,clicked_target,close_available,closed_verified,forbidden_click,misclick,info_correct,seconds_to_close,rehearsal,notes
+trial_id,site_id,browser,date,tester,device,android,app_build,talkback,preset,popup_type,human_kind,popup_appeared,detected,detected_code,classified_code,observed_kind,outcome,clicked_target,close_available,closed_verified,forbidden_click,misclick,info_correct,seconds_to_close,rehearsal,notes
