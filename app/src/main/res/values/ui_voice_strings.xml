@@ -17,6 +17,9 @@
     <string name="ui_result_not_confirmed">팝업이 닫혔는지 확인하지 못했어요.</string>
     <string name="ui_result_next">내용 다시 읽기나 그대로 두기를 고를 수 있어요.</string>
     <string name="ui_result_next_with_move">내용 다시 읽기, 그대로 두기, 버튼으로 이동 중에서 고를 수 있어요.</string>
+    <!-- F41: 결과 카드의 버튼(TalkBack 라벨도 이 글자)과, 다음 팝업이 와서 지운 뒤 눌렀을 때 -->
+    <string name="ui_result_hear_closed">방금 닫은 내용 듣기</string>
+    <string name="ui_result_hear_closed_gone">방금 닫은 내용은 지웠어요.</string>
     <string name="ui_result_next_check_screen">지금 화면을 직접 확인해 주세요.</string>
 
     <!-- "닫을까요?" 선택 창. 분류는 틀릴 수 있으므로 단정하지 않는다. -->

@@ -142,6 +142,8 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
     private var preClickTarget: AccessibilityNodeInfo? = null
     /** F17: the popup the focused result card is about, so the card's removal moves the focus to the page, not back there. */
     private var lastClosedMemory: PopupMemory? = null
+    /** F41: what [방금 닫은 내용 듣기] on the result card says; memory only, while that card is up. */
+    private val lastClosed = LastClosedContent()
     /** F18: skip buttons already pressed (window + path), not pressed again for [SimpleCloseEngineFeature.SAME_POPUP_COOLDOWN_MILLIS]. */
     private val skippedAt = LinkedHashMap<String, Long>()
     /** F36: the app whose video cover is counting down, until when it is re-read, and the re-read pending. */
@@ -261,10 +263,10 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
             PromptControlsSupport.create(this, announcer),
             beforeClose = ::focusPageBeforeOurWindowGoes,
         )
-        resultBanner = TalkBackResultBanner(this) {
+        resultBanner = TalkBackResultBanner(this, beforeFocusedDismiss = {
             lastOwnFocusAt = SystemClock.uptimeMillis()
             lastClosedMemory?.let { collector.focusPageItem(it, beforeClick = true) }
-        }
+        }, onGone = lastClosed::forget)
         log.trace(SimpleTrace.SERVICE_CONNECTED)
     }
 
@@ -702,6 +704,8 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
                     } else {
                         null
                     }
+                    // F41: the next popup is being handled: the last card's words are forgotten.
+                    lastClosed.forget()
                     val result = try {
                         pressAndConfirm(classified, decision.candidate, preClickMove, watchFocus = moveFocus, prePress = prePress)
                     } finally {
@@ -814,20 +818,29 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
         val watch = reclaim
         val kindOfPopup = AutoDecisionSpeech.kindOf(popup.analysis.classification)
         val closedSentence = getString(R.string.ui_auto_closed_one, getString(AutoDecisionSpeech.objectRes(kindOfPopup)))
+        // F41: the card offers [방금 닫은 내용 듣기] only for a popup that had words; kept once a card is up.
+        lastClosedMemory = PopupMemory.of(popup)
+        val heard = PromptSpeech.contentOrNull(popup.analysis)?.let { PromptSpeech.content(this, popup.analysis) }
+        val hearButton = heard?.let { getString(R.string.ui_result_hear_closed) to ::hearLastClosed }
+        fun cardShown() {
+            if (heard == null) return
+            lastClosed.keep(heard)
+            log.trace(SimpleTrace.RESULT_HEAR_CLOSED_OFFERED)
+        }
         val focusBanner = resultBanner
         if (SimpleCloseEngineFeature.RESULT_BANNER_TAKES_FOCUS && moveFocus && focusBanner != null && focusBanner.talkBackOn()) {
             // F17 (LG 11/1 옥션: toolbar, title, reclaim = three places read): one move after the close, onto the
             // result card itself; TalkBack drops what it was saying and reads "쿠폰을 닫았어요". The reclaim watch
             // (if on) now puts the focus back on the card when the page takes it into the old popup.
             log.latency("FOCUS_MOVES_BY_OTHERS", focusMovesByOthers.toLong())
-            lastClosedMemory = PopupMemory.of(popup)
-            val shown = focusBanner.show(closedSentence, takeFocus = true) { onScreen, focused ->
+            val shown = focusBanner.show(closedSentence, takeFocus = true, hearClosed = hearButton) { onScreen, focused ->
                 log.trace(if (onScreen) SimpleTrace.RESULT_BANNER_SHOWN else SimpleTrace.RESULT_BANNER_NOT_SHOWN)
                 log.trace(if (focused) SimpleTrace.RESULT_BANNER_FOCUSED else SimpleTrace.RESULT_BANNER_FOCUS_FAILED)
                 if (focused && watch != null && reclaim === watch) watch.onBanner = true
             }
             if (shown) {
                 log.trace(SimpleTrace.RESULT_VIA_TALKBACK)
+                cardShown()
                 if (watch != null && reclaim === watch) {
                     // F39: the card is watched a little longer than the page (a late focus restore after a voice choice).
                     watch.until = SystemClock.uptimeMillis() + SimpleCloseEngineFeature.FOCUS_RECLAIM_CARD_WINDOW_MILLIS
@@ -884,13 +897,35 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
         if (banner != null && banner.talkBackOn()) {
             // F12: after a focus move TalkBack reads the focused item first; the card comes after it.
             if (movedNow) delay(SimpleCloseEngineFeature.RESULT_AFTER_FOCUS_MILLIS)
-            if (banner.show(sentence) { shown, _ -> log.trace(if (shown) SimpleTrace.RESULT_BANNER_SHOWN else SimpleTrace.RESULT_BANNER_NOT_SHOWN) }) {
+            if (banner.show(sentence, hearClosed = hearButton) { shown, _ -> log.trace(if (shown) SimpleTrace.RESULT_BANNER_SHOWN else SimpleTrace.RESULT_BANNER_NOT_SHOWN) }) {
                 log.trace(SimpleTrace.RESULT_VIA_TALKBACK)
+                cardShown()
                 return
             }
         }
         log.trace(SimpleTrace.RESULT_VIA_TTS)
+        // F41: with TalkBack off the sentence is our TTS; the card shows only when there is something to hear again
+        // (its live region says nothing without TalkBack, so nothing is said twice).
+        if (hearButton != null && banner != null && banner.show(sentence, hearClosed = hearButton)) cardShown()
         scope.launch { announcer.announce(AnnouncementRequest(null, AnnouncementKind.ACTION_RESULT, sentence)) }
+    }
+
+    /**
+     * F41: [방금 닫은 내용 듣기] on the result card (main thread, the person's own press): the closed popup's words
+     * through our TTS, as [내용 다시 읽기] says them. Once forgotten (the next popup came), says so instead.
+     */
+    private fun hearLastClosed() {
+        val announcer = tts ?: return
+        endReclaim(null)
+        val content = lastClosed.current()
+        log.trace(if (content != null) SimpleTrace.RESULT_HEAR_CLOSED_READ else SimpleTrace.RESULT_HEAR_CLOSED_GONE)
+        announcer.stop()
+        val request = if (content != null) {
+            AnnouncementRequest(null, AnnouncementKind.CONTENT, content)
+        } else {
+            AnnouncementRequest(null, AnnouncementKind.ACTION_RESULT, getString(R.string.ui_result_hear_closed_gone))
+        }
+        scope.launch { announcer.announce(request) }
     }
 
     /** A deny sentence ("확인이 필요한 팝업이에요", the scam warning) is said once per popup key per session (LG 10/31: it looped). */
@@ -973,6 +1008,8 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
         val shown = SimplePromptOptions.adjust(withRemember, listOfNotNull(xMove) + popup.scan.riskButtons, failedButtons[keyOf(popup)].orEmpty(), failedNow)
         prompted = popup
         focusedBeforeClose = false
+        // F41: the next popup: what the last card would say is forgotten.
+        lastClosed.forget()
         val result = presenter.present(shown) { answer -> onAnswer(popup, answer) }
         if (result != PromptShowResult.SHOWN) {
             prompted = null
@@ -1601,6 +1638,7 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
         reclaim = null
         preClickTarget = null
         lastClosedMemory = null
+        lastClosed.forget()
         skippedAt.clear()
         autoFailed.clear()
         failedButtons.clear()

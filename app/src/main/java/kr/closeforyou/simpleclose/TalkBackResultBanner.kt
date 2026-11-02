@@ -11,6 +11,8 @@ import android.view.View
 import android.view.WindowManager
 import android.view.accessibility.AccessibilityManager
 import android.view.accessibility.AccessibilityNodeInfo
+import android.widget.Button
+import android.widget.LinearLayout
 import android.widget.TextView
 
 /**
@@ -30,15 +32,25 @@ import android.widget.TextView
  * page (never back into the old popup), unless the person already moved it.
  * Main thread. Device check needed (does TalkBack read a live region in an accessibility overlay
  * window, does it follow a focus requested from the overlay's own view; LG Android 12 / TalkBack version).
+ *
+ * F41: with `hearClosed` the card also has a [방금 닫은 내용 듣기] button under the sentence (TalkBack reaches it
+ * with one swipe; its label is its own text). [onGone] runs when a shown card goes away (timeout, [dismiss],
+ * or replaced by the next card), so what the button would say is forgotten with it.
  */
 class TalkBackResultBanner(
     private val service: AccessibilityService,
     /** F17: called right before a card that still holds TalkBack's focus is removed. */
     private val beforeFocusedDismiss: () -> Unit = {},
+    /** F41: a shown card went away. */
+    private val onGone: () -> Unit = {},
 ) {
     private val windowManager = service.getSystemService(WindowManager::class.java)
     private val handler = Handler(Looper.getMainLooper())
+    /** The card's window root: the sentence itself, or (F41) the sentence and its button. */
     private var shown: View? = null
+    /** The sentence's view, which takes TalkBack's focus. */
+    private var sentenceView: TextView? = null
+    private var buttonView: View? = null
     private var focusMode = false
 
     /** TalkBack (touch exploration) is on: results should go through it. */
@@ -49,21 +61,45 @@ class TalkBackResultBanner(
      * [onShown] says, once the text is set, whether the card is really on screen (debug log, F12), and
      * (F17, [takeFocus]) whether it took TalkBack's focus.
      */
-    fun show(sentence: String, takeFocus: Boolean = false, onShown: (shown: Boolean, focused: Boolean) -> Unit = { _, _ -> }): Boolean {
+    fun show(
+        sentence: String,
+        takeFocus: Boolean = false,
+        /** F41: the button's label and what it does; null = the sentence only, as before. */
+        hearClosed: Pair<String, () -> Unit>? = null,
+        onShown: (shown: Boolean, focused: Boolean) -> Unit = { _, _ -> },
+    ): Boolean {
         dismiss()
         val density = service.resources.displayMetrics.density
+        val pad = (16 * density).toInt()
+        val cardBackground = GradientDrawable().apply {
+            setColor(0xE6202A44.toInt())
+            cornerRadius = 16 * density
+        }
         val view = TextView(service).apply {
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 20f)
             setTextColor(0xFFFFFFFF.toInt())
-            val pad = (16 * density).toInt()
             setPadding(pad, pad / 2, pad, pad / 2)
-            background = GradientDrawable().apply {
-                setColor(0xE6202A44.toInt())
-                cornerRadius = 16 * density
-            }
+            if (hearClosed == null) background = cardBackground
             if (!takeFocus) accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_POLITE
             importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_YES
             if (takeFocus) text = sentence
+        }
+        val button = hearClosed?.let { (label, onPress) ->
+            Button(service).apply {
+                text = label
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 18f)
+                minHeight = (48 * density).toInt()
+                setOnClickListener { onPress() }
+            }
+        }
+        val root: View = if (button == null) view else LinearLayout(service).apply {
+            orientation = LinearLayout.VERTICAL
+            background = cardBackground
+            setPadding(0, 0, pad / 2, pad / 2)
+            addView(view)
+            addView(button, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
+                marginStart = pad
+            })
         }
         val params = WindowManager.LayoutParams(
             WindowManager.LayoutParams.WRAP_CONTENT,
@@ -76,8 +112,10 @@ class TalkBackResultBanner(
             y = (96 * density).toInt()
         }
         return try {
-            windowManager.addView(view, params)
-            shown = view
+            windowManager.addView(root, params)
+            shown = root
+            sentenceView = view
+            buttonView = button
             focusMode = takeFocus
             view.post {
                 val onScreen = view.isAttachedToWindow && view.isShown
@@ -97,17 +135,19 @@ class TalkBackResultBanner(
                 }
                 onShown(onScreen, focused)
             }
-            handler.postDelayed({ if (shown === view) dismiss() }, if (takeFocus) FOCUSED_SHOW_MILLIS else SHOW_MILLIS)
+            handler.postDelayed({ if (shown === root) dismiss() }, if (takeFocus) FOCUSED_SHOW_MILLIS else SHOW_MILLIS)
             true
         } catch (e: RuntimeException) {
             shown = null
+            sentenceView = null
+            buttonView = null
             false
         }
     }
 
     /** F17: TalkBack's focus back on the card (the page took it during the reclaim watch); false when there is no card. */
     fun refocus(): Boolean {
-        val view = shown ?: return false
+        val view = sentenceView ?: return false
         return focusMode && view.performAccessibilityAction(AccessibilityNodeInfo.ACTION_ACCESSIBILITY_FOCUS, null)
     }
 
@@ -117,8 +157,13 @@ class TalkBackResultBanner(
     fun dismiss() {
         val view = shown ?: return
         shown = null
+        val sentence = sentenceView
+        val button = buttonView
+        sentenceView = null
+        buttonView = null
         // F17: removed under TalkBack's focus, the focus could fall back into the old popup: the page first.
-        if (focusMode && hasAccessibilityFocus(view)) {
+        // F41: also when the person had swiped onto the card's button.
+        if ((focusMode && sentence != null && hasAccessibilityFocus(sentence)) || (button != null && hasAccessibilityFocus(button))) {
             try { beforeFocusedDismiss() } catch (_: RuntimeException) {}
         }
         focusMode = false
@@ -126,6 +171,7 @@ class TalkBackResultBanner(
             windowManager.removeView(view)
         } catch (_: RuntimeException) {
         }
+        try { onGone() } catch (_: RuntimeException) {}
     }
 
     private fun hasAccessibilityFocus(view: View): Boolean = try {

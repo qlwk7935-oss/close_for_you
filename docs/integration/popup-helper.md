@@ -781,6 +781,21 @@ F26 자동 확인: 옥션 웹 감지 1.3초·재확인 308ms·`READ_DUTY_PCT` 7.
 - **이유:** 이 버튼은 닫기에 더해 "한동안 안 보기"라는 설정을 바꾼다. 가장 조심스러운 프리셋에서는 사람이 정하게 한다.
 - 검증(F40): 5개 Gradle 작업 통과, 단위 시험 debug 1317개·release 1302개 실패 0, lintDebug 오류 0(경고 14), INTERNET 0. 시험 추가 `F40Test` 3개.
 
+### 8-33. F41 — 결과 카드 [방금 닫은 내용 듣기] (JVM 시험만, 실기기 미검증)
+
+- **무엇:** 닫았다는 결과 카드 아래에 [방금 닫은 내용 듣기] 버튼을 둔다. 누르면 닫은 팝업의 글자를 우리 TTS로 읽는다. 선택 창의 [내용 다시 읽기]와 같은 문장이다(`PromptSpeech.content`).
+  - TalkBack 켬: 카드 문장에 초점이 가고, 오른쪽으로 한 번 쓸면 버튼이다. TalkBack 라벨은 버튼 글자 그대로 "방금 닫은 내용 듣기, 버튼"이다.
+  - TalkBack 끔: 결과 문장은 전처럼 TTS로 말한다. 다시 들을 글자가 있을 때만 카드가 화면에 뜬다. live region은 TalkBack 없이 말하지 않으므로 두 번 말하지 않는다.
+- **메모리만 쓴다(`LastClosedContent`):** 저장·로그를 하지 않는다. `toString`도 가린다.
+  - 지우는 때: 카드가 사라질 때(시간 초과·교체·`dismiss`, `TalkBackResultBanner.onGone`), 다음 팝업을 처리할 때(선택 창을 띄울 때·자동으로 누르기 전), 서비스가 끝날 때.
+  - 다음 팝업이 와서 지운 뒤 카드 버튼을 누르면 "방금 닫은 내용은 지웠어요."라고 말한다.
+- **글자 없는 팝업:** 버튼을 숨긴다(`PromptSpeech.contentOrNull`이 null).
+- 같이 바뀐 것: `lastClosedMemory`(카드가 사라질 때 초점을 둘 곳 계산용)를 TalkBack 초점 경로만이 아니라 모든 결과 경로에서 채운다.
+- 진단 코드(글자 없음): `RESULT_HEAR_CLOSED_OFFERED` / `_READ` / `_GONE`
+- 문자열: `ui_result_hear_closed`, `ui_result_hear_closed_gone`(`ui_voice_strings.xml`)
+- 검증(F41): 5개 Gradle 작업 통과, 단위 시험 debug 1320개·release 1305개 실패 0, lintDebug 오류 0(경고 14), INTERNET 0. 시험 추가 `F41Test` 3개.
+  - 카드 화면·TalkBack 이동은 JVM으로 시험할 수 없다. 실기기 확인이 필요하다.
+
 - 잔여 노드 쪽 이벤트 무시: TalkBack이 무엇을 읽을지는 앱이 막을 수 없다. 대신 포커스를 잔여 노드 밖으로 옮기는 것(F9)이 할 수 있는 전부. 웹 페이지가 닫힌 팝업을 DOM에 `aria-hidden` 없이 남기는 한, 사용자가 스와이프로 다시 만날 수 있다(한계로 기록).
 - 선택 창 PROMPT도 TalkBack 큐로? 가능은 하다: 선택 창 자체(이미 접근성 오버레이)에 paneTitle이 있고 TalkBack이 창을 읽으므로, "안내 맡기기" ON이면 우리 TTS PROMPT를 끄고 paneTitle/첫 버튼 포커스 낭독에 맡기는 방식. 단, 지금 PROMPT는 TalkBack이 팝업을 읽는 도중 끊고 들어가야 시연이 빠르므로 polite로 바꾸면 늦어질 수 있다. F11 배너가 LG에서 잘 읽히면 같은 방식으로 옮길지 정하자(의견, 미구현).
 - 검증(F1~F11 한 빌드): 5개 Gradle 작업 통과, 단위 시험 debug 1028개·release 1013개 실패 0, lintDebug 오류 0(경고 12), 병합 매니페스트 INTERNET 0·새 권한 없음.
