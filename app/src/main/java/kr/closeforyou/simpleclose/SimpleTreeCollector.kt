@@ -53,6 +53,8 @@ class TreeRead(
     val boundsFromRoot: Boolean = false,
     /** F32: the windows of this read as one debug line of codes ([WindowBoundsRules.line]); logged when it changes. */
     val windowsLine: String? = null,
+    /** F43: the active window was judged by the bottom sheet rule (debug `BOTTOM_SHEET_*`). */
+    val bottomSheet: BottomSheetVerdict? = null,
 )
 
 /** F15: how a read went (debug log `READ_*`). F16: [APP_WINDOW], an app's own popup window above its main window. */
@@ -125,7 +127,8 @@ class SimpleTreeCollector(private val service: AccessibilityService) {
                     // F32: every window as a shape (its root's package compared in memory only), the active one with its root view.
                     val shapes = windows.map { shapeOf(it, packageName) }.map { if (it.id == root.windowId) it.copy(root = boundsOf(root)) else it }
                     val active = shapes.firstOrNull { it.id == root.windowId }
-                    val activeReject = if (active == null) ActiveWindowReject.NOT_LISTED else WindowBoundsRules.activeBounded(active, shapes, screen)
+                    val judgement = if (active == null) ActiveJudgement(ActiveWindowReject.NOT_LISTED) else WindowBoundsRules.activeJudgement(active, shapes, screen)
+                    val activeReject = judgement.reject
                     val bounded = activeReject == null
                     val activeByRoot = bounded && active != null && !WindowBoundsRules.bounded(active.window, null, screen)
                     val appRejects = mutableListOf<AppWindowReject>()
@@ -160,7 +163,7 @@ class SimpleTreeCollector(private val service: AccessibilityService) {
                                     return@collect TreeRead(packageName, window.id, nodes, screen, true, count.visited, count.skipped,
                                         TreeReadMode.APP_WINDOW, popupWindowId = window.id, depthCut = count.depthCut,
                                         passwordSeen = count.password, address = addressOf(root, packageName, nodes, lookUpAddress),
-                                        boundsFromRoot = windowByRoot, windowsLine = line())
+                                        boundsFromRoot = windowByRoot, windowsLine = line(), bottomSheet = judgement.sheet)
                                 }
                                 appRejects += if (count.aborted) AppWindowReject.CUT else AppWindowReject.NOT_POPUP
                                 appWindowIgnored = true
@@ -197,13 +200,13 @@ class SimpleTreeCollector(private val service: AccessibilityService) {
                                     probeVisited + count.visited, count.skipped, TreeReadMode.POPUP_SUBTREE, probeVisited, probeOutcome = outcome,
                                     appWindowIgnored = appWindowIgnored, depthCut = count.depthCut,
                                     passwordSeen = count.password, address = addressOf(root, packageName, nodes, lookUpAddress),
-                                    windowsLine = line())
+                                    windowsLine = line(), bottomSheet = judgement.sheet)
                             }
                         }
                         mode = TreeReadMode.FULL_AFTER_PROBE
                         if (!wholeIfProbeMisses) {
                             return@collect TreeRead(packageName, root.windowId, emptyList(), screen, false, probeVisited, 0, mode, probeVisited,
-                                probeOutcome = outcome, appWindowIgnored = appWindowIgnored, wholeAborted = aborted, windowsLine = line())
+                                probeOutcome = outcome, appWindowIgnored = appWindowIgnored, wholeAborted = aborted, windowsLine = line(), bottomSheet = judgement.sheet)
                         }
                     }
                     val nodes = ArrayList<NodeSnapshot>(256)
@@ -220,7 +223,7 @@ class SimpleTreeCollector(private val service: AccessibilityService) {
                     TreeRead(packageName, root.windowId, complete, screen, bounded, probeVisited + count.visited, count.skipped, mode, probeVisited,
                         probeOutcome = outcome, appWindowIgnored = appWindowIgnored, wholeAborted = aborted || count.aborted, depthCut = count.depthCut,
                         passwordSeen = count.password, address = addressOf(root, packageName, complete, lookUpAddress),
-                        boundsFromRoot = activeByRoot, windowsLine = line())
+                        boundsFromRoot = activeByRoot, windowsLine = line(), bottomSheet = judgement.sheet)
                 } finally {
                     windows.forEach(::release)
                 }
@@ -565,6 +568,7 @@ class SimpleTreeCollector(private val service: AccessibilityService) {
             AccessibilityWindowInfo.TYPE_INPUT_METHOD -> WindowKind.INPUT_METHOD
             AccessibilityWindowInfo.TYPE_SYSTEM -> WindowKind.SYSTEM
             AccessibilityWindowInfo.TYPE_ACCESSIBILITY_OVERLAY -> WindowKind.ACCESSIBILITY_OVERLAY
+            AccessibilityWindowInfo.TYPE_SPLIT_SCREEN_DIVIDER -> WindowKind.SPLIT_DIVIDER
             else -> WindowKind.OTHER
         }
         // Application windows only: one binder call each (the others are never a popup of the app).

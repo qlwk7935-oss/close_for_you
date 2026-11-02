@@ -335,6 +335,12 @@ enum class SimpleTrace {
     RESULT_CARD_HOLD_MAX,
     RESULT_CARD_TIMED_OUT,
     RESULT_CARD_REPLACED_BY_NEXT,
+    /**
+     * F43 ([WindowBoundsRules.bottomSheet]): the active app window, with nothing wider of its app listed, is sheet-shaped at
+     * the bottom: ACCEPTED as the popup window / REJECTED_SPLIT (a split-screen divider or another app window above it).
+     */
+    BOTTOM_SHEET_WINDOW_ACCEPTED,
+    BOTTOM_SHEET_REJECTED_SPLIT,
     ;
 
     companion object {

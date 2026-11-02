@@ -392,6 +392,11 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
         var videoAdWaiting = false
         if (read.appWindowIgnored) log.trace(SimpleTrace.APP_WINDOW_IGNORED)
         if (read.boundsFromRoot) log.trace(SimpleTrace.WINDOW_BOUNDS_FROM_ROOT)
+        when (read.bottomSheet) {
+            BottomSheetVerdict.ACCEPTED -> log.trace(SimpleTrace.BOTTOM_SHEET_WINDOW_ACCEPTED)
+            BottomSheetVerdict.REJECTED_SPLIT -> log.trace(SimpleTrace.BOTTOM_SHEET_REJECTED_SPLIT)
+            null -> Unit
+        }
         // F32: the windows of the read as one code line, only when it changed (not per event).
         read.windowsLine?.takeIf { it != lastWindowsLine }?.let { lastWindowsLine = it; log.line(it) }
         // F22 (LG 11/1: VIDEO_AD_MARKER_FOUND ×64 in a shopping app, a banner's "AD"): video ads only in YouTube.

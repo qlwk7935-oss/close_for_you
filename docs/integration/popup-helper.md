@@ -814,6 +814,23 @@ F26 자동 확인: 옥션 웹 감지 1.3초·재확인 308ms·`READ_DUTY_PCT` 7.
 - 진단(글자 없음): `RESULT_CARD_TIMEOUT_MS=<첫 시간 ms>`, `RESULT_CARD_HELD_FOCUS`(시간이 지났지만 초점이 있어 유지), `RESULT_CARD_FOCUS_LEFT`, `RESULT_CARD_HOLD_MAX`(15초까지 초점이 있어 사라짐), `RESULT_CARD_TIMED_OUT`, `RESULT_CARD_REPLACED_BY_NEXT`
 - 실기기 확인 필요: 오버레이 창 안 View의 `isAccessibilityFocused`가 TalkBack 초점을 그대로 보여 주는지(LG Android 12).
 
+### 8-36. F43 — P33 아래 시트를 못 찾음 (JVM 시험만, 실기기 미검증)
+
+- **증상**(준영 갤럭시 SM-M446K Android 16, c279ee3): P33이 TalkBack을 켜도 꺼도 `NO_POPUP_ROOT`. 진단 줄 `WINDOWS app=1 [... A*S:wPrP] active=NO_WIDER_SAME_APP_WINDOW`.
+- **원인(코드로 확인):** `WindowBoundsRules.activeBounded`는 활성 앱 창을 아래 셋 중 하나일 때만 팝업 창으로 본다.
+  - 창이 보이는 부분보다 1.2배 이상 크다(F30, 터치를 다 받는 Dialog).
+  - 화면 가운데 떠 있다(F33 `floating`: 가운데에서 가로 10%·세로 20% 안).
+  - 같은 앱의 더 큰 창이 함께 보인다(F12).
+  - P33 시트는 창과 뿌리가 같은 크기라 첫째가 아니다. 아래에 붙어 가운데가 아래로 치우치니 둘째도 아니다. 뒤 활동 창은 목록에 없어서 셋째도 아니다. 그래서 `NO_WIDER_SAME_APP_WINDOW`로 일반 창이 되고, 그 안에서 팝업 뿌리를 찾지 못했다. 실제 앱의 `BottomSheetDialog`도 같은 경로다.
+- **고침(`WindowBoundsRules.bottomSheet`):** 위 셋에 해당하지 않으면, 활성 앱 창이 아래 시트 모양인지 본다.
+  - 시트 모양: 폭이 화면의 90% 이상, 아래 끝이 화면 아래에서 8% 안(내비게이션 바 자리), 높이가 화면의 45% 이하(50:50 분할 화면 반쪽은 이보다 높다), 넓이가 화면의 5% 이상.
+  - 분할 화면 구분(`BOTTOM_SHEET_REJECTED_SPLIT`): 분할 화면 구분선 창(`TYPE_SPLIT_SCREEN_DIVIDER`, 진단 줄 `D`)이 목록에 있거나, 다른 앱 창(다른 앱이든 같은 앱의 다른 창이든)이 시트 위에 있으면(그 창의 아래 끝 ≤ 시트 위 끝 + 8%) 분할 화면으로 보고 받지 않는다. 분할 화면에서는 위쪽 앱이 화면에 보이므로 목록에 나온다. Dialog 시트 뒤의 활동 창은 목록에 없거나 화면 전체라서 "위에 있는 창"이 아니다.
+  - 같이 바꾼 것: F12의 "같은 앱의 더 큰 창"은 활성 창 아래에 깔려 있어야(활성 창 넓이의 절반 이상 겹침) 인정한다. 같은 앱을 위·아래 두 창으로 띄운 분할 화면에서 위 창이 더 크다는 이유만으로 아래 창을 팝업으로 보던 구멍을 막는다. Dialog와 그 활동 창은 늘 겹치므로 기존 사례는 그대로다.
+- 진단(글자 없음): `BOTTOM_SHEET_WINDOW_ACCEPTED`, `BOTTOM_SHEET_REJECTED_SPLIT`, 진단 줄 `active=BOTTOM_SHEET_SPLIT`, 창 종류 `D`(분할 구분선).
+- 고정한 기존 판정(`F43Test`, `F32RegressionTest`): P14 화면 전체 활동(NOT_BOUNDED), P15 토스트(시스템 창), 토스트 크기 앱 창, 아래 얇은 띠, 위 배너 창, 바닥에서 뜬 창, 50:50 분할 반쪽, F33 가운데 Dialog, F30 터치를 다 받는 Dialog, F12 활동 위 Dialog, 키보드. F33 시험의 "아래 시트 창만 있을 때 거절" 한 줄만 F43 뜻대로 "받음"으로 바꿨다. F29(닫힘 재확인) 시험은 노드 단위라 그대로 통과한다.
+- 검증(F43): 5개 Gradle 작업 통과, 단위 시험 debug 1330개·release 1315개 실패 0(`F43Test` 4개 추가), lintDebug 오류 0(경고 14), INTERNET 0.
+- 위험: 시트 창이 닫히는 애니메이션 동안 목록에 남으면 엄격 재확인이 잠깐 "다시 나타남"으로 볼 수 있다(F33 가운데 Dialog와 같은 조건, LG P04에서는 문제 없었음). 실기기 확인 필요.
+
 - 잔여 노드 쪽 이벤트 무시: TalkBack이 무엇을 읽을지는 앱이 막을 수 없다. 대신 포커스를 잔여 노드 밖으로 옮기는 것(F9)이 할 수 있는 전부. 웹 페이지가 닫힌 팝업을 DOM에 `aria-hidden` 없이 남기는 한, 사용자가 스와이프로 다시 만날 수 있다(한계로 기록).
 - 선택 창 PROMPT도 TalkBack 큐로? 가능은 하다: 선택 창 자체(이미 접근성 오버레이)에 paneTitle이 있고 TalkBack이 창을 읽으므로, "안내 맡기기" ON이면 우리 TTS PROMPT를 끄고 paneTitle/첫 버튼 포커스 낭독에 맡기는 방식. 단, 지금 PROMPT는 TalkBack이 팝업을 읽는 도중 끊고 들어가야 시연이 빠르므로 polite로 바꾸면 늦어질 수 있다. F11 배너가 LG에서 잘 읽히면 같은 방식으로 옮길지 정하자(의견, 미구현).
 - 검증(F1~F11 한 빌드): 5개 Gradle 작업 통과, 단위 시험 debug 1028개·release 1013개 실패 0, lintDebug 오류 0(경고 12), 병합 매니페스트 INTERNET 0·새 권한 없음.
