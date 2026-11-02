@@ -58,6 +58,9 @@ data class PopupRoot(
 ) {
     fun contains(node: NodeSnapshot): Boolean = members?.let { node.path in it } ?: (node.path == path || node.path.startsWith("$path/"))
 
+    /** B_DEMO_RULES.md 6-3: where the popup's words are when it is read again right before a press. */
+    fun rereadPaths(): Set<String> = members ?: setOf(path)
+
     /** "The same popup" while it is on screen, whatever its content repaints (carousel, countdown). */
     val key: String get() = "$kind:$path:${bounds.left},${bounds.top},${bounds.right},${bounds.bottom}"
 }
