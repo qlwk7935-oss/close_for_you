@@ -31,11 +31,11 @@ HEADER = TEMPLATE.read_text(encoding="utf-8").splitlines()[0]
 def trial(tid: str, site: str, outcome: str, clicked: str = "CLOSE", closed: str = "Y", forbidden: str = "N",
           misclick: str = "N", info: str = "Y", appeared: str = "Y", detected: str = "Y", kind: str = "",
           seconds: str = "1.5", notes: str = "", browser: str = "CHROME", preset: str = "CLOSE_ALL",
-          close_available: str = "Y", popup_type: str = "EVENT_POPUP") -> str:
+          close_available: str = "Y", popup_type: str = "EVENT_POPUP", human: str = "AD") -> str:
     fields = {
         "trial_id": tid, "site_id": site, "browser": browser, "date": "2026-11-02", "tester": "D",
         "device": "synthetic", "android": "14", "app_build": "test", "talkback": "Y", "preset": preset,
-        "popup_type": popup_type, "popup_appeared": appeared, "detected": detected,
+        "popup_type": popup_type, "human_kind": human, "popup_appeared": appeared, "detected": detected,
         "detected_code": "DETECTED_DIALOG_WINDOW" if detected == "Y" else "", "classified_code": "",
         "observed_kind": kind, "outcome": outcome, "clicked_target": clicked, "close_available": close_available,
         "closed_verified": closed, "forbidden_click": forbidden, "misclick": misclick, "info_correct": info,
@@ -105,6 +105,26 @@ class RealSiteMetricsTest(unittest.TestCase):
         result = run([trial("T1", "L05", "CLOSED_BY_APP", clicked="SKIP", kind="UNKNOWN")])
         self.assertIn("| L05 | video | CLOSE_OK | 1 | 1 | 0 | - |", result.stdout)
         self.assertIn("기대 분류와 일치(건너뛰기 제외) | N/A (0건)", result.stdout)
+
+    def test_closing_a_notice_without_asking_is_a_wrong_close(self):
+        result = run([trial("T1", "L01", "CLOSED_BY_APP", human="NOTICE", kind="ADVERTISEMENT",
+                            popup_type="NOTICE_POPUP")])
+        self.assertEqual(0, result.returncode, result.stderr)  # 안전 실패(금지 버튼)는 아님
+        self.assertIn("WRONG_KIND_CLOSE", result.stdout)
+        self.assertIn("잘못 닫음(공지·결정 등을 묻지 않고 닫아 내용을 놓침) | 1건", result.stdout)
+        self.assertIn("사람 NOTICE → 앱 ADVERTISEMENT / CLOSE_ALL", result.stdout)
+
+    def test_wrong_close_depends_on_the_preset(self):
+        coupon_ads_only = run([trial("T1", "L01", "CLOSED_BY_APP", human="COUPON", preset="CLOSE_ADS_ONLY")])
+        self.assertIn("WRONG_KIND_CLOSE", coupon_ads_only.stdout)
+        coupon_all = run([trial("T2", "L01", "CLOSED_BY_APP", human="COUPON", preset="CLOSE_ALL")])
+        self.assertNotIn("WRONG_KIND_CLOSE", coupon_all.stdout)
+        asked_notice = run([trial("T3", "L04", "USER_CONFIRMED", human="NOTICE")])
+        self.assertNotIn("WRONG_KIND_CLOSE", asked_notice.stdout)  # 물어본 뒤 사용자가 닫은 것은 괜찮음
+
+    def test_unknown_auto_closes_are_counted(self):
+        result = run([trial("T1", "L01", "CLOSED_BY_APP", kind="UNKNOWN", human="OTHER")])
+        self.assertIn("판단 불가(UNKNOWN)인데 자동으로 닫음(F7) | 1건", result.stdout)
 
     def test_screen_text_in_notes_is_rejected(self):
         result = run([trial("T1", "L01", "CLOSED_BY_APP", notes="지금 구매하기")])
