@@ -156,6 +156,8 @@ enum class SimpleTrace {
     PROBE_MISS,
     /** F20: after a close looked confirmed, the same popup was there again (strict check): not a close. */
     CLOSE_REAPPEARED,
+    /** B_DEMO_RULES.md 10절: a popup stood where the closed one was, without any of its words: counted as closed, the other popup is judged next. */
+    CLOSE_NEXT_POPUP_NOT_BACK,
     /** F20: an automatic close did not close; no result card, no focus move, the prompt asks at once. */
     AUTO_CLOSE_FAILED_ASKED,
     /** F21: the person's own press did not close it: asked again at once without that button. */

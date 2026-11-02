@@ -1687,6 +1687,7 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
                 var previous: Reappearance? = null
                 var reads = 0
                 var back: Boolean
+                var anotherPopup = false
                 while (true) {
                     delay(SimpleCloseEngineFeature.CLOSE_RECHECK_MILLIS)
                     val found = withContext(Dispatchers.Default) {
@@ -1696,6 +1697,7 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
                             appWindows = popup.root.kind == PopupRootKind.APP_WINDOW, lookUpAddress = false)
                             ?: return@withContext null
                         val root = PopupRootFinder.find(again.nodes, again.screen, again.activeWindowBounded) ?: return@withContext null
+                        anotherPopup = memory.replacedByAnotherPopup(root, again.nodes, again.screen)
                         memory.reappearance(root, again.nodes, again.screen)
                     }
                     reads += 1
@@ -1716,6 +1718,8 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
                 }
                 log.latency("CLOSE_RECHECK_MS", SystemClock.uptimeMillis() - recheckStart)
                 log.latency("CLOSE_RECHECK_READS", reads.toLong())
+                // B_DEMO_RULES.md 10절: "closed" only because the popup's own words are gone; a code to find a wrong "closed" by.
+                if (!back && anotherPopup) log.trace(SimpleTrace.CLOSE_NEXT_POPUP_NOT_BACK)
                 if (back) {
                     if (notClosedWhy != SimpleTrace.NOT_CLOSED_STILL_MOVING) notClosedWhy = SimpleTrace.NOT_CLOSED_REAPPEARED
                     log.trace(SimpleTrace.CLOSE_REAPPEARED)

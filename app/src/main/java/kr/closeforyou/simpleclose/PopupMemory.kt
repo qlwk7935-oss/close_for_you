@@ -19,6 +19,8 @@ class PopupMemory(
     private val area: ScreenBounds? = null,
     /** F29: the popup root's own bounds when it was found (null in old callers: never "in place"). */
     private val rootBounds: ScreenBounds? = null,
+    /** B_DEMO_RULES.md 10절: the popup's own words, without its button names (empty = none to tell it apart by). */
+    private val bodyWords: Set<String> = emptySet(),
 ) {
     fun matches(text: String?, description: String?, nodeBounds: ScreenBounds): Boolean =
         sameTextOrPlace(text, description, nodeBounds) || overlapsArea(nodeBounds)
@@ -42,14 +44,8 @@ class PopupMemory(
      * [Reappearance.inPlace]: its root and every matched node sit exactly where they were before the press.
      */
     fun reappearance(root: PopupRoot, nodes: List<NodeSnapshot>, screen: ScreenBounds? = null): Reappearance? {
-        if (area != null && !overlaps(area, root.bounds)) return null
-        if (screen != null && !(root.bounds.width > 0 && root.bounds.height > 0 && overlaps(root.bounds, screen))) return null
-        val matched = nodes.filter { node ->
-            root.contains(node) && (!node.text.isNullOrBlank() || !node.contentDescription.isNullOrBlank()) &&
-                (screen == null || PopupRootFinder.isVisible(node, screen)) &&
-                sameTextOrPlace(node.text, node.contentDescription, node.bounds)
-        }
-        if (matched.isEmpty()) return null
+        val matched = matchedNodes(root, nodes, screen)
+        if (matched.isEmpty() || isAnotherPopup(root, nodes, screen)) return null
         val places = matched.map { it.bounds }
         return Reappearance(
             inPlace = rootBounds != null && root.bounds == rootBounds && places.all { it in bounds },
@@ -65,6 +61,34 @@ class PopupMemory(
     fun foundAnywhere(root: PopupRoot, nodes: List<NodeSnapshot>, screen: ScreenBounds): Boolean = nodes.any { node ->
         root.contains(node) && PopupRootFinder.isVisible(node, screen) &&
             ((node.text?.isNotBlank() == true && node.text in texts) || (node.contentDescription?.isNotBlank() == true && node.contentDescription in texts))
+    }
+
+    /**
+     * B_DEMO_RULES.md 10절 (갤럭시 11/2 P12: the next popup's "닫기" at the same place counted as this popup back, so a
+     * close that worked was reported as failed): both popups have words of their own and none of ours is left.
+     * A popup without words of its own stays "the same" as before; the next popup is still asked ([ChainGuard]).
+     */
+    private fun isAnotherPopup(root: PopupRoot, nodes: List<NodeSnapshot>, screen: ScreenBounds?): Boolean {
+        if (bodyWords.isEmpty()) return false
+        val now = nodes.filter { root.contains(it) && (screen == null || PopupRootFinder.isVisible(it, screen)) }.flatMap(::wordsOf)
+        return now.isNotEmpty() && now.none { it in bodyWords }
+    }
+
+    /**
+     * B_DEMO_RULES.md 10절: the rule of [isAnotherPopup] is what made this popup "closed" although the old check called it
+     * back, so the debug log can tell these closes apart (`CLOSE_NEXT_POPUP_NOT_BACK`).
+     */
+    fun replacedByAnotherPopup(root: PopupRoot, nodes: List<NodeSnapshot>, screen: ScreenBounds? = null): Boolean =
+        matchedNodes(root, nodes, screen).isNotEmpty() && isAnotherPopup(root, nodes, screen)
+
+    private fun matchedNodes(root: PopupRoot, nodes: List<NodeSnapshot>, screen: ScreenBounds?): List<NodeSnapshot> {
+        if (area != null && !overlaps(area, root.bounds)) return emptyList()
+        if (screen != null && !(root.bounds.width > 0 && root.bounds.height > 0 && overlaps(root.bounds, screen))) return emptyList()
+        return nodes.filter { node ->
+            root.contains(node) && (!node.text.isNullOrBlank() || !node.contentDescription.isNullOrBlank()) &&
+                (screen == null || PopupRootFinder.isVisible(node, screen)) &&
+                sameTextOrPlace(node.text, node.contentDescription, node.bounds)
+        }
     }
 
     /** Wholly above the popup's area (F9 fallback ①); false when the area is unknown. */
@@ -84,8 +108,17 @@ class PopupMemory(
                 inside.map { it.bounds }.toSet(),
                 popup.root.bounds.takeIf { screenArea > 0 && rootArea < screenArea * FULL_SCREEN_SHARE },
                 popup.root.bounds,
+                inside.flatMap(::wordsOf).toSet() - buttonNames(popup),
             )
         }
+
+        /** A node's words, unless it is a button. */
+        private fun wordsOf(node: NodeSnapshot): List<String> =
+            if (node.className?.contains("Button") == true) emptyList()
+            else listOfNotNull(node.text, node.contentDescription).filter { it.isNotBlank() }
+
+        private fun buttonNames(popup: SimplePopup): Set<String> =
+            (popup.scan.candidates + listOfNotNull(popup.scan.xButton)).mapNotNull { it.label }.toSet()
 
         /** Strict overlap (touching edges do not count). */
         fun overlaps(a: ScreenBounds, b: ScreenBounds): Boolean =
