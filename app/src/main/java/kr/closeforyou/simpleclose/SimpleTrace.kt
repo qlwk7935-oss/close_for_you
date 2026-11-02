@@ -356,6 +356,20 @@ enum class SimpleTrace {
      * `RESULT_CARD_READ_HOLD_MS=<ms>` ([ResultCardClock.readHoldMillis]).
      */
     RESULT_CARD_RESTARTED_ON_READ,
+    /**
+     * F47 ([ReclaimDeferral]): a focus move we did not make is taken back only after a short wait (DEFERRED);
+     * the person's touch or gesture came with it, so it is theirs (SKIPPED_USER_MOVE, the watch ends).
+     * Our prompt's first focus: looked after (HOLD_STARTED), moved away by TalkBack or the app (LOST), put back
+     * (RECLAIMED / RECLAIM_FAILED), ended by the person's touch (HOLD_END_BY_USER) or after 2 times (HOLD_LIMIT).
+     */
+    FOCUS_RECLAIM_DEFERRED,
+    FOCUS_RECLAIM_SKIPPED_USER_MOVE,
+    PROMPT_FOCUS_HOLD_STARTED,
+    PROMPT_FOCUS_LOST,
+    PROMPT_FOCUS_RECLAIMED,
+    PROMPT_FOCUS_RECLAIM_FAILED,
+    PROMPT_FOCUS_HOLD_END_BY_USER,
+    PROMPT_FOCUS_HOLD_LIMIT,
     ;
 
     companion object {

@@ -893,7 +893,38 @@ F26 자동 확인: 옥션 웹 감지 1.3초·재확인 308ms·`READ_DUTY_PCT` 7.
     - 형식: `PROMPT_FOCUS target=FIRST_ITEM result=<마지막> attempts=<n> tries=[<결과:횟수>…] own=<우리 앱 오버레이 창 수> titleNull=<제목 없음> titleOther=<다른 제목>`
     - 창 수 셋은 우리 창을 못 찾은 시도가 있을 때만 붙는다.
 - 공용 계약(core/model·contract)은 바꾸지 않았다. `PromptFocus`에 기본 구현이 있는 `finished`를 더한 것은 C 패키지 안의 인터페이스다.
+- 실측(11/3, 총괄 전달, `76245ff`): 우진 11번가 결정 팝업 3회 모두 `PROMPT_FOCUS target=FIRST_ITEM result=OK`(tries `NO_OWN_WINDOW:2`, `OK:1`). 그런데 초점은 1/3만 선택 창에 남았다. 원인 후보 3("요청은 성공했는데 뒤이어 초점을 가져감")에 해당하며 F47에서 다룬다.
 - 검증(F46): 5개 Gradle 작업 통과, 단위 시험 debug 1345개·release 1330개 실패 0(`F46Test` 5개 추가), lintDebug 오류 0(경고 15, 그대로), INTERNET 0.
+
+### 8-40. F47 — 되찾기 유예: 사용자 스와이프는 되돌리지 않고, 선택 창 첫 초점은 지킨다 (JVM 시험만, 실기기 미검증)
+
+- **증상 1**(우진 SM-F966N, `76245ff`, TalkBack 켬): 결과 카드에서 한 손가락 스와이프로 페이지로 나가려 하면 되돌아왔다.
+  - 로그: `FOCUS_OTHER_ON_PAGE` 25.131 → `FOCUS_RECLAIM_CARD_AFTER_CLEAR`·`FOCUS_RECLAIM_PAGE_TO_CARD` 25.134 → `FOCUS_RECLAIM_STOPPED_BY_USER` 25.348.
+  - 스와이프의 터치 이벤트가 초점 이동보다 약 214ms 늦게 왔는데, 되찾기는 3ms 만에 했다.
+- **증상 2**(같은 기기, 11번가 결정 팝업): `PROMPT_FOCUS result=OK`였는데 2/3은 첫 줄로 온 직후 초점이 원래 팝업으로 돌아갔다.
+- **고침(`ReclaimDeferral`, 순수):** 우리가 하지 않은 초점 이동을 보면 바로 되찾지 않고 `DEFER_MILLIS` 400ms 기다린다(`FOCUS_RECLAIM_DEFERRED`).
+  - 그사이에 사용자의 터치·제스처 이벤트가 오면 사용자 이동으로 보고 되찾지 않는다(`FOCUS_RECLAIM_SKIPPED_USER_MOVE`, 감시 종료). 이동 전 `USER_BEFORE_MILLIS` 500ms 안에 온 이벤트도 같다. 이벤트 종류는 `TYPE_TOUCH_INTERACTION_START`, `TYPE_GESTURE_DETECTION_START`, `TYPE_TOUCH_EXPLORATION_GESTURE_START`이며, 서비스 설정이 받는 것은 이 셋뿐이다.
+  - 그 뒤에 다른 초점 이동이 또 왔으면 그 이동의 유예가 정한다.
+  - 초점이 이미 카드에 돌아와 있으면 아무것도 안 한다.
+  - 최대 횟수(3번)는 그대로다.
+  - 400ms의 근거: 실측 지연 214ms(한 번, 우리 서비스 `notificationTimeout` 100ms)의 약 2배. 페이지가 스스로 초점을 가져간 경우에는 TalkBack이 많이 읽기 전에 되찾을 수 있는 길이다.
+- **F17 터치 유예(800ms) 확인:**
+  - 감시를 시작한 직후 800ms 안의 터치는 [닫기]를 고른 두 번 탭으로 보고 무시한다. 새 규칙에서도 이 터치는 사용자 이동으로 세지 않는다(`userTouchAfterGrace`).
+  - 실측 로그에서는 감시 시작(누른 순간)과 스와이프 사이가 카드 표시(0.9초 전)보다 길었으므로, 이 유예가 원인은 아니다(추정).
+  - 다만 감시 시작 뒤 800ms 안의 진짜 스와이프는 지금도 무시된다(한계).
+- **선택 창 첫 초점 지키기:** 첫 초점이 성공하면(`OK`·`AFTER_CLEAR`·`ALREADY_FOCUSED`, 창마다 한 번) 2초 동안 지킨다(`PROMPT_FOCUS_HOLD_STARTED`).
+  - 다른 앱 쪽으로 초점이 가면 `PROMPT_FOCUS_LOST`를 남기고 같은 400ms 유예를 거친다. 사용자 조작이 없고 선택 창이 그대로면 첫 항목으로 되찾는다(`PROMPT_FOCUS_RECLAIMED`, 실패하면 `_RECLAIM_FAILED`). 최대 2번까지이고, 넘으면 `PROMPT_FOCUS_HOLD_LIMIT`.
+  - 사용자 터치·제스처가 오면 즉시 끝난다(`PROMPT_FOCUS_HOLD_END_BY_USER`). 사용자가 고르거나 선택 창이 사라져도 끝난다.
+  - TalkBack 안내 맡기기 설정이 꺼져 있으면 `PromptFocus.NONE`이라 시작하지 않는다.
+- **바뀐 파일:**
+  - 새 파일 `simpleclose/ReclaimDeferral.kt`
+  - `SimpleCloseAccessibilityService.kt`(유예, `reclaimToCard`·`reclaimToTarget`으로 분리, `PromptHold`)
+  - `TalkBackResultBanner.focusIsOnCard`
+  - `AccessibilityChoiceOverlay`(`onFirstFocus`)
+  - `PromptFocusTally.lastMoved`
+  - `SimpleTrace`
+  - 새 시험 `F47Test`
+- 검증(F47): 5개 Gradle 작업 통과, 단위 시험 debug 1351개·release 1336개 실패 0(`F47Test` 6개 추가), lintDebug 오류 0(경고 15, 그대로), INTERNET 0.
 
 - 잔여 노드 쪽 이벤트 무시: TalkBack이 무엇을 읽을지는 앱이 막을 수 없다. 대신 포커스를 잔여 노드 밖으로 옮기는 것(F9)이 할 수 있는 전부. 웹 페이지가 닫힌 팝업을 DOM에 `aria-hidden` 없이 남기는 한, 사용자가 스와이프로 다시 만날 수 있다(한계로 기록).
 - 선택 창 PROMPT도 TalkBack 큐로? 가능은 하다: 선택 창 자체(이미 접근성 오버레이)에 paneTitle이 있고 TalkBack이 창을 읽으므로, "안내 맡기기" ON이면 우리 TTS PROMPT를 끄고 paneTitle/첫 버튼 포커스 낭독에 맡기는 방식. 단, 지금 PROMPT는 TalkBack이 팝업을 읽는 도중 끊고 들어가야 시연이 빠르므로 polite로 바꾸면 늦어질 수 있다. F11 배너가 LG에서 잘 읽히면 같은 방식으로 옮길지 정하자(의견, 미구현).

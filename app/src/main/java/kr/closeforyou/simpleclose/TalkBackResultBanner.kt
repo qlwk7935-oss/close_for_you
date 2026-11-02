@@ -313,6 +313,9 @@ class TalkBackResultBanner(
         return hold
     }
 
+    /** F47: the system's accessibility focus is on the shown card now (its sentence or button). */
+    fun focusIsOnCard(): Boolean = shown != null && focusInside()
+
     /** A card shown with the focus is on screen: the reclaim watch puts the focus back here. */
     val holdsFocusTarget: Boolean get() = shown != null && focusMode
 

@@ -68,6 +68,9 @@ class PromptFocusTally {
 
     fun line(target: TakeoverFocusTarget, attempts: Int): String = PromptFocusRules.line(target, attempts, outcomes, last, windows)
 
+    /** F47: the last try moved the focus. */
+    val lastMoved: Boolean get() = last?.moved == true
+
     fun clear() {
         outcomes.clear()
         last = null

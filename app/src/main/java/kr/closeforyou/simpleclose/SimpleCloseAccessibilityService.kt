@@ -61,9 +61,11 @@ import kr.closeforyou.ui.voice.overlay.PromptAnnounceMode
 import kr.closeforyou.ui.voice.overlay.PromptAnnouncementListener
 import kr.closeforyou.ui.voice.overlay.PromptAnswer
 import kr.closeforyou.ui.voice.overlay.PromptControlsSupport
+import kr.closeforyou.ui.voice.overlay.PromptFocus
 import kr.closeforyou.ui.voice.overlay.PromptShowResult
 import kr.closeforyou.ui.voice.overlay.PromptSpeech
 import kr.closeforyou.ui.voice.overlay.TalkBackTakeoverPlan
+import kr.closeforyou.ui.voice.overlay.TakeoverFocusTarget
 import kr.closeforyou.ui.voice.settings.SpeechRates
 import kr.closeforyou.ui.voice.settings.UiVoicePreferences
 import kr.closeforyou.ui.voice.settings.autoCloseKinds
@@ -140,6 +142,11 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
      * [preClickTarget]: a copy of the node focused right before the press, its first target.
      */
     private var reclaim: FocusReclaim? = null
+    /** F47: the person's last touch or gesture event (uptime ms, -1 = none), and every focus move we saw from another app. */
+    private var lastTouchAt = -1L
+    private var focusMoveSeq = 0L
+    /** F47: our prompt's first focus, looked after for [ReclaimDeferral.PROMPT_HOLD_MILLIS]. */
+    private var promptHold: PromptHold? = null
     private var preClickTarget: AccessibilityNodeInfo? = null
     /** F17: the popup the focused result card is about, so the card's removal moves the focus to the page, not back there. */
     private var lastClosedMemory: PopupMemory? = null
@@ -265,6 +272,11 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
             beforeClose = ::focusPageBeforeOurWindowGoes,
             // F46: the prompt's focus moves as one code line each (Debug only).
             focusTrace = { log.line(it) },
+            // F47: the first focus came: looked after for a short while.
+            onFirstFocus = { focus ->
+                promptHold = PromptHold(focus, SystemClock.uptimeMillis())
+                log.trace(SimpleTrace.PROMPT_FOCUS_HOLD_STARTED)
+            },
         )
         resultBanner = TalkBackResultBanner(this, beforeFocusedDismiss = {
             lastOwnFocusAt = SystemClock.uptimeMillis()
@@ -277,6 +289,12 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
         if (event == null || overlay == null) return
         // F15: the person touches the screen or makes a gesture: the focus is theirs again.
         if (event.eventType in USER_TOUCH_EVENTS) {
+            lastTouchAt = SystemClock.uptimeMillis()
+            // F47: the person touches our prompt or the page: the prompt's first focus is theirs now.
+            if (promptHold != null) {
+                promptHold = null
+                log.trace(SimpleTrace.PROMPT_FOCUS_HOLD_END_BY_USER)
+            }
             // F17: the double tap that chose [닫기] on our window can arrive after the watch began: not a new touch.
             val watch = reclaim
             if (watch != null && SystemClock.uptimeMillis() - watch.armedAt > SimpleCloseEngineFeature.FOCUS_RECLAIM_TOUCH_GRACE_MILLIS) {
@@ -308,7 +326,11 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
             SystemClock.uptimeMillis() - lastOwnFocusAt > OWN_FOCUS_ECHO_MILLIS) {
             focusMovesByOthers += 1
         }
-        if (event.eventType == AccessibilityEvent.TYPE_VIEW_ACCESSIBILITY_FOCUSED) reclaim?.let { focusMovedDuringReclaim(it, event) }
+        if (event.eventType == AccessibilityEvent.TYPE_VIEW_ACCESSIBILITY_FOCUSED) {
+            focusMoveSeq += 1
+            promptHold?.let(::focusMovedDuringPromptHold)
+            reclaim?.let { focusMovedDuringReclaim(it, event) }
+        }
         val kind = when (event.eventType) {
             AccessibilityEvent.TYPE_VIEW_ACCESSIBILITY_FOCUSED -> SimpleInspectionEvent.TALKBACK_FOCUS
             AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED -> contentKind(event)
@@ -1210,6 +1232,7 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
      * into the popup, which it read again (LG 11/1). Main thread, a bounded walk; nothing is clicked.
      */
     private fun focusPageBeforeOurWindowGoes(answer: PromptAnswer) {
+        promptHold = null
         val kind = (answer as? PromptAnswer.Picked)?.choice?.kind ?: return
         if (kind != ChoiceKind.CLOSE_ONCE && kind != ChoiceKind.SKIP_ONCE && kind != ChoiceKind.REMEMBER_EXACT_POPUP) return
         val popup = prompted ?: return
@@ -1247,43 +1270,126 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
             val ours = if (target != null) focused?.second == target else now - lastOwnFocusAt <= OWN_FOCUS_ECHO_MILLIS
             if (!ours) log.trace(if (FocusReclaimRules.intoPopup(focused?.first, watch.memory)) SimpleTrace.FOCUS_OTHER_INTO_POPUP else SimpleTrace.FOCUS_OTHER_ON_PAGE)
             val cardHoldsFocus = watch.onBanner && resultBanner?.holdsFocusTarget == true
-            when (FocusReclaimRules.decide(focused?.first, ours, watch.memory, watch.count, SimpleCloseEngineFeature.FOCUS_RECLAIM_MAX, cardHoldsFocus)) {
+            when (val verdict = FocusReclaimRules.decide(focused?.first, ours, watch.memory, watch.count, SimpleCloseEngineFeature.FOCUS_RECLAIM_MAX, cardHoldsFocus)) {
                 ReclaimVerdict.OUR_OWN, ReclaimVerdict.LEAVE -> Unit
                 ReclaimVerdict.LIMIT -> endReclaim(SimpleTrace.FOCUS_RECLAIM_LIMIT)
-                ReclaimVerdict.RECLAIM_TO_CARD -> {
-                    lastOwnFocusAt = now
-                    if (resultBanner?.refocus() == true) {
-                        watch.count += 1
-                        watch.lastMoveAt = now
-                        log.trace(SimpleTrace.FOCUS_RECLAIM_PAGE_TO_CARD)
-                    } else {
-                        log.trace(SimpleTrace.FOCUS_RECLAIM_CARD_REFUSED)
-                    }
-                }
-                ReclaimVerdict.RECLAIM -> {
-                    lastOwnFocusAt = now
-                    if (watch.onBanner && resultBanner?.refocus() == true) {
-                        watch.count += 1
-                        watch.lastMoveAt = now
-                    } else if (target != null && collector.refocus(target)) {
-                        watch.count += 1
-                        watch.lastMoveAt = now
-                    } else {
-                        // F17: no node to go back to yet (or it is gone): take a page place now, not after the close.
-                        val focus = collector.focusPageItemKeeping(watch.memory, beforeClick = true)
-                        watch.target = focus.node
-                        if (focus.moved) {
-                            watch.count += 1
-                            watch.lastMoveAt = now
-                            log.trace(SimpleTrace.FOCUS_RECLAIM_TARGET_TAKEN)
-                        } else {
-                            log.trace(SimpleTrace.FOCUS_RECLAIM_NO_TARGET)
+                ReclaimVerdict.RECLAIM_TO_CARD, ReclaimVerdict.RECLAIM -> {
+                    // F47: not at once: the swipe that made this move may tell us so a little later.
+                    log.trace(SimpleTrace.FOCUS_RECLAIM_DEFERRED)
+                    val seq = focusMoveSeq
+                    scope.launch {
+                        delay(ReclaimDeferral.DEFER_MILLIS)
+                        val at = SystemClock.uptimeMillis()
+                        val toCard = verdict == ReclaimVerdict.RECLAIM_TO_CARD
+                        val after = ReclaimDeferral.afterDefer(
+                            active = reclaim === watch && at <= watch.until,
+                            moveAt = now,
+                            lastUserAt = ReclaimDeferral.userTouchAfterGrace(lastTouchAt, watch.armedAt, SimpleCloseEngineFeature.FOCUS_RECLAIM_TOUCH_GRACE_MILLIS),
+                            newerMove = focusMoveSeq != seq,
+                            alreadyBack = toCard && resultBanner?.focusIsOnCard() == true,
+                            reclaimed = watch.count,
+                            max = SimpleCloseEngineFeature.FOCUS_RECLAIM_MAX,
+                        )
+                        when (after) {
+                            DeferVerdict.RECLAIM -> if (toCard) reclaimToCard(watch, at) else reclaimToTarget(watch, at)
+                            DeferVerdict.SKIPPED_USER_MOVE -> {
+                                log.trace(SimpleTrace.FOCUS_RECLAIM_SKIPPED_USER_MOVE)
+                                // The touch event itself may have ended this watch already.
+                                if (reclaim === watch) endReclaim(SimpleTrace.FOCUS_RECLAIM_STOPPED_BY_USER)
+                            }
+                            DeferVerdict.LIMIT -> if (reclaim === watch) endReclaim(SimpleTrace.FOCUS_RECLAIM_LIMIT)
+                            DeferVerdict.ENDED, DeferVerdict.SUPERSEDED, DeferVerdict.ALREADY_BACK -> Unit
                         }
                     }
                 }
             }
         } finally {
             @Suppress("DEPRECATION") focused?.second?.recycle()
+        }
+    }
+
+    /** F39: TalkBack's focus back on the result card (after F47's wait). */
+    private fun reclaimToCard(watch: FocusReclaim, now: Long) {
+        lastOwnFocusAt = now
+        if (resultBanner?.refocus() == true) {
+            watch.count += 1
+            watch.lastMoveAt = now
+            log.trace(SimpleTrace.FOCUS_RECLAIM_PAGE_TO_CARD)
+        } else {
+            log.trace(SimpleTrace.FOCUS_RECLAIM_CARD_REFUSED)
+        }
+    }
+
+    /** F15/F17: TalkBack's focus out of the old popup, onto the card or our page target (after F47's wait). */
+    private fun reclaimToTarget(watch: FocusReclaim, now: Long) {
+        val target = watch.target
+        lastOwnFocusAt = now
+        if (watch.onBanner && resultBanner?.refocus() == true) {
+            watch.count += 1
+            watch.lastMoveAt = now
+        } else if (target != null && collector.refocus(target)) {
+            watch.count += 1
+            watch.lastMoveAt = now
+        } else {
+            // F17: no node to go back to yet (or it is gone): take a page place now, not after the close.
+            val focus = collector.focusPageItemKeeping(watch.memory, beforeClick = true)
+            watch.target = focus.node
+            if (focus.moved) {
+                watch.count += 1
+                watch.lastMoveAt = now
+                log.trace(SimpleTrace.FOCUS_RECLAIM_TARGET_TAKEN)
+            } else {
+                log.trace(SimpleTrace.FOCUS_RECLAIM_NO_TARGET)
+            }
+        }
+    }
+
+    /**
+     * F47: a focus move into another app while our prompt's first focus is looked after (TalkBack or the app put it
+     * back on the popup, 우진 11번가 2/3): after [ReclaimDeferral.DEFER_MILLIS], with no touch or gesture of the person
+     * and the prompt still up, the focus goes back to the prompt's first item, at most [ReclaimDeferral.PROMPT_HOLD_MAX]
+     * times. Only a focus move; the person's touch ends it at once.
+     */
+    private fun focusMovedDuringPromptHold(hold: PromptHold) {
+        val now = SystemClock.uptimeMillis()
+        if (!ReclaimDeferral.promptHoldOn(hold.startedAt, now) || prompted == null) {
+            promptHold = null
+            return
+        }
+        log.trace(SimpleTrace.PROMPT_FOCUS_LOST)
+        val seq = focusMoveSeq
+        scope.launch {
+            delay(ReclaimDeferral.DEFER_MILLIS)
+            val after = ReclaimDeferral.afterDefer(
+                active = promptHold === hold && prompted != null,
+                moveAt = now,
+                lastUserAt = lastTouchAt,
+                newerMove = focusMoveSeq != seq,
+                alreadyBack = false,
+                reclaimed = hold.count,
+                max = ReclaimDeferral.PROMPT_HOLD_MAX,
+            )
+            when (after) {
+                DeferVerdict.RECLAIM -> {
+                    val moved = hold.focus.moveTo(TakeoverFocusTarget.FIRST_ITEM)
+                    hold.focus.finished(TakeoverFocusTarget.FIRST_ITEM, 1)
+                    if (moved) {
+                        hold.count += 1
+                        log.trace(SimpleTrace.PROMPT_FOCUS_RECLAIMED)
+                    } else {
+                        log.trace(SimpleTrace.PROMPT_FOCUS_RECLAIM_FAILED)
+                    }
+                }
+                DeferVerdict.SKIPPED_USER_MOVE -> {
+                    if (promptHold === hold) promptHold = null
+                    log.trace(SimpleTrace.PROMPT_FOCUS_HOLD_END_BY_USER)
+                }
+                DeferVerdict.LIMIT -> {
+                    if (promptHold === hold) promptHold = null
+                    log.trace(SimpleTrace.PROMPT_FOCUS_HOLD_LIMIT)
+                }
+                DeferVerdict.ENDED, DeferVerdict.SUPERSEDED, DeferVerdict.ALREADY_BACK -> Unit
+            }
         }
     }
 
@@ -1728,6 +1834,11 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
  * is on. F17: [armedAt] (touches just after it are the press's own double tap), [onBanner] (the focused
  * result card is the place to go back to).
  */
+/** F47: our prompt's first focus ([focus], its window only), looked after since [startedAt]; [count] times taken back. */
+private class PromptHold(val focus: PromptFocus, val startedAt: Long) {
+    var count = 0
+}
+
 private class FocusReclaim(val memory: PopupMemory, var target: AccessibilityNodeInfo?, val armedAt: Long) {
     var until = Long.MAX_VALUE
     var count = 0

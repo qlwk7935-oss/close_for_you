@@ -62,6 +62,8 @@ class AccessibilityChoiceOverlay(
     private val beforeClose: (PromptAnswer) -> Unit = {},
     /** F46: one debug line per focus move ([PromptFocusRules.line]: codes and counts, no title, text or id). */
     private val focusTrace: (String) -> Unit = {},
+    /** F47: the window's first focus move (FIRST_ITEM) succeeded: the caller may look after it. Once per window. */
+    private val onFirstFocus: (PromptFocus) -> Unit = {},
 ) : ChoicePromptPresenter {
     /** One prompt's voice controller and coroutine scope; [onTap] carries its generation. */
     private class PromptSession(
@@ -320,6 +322,7 @@ class AccessibilityChoiceOverlay(
     private inner class WindowFocus(private val generation: Long) : PromptFocus {
         override val enabled = true
         private val tally = PromptFocusTally()
+        private var firstReported = false
 
         override fun moveTo(target: TakeoverFocusTarget): Boolean {
             if (keeper.status != OverlayWindowStatus.SHOWING || keeper.windowGeneration != generation) {
@@ -352,7 +355,12 @@ class AccessibilityChoiceOverlay(
 
         override fun finished(target: TakeoverFocusTarget, attempts: Int) {
             try { focusTrace(tally.line(target, attempts)) } catch (_: RuntimeException) {}
+            val moved = tally.lastMoved
             tally.clear()
+            if (target == TakeoverFocusTarget.FIRST_ITEM && moved && !firstReported) {
+                firstReported = true
+                try { onFirstFocus(this) } catch (_: RuntimeException) {}
+            }
         }
 
         /** The system's accessibility focus (not the node's own flag) is on [node]. */
