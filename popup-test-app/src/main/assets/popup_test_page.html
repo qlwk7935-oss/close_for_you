@@ -17,6 +17,12 @@
        background: no-repeat center/24px linear-gradient(45deg, transparent 45%, #333 45% 55%, transparent 55%),
                    no-repeat center/24px linear-gradient(-45deg, transparent 45%, #333 45% 55%, transparent 55%); }
   canvas { width: 100%; height: auto; display: block; }
+  .sheet-wrap { position: fixed; inset: 0; background: rgba(0,0,0,.5); }
+  .sheet { position: fixed; left: 0; right: 0; bottom: 0; background: #fff; border-radius: 16px 16px 0 0; padding: 20px; }
+  .sheet button { font-size: 17px; padding: 10px 14px; margin: 6px 6px 0 0; }
+  .layer { position: fixed; inset: 0; background: #fff8e1; padding: 20px; overflow: auto; }
+  .layer .art { height: 240px; background: #2d5bff; border-radius: 8px; margin: 12px 0; }
+  .layer button { font-size: 17px; padding: 10px 14px; margin: 6px 6px 0 0; }
   #log { margin-top: 24px; font-size: 14px; color: #444; white-space: pre-line; }
 </style>
 </head>
@@ -32,6 +38,9 @@
   <a href="#payment">W06 가짜 결제 확인</a>
   <a href="#consent">W07 가짜 동의 요청</a>
   <a href="#ad-risky-back">W08 뒤 페이지에 결정 문구가 있는 광고 모달</a>
+  <a href="#sheet">W09 아래에서 올라오는 시트</a>
+  <a href="#layer">W10 화면 전체를 덮는 큰 레이어(대화상자 표시 없음)</a>
+  <a href="#open-in-app">W11 앱에서 열기 시트</a>
 </nav>
 <div id="log" aria-live="off"></div>
 <div id="root"></div>
@@ -109,6 +118,25 @@
       modal('<h2 id="t">결제 확인</h2><p>시험용 상품 12,900원을 결제할까요? 실제 결제는 일어나지 않습니다.</p>' +
         '<button data-id="btn_cancel">취소</button><button data-id="btn_pay">결제하기</button>');
     },
+    // 11/2 추가(P33~P35와 같은 모양). W09만 role=dialog이고 W10·W11은 표시 없는 div다.
+    'sheet': function () {
+      nav.hidden = true;
+      root.innerHTML = '<div class="sheet-wrap"><div class="sheet" role="dialog" aria-modal="true" aria-labelledby="t">' +
+        '<h2 id="t">가을 할인 쿠폰</h2><p>지금 받으면 30퍼센트 할인. 시험용 광고입니다.</p>' +
+        '<button data-id="btn_ad_open">자세히 보기</button><button data-id="btn_close">닫기</button></div></div>';
+    },
+    'layer': function () {
+      nav.hidden = true;
+      root.innerHTML = '<div class="layer"><button data-id="btn_close" style="float:right">닫기</button>' +
+        '<div class="art"></div><h2>봄맞이 특가 광고</h2><p>가구 최대 40퍼센트 할인. 시험용 광고입니다.</p>' +
+        '<button data-id="btn_ad_open">자세히 보기</button></div>';
+    },
+    'open-in-app': function () {
+      nav.hidden = true;
+      root.innerHTML = '<div class="sheet-wrap"><div class="sheet">' +
+        '<h2>앱으로 보면 더 편해요</h2><p>앱에서 더 빠르게 볼 수 있어요. 시험용 광고입니다.</p>' +
+        '<button data-id="btn_open_app">앱에서 열기</button><button data-id="btn_stay_web">모바일 웹으로 볼게요</button></div></div>';
+    },
     'consent': function () {
       modal('<h2 id="t">마케팅 정보 수신 동의</h2><p>이벤트 소식을 받으시겠어요? 시험용 동의창입니다.</p>' +
         '<button data-id="btn_deny">거부</button><button data-id="btn_allow">동의</button>');
@@ -120,7 +148,7 @@
     if (!el) return;
     var id = el.getAttribute('data-id');
     record(id);
-    if (id === 'btn_ad_open' || id === 'btn_fake_x') landing(); else close();
+    if (id === 'btn_ad_open' || id === 'btn_fake_x' || id === 'btn_open_app') landing(); else close();
   });
   document.addEventListener('keydown', function (e) {
     if (e.key === 'Escape' && root.innerHTML) { record('escape'); close(); }

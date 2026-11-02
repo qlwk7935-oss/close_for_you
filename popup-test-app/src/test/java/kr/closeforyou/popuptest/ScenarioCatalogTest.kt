@@ -178,11 +178,14 @@ class ScenarioCatalogTest {
         // 11/2 팀 결정: P13·P24 웹 "닫기"는 누를 수 있다(LG 닫힘 확인) → P01과 같은 쿠폰 목표.
         assertEquals(listOf(PresetGoal.CLOSE, PresetGoal.CLOSE, PresetGoal.ANNOUNCE), goals("P13"))
         assertEquals(listOf(PresetGoal.CLOSE, PresetGoal.CLOSE, PresetGoal.ANNOUNCE), goals("P24"))
+        assertEquals(listOf(PresetGoal.CLOSE, PresetGoal.CLOSE, PresetGoal.ANNOUNCE), goals("P33")) // 쿠폰 시트
+        assertEquals(List(3) { PresetGoal.CLOSE }, goals("P34")) // 광고 레이어
+        assertEquals(List(3) { PresetGoal.CLOSE }, goals("P35")) // 앱에서 열기 시트(닫는 버튼은 모바일 웹으로 보기)
     }
 
     @Test
     fun couponScenariosAreTheClaimableBenefits() {
-        assertEquals(setOf("P01", "P02", "P12", "P13", "P23", "P24"), all.filter { it.kind == PopupKind.COUPON }.map { it.id }.toSet())
+        assertEquals(setOf("P01", "P02", "P12", "P13", "P23", "P24", "P33"), all.filter { it.kind == PopupKind.COUPON }.map { it.id }.toSet())
     }
 
     /** S18: 사기 의심은 어떤 프리셋에서도 앱이 누르지 않는다. */
@@ -223,6 +226,23 @@ class ScenarioCatalogTest {
         assertEquals(Int1Kind.COUPON, ScenarioCatalog.int1.getValue("P13").kind)
         // 11/2 팀 결정: 시연 엔진은 팝업 자신의 "닫기"만 누른다(프리셋 CLOSE). A 결정 요약 회귀(int1)는 그대로 지킨다.
         assertEquals("btn_close", ScenarioCatalog.find("P24")!!.appAllowedTargetId)
+    }
+
+    /** 11/2 추가 유형: Dialog 표시가 없거나 화면 아래에 붙은 팝업. 닫는 버튼은 이름이 있고, 여는 버튼은 금지다. */
+    @Test
+    fun newLayoutTypesCloseWithANamedButton() {
+        val sheet = ScenarioCatalog.find("P33")!!
+        val layer = ScenarioCatalog.find("P34")!!
+        val openInApp = ScenarioCatalog.find("P35")!!
+        assertEquals(PopupSurface.BOTTOM_SHEET, sheet.surface)
+        assertEquals(PopupSurface.FRONT_LAYER, layer.surface)
+        assertEquals(PopupSurface.BOTTOM_SHEET, openInApp.surface)
+        listOf(sheet, layer, openInApp).forEach {
+            assertEquals(it.id, CloseEvidence.E2_LABELED_CLICK, it.closeEvidence)
+            assertNotNull(it.id, it.appAllowedTargetId)
+        }
+        assertEquals("btn_stay_web", openInApp.appAllowedTargetId)
+        assertTrue("btn_open_app" in openInApp.forbiddenTargetIds)
     }
 
     @Test
