@@ -4,6 +4,8 @@
 
 **상태:** CI(빌드·JVM 단위 시험·lint)는 통과했습니다. 계측 시험(`PopupRuleDatabaseTest`)은 CI에서 컴파일만 하며 기기 실행은 아직 하지 않았습니다. 서비스 경로(A/B) 연결은 별도 PR입니다.
 
+> **시연 엔진(`simpleclose`)은 이 저장소를 쓰지 않습니다.** 최종 시연용 엔진(`integration/popup-helper`의 `simpleclose` 패키지)은 "앞으로 항상 닫기"를 `RememberedPopups`(SharedPreferences, SHA-256)에 따로 저장하고, 기억으로 눌렀다가 실패하면 `recordFailure` 대신 그 규칙을 지웁니다(로그 `REMEMBERED_RULE_DROPPED`). 이 문서의 저장·실패 판정은 F12 경로(Room·Keystore) 기준입니다(준영·재호 11/2).
+
 ## 구성
 
 | 파일 | 내용 |
