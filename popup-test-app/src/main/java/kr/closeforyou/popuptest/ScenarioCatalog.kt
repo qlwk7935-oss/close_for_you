@@ -27,7 +27,10 @@ enum class ExpectedHandling {
 /** 닫기 근거 단계(통합설계 E1~E4). */
 enum class CloseEvidence { E2_LABELED_CLICK, E3_UNLABELED_CLICKABLE, E4_VISUAL_ONLY, NONE }
 
-enum class PopupSurface { DIALOG, SAME_WINDOW_OVERLAY, BOTTOM_BANNER, WEBVIEW, TOAST, FULL_SCREEN, VIDEO_OVERLAY }
+/**
+ * [BOTTOM_SHEET]: 화면 아래에서 올라오는 시트. [FRONT_LAYER]: Dialog 표시 없이 같은 창에서 화면 전체를 덮는 레이어(11/2 추가).
+ */
+enum class PopupSurface { DIALOG, SAME_WINDOW_OVERLAY, BOTTOM_BANNER, WEBVIEW, TOAST, FULL_SCREEN, VIDEO_OVERLAY, BOTTOM_SHEET, FRONT_LAYER }
 
 /** 팀 프리셋 3개. C `HandlingPreset`과 이름·뜻이 같다(앱 모듈 `AnswerKeyPipelineTest`가 대조). */
 enum class TestPreset { CLOSE_ALL, CLOSE_ADS_AND_COUPONS, CLOSE_ADS_ONLY }
@@ -102,6 +105,12 @@ object ScenarioCatalog {
 
     /** P23(S20): '닫기' 버튼이 이 시간(초) 뒤에 생긴다. */
     const val DELAYED_CLOSE_SECONDS = 3
+
+    /**
+     * P13·P24 웹 모달의 '닫기'. 웹 버튼에는 리소스 ID가 없어 정답지에서만 쓰는 이름이다(기록은 웹 콘솔 `btn_close`).
+     * 11/2 팀 결정(B #71, A 동의): 팝업 자신의 이름 있는 닫기라 프리셋 목표는 P01과 같이 닫기다.
+     */
+    const val WEB_CLOSE_TARGET_ID = "web_close"
 
     val all: List<PopupScenario> = listOf(
         PopupScenario(
@@ -216,10 +225,10 @@ object ScenarioCatalog {
             id = "P13", title = "WebView 모달 광고", surface = PopupSurface.WEBVIEW,
             kind = PopupKind.COUPON, expected = ExpectedHandling.USER_CHOICE,
             closeEvidence = CloseEvidence.E2_LABELED_CLICK,
-            correctTargetId = null, appAllowedTargetId = null, forbiddenTargetIds = emptySet(),
+            correctTargetId = WEB_CLOSE_TARGET_ID, appAllowedTargetId = WEB_CLOSE_TARGET_ID, forbiddenTargetIds = emptySet(),
             keyFacts = listOf("웹 페이지 안의 쿠폰 광고"), rememberable = false,
             memoryReusableFrom = null, experiments = setOf("B01", "C01"),
-            note = "assets/popup_test_page.html#ad 를 앱 안 WebView로 표시. 웹 버튼은 리소스 ID가 없음. 노드 노출 여부는 실기기 체크리스트 P9 확인 후 정답지 갱신.",
+            note = "assets/popup_test_page.html#ad 를 앱 안 WebView로 표시. 웹 버튼은 리소스 ID가 없어 정답지 이름은 web_close. 11/2: 웹 닫기를 누를 수 있음(LG 확인, B #71)이 확인되어 목표를 P01과 같게(닫기·닫기·알리기) 바꿈.",
         ),
         PopupScenario(
             id = "P14", title = "일반 화면 전환(팝업 아님)", surface = PopupSurface.FULL_SCREEN,
@@ -315,10 +324,37 @@ object ScenarioCatalog {
             id = "P24", title = "뒤 페이지에 결정 문구가 있는 웹 광고", surface = PopupSurface.WEBVIEW,
             kind = PopupKind.COUPON, expected = ExpectedHandling.USER_CHOICE,
             closeEvidence = CloseEvidence.E2_LABELED_CLICK,
-            correctTargetId = null, appAllowedTargetId = null, forbiddenTargetIds = emptySet(),
+            correctTargetId = WEB_CLOSE_TARGET_ID, appAllowedTargetId = WEB_CLOSE_TARGET_ID, forbiddenTargetIds = emptySet(),
             keyFacts = listOf("팝업은 쿠폰이지만 뒤 페이지에 결제·동의 문구가 있음"), rememberable = false,
             memoryReusableFrom = null, experiments = setOf("A05", "B01"),
-            note = "P13과 같은 쿠폰 모달인데 뒤 페이지에 '결제'·'동의' 문구가 남아 있다(A 10/25 요청 회귀 시험). 실제 앱처럼 뒤 문구가 섞이면 A가 결정으로 요약해 막아야 한다. P13의 목록 숨김으로 이 안전 차단이 사라지지 않았는지 본다.",
+            note = "P13과 같은 쿠폰 모달인데 뒤 페이지에 '결제'·'동의' 문구가 남아 있다(A 10/25 요청 회귀 시험). 실제 앱처럼 뒤 문구가 섞이면 A가 결정으로 요약해 막아야 한다. P13의 목록 숨김으로 이 안전 차단이 사라지지 않았는지 본다. 11/2 팀 결정(B #71): 누르는 것은 팝업 자신의 닫기이고 뒤 페이지는 건드리지 않으므로 프리셋 목표는 닫기. int1(A 결정 요약)은 A 회귀 시험 뜻을 살려 그대로 둔다.",
+        ),
+        PopupScenario(
+            id = "P33", title = "아래에서 올라오는 시트", surface = PopupSurface.BOTTOM_SHEET,
+            kind = PopupKind.COUPON, expected = ExpectedHandling.USER_CHOICE,
+            closeEvidence = CloseEvidence.E2_LABELED_CLICK,
+            correctTargetId = "btn_close", appAllowedTargetId = "btn_close", forbiddenTargetIds = setOf("btn_ad_open"),
+            keyFacts = listOf("화면 아래에 붙어 올라온 쿠폰 시트"), rememberable = true, memoryReusableFrom = null,
+            experiments = setOf("C01"),
+            note = "11/2 추가(A 요청, 실기기 재현용). Dialog 창이지만 화면 아래에 붙고 가로를 꽉 채운다(BottomSheetDialog 모양). 이름 있는 '닫기'가 있다.",
+        ),
+        PopupScenario(
+            id = "P34", title = "화면 전체를 덮는 큰 레이어", surface = PopupSurface.FRONT_LAYER,
+            kind = PopupKind.AD, expected = ExpectedHandling.USER_CHOICE,
+            closeEvidence = CloseEvidence.E2_LABELED_CLICK,
+            correctTargetId = "btn_close", appAllowedTargetId = "btn_close", forbiddenTargetIds = setOf("btn_ad_open"),
+            keyFacts = listOf("Dialog 표시 없이 화면 전체를 덮는 광고"), rememberable = true, memoryReusableFrom = null,
+            experiments = setOf("C01"),
+            note = "11/2 추가(A 요청). Dialog·어둡게 하기 없이 같은 창에서 화면 전체를 덮는 레이어(앱 자체 전면 광고). 큰 그림(글자 없음)과 이름 있는 '닫기'가 오른쪽 위에 있다.",
+        ),
+        PopupScenario(
+            id = "P35", title = "앱에서 열기·모바일 웹 시트", surface = PopupSurface.BOTTOM_SHEET,
+            kind = PopupKind.AD, expected = ExpectedHandling.USER_CHOICE,
+            closeEvidence = CloseEvidence.E2_LABELED_CLICK,
+            correctTargetId = "btn_stay_web", appAllowedTargetId = "btn_stay_web", forbiddenTargetIds = setOf("btn_open_app"),
+            keyFacts = listOf("앱 설치·열기 유도"), rememberable = true, memoryReusableFrom = null,
+            experiments = setOf("C01"),
+            note = "11/2 추가(A 요청). 모바일 웹에서 흔한 '앱에서 열기 / 모바일 웹으로 볼게요' 시트를 Dialog 없이 같은 창 아래에 그린다. 닫는 버튼은 '모바일 웹으로 볼게요'이고 '앱에서 열기'는 광고 페이지를 연다(앱이 누르면 실패).",
         ),
     ) + noticeVariants()
 
@@ -412,6 +448,9 @@ object ScenarioCatalog {
         "P23" to Int1Expectation(Int1Kind.COUPON, Int1Path.TREE),
         "P24" to Int1Expectation(Int1Kind.USER_DECISION, Int1Path.A_SUMMARY,
             "뒤 페이지 '결제'·'동의' 때문에 A가 결정 요약으로 막음(의도한 안전 차단 회귀)"),
+        "P33" to Int1Expectation(Int1Kind.COUPON, Int1Path.TREE),
+        "P34" to Int1Expectation(Int1Kind.ADVERTISEMENT, Int1Path.TREE),
+        "P35" to Int1Expectation(Int1Kind.ADVERTISEMENT, Int1Path.TREE),
     ) + noticeVariants().associate { it.id to Int1Expectation(Int1Kind.NOTICE, Int1Path.TREE) }
 
     fun find(id: String): PopupScenario? = all.firstOrNull { it.id == id }
