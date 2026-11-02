@@ -89,4 +89,10 @@
     <string name="scan_now">지금 검사하기</string>
     <string name="delayed_title">적립금 쿠폰 도착</string>
     <string name="delayed_body">3초 뒤 닫기 버튼이 나타납니다(시험용).</string>
+
+    <!-- 11/2 추가 유형(P35 앱에서 열기 시트). P33은 P01, P34는 P20 첫 광고 문구를 쓴다. -->
+    <string name="open_app_title">앱으로 보면 더 편해요</string>
+    <string name="open_app_body">앱에서 더 빠르게 볼 수 있어요. 시험용 광고입니다.</string>
+    <string name="open_app">앱에서 열기</string>
+    <string name="stay_web">모바일 웹으로 볼게요</string>
 </resources>
