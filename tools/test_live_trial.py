@@ -100,6 +100,14 @@ class CliTest(unittest.TestCase):
         self.assertEqual(["L06-SAMSUNG-1-a", "L06-SAMSUNG-1-b"], [r["trial_id"] for r in rows])
         self.assertEqual(["CLOSE", "STAY_WEB"], [r["clicked_target"] for r in rows])
         self.assertEqual("DETECTED_BOTTOM_SHEET", rows[1]["detected_code"])
+        self.assertEqual(["AD", "AD"], [r["human_kind"] for r in rows])
+
+    def test_notice_closed_by_the_app_is_flagged(self):
+        result, rows = self.run_cli(log("DETECTED_DIALOG_WINDOW", "CLASSIFIED_AD", "DECIDED_AUTO_CLOSE", "CLICKED",
+                                        "CLICKED_LABELED_CLOSE", "CLOSED_CONFIRMED"),
+                                    "--popup-type", "NOTICE_POPUP")
+        self.assertEqual("NOTICE", rows[0]["human_kind"])
+        self.assertIn("WRONG_KIND_CLOSE", result.stdout)
 
     def test_no_popup_found_records_the_reason_codes(self):
         result, rows = self.run_cli(log("SERVICE_CONNECTED", "SKIPPED_SCOPE_NOT_CHOSEN", "NO_POPUP_ROOT"))
