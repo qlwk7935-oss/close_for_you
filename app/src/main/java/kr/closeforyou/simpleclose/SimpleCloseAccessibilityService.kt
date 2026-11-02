@@ -621,6 +621,12 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
                 log.trace(SimpleTrace.INSTALL_AD_LONE_CLOSE_ASKED)
                 SimpleDecision.Ask
             }
+            // F40: "광고만 닫기" with only "오늘 하루 보지 않기" to press: asked (other presets press it as before).
+            decided is SimpleDecision.AutoClose && rememberedButton == null &&
+                HideTodaySafePreset.asks(preferences.current().autoCloseKinds(live = true), decided.candidate) -> {
+                log.trace(SimpleTrace.HIDE_TODAY_ASKED_SAFE_PRESET)
+                SimpleDecision.Ask
+            }
             // F27 (review #7): a part of the popup was too deep to read: a risky button could hide there.
             decided is SimpleDecision.AutoClose && popup.depthCut -> {
                 log.trace(SimpleTrace.DEPTH_CUT_ASKED)

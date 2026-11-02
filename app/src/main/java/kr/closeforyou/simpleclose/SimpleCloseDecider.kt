@@ -8,6 +8,7 @@ import kr.closeforyou.core.model.ScreenBounds
 import kr.closeforyou.decision.DecisionKeywords
 import kr.closeforyou.core.model.PopupClassification
 import kr.closeforyou.decision.DecisionDemoRules
+import kr.closeforyou.ui.voice.settings.HandlingPreset
 import kr.closeforyou.ui.voice.settings.UiVoiceSettings
 import kr.closeforyou.ui.voice.settings.autoCloseKinds
 
@@ -88,6 +89,19 @@ object SimpleCloseDecider {
     }
 
     private val PROMO_KINDS = setOf(PopupClassification.ADVERTISEMENT, PopupClassification.COUPON)
+}
+
+/**
+ * F40 (총괄 11/2): in the safest preset ("광고만 닫기"), a popup whose only close is "오늘 하루 보지 않기" (or "7일간 보지
+ * 않기", [PressKind.HIDE_FOR_A_WHILE]) is asked, not pressed: that button also hides the popup for a while, more than a
+ * plain close, and that preset is the one chosen by people who want the fewest changes made for them. Other presets
+ * keep pressing it after a plain close ([SimpleLabelRules.clarity]). A plain "닫기" in the popup is pressed as before.
+ */
+object HideTodaySafePreset {
+    private val ADS_ONLY = HandlingPreset.CLOSE_ADS_ONLY.autoCloseKinds()
+
+    fun asks(autoCloseKinds: ImmutableSet<PopupClassification>, pick: CloseCandidate): Boolean =
+        autoCloseKinds == ADS_ONLY && SimpleLabelRules.pressKind(pick.label, pick.role, visualOnly = false) == PressKind.HIDE_FOR_A_WHILE
 }
 
 /**

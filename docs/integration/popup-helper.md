@@ -769,6 +769,18 @@ F26 자동 확인: 옥션 웹 감지 1.3초·재확인 308ms·`READ_DUTY_PCT` 7.
   - 바꾼 파일: `docs/templates/popup_answer_key.csv`, `popup-test-app/.../ScenarioCatalog.kt`, `ScenarioCatalogTest.kt`(P13 목표, P24 허용 버튼). **동준 파일이다(팀 결정으로 반영).** `POPUP_TEST_APP.md` 설명은 동준이 맞춘다.
 - 검증: 5개 Gradle 작업 + `:popup-test-app:testDebugUnitTest` 통과. 단위 시험 debug 1314개·release 1299개·재현 앱 26개 실패 0, lintDebug 오류 0(경고 14), INTERNET 0.
 
+### 8-32. F40 — "광고만 닫기"에서 "오늘 하루 보지 않기"만 있으면 묻기 (JVM 시험만, 실기기 미검증)
+
+- **요청(총괄 11/2):** "광고만 닫기" 프리셋에서 닫기 버튼 없이 "오늘 하루 보지 않기"만 있으면 자동으로 누르지 않고 묻는다. 다른 프리셋은 지금처럼 닫기 다음 순서로 누른다.
+- **고침:** `HideTodaySafePreset.asks(autoCloseKinds, pick)`
+  - 조건 1: 사람이 동의한 자동 닫기 종류가 "광고만 닫기"와 같다.
+  - 조건 2: 고른 버튼이 `PressKind.HIDE_FOR_A_WHILE`이다("오늘 하루 보지 않기", "7일간 보지 않기", "다시 보지 않기" 등).
+  - 두 조건이 맞으면 묻는다(`HIDE_TODAY_ASKED_SAFE_PRESET`). 선택 창에는 그 버튼이 그대로 나와서, 사람이 고르면 누른다.
+  - "앞으로 항상 닫기"로 사람이 직접 고른 기억 규칙은 제외한다(그대로 누름).
+  - "광고와 쿠폰 닫기"는 그대로 누른다. "전부 닫기"(강력 모드)는 닫기 → 오늘 하루 순서 그대로다.
+- **이유:** 이 버튼은 닫기에 더해 "한동안 안 보기"라는 설정을 바꾼다. 가장 조심스러운 프리셋에서는 사람이 정하게 한다.
+- 검증(F40): 5개 Gradle 작업 통과, 단위 시험 debug 1317개·release 1302개 실패 0, lintDebug 오류 0(경고 14), INTERNET 0. 시험 추가 `F40Test` 3개.
+
 - 잔여 노드 쪽 이벤트 무시: TalkBack이 무엇을 읽을지는 앱이 막을 수 없다. 대신 포커스를 잔여 노드 밖으로 옮기는 것(F9)이 할 수 있는 전부. 웹 페이지가 닫힌 팝업을 DOM에 `aria-hidden` 없이 남기는 한, 사용자가 스와이프로 다시 만날 수 있다(한계로 기록).
 - 선택 창 PROMPT도 TalkBack 큐로? 가능은 하다: 선택 창 자체(이미 접근성 오버레이)에 paneTitle이 있고 TalkBack이 창을 읽으므로, "안내 맡기기" ON이면 우리 TTS PROMPT를 끄고 paneTitle/첫 버튼 포커스 낭독에 맡기는 방식. 단, 지금 PROMPT는 TalkBack이 팝업을 읽는 도중 끊고 들어가야 시연이 빠르므로 polite로 바꾸면 늦어질 수 있다. F11 배너가 LG에서 잘 읽히면 같은 방식으로 옮길지 정하자(의견, 미구현).
 - 검증(F1~F11 한 빌드): 5개 Gradle 작업 통과, 단위 시험 debug 1028개·release 1013개 실패 0, lintDebug 오류 0(경고 12), 병합 매니페스트 INTERNET 0·새 권한 없음.

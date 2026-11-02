@@ -318,6 +318,8 @@ enum class SimpleTrace {
     FOCUS_OTHER_ON_PAGE,
     FOCUS_RECLAIM_PAGE_TO_CARD,
     FOCUS_RECLAIM_CARD_REFUSED,
+    /** F40: "광고만 닫기" and the popup's only close is "오늘 하루 보지 않기"-like ([HideTodaySafePreset]): asked, not pressed. */
+    HIDE_TODAY_ASKED_SAFE_PRESET,
     ;
 
     companion object {
