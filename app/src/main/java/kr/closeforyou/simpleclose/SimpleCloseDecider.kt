@@ -129,11 +129,13 @@ object InstallAdLoneClose {
  * UNKNOWN, B's own wider word lists (read-only: [DecisionKeywords.isCoupon], [DecisionKeywords.isPromotion],
  * [DecisionKeywords.isStrongNotice]) name the kind, coupon first. Never with a scam, a decision word anywhere in the
  * popup ([DecisionKeywords.isDecisionWide]) or a risky button. B's classifier itself is not changed (a proposal for 준영).
+ * B_DEMO_RULES.md 9-2: on tree text B already names these kinds, so B says UNKNOWN with such words only when the popup
+ * doubts itself ("출처를 알 수 없는", "확인되지 않은", [DecisionKeywords.isUncertainWide]): that is B's guard, not a gap. Denied.
  */
 object WordKindHint {
     fun of(byB: PopupClassification, suspicious: Boolean, texts: List<String>, riskCount: Int): WordHint {
         if (byB != PopupClassification.UNKNOWN || texts.isEmpty()) return WordHint.NONE
-        if (suspicious || riskCount > 0 || texts.any { DecisionKeywords.isDecisionWide(it) || DecisionKeywords.isSuspicious(it) }) return WordHint.DENIED
+        if (suspicious || riskCount > 0 || texts.any { DecisionKeywords.isDecisionWide(it) || DecisionKeywords.isSuspicious(it) || DecisionKeywords.isUncertainWide(it) }) return WordHint.DENIED
         return when {
             texts.any(DecisionKeywords::isCoupon) -> WordHint.COUPON
             texts.any(DecisionKeywords::isPromotion) -> WordHint.AD

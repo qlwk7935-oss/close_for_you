@@ -757,6 +757,18 @@ F26 자동 확인: 옥션 웹 감지 1.3초·재확인 308ms·`READ_DUTY_PCT` 7.
   - `FOCUS_OTHER_ON_PAGE`가 없는데도 본문을 읽으면, 초점은 그대로이고 TalkBack 쪽 읽기 순서 문제다. 그 로그를 보내 주기.
 - 검증(F39): 5개 Gradle 작업 통과, 단위 시험 debug 1311개·release 1296개 실패 0, lintDebug 오류 0(경고 14), INTERNET 0. 시험 추가 1개(`PopupMemoryTest.f39…`).
 
+### 8-31. 준영 PR #71 병합 + 정답지 P13·P24 (JVM 시험만, 실기기 미검증)
+
+- **병합:** `origin` `refs/pull/71/head`(`f701b1a`, 661153e 기준). 충돌 없음(F39는 `SimpleCloseDecider`를 건드리지 않음).
+  - B 9-1: "신규 가입 이벤트"·"회원가입 혜택"·"첫 가입 쿠폰" 같은 가입 혜택 이름은 결정이 아니라 혜택 언급이다(`DecisionKeywords.memberBenefit`). 그래서 P02는 쿠폰이 된다. "가입하기"·"회원가입"·동의·정기 결제가 함께 있으면 결정 그대로다.
+  - B 9-2: `WordKindHint`는 "알 수 없는/확인되지 않은" 문구가 있으면 `DENIED`다.
+  - 정답지 P02 `int1_kind`=COUPON(csv, `ScenarioCatalog`).
+- **팀 결정(11/2) — P13·P24 프리셋:** `preset_close_all`·`preset_close_ads_and_coupons`·`preset_close_ads_only` = CLOSE·CLOSE·ANNOUNCE(P01과 같음).
+  - 프리셋 목표는 앱 허용 버튼에서 계산하므로, 두 시나리오의 `correct_target`·`app_allowed_target`을 웹 버튼 `data-id="btn_close"`로 정했다. `forbidden_targets`는 `btn_ad_open`이다.
+  - P24 `int1`(USER_DECISION, A_SUMMARY)은 A 회귀 시험이라 그대로 둔다.
+  - 바꾼 파일: `docs/templates/popup_answer_key.csv`, `popup-test-app/.../ScenarioCatalog.kt`, `ScenarioCatalogTest.kt`(P13 목표, P24 허용 버튼). **동준 파일이다(팀 결정으로 반영).** `POPUP_TEST_APP.md` 설명은 동준이 맞춘다.
+- 검증: 5개 Gradle 작업 + `:popup-test-app:testDebugUnitTest` 통과. 단위 시험 debug 1314개·release 1299개·재현 앱 26개 실패 0, lintDebug 오류 0(경고 14), INTERNET 0.
+
 - 잔여 노드 쪽 이벤트 무시: TalkBack이 무엇을 읽을지는 앱이 막을 수 없다. 대신 포커스를 잔여 노드 밖으로 옮기는 것(F9)이 할 수 있는 전부. 웹 페이지가 닫힌 팝업을 DOM에 `aria-hidden` 없이 남기는 한, 사용자가 스와이프로 다시 만날 수 있다(한계로 기록).
 - 선택 창 PROMPT도 TalkBack 큐로? 가능은 하다: 선택 창 자체(이미 접근성 오버레이)에 paneTitle이 있고 TalkBack이 창을 읽으므로, "안내 맡기기" ON이면 우리 TTS PROMPT를 끄고 paneTitle/첫 버튼 포커스 낭독에 맡기는 방식. 단, 지금 PROMPT는 TalkBack이 팝업을 읽는 도중 끊고 들어가야 시연이 빠르므로 polite로 바꾸면 늦어질 수 있다. F11 배너가 LG에서 잘 읽히면 같은 방식으로 옮길지 정하자(의견, 미구현).
 - 검증(F1~F11 한 빌드): 5개 Gradle 작업 통과, 단위 시험 debug 1028개·release 1013개 실패 0, lintDebug 오류 0(경고 12), 병합 매니페스트 INTERNET 0·새 권한 없음.

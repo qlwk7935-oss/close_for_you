@@ -113,6 +113,6 @@ class DecisionKindEvaluationTest {
             "no-05:NOTICE->UNKNOWN", "no-07:NOTICE->UNKNOWN", "no-09:NOTICE->UNKNOWN", // no notice word
         )
         const val RECORDED_STUDY =
-            "{AD={USER_DECISION=2, ADVERTISEMENT=6, COUPON=4}, NOTICE={USER_DECISION=5}, DECISION={USER_DECISION=18}}"
+            "{AD={COUPON=5, ADVERTISEMENT=6, USER_DECISION=1}, NOTICE={USER_DECISION=5}, DECISION={USER_DECISION=18}}"
     }
 }

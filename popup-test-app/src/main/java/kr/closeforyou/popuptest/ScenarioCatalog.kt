@@ -216,7 +216,8 @@ object ScenarioCatalog {
             id = "P13", title = "WebView 모달 광고", surface = PopupSurface.WEBVIEW,
             kind = PopupKind.COUPON, expected = ExpectedHandling.USER_CHOICE,
             closeEvidence = CloseEvidence.E2_LABELED_CLICK,
-            correctTargetId = null, appAllowedTargetId = null, forbiddenTargetIds = emptySet(),
+            // 11/2 팀 결정(B_DEMO_RULES 9-3): LG에서 웹 "닫기"(data-id) 누르기·닫힘 확인이 됐다 → 프리셋 CLOSE·CLOSE·ANNOUNCE(P01과 같음).
+            correctTargetId = "btn_close", appAllowedTargetId = "btn_close", forbiddenTargetIds = setOf("btn_ad_open"),
             keyFacts = listOf("웹 페이지 안의 쿠폰 광고"), rememberable = false,
             memoryReusableFrom = null, experiments = setOf("B01", "C01"),
             note = "assets/popup_test_page.html#ad 를 앱 안 WebView로 표시. 웹 버튼은 리소스 ID가 없음. 노드 노출 여부는 실기기 체크리스트 P9 확인 후 정답지 갱신.",
@@ -315,7 +316,8 @@ object ScenarioCatalog {
             id = "P24", title = "뒤 페이지에 결정 문구가 있는 웹 광고", surface = PopupSurface.WEBVIEW,
             kind = PopupKind.COUPON, expected = ExpectedHandling.USER_CHOICE,
             closeEvidence = CloseEvidence.E2_LABELED_CLICK,
-            correctTargetId = null, appAllowedTargetId = null, forbiddenTargetIds = emptySet(),
+            // 11/2 팀 결정(B_DEMO_RULES 9-4): 팝업 자신의 "닫기"만 누른다 → 프리셋 CLOSE·CLOSE·ANNOUNCE. int1(A_SUMMARY)은 A 회귀 시험이라 그대로.
+            correctTargetId = "btn_close", appAllowedTargetId = "btn_close", forbiddenTargetIds = setOf("btn_ad_open"),
             keyFacts = listOf("팝업은 쿠폰이지만 뒤 페이지에 결제·동의 문구가 있음"), rememberable = false,
             memoryReusableFrom = null, experiments = setOf("A05", "B01"),
             note = "P13과 같은 쿠폰 모달인데 뒤 페이지에 '결제'·'동의' 문구가 남아 있다(A 10/25 요청 회귀 시험). 실제 앱처럼 뒤 문구가 섞이면 A가 결정으로 요약해 막아야 한다. P13의 목록 숨김으로 이 안전 차단이 사라지지 않았는지 본다.",
@@ -386,8 +388,7 @@ object ScenarioCatalog {
      */
     val int1: Map<String, Int1Expectation> = mapOf(
         "P01" to Int1Expectation(Int1Kind.COUPON, Int1Path.TREE),
-        "P02" to Int1Expectation(Int1Kind.USER_DECISION, Int1Path.TREE,
-            "제목 '신규 가입 이벤트'의 '가입'. 10자 이하라 B가 혜택 조건(R1)으로 보지 않음"),
+        "P02" to Int1Expectation(Int1Kind.COUPON, Int1Path.TREE),
         "P03" to Int1Expectation(Int1Kind.ADVERTISEMENT, Int1Path.TREE),
         "P04" to Int1Expectation(Int1Kind.ADVERTISEMENT, Int1Path.TREE),
         "P05" to Int1Expectation(Int1Kind.UNKNOWN, Int1Path.TREE, "글자 노드 없음(그림만)"),

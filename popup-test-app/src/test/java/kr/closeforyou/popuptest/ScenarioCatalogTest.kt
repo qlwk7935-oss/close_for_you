@@ -150,7 +150,7 @@ class ScenarioCatalogTest {
     fun int1GapsAreListedAndExplained() {
         assertEquals(all.map { it.id }.toSet(), ScenarioCatalog.int1.keys)
         val gaps = all.filter { ScenarioCatalog.int1.getValue(it.id).kind != humanInt1(it.kind) }.map { it.id }.toSet()
-        assertEquals(setOf("P02", "P05", "P07", "P18", "P24"), gaps)
+        assertEquals(setOf("P05", "P07", "P18", "P24"), gaps)
         gaps.forEach { assertTrue(it, ScenarioCatalog.int1.getValue(it).reason.isNotBlank()) }
     }
 
@@ -175,7 +175,9 @@ class ScenarioCatalogTest {
         assertEquals(List(3) { PresetGoal.ASK }, goals("P08")) // 결정
         assertEquals(List(3) { PresetGoal.BLOCK }, goals("P11")) // 민감
         assertEquals(List(3) { PresetGoal.NONE }, goals("P14")) // 팝업 아님
-        assertEquals(listOf(PresetGoal.ASK, PresetGoal.ASK, PresetGoal.ANNOUNCE), goals("P13")) // 쿠폰, 앱 허용 버튼 미정
+        // 11/2 팀 결정: P13·P24 웹 "닫기"는 누를 수 있다(LG 닫힘 확인) → P01과 같은 쿠폰 목표.
+        assertEquals(listOf(PresetGoal.CLOSE, PresetGoal.CLOSE, PresetGoal.ANNOUNCE), goals("P13"))
+        assertEquals(listOf(PresetGoal.CLOSE, PresetGoal.CLOSE, PresetGoal.ANNOUNCE), goals("P24"))
     }
 
     @Test
@@ -219,7 +221,8 @@ class ScenarioCatalogTest {
         assertEquals(Int1Kind.USER_DECISION, p24.kind)
         assertEquals(Int1Path.A_SUMMARY, p24.path)
         assertEquals(Int1Kind.COUPON, ScenarioCatalog.int1.getValue("P13").kind)
-        assertNull(ScenarioCatalog.find("P24")!!.appAllowedTargetId)
+        // 11/2 팀 결정: 시연 엔진은 팝업 자신의 "닫기"만 누른다(프리셋 CLOSE). A 결정 요약 회귀(int1)는 그대로 지킨다.
+        assertEquals("btn_close", ScenarioCatalog.find("P24")!!.appAllowedTargetId)
     }
 
     @Test
