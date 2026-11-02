@@ -16,7 +16,7 @@
 패키지 이름이 없다. 원본 로그는 live_logs/<시행 ID>.log로 남긴다.
 
 한 줄 = 팝업 하나. 로그에서 DETECTED_*(DETECTED_BY_* 제외)가 나올 때마다 새 팝업으로 본다. 같은 팝업을 다시 찾기만 하고
-아무것도 안 한 묶음(SAME_POPUP_COOLDOWN 등)은 버린다. 로그로 정할 수 없는 칸(팝업 모양, 이름 있는 닫기가 있었나,
+아무것도 안 한 묶음(SAME_POPUP_COOLDOWN 등)은 버린다. 로그로 정할 수 없는 칸(팝업 모양, 사람이 본 종류, 이름 있는 닫기가 있었나,
 금지 버튼·엉뚱한 곳을 눌렀나, 안내가 맞았나)은 사람이 답한다. 금지 버튼을 눌렀다고 답하면 🚨 경고를 낸다.
 """
 from __future__ import annotations
@@ -69,6 +69,10 @@ POPUP_TYPE_MENU = [
     "BOTTOM_BANNER", "DIM_LAYER", "FULL_LAYER", "INTERSTITIAL", "UNLABELED_X_ONLY", "VIDEO_AD", "LOGIN_PROMO",
     "PERMISSION", "COOKIE_CONSENT", "SURVEY", "OTHER",
 ]
+# 사람이 본 모양 → 사람 기준 종류의 기본값(잘못 닫음 판정용). 시험자가 바꿀 수 있다.
+KIND_FROM_TYPE = {"NOTICE_POPUP": "NOTICE", "COUPON_POPUP": "COUPON", "PERMISSION": "DECISION",
+                  "COOKIE_CONSENT": "DECISION", "SURVEY": "OTHER", "OTHER": "OTHER"}
+HUMAN_KIND_MENU = ["AD", "COUPON", "NOTICE", "DECISION", "SUSPICIOUS", "OTHER"]
 HEADER = (TOOLS.parent / "docs" / "templates" / "real_site_trials.csv").read_text(encoding="utf-8").splitlines()[0].split(",")
 
 
@@ -177,7 +181,13 @@ class Asker:
             print("  목록의 번호나 코드로 적어 주세요")
 
 
-def build_rows(codes: list[str], base: dict, asker: Asker, popup_type_default: str) -> list[dict]:
+def ask_kind(asker: Asker, popup_type: str, forced: str) -> str:
+    default = forced or KIND_FROM_TYPE.get(popup_type, "AD")
+    return asker.ask("사람이 보기에 무슨 팝업? (AD 광고·COUPON 쿠폰·NOTICE 공지·DECISION 결정·SUSPICIOUS 사기 의심·OTHER)",
+                     default, set(HUMAN_KIND_MENU))
+
+
+def build_rows(codes: list[str], base: dict, asker: Asker, popup_type_default: str, kind_default: str = "") -> list[dict]:
     episodes, before = split_episodes(codes)
     rows = []
     if not episodes:
@@ -187,6 +197,7 @@ def build_rows(codes: list[str], base: dict, asker: Asker, popup_type_default: s
                    clicked_target="NONE", forbidden_click="N", misclick="N", notes=miss_reasons(codes))
         if appeared == "Y":
             row["popup_type"] = asker.popup_type(popup_type_default)
+            row["human_kind"] = ask_kind(asker, row["popup_type"], kind_default)
         rows.append(row)
         return rows
     for i, episode in enumerate(episodes):
@@ -197,6 +208,7 @@ def build_rows(codes: list[str], base: dict, asker: Asker, popup_type_default: s
         row = dict(base, trial_id=f"{base['trial_id']}-{chr(97 + i)}" if len(episodes) > 1 else base["trial_id"],
                    popup_appeared="Y", detected="Y", **{k: v for k, v in s.items() if k != "close_hint"})
         row["popup_type"] = asker.popup_type(popup_type_default)
+        row["human_kind"] = ask_kind(asker, row["popup_type"], kind_default)
         row["close_available"] = asker.yes_no("이름 있는 닫기 버튼(닫기·X 이름 있음)이 있었나요?", s["close_hint"] or "Y")
         if s["clicked_target"] != "NONE":
             row["closed_verified"] = asker.yes_no("팝업이 실제로 사라졌나요?", s["closed_verified"])
@@ -258,6 +270,8 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--rehearsal", default="N", choices=["Y", "N"])
     p.add_argument("--site-code", default="", help="L90일 때 사이트 영문 코드(예: SITE_WEMAKEPRICE). 한글 금지")
     p.add_argument("--popup-type", default="OTHER", choices=POPUP_TYPE_MENU, help="묻지 않을 때(--yes) 쓸 팝업 모양")
+    p.add_argument("--human-kind", default="", choices=[""] + HUMAN_KIND_MENU,
+                   help="묻지 않을 때(--yes) 쓸 사람 기준 종류(비우면 팝업 모양에서 추정)")
     p.add_argument("--yes", action="store_true", help="묻지 않고 기본값으로 채움")
     p.add_argument("--key", type=Path, default=metrics.DEFAULT_KEY)
     args = p.parse_args(argv)
@@ -280,7 +294,7 @@ def main(argv: list[str] | None = None) -> int:
     base.update(trial_id=trial_id, site_id=args.site, browser=args.browser, date=dt.date.today().isoformat(),
                 tester=args.tester, device=args.device, android=args.android, app_build=args.build,
                 talkback=args.talkback, preset=args.preset, rehearsal=args.rehearsal)
-    rows = build_rows(codes, base, Asker(args.yes), args.popup_type)
+    rows = build_rows(codes, base, Asker(args.yes), args.popup_type, args.human_kind)
     if args.site_code:
         for row in rows:
             row["notes"] = ";".join(x for x in (args.site_code, row.get("notes", "")) if x)[:metrics.NOTES_MAX]
@@ -298,6 +312,8 @@ def main(argv: list[str] | None = None) -> int:
     for row in rows:
         verdict, why = metrics.judge(row, key[args.site])
         print(f"→ {row['trial_id']}: ④ {verdict}{' (' + why + ')' if verdict == 'FAIL' else ''}")
+        if why == "WRONG_KIND_CLOSE":
+            print("   ⚠ 묻거나 알려야 할 팝업을 닫았습니다(내용을 놓침). 단톡에 사이트·시행 ID를 알려 주세요.")
     print(f"{len(rows)}줄을 {args.out}에 붙였습니다.")
     return 1 if any(r["forbidden_click"] == "Y" or r["misclick"] == "Y" for r in rows) else 0
 
