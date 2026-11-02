@@ -158,7 +158,7 @@ A의 원본 F1 시나리오 14개는 현재 `UNOBSERVED=14`이며 F0 완전성�
 
 ## 8. 다음 단계: 클릭을 켠 뒤 성공 판정 (미리 정함)
 
-첫 통합에는 클릭이 없으므로 이 절은 쓰지 않습니다. 클릭을 켜는 실측부터 아래 기준으로 판정합니다(A·C #34/#42 리뷰 10/25, `docs/F12_RULE_STORAGE.md` "누르기 성공").
+첫 통합에는 클릭이 없으므로 이 절은 쓰지 않습니다. 클릭을 켜는 실측부터 아래 기준으로 판정합니다(A·C #34/#42 리뷰, B #48, 10/25, `docs/F12_RULE_STORAGE.md` "누르기 성공").
 
 **성공은 세 가지가 모두일 때만**: 누르기 시도함(`attempted`) + `MECHANICAL_SUCCESS` + 닫힘 관측(`CLOSED_CONFIRMED`).
 
@@ -167,8 +167,9 @@ A의 원본 F1 시나리오 14개는 현재 `UNOBSERVED=14`이며 F0 완전성�
 | 세 가지 모두 | "닫았어요" | [기억하기]를 골랐으면 1건 | 기억하기를 골랐는데 저장 0건 |
 | `MECHANICAL_SUCCESS`, 닫힘 관측 없음 | "닫혔는지 확인하지 못했어요" | **0건** | "닫았어요" 안내, 또는 기억 저장 |
 | `ATTEMPT_FAILED`·`OUTCOME_UNKNOWN` + `CLOSED_CONFIRMED` | "닫혔는지 확인하지 못했어요" | **0건** | "닫았어요" 안내, 또는 기억 저장 |
-| `NOT_EXECUTED`·`BLOCKED`·`STALE` | 비실행 안내 | 0건 | "닫았어요" 안내 |
+| `attempted=false`인 `NOT_EXECUTED`·`BLOCKED`·`STALE` | 비실행 안내 | 0건 | "닫았어요" 안내 |
 
 - 결과 CSV의 `outcome`은 지금처럼 **앱이 실제로 눌렀는지**로 적습니다(눌렀으면 `USER_CONFIRMED`/`AUTO_HANDLED`, `clicked_target` 기록). 닫힘을 확인하지 못했으면 `notes`에 `닫힘 미확인`이라고 적습니다.
 - 기억 저장 건수는 설정 화면 기억 목록 개수로 확인합니다(화면 원문은 적지 않음).
+- **기억으로 눌렀을 때**(자동 반복을 켠 뒤): 성공이 아니면 그 규칙이 목록에서 꺼짐으로 바뀌어야 합니다(B #48). 성공이 아닌데 규칙이 계속 켜져 있으면 실패, 누르지 않은 경우(`attempted=false`)에 규칙이 꺼지면 그것도 실패입니다.
 - 닫힘 미확인 상황은 시험자가 일부러 만들기 어렵습니다. 관측된 경우만 기록하고, 관측하지 못한 줄은 "못 봄"으로 둡니다. 조합별 판정은 C·A JVM 시험(`PressResultSpeechTest`, `AnnouncementBatcherTest`, `PopupChoiceFlowTest`)이 맡습니다.
