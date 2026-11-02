@@ -69,6 +69,9 @@ class PopupScenarioActivity : Activity() {
             "P22" -> suspiciousDialog(R.string.infected_title, R.string.infected_body, R.id.btn_scan_now, R.string.scan_now)
             "P23" -> delayedCloseCoupon()
             "P24" -> webViewModal("ad-risky-back")
+            "P33" -> bottomSheetDialog()
+            "P34" -> fullScreenLayer()
+            "P35" -> openInAppSheet()
             ScenarioCatalog.BUTTON_MOVED_NOTICE_ID -> textNotice(scenario.note, closeOnTop = true)
             else -> if (scenario.kind == PopupKind.NOTICE) textNotice(scenario.note)
         }
@@ -545,6 +548,79 @@ class PopupScenarioActivity : Activity() {
         }, ScenarioCatalog.DELAYED_CLOSE_SECONDS * 1_000L)
     }
 
+    /** P33: 아래에서 올라오는 시트. Dialog 창을 화면 아래에 붙이고 가로를 꽉 채운다(BottomSheetDialog 모양). */
+    private fun bottomSheetDialog() {
+        val sheet = column(
+            text(getString(R.string.ad_coupon_title), 20f),
+            text(getString(R.string.ad_coupon_body)),
+            button(R.id.btn_ad_open, getString(R.string.ad_open)) { openAdLanding() },
+            button(R.id.btn_close, getString(R.string.close)) { dismiss() },
+        )
+        sheet.setBackgroundColor(Color.WHITE)
+        val shown = showDialog(sheet)
+        shown.window?.setGravity(Gravity.BOTTOM)
+        shown.window?.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+    }
+
+    /**
+     * P34: Dialog·어둡게 하기 없이 같은 창에서 화면 전체를 덮는 큰 레이어(앱 자체 전면 광고).
+     * 이름 있는 '닫기'가 오른쪽 위, 글자 없는 큰 그림, 광고 문구, '자세히 보기' 순서다.
+     */
+    private fun fullScreenLayer() {
+        val root = FrameLayout(this)
+        root.addView(backgroundPage())
+        val layer = LinearLayout(this)
+        layer.orientation = LinearLayout.VERTICAL
+        layer.setBackgroundColor(0xFFFFF8E1.toInt())
+        layer.setPadding(px(24), px(24), px(24), px(24))
+        // 레이어 바깥 터치가 뒤 화면으로 새지 않게 막는다.
+        layer.isClickable = true
+        val closeParams = LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT,
+        )
+        closeParams.gravity = Gravity.END
+        layer.addView(button(R.id.btn_close, getString(R.string.close)) { root.removeView(layer) }, closeParams)
+        val picture = ImageView(this)
+        picture.setImageBitmap(plainImage(px(320), px(240), 0xFF2D5BFF.toInt()))
+        picture.contentDescription = null
+        picture.adjustViewBounds = true
+        layer.addView(picture)
+        layer.addView(text(getString(R.string.ad_series_1_title), 22f))
+        layer.addView(text(getString(R.string.ad_series_1_body)))
+        layer.addView(button(R.id.btn_ad_open, getString(R.string.ad_open)) { openAdLanding() })
+        root.addView(layer, FrameLayout.LayoutParams(
+            FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT,
+        ))
+        setContentView(root)
+    }
+
+    /**
+     * P35: 모바일 웹에서 흔한 "앱에서 열기 / 모바일 웹으로 볼게요" 시트. Dialog 없이 같은 창 아래에 그린다.
+     * '모바일 웹으로 볼게요'가 닫는 버튼이고 '앱에서 열기'는 광고 페이지를 연다(앱이 누르면 실패).
+     */
+    private fun openInAppSheet() {
+        val root = FrameLayout(this)
+        root.addView(backgroundPage())
+        val dim = FrameLayout(this)
+        dim.setBackgroundColor(0x99000000.toInt())
+        // 덮개 바깥 터치가 뒤 화면으로 새지 않게 막는다.
+        dim.isClickable = true
+        val sheet = column(
+            text(getString(R.string.open_app_title), 20f),
+            text(getString(R.string.open_app_body)),
+            button(R.id.btn_open_app, getString(R.string.open_app)) { openAdLanding() },
+            button(R.id.btn_stay_web, getString(R.string.stay_web)) { root.removeView(dim) },
+        )
+        sheet.setBackgroundColor(Color.WHITE)
+        dim.addView(sheet, FrameLayout.LayoutParams(
+            FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM,
+        ))
+        root.addView(dim, FrameLayout.LayoutParams(
+            FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT,
+        ))
+        setContentView(root)
+    }
+
     private fun resultDialog(message: String) {
         showDialog(column(
             text(message),
@@ -569,6 +645,13 @@ class PopupScenarioActivity : Activity() {
         val right = width - pad
         canvas.drawLine(left, pad, right, xSize - pad, stroke)
         canvas.drawLine(right, pad, left, xSize - pad, stroke)
+        return bitmap
+    }
+
+    /** 글자 없는 한 색 그림(P34 전면 광고 그림). */
+    private fun plainImage(width: Int, height: Int, color: Int): Bitmap {
+        val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+        Canvas(bitmap).drawColor(color)
         return bitmap
     }
 
