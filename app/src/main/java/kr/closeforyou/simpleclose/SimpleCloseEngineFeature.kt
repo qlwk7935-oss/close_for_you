@@ -204,6 +204,13 @@ object SimpleCloseEngineFeature {
     const val FOCUS_RECLAIM_WINDOW_MILLIS = 1_500L
     const val FOCUS_RECLAIM_MAX = 3
 
+    /**
+     * F39 (삼성, TalkBack, voice "닫아"): while the focused result card is up, a page move is taken back to the card
+     * ([ReclaimVerdict.RECLAIM_TO_CARD]) for this long after it took the focus; still at most [FOCUS_RECLAIM_MAX]
+     * and ended by the person's touch or gesture.
+     */
+    const val FOCUS_RECLAIM_CARD_WINDOW_MILLIS = 3_000L
+
     /** F15: the result sentence waits until no move for this long (TalkBack reads the focused item first). */
     const val FOCUS_RECLAIM_QUIET_MILLIS = 600L
     const val FOCUS_RECLAIM_POLL_MILLIS = 50L

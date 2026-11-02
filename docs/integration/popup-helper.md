@@ -734,6 +734,29 @@ F26 자동 확인: 옥션 웹 감지 1.3초·재확인 308ms·`READ_DUTY_PCT` 7.
 - **"닫아"로 닫힌 경우 로그 확인:** 음성 선택은 탭과 같은 경로다. `adb logcat -s CfySimple`에서 `ASKED` → `USER_CHOSE_PRESS` → `CLICKED_LABELED_CLOSE` → `CLOSED_CONFIRMED` 순서면 정상이다. 로그만으로 음성과 탭은 구분되지 않는다.
 - 검증(F38): 5개 Gradle 작업 통과, 단위 시험 debug 1310개·release 1295개 실패 0, lintDebug 오류 0(경고 14), INTERNET 0. 시험 추가 5개(`PromptControlsControllerTest`의 `f38*`).
 
+### 8-30. F39 — TalkBack 켜고 음성 "닫아" 뒤 결과 대신 본문을 읽음 (JVM 시험만, 실기기 미검증)
+
+- **측정**(우진, 삼성 SM-F966N, 661153e, TalkBack 켬, P04 [말하기] "닫아"): 팝업은 닫히는데 "닫았어요" 대신 P04 본문을 읽었다(여러 번 같음). TalkBack을 끄면 정상이었다. LG에서 손으로 [닫기]를 탭했을 때도 정상이었다.
+  - 로그: `FOCUS_PRE_CLICK_NONE` → `FOCUS_PRE_CLICK_FAILED` → `RESULT_VIA_TALKBACK` → `RESULT_BANNER_SHOWN` → `RESULT_BANNER_FOCUSED` → `FOCUS_RECLAIMED=0`
+- **코드로 본 원인:**
+  - 음성 선택과 탭 선택은 서비스에서 같은 길을 탄다. 다른 것은 `ChoiceOrigin`뿐이다: `onAnswer` → `focusPageBeforeOurWindowGoes` → `pressAndConfirm` → `speakClosedThenFocusPage`.
+  - `FOCUS_PRE_CLICK_NONE/FAILED`: P04에는 팝업 위에 초점을 둘 곳(툴바·제목·위 항목)이 없다. 그래서 누르기 전 초점 이동이 안 됐고, 우리 창이 없어질 때 TalkBack이 초점을 스스로 고른다.
+  - `RESULT_BANNER_FOCUSED`: 결과 카드는 초점을 잡았다. 그 **뒤에** TalkBack이나 앱이 초점을 본문으로 옮겼고, TalkBack은 새 초점(본문)을 읽느라 카드 문장을 끊었다.
+  - `FOCUS_RECLAIMED=0`: 초점 되찾기(F15)는 "닫힌 팝업 안이나 없어진 노드로 간 초점"만 되찾는다(`FocusReclaimRules`). 본문은 페이지 위라 `LEAVE`로 그대로 뒀다.
+  - 탭과 결과가 달랐던 이유는 로그만으로 정할 수 없다. 기기(LG·삼성)와 TalkBack 버전도 달랐다. 음성 경로에서는 [말하기]를 누른 뒤 몇 초 동안 터치가 없고, 인식이 끝난 뒤 TalkBack이 초점을 다시 정하는 시점이 늦을 수 있다(추정). **삼성 탭 시험으로 가려야 한다.**
+- **고침:**
+  - 결과 카드가 초점을 쥐고 있는 동안에는 우리가 옮기지 않은 페이지 초점 이동도 카드로 되돌린다(`ReclaimVerdict.RECLAIM_TO_CARD`, `FOCUS_RECLAIM_PAGE_TO_CARD`).
+  - 지켜보는 시간은 카드가 초점을 잡은 뒤 3초다(`FOCUS_RECLAIM_CARD_WINDOW_MILLIS`, 페이지만 볼 때는 1.5초).
+  - 최대 3번이고, 사람이 화면을 만지거나 제스처를 하면 바로 끝난다. 사람의 탐색은 막지 않는다.
+  - TTS 대안은 쓰지 않았다. TalkBack이 본문을 읽는 중에 TTS로 말하면 두 목소리가 겹친다. 카드로 되돌리면 TalkBack 한 목소리로 "닫았어요"를 읽는다.
+- **진단 코드(글자 없음):**
+  - `USER_CHOSE_BY_VOICE` / `USER_CHOSE_BY_TAP`: 고른 방법
+  - 지켜보는 동안 남이 옮긴 초점: `FOCUS_OTHER_INTO_POPUP` / `FOCUS_OTHER_ON_PAGE`
+  - `FOCUS_RECLAIM_PAGE_TO_CARD` / `FOCUS_RECLAIM_CARD_REFUSED`
+- **기대 로그(삼성, TalkBack 켬, 음성):** `USER_CHOSE_PRESS` → `USER_CHOSE_BY_VOICE` → … → `RESULT_BANNER_FOCUSED` → `FOCUS_OTHER_ON_PAGE` → `FOCUS_RECLAIM_PAGE_TO_CARD` → `FOCUS_RECLAIMED=1`. "닫았어요"가 들려야 한다.
+  - `FOCUS_OTHER_ON_PAGE`가 없는데도 본문을 읽으면, 초점은 그대로이고 TalkBack 쪽 읽기 순서 문제다. 그 로그를 보내 주기.
+- 검증(F39): 5개 Gradle 작업 통과, 단위 시험 debug 1311개·release 1296개 실패 0, lintDebug 오류 0(경고 14), INTERNET 0. 시험 추가 1개(`PopupMemoryTest.f39…`).
+
 - 잔여 노드 쪽 이벤트 무시: TalkBack이 무엇을 읽을지는 앱이 막을 수 없다. 대신 포커스를 잔여 노드 밖으로 옮기는 것(F9)이 할 수 있는 전부. 웹 페이지가 닫힌 팝업을 DOM에 `aria-hidden` 없이 남기는 한, 사용자가 스와이프로 다시 만날 수 있다(한계로 기록).
 - 선택 창 PROMPT도 TalkBack 큐로? 가능은 하다: 선택 창 자체(이미 접근성 오버레이)에 paneTitle이 있고 TalkBack이 창을 읽으므로, "안내 맡기기" ON이면 우리 TTS PROMPT를 끄고 paneTitle/첫 버튼 포커스 낭독에 맡기는 방식. 단, 지금 PROMPT는 TalkBack이 팝업을 읽는 도중 끊고 들어가야 시연이 빠르므로 polite로 바꾸면 늦어질 수 있다. F11 배너가 LG에서 잘 읽히면 같은 방식으로 옮길지 정하자(의견, 미구현).
 - 검증(F1~F11 한 빌드): 5개 Gradle 작업 통과, 단위 시험 debug 1028개·release 1013개 실패 0, lintDebug 오류 0(경고 12), 병합 매니페스트 INTERNET 0·새 권한 없음.

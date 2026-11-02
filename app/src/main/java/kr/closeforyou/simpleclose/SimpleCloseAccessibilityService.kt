@@ -56,6 +56,7 @@ import kr.closeforyou.ui.voice.choice.PromptOption
 import kr.closeforyou.ui.voice.choice.PromptOptionKind
 import kr.closeforyou.ui.voice.choice.RememberChoiceRules
 import kr.closeforyou.ui.voice.overlay.AccessibilityChoiceOverlay
+import kr.closeforyou.ui.voice.overlay.ChoiceOrigin
 import kr.closeforyou.ui.voice.overlay.PromptAnnounceMode
 import kr.closeforyou.ui.voice.overlay.PromptAnnouncementListener
 import kr.closeforyou.ui.voice.overlay.PromptAnswer
@@ -822,9 +823,10 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
             if (shown) {
                 log.trace(SimpleTrace.RESULT_VIA_TALKBACK)
                 if (watch != null && reclaim === watch) {
-                    watch.until = SystemClock.uptimeMillis() + SimpleCloseEngineFeature.FOCUS_RECLAIM_WINDOW_MILLIS
+                    // F39: the card is watched a little longer than the page (a late focus restore after a voice choice).
+                    watch.until = SystemClock.uptimeMillis() + SimpleCloseEngineFeature.FOCUS_RECLAIM_CARD_WINDOW_MILLIS
                     scope.launch {
-                        delay(SimpleCloseEngineFeature.FOCUS_RECLAIM_WINDOW_MILLIS)
+                        delay(SimpleCloseEngineFeature.FOCUS_RECLAIM_CARD_WINDOW_MILLIS)
                         if (reclaim === watch) endReclaim(null)
                     }
                 }
@@ -990,6 +992,7 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
             }
             ChoiceKind.CLOSE_ONCE, ChoiceKind.SKIP_ONCE, ChoiceKind.REMEMBER_EXACT_POPUP -> {
                 log.trace(SimpleTrace.USER_CHOSE_PRESS)
+                log.trace(if (answer.origin == ChoiceOrigin.VOICE) SimpleTrace.USER_CHOSE_BY_VOICE else SimpleTrace.USER_CHOSE_BY_TAP)
                 val remember = choice.kind == ChoiceKind.REMEMBER_EXACT_POPUP && choice.buttonMeaningConfirmed && choice.repeatAutomationExplicitlyAllowed
                 prompted = null
                 val candidate = (popup.scan.candidates + listOfNotNull(popup.scan.xButton)).firstOrNull { it.id == choice.candidateId } ?: return
@@ -1179,9 +1182,21 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
             val target = watch.target
             // Before our own move's node is known, its echo is told by time.
             val ours = if (target != null) focused?.second == target else now - lastOwnFocusAt <= OWN_FOCUS_ECHO_MILLIS
-            when (FocusReclaimRules.decide(focused?.first, ours, watch.memory, watch.count, SimpleCloseEngineFeature.FOCUS_RECLAIM_MAX)) {
+            if (!ours) log.trace(if (FocusReclaimRules.intoPopup(focused?.first, watch.memory)) SimpleTrace.FOCUS_OTHER_INTO_POPUP else SimpleTrace.FOCUS_OTHER_ON_PAGE)
+            val cardHoldsFocus = watch.onBanner && resultBanner?.holdsFocusTarget == true
+            when (FocusReclaimRules.decide(focused?.first, ours, watch.memory, watch.count, SimpleCloseEngineFeature.FOCUS_RECLAIM_MAX, cardHoldsFocus)) {
                 ReclaimVerdict.OUR_OWN, ReclaimVerdict.LEAVE -> Unit
                 ReclaimVerdict.LIMIT -> endReclaim(SimpleTrace.FOCUS_RECLAIM_LIMIT)
+                ReclaimVerdict.RECLAIM_TO_CARD -> {
+                    lastOwnFocusAt = now
+                    if (resultBanner?.refocus() == true) {
+                        watch.count += 1
+                        watch.lastMoveAt = now
+                        log.trace(SimpleTrace.FOCUS_RECLAIM_PAGE_TO_CARD)
+                    } else {
+                        log.trace(SimpleTrace.FOCUS_RECLAIM_CARD_REFUSED)
+                    }
+                }
                 ReclaimVerdict.RECLAIM -> {
                     lastOwnFocusAt = now
                     if (watch.onBanner && resultBanner?.refocus() == true) {

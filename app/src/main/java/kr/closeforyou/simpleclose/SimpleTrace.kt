@@ -305,6 +305,19 @@ enum class SimpleTrace {
     AD_HINT_MISS_NO_VERIFIED_CLOSE,
     AD_HINT_MISS_IMAGE_TOO_SMALL,
     AD_HINT_MISS_TOO_MUCH_TEXT,
+    /**
+     * F39 (우진 삼성 SM-F966N, TalkBack 켬, [말하기] "닫아": closed, then TalkBack read the page's body instead of
+     * "닫았어요"; FOCUS_RECLAIMED=0): BY_VOICE / BY_TAP: how the press was chosen (no words). During the watch, a
+     * focus move we did not make: OTHER_INTO_POPUP (into the old popup or a gone node) / OTHER_ON_PAGE (elsewhere
+     * on the page). RECLAIM_PAGE_TO_CARD: such a page move while the result card held the focus, put back on the
+     * card; CARD_REFUSED: the card could not take it back.
+     */
+    USER_CHOSE_BY_VOICE,
+    USER_CHOSE_BY_TAP,
+    FOCUS_OTHER_INTO_POPUP,
+    FOCUS_OTHER_ON_PAGE,
+    FOCUS_RECLAIM_PAGE_TO_CARD,
+    FOCUS_RECLAIM_CARD_REFUSED,
     ;
 
     companion object {

@@ -162,8 +162,11 @@ object PageFocusRules {
 /** F15: the node TalkBack's focus just went to, as the reclaim rule needs it (memory only, never logged). */
 class FocusedNode(val text: String?, val description: String?, val bounds: ScreenBounds, val visible: Boolean)
 
-/** F15: what to do with a focus move we did not make, while the watch after a press is on. */
-enum class ReclaimVerdict { OUR_OWN, LEAVE, RECLAIM, LIMIT }
+/**
+ * F15: what to do with a focus move we did not make, while the watch after a press is on.
+ * F39: [RECLAIM_TO_CARD] = a move elsewhere on the page while our result card holds the focus: back to the card.
+ */
+enum class ReclaimVerdict { OUR_OWN, LEAVE, RECLAIM, RECLAIM_TO_CARD, LIMIT }
 
 /**
  * F15 (demo mode, AGENTS 6-0; LG 11/1 02:55: `FOCUS_MOVES_BY_OTHERS=2`, TalkBack read the closed
@@ -173,14 +176,23 @@ enum class ReclaimVerdict { OUR_OWN, LEAVE, RECLAIM, LIMIT }
  * the page is left alone, and so is our own move. Pure; JVM tested.
  */
 object FocusReclaimRules {
-    fun decide(focused: FocusedNode?, ours: Boolean, memory: PopupMemory, reclaimed: Int, max: Int): ReclaimVerdict {
+    /**
+     * F39 (삼성, TalkBack, a voice "닫아"): with nothing touched since the choice, a move onto the page's own
+     * text while our result card holds the focus is TalkBack or the app restoring a focus, not the person:
+     * [cardHoldsFocus] takes it back to the card too (the watch ends at the person's touch or gesture).
+     */
+    fun decide(focused: FocusedNode?, ours: Boolean, memory: PopupMemory, reclaimed: Int, max: Int, cardHoldsFocus: Boolean = false): ReclaimVerdict {
         if (ours) return ReclaimVerdict.OUR_OWN
-        val intoPopup = focused == null || !focused.visible || focused.bounds.width <= 0 || focused.bounds.height <= 0 ||
-            memory.matches(focused.text, focused.description, focused.bounds)
+        val intoPopup = intoPopup(focused, memory)
         return when {
-            !intoPopup -> ReclaimVerdict.LEAVE
+            !intoPopup && !cardHoldsFocus -> ReclaimVerdict.LEAVE
             reclaimed >= max -> ReclaimVerdict.LIMIT
+            !intoPopup -> ReclaimVerdict.RECLAIM_TO_CARD
             else -> ReclaimVerdict.RECLAIM
         }
     }
+
+    fun intoPopup(focused: FocusedNode?, memory: PopupMemory): Boolean =
+        focused == null || !focused.visible || focused.bounds.width <= 0 || focused.bounds.height <= 0 ||
+            memory.matches(focused.text, focused.description, focused.bounds)
 }

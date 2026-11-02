@@ -108,8 +108,21 @@ class PopupMemoryTest {
 
     // ---- F15 (LG 11/1 02:55: FOCUS_MOVES_BY_OTHERS=2, TalkBack read the closed 11번가 sheet again) ----
 
-    private fun decide(node: FocusedNode?, ours: Boolean = false, count: Int = 0) =
-        FocusReclaimRules.decide(node, ours, memory(SimpleNodes.elevenStreet()), count, max = 3)
+    private fun decide(node: FocusedNode?, ours: Boolean = false, count: Int = 0, card: Boolean = false) =
+        FocusReclaimRules.decide(node, ours, memory(SimpleNodes.elevenStreet()), count, max = 3, cardHoldsFocus = card)
+
+    /** F39 (삼성, TalkBack, voice "닫아": TalkBack read the page body instead of the card; FOCUS_RECLAIMED=0). */
+    @Test fun f39APageMoveWhileTheCardHoldsTheFocusGoesBackToTheCard() {
+        val body = FocusedNode("오늘의 특가 상품", null, ScreenBounds(0, 320, 1080, 420), true)
+        assertEquals(ReclaimVerdict.LEAVE, decide(body))
+        assertEquals(ReclaimVerdict.RECLAIM_TO_CARD, decide(body, card = true))
+        // Into the old popup it is the old rule; our own move stays ours; the limit still holds.
+        assertEquals(ReclaimVerdict.RECLAIM, decide(null, card = true))
+        assertEquals(ReclaimVerdict.OUR_OWN, decide(body, ours = true, card = true))
+        assertEquals(ReclaimVerdict.LIMIT, decide(body, count = 3, card = true))
+        assertEquals(true, FocusReclaimRules.intoPopup(null, memory(SimpleNodes.elevenStreet())))
+        assertEquals(false, FocusReclaimRules.intoPopup(body, memory(SimpleNodes.elevenStreet())))
+    }
 
     @Test fun aMoveIntoTheOldPopupOrOntoAGoneNodeIsTakenBack() {
         // The sheet's own words, its place, or nothing at all (the node went with the popup).
