@@ -796,6 +796,24 @@ F26 자동 확인: 옥션 웹 감지 1.3초·재확인 308ms·`READ_DUTY_PCT` 7.
 - 검증(F41): 5개 Gradle 작업 통과, 단위 시험 debug 1320개·release 1305개 실패 0, lintDebug 오류 0(경고 14), INTERNET 0. 시험 추가 `F41Test` 3개.
   - 카드 화면·TalkBack 이동은 JVM으로 시험할 수 없다. 실기기 확인이 필요하다.
 
+### 8-34. 동준 PR #73 병합 (JVM 시험만, 실기기 미검증)
+
+- `refs/pull/73/head`(648d959, b9827d3 위)를 충돌 없이 병합했다(`#72` 대체).
+- 재현 앱에 P33 아래에서 올라오는 시트, P34 화면 전체를 덮는 큰 레이어(Dialog 표시 없음), P35 "앱에서 열기·모바일 웹" 시트, 시험 페이지 W09~W11이 생겼다. P13·P24는 우리 버전(`btn_close`) 그대로다.
+- 재현 앱 단위 시험 27개와 앱 `AnswerKeyPipelineTest`(P33~P35 포함) 통과.
+
+### 8-35. F42 — 결과 카드 표시 시간 (준영 제안, 팀 결정 11/2) (JVM 시험만, 실기기 미검증)
+
+- **문제:** F41 카드는 초점이 있으면 6초, 없으면 4초 뒤에 사라졌다. TalkBack으로 결과를 듣고 → 쓸어서 [방금 닫은 내용 듣기]로 가서 → 두 번 누르기에는 빠듯했다. 카드가 사라지면 내용도 지워진다.
+- **바꾼 것(버튼이 있는 카드만, `ResultCardClock`):** 0.5초마다 카드를 확인한다.
+  - TalkBack 접근성 초점이 카드 안(문장이나 버튼)에 있으면 사라지지 않는다. 최대 15초(사용자 설정 시간이 더 길면 그 시간).
+  - 초점이 카드 안에 있다가 밖으로 나가면 2초 뒤에 사라진다(확인 간격 때문에 최대 2.5초). 다시 들어오면 다시 유지한다.
+  - 초점이 한 번도 안 들어왔으면(TalkBack 끔 포함) `AccessibilityManager.getRecommendedTimeoutMillis(기존 시간, FLAG_CONTENT_TEXT | FLAG_CONTENT_CONTROLS)` 뒤에 사라진다. 사용자 설정이 없으면 기존 시간 그대로이고, 기존보다 짧아지지 않는다.
+  - 다음 팝업을 처리하면(선택 창을 띄울 때·자동으로 누르기 전) 버튼 있는 카드는 바로 사라진다. 이때는 초점을 페이지로 먼저 옮기지 않는다(다음 선택 창·누르기가 초점을 맡는다). 새 결과 카드는 전처럼 이전 카드를 바로 교체한다.
+- 버튼이 없는 카드는 전과 같다(4초 / 초점이 있으면 6초).
+- 진단(글자 없음): `RESULT_CARD_TIMEOUT_MS=<첫 시간 ms>`, `RESULT_CARD_HELD_FOCUS`(시간이 지났지만 초점이 있어 유지), `RESULT_CARD_FOCUS_LEFT`, `RESULT_CARD_HOLD_MAX`(15초까지 초점이 있어 사라짐), `RESULT_CARD_TIMED_OUT`, `RESULT_CARD_REPLACED_BY_NEXT`
+- 실기기 확인 필요: 오버레이 창 안 View의 `isAccessibilityFocused`가 TalkBack 초점을 그대로 보여 주는지(LG Android 12).
+
 - 잔여 노드 쪽 이벤트 무시: TalkBack이 무엇을 읽을지는 앱이 막을 수 없다. 대신 포커스를 잔여 노드 밖으로 옮기는 것(F9)이 할 수 있는 전부. 웹 페이지가 닫힌 팝업을 DOM에 `aria-hidden` 없이 남기는 한, 사용자가 스와이프로 다시 만날 수 있다(한계로 기록).
 - 선택 창 PROMPT도 TalkBack 큐로? 가능은 하다: 선택 창 자체(이미 접근성 오버레이)에 paneTitle이 있고 TalkBack이 창을 읽으므로, "안내 맡기기" ON이면 우리 TTS PROMPT를 끄고 paneTitle/첫 버튼 포커스 낭독에 맡기는 방식. 단, 지금 PROMPT는 TalkBack이 팝업을 읽는 도중 끊고 들어가야 시연이 빠르므로 polite로 바꾸면 늦어질 수 있다. F11 배너가 LG에서 잘 읽히면 같은 방식으로 옮길지 정하자(의견, 미구현).
 - 검증(F1~F11 한 빌드): 5개 Gradle 작업 통과, 단위 시험 debug 1028개·release 1013개 실패 0, lintDebug 오류 0(경고 12), 병합 매니페스트 INTERNET 0·새 권한 없음.

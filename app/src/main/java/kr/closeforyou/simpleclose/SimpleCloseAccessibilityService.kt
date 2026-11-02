@@ -266,7 +266,7 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
         resultBanner = TalkBackResultBanner(this, beforeFocusedDismiss = {
             lastOwnFocusAt = SystemClock.uptimeMillis()
             lastClosedMemory?.let { collector.focusPageItem(it, beforeClick = true) }
-        }, onGone = lastClosed::forget)
+        }, onGone = lastClosed::forget, trace = { log.trace(it) }, timeoutMillis = { log.latency("RESULT_CARD_TIMEOUT_MS", it) })
         log.trace(SimpleTrace.SERVICE_CONNECTED)
     }
 
@@ -706,6 +706,8 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
                     }
                     // F41: the next popup is being handled: the last card's words are forgotten.
                     lastClosed.forget()
+                    // F42: and its card (held while focused) goes now.
+                    resultBanner?.dismissForNextPopup()
                     val result = try {
                         pressAndConfirm(classified, decision.candidate, preClickMove, watchFocus = moveFocus, prePress = prePress)
                     } finally {
@@ -1010,6 +1012,8 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
         focusedBeforeClose = false
         // F41: the next popup: what the last card would say is forgotten.
         lastClosed.forget()
+        // F42: and its card (held while focused) goes now.
+        resultBanner?.dismissForNextPopup()
         val result = presenter.present(shown) { answer -> onAnswer(popup, answer) }
         if (result != PromptShowResult.SHOWN) {
             prompted = null

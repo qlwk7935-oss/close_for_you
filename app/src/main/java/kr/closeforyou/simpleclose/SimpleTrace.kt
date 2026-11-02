@@ -324,6 +324,17 @@ enum class SimpleTrace {
     RESULT_HEAR_CLOSED_OFFERED,
     RESULT_HEAR_CLOSED_READ,
     RESULT_HEAR_CLOSED_GONE,
+    /**
+     * F42 (a card with [방금 닫은 내용 듣기], [ResultCardClock]): HELD_FOCUS: past its timeout but TalkBack's focus is
+     * inside, kept; FOCUS_LEFT: the focus left it, going in 2 s; HOLD_MAX: still focused at 15 s, gone; TIMED_OUT:
+     * gone without the focus; REPLACED_BY_NEXT: the next popup took over. The first timeout is the debug line
+     * `RESULT_CARD_TIMEOUT_MS=<ms>`.
+     */
+    RESULT_CARD_HELD_FOCUS,
+    RESULT_CARD_FOCUS_LEFT,
+    RESULT_CARD_HOLD_MAX,
+    RESULT_CARD_TIMED_OUT,
+    RESULT_CARD_REPLACED_BY_NEXT,
     ;
 
     companion object {

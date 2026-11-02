@@ -5,6 +5,7 @@ import android.graphics.PixelFormat
 import android.graphics.drawable.GradientDrawable
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.View
@@ -36,6 +37,10 @@ import android.widget.TextView
  * F41: with `hearClosed` the card also has a [방금 닫은 내용 듣기] button under the sentence (TalkBack reaches it
  * with one swipe; its label is its own text). [onGone] runs when a shown card goes away (timeout, [dismiss],
  * or replaced by the next card), so what the button would say is forgotten with it.
+ *
+ * F42: a card with that button no longer goes after a fixed time: [ResultCardClock] keeps it while TalkBack's
+ * focus is inside it (up to 15 s), takes it away 2 s after the focus leaves, and otherwise waits as long as the
+ * person's accessibility timeout setting asks. [trace] / [timeoutMillis] are debug codes and a number only.
  */
 class TalkBackResultBanner(
     private val service: AccessibilityService,
@@ -43,6 +48,10 @@ class TalkBackResultBanner(
     private val beforeFocusedDismiss: () -> Unit = {},
     /** F41: a shown card went away. */
     private val onGone: () -> Unit = {},
+    /** F42: debug codes (no words). */
+    private val trace: (SimpleTrace) -> Unit = {},
+    /** F42: the card's first timeout in ms (debug line `RESULT_CARD_TIMEOUT_MS`). */
+    private val timeoutMillis: (Long) -> Unit = {},
 ) {
     private val windowManager = service.getSystemService(WindowManager::class.java)
     private val handler = Handler(Looper.getMainLooper())
@@ -135,7 +144,13 @@ class TalkBackResultBanner(
                 }
                 onShown(onScreen, focused)
             }
-            handler.postDelayed({ if (shown === root) dismiss() }, if (takeFocus) FOCUSED_SHOW_MILLIS else SHOW_MILLIS)
+            if (button == null) {
+                handler.postDelayed({ if (shown === root) dismiss() }, ResultCardClock.baseMillis(takeFocus))
+            } else {
+                val timeout = ResultCardClock.timeoutMillis(takeFocus, hasButton = true, ::recommendedTimeout)
+                timeoutMillis(timeout)
+                watch(root, ResultCardClock(timeout), SystemClock.uptimeMillis())
+            }
             true
         } catch (e: RuntimeException) {
             shown = null
@@ -143,6 +158,45 @@ class TalkBackResultBanner(
             buttonView = null
             false
         }
+    }
+
+    /** F42: checks the card every [ResultCardClock.CHECK_MILLIS] until its clock says it goes (or it is replaced). */
+    private fun watch(root: View, clock: ResultCardClock, shownAt: Long) {
+        handler.postDelayed({
+            if (shown !== root) return@postDelayed
+            val step = clock.tick(SystemClock.uptimeMillis() - shownAt, focusInside())
+            when (step) {
+                ResultCardClock.Step.KEEP -> Unit
+                ResultCardClock.Step.HELD_FOCUS -> trace(SimpleTrace.RESULT_CARD_HELD_FOCUS)
+                ResultCardClock.Step.FOCUS_LEFT -> trace(SimpleTrace.RESULT_CARD_FOCUS_LEFT)
+                ResultCardClock.Step.DISMISS_HOLD_MAX -> trace(SimpleTrace.RESULT_CARD_HOLD_MAX)
+                ResultCardClock.Step.DISMISS -> trace(SimpleTrace.RESULT_CARD_TIMED_OUT)
+            }
+            if (step == ResultCardClock.Step.DISMISS || step == ResultCardClock.Step.DISMISS_HOLD_MAX) dismiss()
+            else watch(root, clock, shownAt)
+        }, ResultCardClock.CHECK_MILLIS)
+    }
+
+    private fun focusInside(): Boolean =
+        listOfNotNull(sentenceView, buttonView).any(::hasAccessibilityFocus)
+
+    /** The person's accessibility timeout ("조치를 취할 시간") for a card with words and a button. */
+    private fun recommendedTimeout(original: Int): Int = try {
+        service.getSystemService(AccessibilityManager::class.java)?.getRecommendedTimeoutMillis(
+            original, AccessibilityManager.FLAG_CONTENT_TEXT or AccessibilityManager.FLAG_CONTENT_CONTROLS,
+        ) ?: original
+    } catch (_: RuntimeException) {
+        original
+    }
+
+    /**
+     * F42: the next popup is being handled: a card with [방금 닫은 내용 듣기] goes now (its words are forgotten too).
+     * The focus is not moved to the page first: the next prompt or press takes care of it.
+     */
+    fun dismissForNextPopup() {
+        if (shown == null || buttonView == null) return
+        trace(SimpleTrace.RESULT_CARD_REPLACED_BY_NEXT)
+        dismiss(focusPage = false)
     }
 
     /** F17: TalkBack's focus back on the card (the page took it during the reclaim watch); false when there is no card. */
@@ -154,7 +208,7 @@ class TalkBackResultBanner(
     /** A card shown with the focus is on screen: the reclaim watch puts the focus back here. */
     val holdsFocusTarget: Boolean get() = shown != null && focusMode
 
-    fun dismiss() {
+    fun dismiss(focusPage: Boolean = true) {
         val view = shown ?: return
         shown = null
         val sentence = sentenceView
@@ -163,7 +217,7 @@ class TalkBackResultBanner(
         buttonView = null
         // F17: removed under TalkBack's focus, the focus could fall back into the old popup: the page first.
         // F41: also when the person had swiped onto the card's button.
-        if ((focusMode && sentence != null && hasAccessibilityFocus(sentence)) || (button != null && hasAccessibilityFocus(button))) {
+        if (focusPage && ((focusMode && sentence != null && hasAccessibilityFocus(sentence)) || (button != null && hasAccessibilityFocus(button)))) {
             try { beforeFocusedDismiss() } catch (_: RuntimeException) {}
         }
         focusMode = false
@@ -178,11 +232,5 @@ class TalkBackResultBanner(
         view.createAccessibilityNodeInfo().isAccessibilityFocused
     } catch (_: RuntimeException) {
         false
-    }
-
-    private companion object {
-        const val SHOW_MILLIS = 4_000L
-        /** F17: a card holding the focus stays a little longer (the person may read it again by touch). */
-        const val FOCUSED_SHOW_MILLIS = 6_000L
     }
 }
