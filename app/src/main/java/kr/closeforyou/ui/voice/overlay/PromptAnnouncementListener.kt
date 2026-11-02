@@ -89,12 +89,19 @@ class PromptAnnouncementListener internal constructor(
         val oneVoice = TalkBackTakeoverPlan.oneVoice(prompt)
         speaking = scope.launch {
             var focused = false
-            for (attempt in 1..takeoverTiming.firstFocusAttempts) {
-                if (focus.moveTo(TakeoverFocusTarget.FIRST_ITEM)) {
-                    focused = true
-                    break
+            var tries = 0
+            try {
+                for (attempt in 1..takeoverTiming.firstFocusAttempts) {
+                    tries = attempt
+                    if (focus.moveTo(TakeoverFocusTarget.FIRST_ITEM)) {
+                        focused = true
+                        break
+                    }
+                    if (attempt < takeoverTiming.firstFocusAttempts) delay(takeoverTiming.firstFocusRetryMillis)
                 }
-                if (attempt < takeoverTiming.firstFocusAttempts) delay(takeoverTiming.firstFocusRetryMillis)
+            } finally {
+                // F46: the first focus move's tries as one debug line, also when the prompt went away meanwhile.
+                focus.finished(TakeoverFocusTarget.FIRST_ITEM, tries)
             }
             // F13: TalkBack reads the first item (summary, a notice's first words, the question); nothing else speaks.
             if (oneVoice && focused) return@launch
@@ -103,6 +110,7 @@ class PromptAnnouncementListener internal constructor(
             val receipt = announcer.announce(AnnouncementRequest(prompt.token, AnnouncementKind.POPUP_FOUND, words))
             if (receipt.state == AnnouncementState.TTS_COMPLETED && !speakPressed()) {
                 focus.moveTo(TakeoverFocusTarget.CHOICE_BUTTON)
+                focus.finished(TakeoverFocusTarget.CHOICE_BUTTON, 1)
             }
         }
     }

@@ -263,6 +263,8 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
             }, detail = { preferences.current().detail }),
             PromptControlsSupport.create(this, announcer),
             beforeClose = ::focusPageBeforeOurWindowGoes,
+            // F46: the prompt's focus moves as one code line each (Debug only).
+            focusTrace = { log.line(it) },
         )
         resultBanner = TalkBackResultBanner(this, beforeFocusedDismiss = {
             lastOwnFocusAt = SystemClock.uptimeMillis()

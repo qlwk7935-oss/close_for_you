@@ -79,6 +79,9 @@ interface PromptFocus {
     /** Main thread. True only when the focus action was accepted on a node of the current window. */
     fun moveTo(target: TakeoverFocusTarget): Boolean
 
+    /** F46: one focus move of [target] ended after [attempts] tries of [moveTo]: its debug line (codes only). */
+    fun finished(target: TakeoverFocusTarget, attempts: Int) {}
+
     companion object {
         val NONE = object : PromptFocus {
             override val enabled = false

@@ -868,7 +868,32 @@ F26 자동 확인: 옥션 웹 감지 1.3초·재확인 308ms·`READ_DUTY_PCT` 7.
   - 글자 수만 쓰고 글자는 로그에 남기지 않는다.
 - 진단: `RESULT_CARD_RESTARTED_ON_READ`, `RESULT_CARD_READ_HOLD_MS=<ms>`.
 - 검증(F45): 5개 Gradle 작업 통과, 단위 시험 debug 1340개·release 1325개 실패 0(`F45Test` 5개 추가), lintDebug 오류 0(경고 15, 그대로), INTERNET 0.
-- 한계: 60초가 넘는 긴 내용(1배속 약 225글자 이상)은 상한에서 카드가 사라진다. 낭독은 우리 TTS가 계속하지만, F17 초점 이동 때 TalkBack이 페이지 항목을 말하며 겹칠 수 있다(실기기 확인 필요).
+- 한계(F45): 60초가 넘는 긴 내용(1배속 약 225글자 이상)은 상한에서 카드가 사라진다. 낭독은 우리 TTS가 계속하지만, F17 초점 이동 때 TalkBack이 페이지 항목을 말하며 겹칠 수 있다(실기기 확인 필요).
+
+### 8-39. F46 — 선택 창 첫 초점이 갤럭시에서 안 옴: 진단 줄 + 비우고 다시 요청 (JVM 시험만, 실기기 미검증)
+
+- **증상**(우진 SM-F966N, `ac66631`, TalkBack 켬, [선택 창이 뜨면 안내를 맡기기] 켬, 11번가 앱 동의 포함 팝업 2회): `CLASSIFIED_DECISION` → `BLOCKED_RISKY` → `DECISION_ASKED` → `ASKED`. 선택 창은 뜨지만 초점이 오지 않았다. LG P04는 정상.
+- **코드 확인:**
+  - 결정 팝업(`DECISION_ASKED`)도 일반 묻기(P04 `DECIDED_ASK`)와 같은 `ask()` → 같은 `takeOver` 분기를 탄다.
+  - 둘 다 `READ_POPUP_TEXT_ON_PROMPT = false`라 `popupText`가 없어서 `oneVoice`이다. `FIRST_ITEM`을 25ms 간격으로 최대 40번 시도하고, 성공하면 TalkBack만 읽는다.
+  - 결정 팝업은 `cannotPressForUser`와 첫 줄 문장만 다르다. 초점 경로의 차이는 코드에서 찾지 못했다.
+- **원인 후보(추정, 실기기 확인 전):**
+  1. 갤럭시에서 View 초점 표시가 안 지워져 FOCUS가 거절됨(F44에서 결과 카드로 확인된 현상, `FOCUS_RECLAIM_CARD_AFTER_CLEAR` 반복). 선택 창도 같은 Compose 노드 경로라 가능성이 높다. 고침에 넣었다.
+  2. 창 제목 비교 실패(`NO_OWN_WINDOW`). `ChoiceOverlayIdentity`는 창 제목이 `ui_choice_pane_title`과 같아야 우리 창으로 본다. 제목은 `LayoutParams.title`로만 준다. 이것이 `AccessibilityWindowInfo.getTitle()`에 그대로 나오는지는 확인하지 못했다(**추측**, LG에서는 맞음). 새 진단 줄의 `own=`·`titleNull=`·`titleOther=`로 구분한다.
+  3. 실제 앱(11번가)에서는 TalkBack이 팝업을 읽으며 스스로 초점을 옮긴다. 우리 요청이 성공(`OK`)해도 그 뒤 TalkBack이 가져갈 수 있다. 진단 줄이 `result=OK`인데 초점이 없으면 이 경우다.
+- **고침(`PromptFocusDiagnosis.kt`, `AccessibilityChoiceOverlay.WindowFocus`):**
+  - 시도마다 결과를 `PromptFocusOutcome`으로 남긴다.
+    - 옮김: `OK`, `AFTER_CLEAR`, `ALREADY_FOCUSED`
+    - 못 옮김: `NOT_SHOWING`, `NO_OWN_WINDOW`, `MANY_OWN_WINDOWS`, `NO_TARGET_NODE`, `NOT_VISIBLE`, `REFUSED`, `ERROR`
+  - FOCUS가 거절되면 방법을 바꾼다.
+    - 시스템 초점(`findFocus`)이 이미 그 노드에 있으면 그대로 둔다(`ALREADY_FOCUSED`).
+    - 아니면 그 노드의 초점을 지우고(`ACTION_CLEAR_ACCESSIBILITY_FOCUS`) 한 번 더 요청한다(`AFTER_CLEAR`). 초점 이동이지 누르기가 아니다.
+    - `CHOICE_BUTTON` 이동도 같은 경로를 쓴다.
+  - 초점 이동 한 번(최대 40번 시도)이 끝나면 Debug 빌드에서만 `CfySimple`에 한 줄을 남긴다. 화면 글자·창 제목·id는 없다.
+    - 형식: `PROMPT_FOCUS target=FIRST_ITEM result=<마지막> attempts=<n> tries=[<결과:횟수>…] own=<우리 앱 오버레이 창 수> titleNull=<제목 없음> titleOther=<다른 제목>`
+    - 창 수 셋은 우리 창을 못 찾은 시도가 있을 때만 붙는다.
+- 공용 계약(core/model·contract)은 바꾸지 않았다. `PromptFocus`에 기본 구현이 있는 `finished`를 더한 것은 C 패키지 안의 인터페이스다.
+- 검증(F46): 5개 Gradle 작업 통과, 단위 시험 debug 1345개·release 1330개 실패 0(`F46Test` 5개 추가), lintDebug 오류 0(경고 15, 그대로), INTERNET 0.
 
 - 잔여 노드 쪽 이벤트 무시: TalkBack이 무엇을 읽을지는 앱이 막을 수 없다. 대신 포커스를 잔여 노드 밖으로 옮기는 것(F9)이 할 수 있는 전부. 웹 페이지가 닫힌 팝업을 DOM에 `aria-hidden` 없이 남기는 한, 사용자가 스와이프로 다시 만날 수 있다(한계로 기록).
 - 선택 창 PROMPT도 TalkBack 큐로? 가능은 하다: 선택 창 자체(이미 접근성 오버레이)에 paneTitle이 있고 TalkBack이 창을 읽으므로, "안내 맡기기" ON이면 우리 TTS PROMPT를 끄고 paneTitle/첫 버튼 포커스 낭독에 맡기는 방식. 단, 지금 PROMPT는 TalkBack이 팝업을 읽는 도중 끊고 들어가야 시연이 빠르므로 polite로 바꾸면 늦어질 수 있다. F11 배너가 LG에서 잘 읽히면 같은 방식으로 옮길지 정하자(의견, 미구현).
