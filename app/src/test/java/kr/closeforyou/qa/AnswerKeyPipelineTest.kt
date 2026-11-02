@@ -105,6 +105,10 @@ class AnswerKeyPipelineTest {
             webText("결제 수단을 바꾸려면 약관에 동의해 주세요(시험용 뒤 페이지 문구)."),
             webText(res("ad_coupon_title")), webText(res("ad_coupon_body")), webText(res("ad_open")), webText(res("close")),
         )
+        // 11/2 추가 유형. P33은 P01, P34는 P20 첫 광고 문구를 쓴다.
+        "P33" -> listOf(res("ad_coupon_title"), res("ad_coupon_body"), res("ad_open"), res("close"))
+        "P34" -> listOf(res("close"), res("ad_series_1_title"), res("ad_series_1_body"), res("ad_open"))
+        "P35" -> listOf(res("open_app_title"), res("open_app_body"), res("open_app"), res("stay_web"))
         else -> listOf(res("notice_title"), catalogText(NOTICES[id] ?: error("시험 fixture 없음: $id")), res("close"))
     }
 
