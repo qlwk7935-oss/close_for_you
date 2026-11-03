@@ -37,6 +37,12 @@ enum class SimpleTrace {
     USER_CHOSE_KEEP,
     USER_CHOSE_READ,
     RECHECK_TARGET_GONE,
+    /** F48: which part of the re-check failed (with RECHECK_TARGET_GONE; detail: a `RECHECK_MISS reason=` line). */
+    RECHECK_GONE_PACKAGE,
+    RECHECK_GONE_ROOT,
+    RECHECK_GONE_TARGET,
+    /** F48: an automatic press stopped because only the button did not match: said as a failed close, asked. */
+    RECHECK_TARGET_FAILED_ASKED,
     CLICK_TARGET_NOT_CLICKABLE,
     CLICKED,
     CLICK_REJECTED,

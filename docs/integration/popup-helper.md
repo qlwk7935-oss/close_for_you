@@ -926,6 +926,42 @@ F26 자동 확인: 옥션 웹 감지 1.3초·재확인 308ms·`READ_DUTY_PCT` 7.
   - 새 시험 `F47Test`
 - 검증(F47): 5개 Gradle 작업 통과, 단위 시험 debug 1351개·release 1336개 실패 0(`F47Test` 6개 추가), lintDebug 오류 0(경고 15, 그대로), INTERNET 0.
 
+### 8-41. F48 — 누르기 직전 재확인이 왜 멈췄는지 나눠 남기고, 버튼만 안 맞으면 실패를 알린다 (JVM 시험만, 원인 미확정)
+
+- **증상**(동준 에뮬레이터 API 37, 76245ff, 시험 앱 P34 큰 레이어 #73 위쪽 여백 수정본, TalkBack 꺼짐 추정): `DETECTED_DIM_OVERLAY` → `CLASSIFIED_AD` → `BLOCKED_FORBIDDEN` → `CANDIDATE_FOUND` → `DECIDED_AUTO_CLOSE_STRONG` → `RECHECK_TARGET_GONE`. 그 뒤 안내 없이 끝났고(STOP len=0), 레이어는 그대로였다. 전날 b9827d3에서는 `CLICKED_LABELED_CLOSE`로 닫혔다.
+- **원인: 확정하지 못했다.** 코드로 확인한 것:
+  - 재확인(`pressAndConfirm`의 세 조건)과 `rootStillPresent`·`targetMatches`는 b9827d3과 76245ff 사이에 바뀌지 않았다.
+  - F43은 P34에 닿지 않는다. P34 레이어는 액티비티 창 안에 있고, 그 창은 화면 전체라 `bounded`가 거짓이다. 그래서 F43이 고친 `activeJudgement`의 뒤쪽(같은 앱 더 큰 창·아래 시트)까지 가지 않는다.
+  - P34는 `DIM_OVERLAY`라 창 id를 묶지 않는다(`bindWindow`). 세 조건 모두 그 순간의 활성 창에서 본다. 이것도 예전과 같다.
+  - LG 벨벳은 ac66631(F43 이후)에서 P34 자동 닫힘을 통과했다(11/2 23:06~, TalkBack 끔).
+  - F44~F47은 TalkBack 초점 쪽만 바꿨다. 자동 닫기 경로에서 새로 끼는 것은 F42의 `dismissForNextPopup`뿐인데, 카드가 없으면(TalkBack 끔) 아무것도 하지 않는다.
+  - → 같은 코드에서 에뮬레이터 실행마다 결과가 다른 것으로 보인다(타이밍·화면 상태). 세 조건 중 무엇이 거짓이었는지는 로그에 없었다.
+- **후보(추정, 확인 필요):**
+  - (가) 화면이 바뀌는 순간이라 활성 창이 잠깐 없음 → `NO_ACTIVE_WINDOW`.
+  - (나) 읽은 뒤 레이어 위치가 바뀜 → `ROOT_MOVED`. 예: #73 수정의 상태 표시줄 여백이 늦게 들어감, 창이 열리는 애니메이션 중에 읽음. `dt=`가 상태 표시줄 높이면 여백 쪽이다.
+  - (다) 버튼이 아직 누를 수 없거나 이름이 다름 → `TARGET_*`.
+- **바꾼 것:**
+  - **재확인 자체는 그대로다.** 세 조건, 순서, 정확히 같은 경계, 같은 이름 모두 이전과 같다(AGENTS 6-5·6-7).
+  - 실패하면 `RECHECK_TARGET_GONE`(기존 코드) 뒤에 원인을 남긴다.
+    - 갈래 코드: `RECHECK_GONE_PACKAGE` / `_ROOT` / `_TARGET`.
+    - Debug 한 줄: `RECHECK_MISS reason=…`. 이유는 `NO_ACTIVE_WINDOW`, `OTHER_APP`, `ROOT_UNREADABLE`, `ROOT_MISSING`, `ROOT_HIDDEN`, `ROOT_MOVED`, `ROOT_NOT_DIALOG`, `TARGET_MISSING`, `TARGET_HIDDEN`, `TARGET_DISABLED`, `TARGET_NOT_CLICKABLE`, `TARGET_NAME_CHANGED`, `TARGET_UNREADABLE`.
+    - `ROOT_MOVED`면 네 변이 움직인 픽셀 `dl= dt= dr= db=`도 남긴다. 글자·id·패키지는 남기지 않는다.
+  - **안내(C 결정):** 앱이 그대로 앞이고 팝업 루트도 그대로인데 버튼만 안 맞은 경우(`TARGET_*`)는 자동 닫기 실패와 같은 경로로 알린다(F20). `RECHECK_TARGET_FAILED_ASKED`를 남기고, 선택 창 첫 줄로 "대신 닫지 못했어요"를 말한다.
+    - 누른 것이 없으므로 그 버튼은 선택지에 남긴다. 사람이 고르면 다시 재확인한다.
+    - 이 팝업은 이 세션에서 다시 자동으로 누르지 않는다(`autoFailed`).
+    - 아래 배너(F37)는 지금처럼 조용히 둔다.
+  - 다른 앱으로 갔거나(`PACKAGE`) 팝업 루트가 사라지거나 바뀐 경우(`ROOT`)는 지금처럼 조용하다.
+- **P34를 통과시키는 수정은 하지 않았다.** 원인을 모른 채 재확인을 다시 하거나 느슨하게 하면 6-5·6-7을 약하게 할 수 있다. 에뮬레이터에서 `RECHECK_MISS` 줄을 받은 뒤 정한다.
+  - (가)라면: 활성 창이 없을 때만 잠깐 다시 보는 방안(세 조건은 그대로).
+  - (나)라면: 새로 읽어 다시 판단하는 방안(옛 분석으로 누르지 않음).
+- **바뀐 파일:**
+  - 새 파일 `simpleclose/ClickRecheck.kt`(순수)
+  - `SimpleTreeCollector`: `rootRecheck`·`targetMiss`. 기존 `rootStillPresent`·`targetMatches`는 이것을 감싸며 답이 같다.
+  - `SimpleCloseAccessibilityService`: `pressAndConfirm`의 `onRecheckMiss`, 자동 경로의 안내 분기, `rememberAutoFailed`.
+  - `SimpleTrace`: 코드 4개.
+  - 새 시험 `F48Test`
+- 동준 #73의 P34 시험 앱 수정(위쪽 여백)은 `5b701dd`(`origin/feature/d-new-popup-types-v2`)이고, integration에는 아직 없다(병합 안 함).
+
 - 잔여 노드 쪽 이벤트 무시: TalkBack이 무엇을 읽을지는 앱이 막을 수 없다. 대신 포커스를 잔여 노드 밖으로 옮기는 것(F9)이 할 수 있는 전부. 웹 페이지가 닫힌 팝업을 DOM에 `aria-hidden` 없이 남기는 한, 사용자가 스와이프로 다시 만날 수 있다(한계로 기록).
 - 선택 창 PROMPT도 TalkBack 큐로? 가능은 하다: 선택 창 자체(이미 접근성 오버레이)에 paneTitle이 있고 TalkBack이 창을 읽으므로, "안내 맡기기" ON이면 우리 TTS PROMPT를 끄고 paneTitle/첫 버튼 포커스 낭독에 맡기는 방식. 단, 지금 PROMPT는 TalkBack이 팝업을 읽는 도중 끊고 들어가야 시연이 빠르므로 polite로 바꾸면 늦어질 수 있다. F11 배너가 LG에서 잘 읽히면 같은 방식으로 옮길지 정하자(의견, 미구현).
 - 검증(F1~F11 한 빌드): 5개 Gradle 작업 통과, 단위 시험 debug 1028개·release 1013개 실패 0, lintDebug 오류 0(경고 12), 병합 매니페스트 INTERNET 0·새 권한 없음.

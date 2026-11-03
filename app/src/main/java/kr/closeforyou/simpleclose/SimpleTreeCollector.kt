@@ -307,32 +307,43 @@ class SimpleTreeCollector(private val service: AccessibilityService) {
      * (for a Dialog root) still a Dialog class. A few binder calls instead of a full tree read, so the
      * click re-check and the closed check stay fast. Null when the tree is unavailable.
      */
-    fun rootStillPresent(root: PopupRoot): Boolean? {
-        val active = service.rootInActiveWindow ?: return null
+    fun rootStillPresent(root: PopupRoot): Boolean? = when (rootRecheck(root).miss) {
+        null -> true
+        RecheckMiss.ROOT_UNREADABLE -> null
+        else -> false
+    }
+
+    /** F48: [rootStillPresent] with why not ([ClickRecheck.rootMiss]) and the live bounds when the node was found. */
+    fun rootRecheck(root: PopupRoot): RootRecheck {
+        val active = service.rootInActiveWindow ?: return RootRecheck(RecheckMiss.ROOT_UNREADABLE)
         release(active)
-        val node = nodeAt(root.path, root.windowId) ?: return false
+        val node = nodeAt(root.path, root.windowId) ?: return RootRecheck(RecheckMiss.ROOT_MISSING)
         try {
-            if (!node.isVisibleToUser) return false
             val bounds = Rect().also(node::getBoundsInScreen)
-            if (ScreenBounds(bounds.left, bounds.top, bounds.right, bounds.bottom) != root.bounds) return false
-            if (root.kind == PopupRootKind.ALERT_DIALOG && node.className?.contains("dialog", ignoreCase = true) != true) return false
-            return true
+            val live = ScreenBounds(bounds.left, bounds.top, bounds.right, bounds.bottom)
+            val isDialog = node.className?.contains("dialog", ignoreCase = true) == true
+            return RootRecheck(ClickRecheck.rootMiss(node.isVisibleToUser, live, root.bounds, root.kind == PopupRootKind.ALERT_DIALOG, isDialog), live)
         } catch (e: RuntimeException) {
-            return null
+            return RootRecheck(RecheckMiss.ROOT_UNREADABLE)
         } finally {
             release(node)
         }
     }
 
     /** The live node at [candidate]'s path still carries the same name (own text/description or its subtree's). */
-    fun targetMatches(candidate: CloseCandidate, windowId: Int? = null): Boolean {
-        val path = candidate.nodePath ?: return false
-        val node = nodeAt(path, windowId) ?: return false
+    fun targetMatches(candidate: CloseCandidate, windowId: Int? = null): Boolean = targetMiss(candidate, windowId) == null
+
+    /** F48: [targetMatches] with why not ([ClickRecheck.targetMiss]); null = it matches. */
+    fun targetMiss(candidate: CloseCandidate, windowId: Int? = null): RecheckMiss? {
+        val path = candidate.nodePath ?: return RecheckMiss.TARGET_MISSING
+        val node = nodeAt(path, windowId) ?: return RecheckMiss.TARGET_MISSING
         try {
             // F27 (review #5): still clickable itself, so the click never climbs to a parent (an ad card's link).
-            return node.isVisibleToUser && node.isEnabled && node.isClickable && liveName(node) == candidate.label
+            // The name is read only when the rest holds, as before (a few binder calls fewer).
+            ClickRecheck.targetMiss(node.isVisibleToUser, node.isEnabled, node.isClickable, sameName = true)?.let { return it }
+            return ClickRecheck.targetMiss(visible = true, enabled = true, clickable = true, sameName = liveName(node) == candidate.label)
         } catch (e: RuntimeException) {
-            return false
+            return RecheckMiss.TARGET_UNREADABLE
         } finally {
             release(node)
         }
