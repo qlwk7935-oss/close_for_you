@@ -549,6 +549,16 @@ class SimpleTreeCollector(private val service: AccessibilityService) {
         return node
     }
 
+    /** F50: the window [windowId] is still in the window list; null when the list could not be read. */
+    fun windowListed(windowId: Int): Boolean? {
+        val windows = try { service.windows.orEmpty() } catch (e: RuntimeException) { return null }
+        try {
+            return windows.any { it.id == windowId }
+        } finally {
+            windows.forEach(::release)
+        }
+    }
+
     private fun windowRoot(windowId: Int): AccessibilityNodeInfo? {
         val windows = service.windows.orEmpty()
         try {

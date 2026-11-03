@@ -171,6 +171,11 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
     private val autoFailed = LinkedHashSet<String>()
     /** F49: a pending re-read after a stopped press on a popup that only moved up or down; popups already re-read once. */
     private var shiftReread: ShiftReread? = null
+    /** F50: the last read of the popup root being waited for to stand still, and the re-read scheduled for it. */
+    private var settle: SettleState? = null
+    private var settleReread: Job? = null
+    /** F50: the last `NO_ROOT` line (logged only when it changes). */
+    private var lastNoRootLine: String? = null
     private val shiftRereadDone = LinkedHashSet<String>()
     /** F21: per popup (same key), the normalized names of buttons pressed there that did not close it: never offered again. */
     private val failedButtons = LinkedHashMap<String, MutableSet<String>>()
@@ -497,7 +502,39 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
         if (root == null) {
             log.trace(if (videoAdWaiting) SimpleTrace.VIDEO_SKIP_WAITING else SimpleTrace.NO_POPUP_ROOT)
             lastNoRootAt = SystemClock.uptimeMillis()
+            // F50: why, as codes and counts (only when it changed).
+            if (!videoAdWaiting) {
+                val off = sinceAborted?.let { WholeReadCap.ABORTED_RETRY_MILLIS - it }?.takeIf { it > 0 }
+                NoRootLine.line(read.mode, read.probeOutcome, read.nodes, read.screen, read.wholeAborted, off)
+                    .takeIf { it != lastNoRootLine }?.let { lastNoRootLine = it; log.line(it) }
+            }
             return false
+        }
+        // F50: judged only once it stands still (a window still coming in moves and lacks its close).
+        if (SimpleCloseEngineFeature.SETTLE_BEFORE_JUDGING) {
+            val now = SystemClock.uptimeMillis()
+            val (verdict, state) = SettleRules.next(settle, SettleRules.key(root.windowId ?: read.windowId, root.kind, root.path),
+                root.bounds, SettleRules.members(root, read.nodes), now)
+            settle = state
+            when (verdict) {
+                SettleVerdict.WAIT -> {
+                    log.trace(SimpleTrace.SETTLE_WAIT)
+                    val pkg = read.packageName
+                    settleReread?.cancel()
+                    settleReread = scope.launch {
+                        delay(SettleRules.READ_AGAIN_MILLIS)
+                        inspectionEvents.onEvent(pkg, SimpleInspectionEvent.WINDOW)
+                    }
+                    return true
+                }
+                SettleVerdict.STABLE, SettleVerdict.LIMIT -> {
+                    log.trace(if (verdict == SettleVerdict.STABLE) SimpleTrace.SETTLE_STABLE else SimpleTrace.SETTLE_LIMIT)
+                    // What the wait cost (the usual path: one read again, about READ_AGAIN_MILLIS + one read).
+                    log.latency("SETTLE_MS", now - state.firstAt)
+                    log.latency("SETTLE_READS", state.reads.toLong())
+                }
+                SettleVerdict.STILL -> Unit
+            }
         }
         val popup = SimplePopupAnalysis.build(read.nodes, root, read.packageName, read.windowId, read.screen, screenVersion, SystemClock.uptimeMillis())
             .copy(foundByProbe = read.mode == TreeReadMode.POPUP_SUBTREE, depthCut = read.depthCut.any { it == root.path || it.startsWith("${root.path}/") })
@@ -769,7 +806,7 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
                     // F49: a stopped press: read again (a pure up/down move, once), ask (still on screen), or quiet.
                     val missStep = recheckMiss?.let { miss ->
                         val banner = classified.root.kind == PopupRootKind.BOTTOM_BANNER
-                        val shift = ClickRecheck.verticalShift(miss, classified.root.bounds, recheckLive, read.screen.height)
+                        val shift = ClickRecheck.sameSizeMove(miss, classified.root.bounds, recheckLive)
                         val done = words in shiftRereadDone
                         val look = miss.group == RecheckGroup.ROOT && !(shift && !done) && !banner
                         val shown = if (look) popupStillShown(classified) else null
@@ -1479,17 +1516,22 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
     }
 
     /**
-     * F49: after a stopped press, is [popup] still on screen? The screen read again, as the closed check does (F21/F27):
-     * the same popup found anywhere ([PopupMemory.reappearance], moved too) = true; none = false; no tree or another app
-     * = null. Memory only.
+     * F49: after a stopped press, is [popup] still on screen? F50 (P01: `RECHECK_POPUP_GONE` while its Dialog window was
+     * still listed): not by its old place. A popup with its own window ([PopupRoot.windowId]): that window still listed
+     * and its app in front ([StillShownRules.byWindow]). One in the page's window: the screen read again and the popup's
+     * words found in a popup root anywhere ([PopupMemory.foundAnywhere]). True / false; null = no tree or unknown.
      */
     private suspend fun popupStillShown(popup: SimplePopup): Boolean? = withContext(Dispatchers.Default) {
         val token = popup.analysis.token
+        val windowId = popup.root.windowId
+        if (windowId != null) {
+            return@withContext StillShownRules.byWindow(collector.foregroundPackage(), token.packageName, collector.windowListed(windowId))
+        }
         val again = collector.read(token.packageName, ::allowsApp, wholeIfProbeMisses = !popup.foundByProbe,
             capMillis = if (popup.foundByProbe) RECHECK_CAP_MILLIS else WholeReadCap.MAX_MILLIS,
             appWindows = popup.root.kind == PopupRootKind.APP_WINDOW, lookUpAddress = false) ?: return@withContext null
         val root = PopupRootFinder.find(again.nodes, again.screen, again.activeWindowBounded) ?: return@withContext false
-        PopupMemory.of(popup).reappearance(root, again.nodes, again.screen) != null
+        PopupMemory.of(popup).foundAnywhere(root, again.nodes, again.screen)
     }
 
     /** The person's own press that did not confirm a close: said at once, no follow-up press (AGENTS 6-6). */
@@ -1868,6 +1910,9 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
         autoFailed.clear()
         shiftReread = null
         shiftRereadDone.clear()
+        settle = null
+        settleReread?.cancel()
+        lastNoRootLine = null
         failedButtons.clear()
         recentlyClosed.clear()
         failedSkips.clear()

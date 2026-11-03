@@ -55,6 +55,10 @@ enum class SimpleTrace {
     RECHECK_POPUP_UNKNOWN,
     /** F49: the popup root did not match but the popup is still on screen: said as a failed close, asked. */
     RECHECK_ROOT_FAILED_ASKED,
+    /** F50: the popup root is read again before it is judged (it just appeared or moved) / stood still / still moving at the limit. */
+    SETTLE_WAIT,
+    SETTLE_STABLE,
+    SETTLE_LIMIT,
     CLICK_TARGET_NOT_CLICKABLE,
     CLICKED,
     CLICK_REJECTED,

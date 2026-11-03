@@ -1000,6 +1000,45 @@ F26 자동 확인: 옥션 웹 감지 1.3초·재확인 308ms·`READ_DUTY_PCT` 7.
   - `F48Test`(안내 시험 1개를 새 규칙으로)
   - 새 시험 `F49Test`
 
+### 8-43. F50 — 창이 멈춘 뒤 판단, 창으로 "팝업 그대로" 판단, 감지 없음 진단 (JVM 시험만, 에뮬레이터 미검증)
+
+- **증상**(메인 세션 에뮬레이터 Pixel_8 API 37, c0dbf75, 시험 앱 1f990c7, TalkBack 끔). 서비스는 매 회 다시 시작했다.
+  - **P01 6회:** 닫힘 2, 물음 3, 조용히 끝 1.
+    - 물음 3회: `READ_WHOLE_ABORTED` → `DETECTED_DIALOG_WINDOW` → `POPUP_TEXTS=3` → `CANDIDATE_NONE` → `DECIDED_ASK`. 닫힌 회차는 `POPUP_TEXTS=4`, `CANDIDATE_FOUND`였다. 창이 열리는 애니메이션 중에 읽어서 닫기 버튼이 아직 트리에 없었다.
+    - 조용히 끝 1회: `RECHECK_MISS reason=ROOT_MOVED dl=-42 dt=821 dr=-42 db=821` → `RECHECK_POPUP_GONE`. 그런데 대화상자 창은 화면에 그대로 있었다.
+  - **P34 8회:** 3회는 13초 동안 `DETECTED_*`가 없었다(읽기 9번).
+- **1. 멈춘 뒤 판단(`SettleRules`, `SETTLE_BEFORE_JUDGING`):**
+  - 팝업 루트를 처음 봤거나, 직전 읽기와 비교해 경계나 루트 안 노드 수가 바뀌었으면 판단(분류·후보·결정)을 미룬다. `SETTLE_WAIT`를 남기고 150ms 뒤 다시 읽는다(창 이벤트로).
+  - 두 번 연속 같으면 판단한다(`SETTLE_STABLE`). 처음 본 지 1초가 지났거나 5번 읽어도 계속 바뀌면 그때 상태로 판단한다(`SETTLE_LIMIT`, 지금까지의 규칙).
+  - 기다리는 동안에는 누르지도 말하지도 않는다.
+  - 값의 근거: Android 기본 애니메이션 시간 `config_shortAnimTime` 200ms, `config_mediumAnimTime` 400ms, `config_longAnimTime` 500ms.
+    - 150ms마다 읽으면 들어오는 창을 적어도 한 번은 움직이는 중에, 그다음은 멈춘 뒤에 본다.
+    - 상한 1초는 가장 긴 값의 2배다.
+  - 같은 팝업인지는 창·종류·경로로 본다(경계는 넣지 않음). 2초 동안 안 보이면 새로 본 것으로 친다.
+  - 정상 경로 비용: 새 팝업마다 다시 읽기 한 번(150ms + 읽기 한 번). `SETTLE_MS`·`SETTLE_READS`로 남긴다.
+  - "후보 없음이면 한 번 더 읽기"는 따로 넣지 않았다. 닫기 버튼이 늦게 생기면 노드 수가 바뀌므로 settle이 다시 읽는다.
+- **2. 팝업 그대로 판단(`popupStillShown`):**
+  - 자기 창이 있는 팝업(`PopupRoot.windowId`, Dialog 창 등): 그 창이 아직 창 목록에 있고 그 앱이 앞이면 그대로다(`StillShownRules.byWindow`). 경계는 보지 않는다.
+  - 페이지 창 안 팝업: 다시 읽어서 팝업 루트 안에 우리 글자가 있으면 그대로다(`PopupMemory.foundAnywhere`, 위치는 비교 안 함).
+  - 원인: 예전 판단은 첫 읽기 자리(애니메이션 중, 821px 아래)와 겹치는지를 봤다. 그래서 멈춘 대화상자를 "사라짐"으로 봤다.
+- **다시 판단 대상 넓힘(`ClickRecheck.sameSizeMove`):** 크기가 같은 이동이면 좌우·멀리 움직여도 F49 다시 판단(새로 읽어 처음부터, 팝업당 1번)을 한다. 25% 상한은 뺐다.
+  - 근거: 옛 좌표로 누르지 않고, 새 판단과 그 판단의 재확인이 정한다. 그래서 이동 거리는 안전과 상관없다.
+  - 크기가 바뀐 경우는 여전히 넣지 않는다(다른 노드거나 아직 열리는 중). 그대로면 묻는다.
+- **3. 감지 없음 진단:** `NO_POPUP_ROOT` 때 Debug 한 줄을 남긴다. 직전 줄과 다를 때만 남긴다.
+  - 형식: `NO_ROOT mode= probe= nodes= shown= clickable= bigBlank= namedClose= aborted= wholeOffMs=`.
+  - 글자·id·패키지는 없고, 개수와 코드뿐이다.
+  - 코드로 보이는 후보(추정): 전체 읽기가 600ms 상한에서 끊기면(`READ_WHOLE_ABORTED`) 10초 동안 전체 읽기를 하지 않는다. 그동안 probe가 레이어를 못 찾으면 읽기마다 노드 0개로 끝날 수 있다. 이 줄의 `wholeOffMs`와 `nodes=0`, `probe=MISS`로 확인할 수 있다. 원인이 확인되지 않아 고치지는 않았다.
+- **바뀐 파일:**
+  - 새 파일 `simpleclose/PopupSettle.kt`(`SettleRules`, `StillShownRules`, `NoRootLine`)
+  - `PopupMemory.foundAnywhere`
+  - `ClickRecheck.sameSizeMove`(F49의 `verticalShift` 대신)
+  - `SimpleTreeCollector.windowListed`
+  - `SimpleCloseEngineFeature.SETTLE_BEFORE_JUDGING`
+  - `SimpleCloseAccessibilityService`
+  - `SimpleTrace`(코드 3개)
+  - `F49Test`(이동 시험 2개를 새 규칙으로)
+  - 새 시험 `F50Test`
+
 - 잔여 노드 쪽 이벤트 무시: TalkBack이 무엇을 읽을지는 앱이 막을 수 없다. 대신 포커스를 잔여 노드 밖으로 옮기는 것(F9)이 할 수 있는 전부. 웹 페이지가 닫힌 팝업을 DOM에 `aria-hidden` 없이 남기는 한, 사용자가 스와이프로 다시 만날 수 있다(한계로 기록).
 - 선택 창 PROMPT도 TalkBack 큐로? 가능은 하다: 선택 창 자체(이미 접근성 오버레이)에 paneTitle이 있고 TalkBack이 창을 읽으므로, "안내 맡기기" ON이면 우리 TTS PROMPT를 끄고 paneTitle/첫 버튼 포커스 낭독에 맡기는 방식. 단, 지금 PROMPT는 TalkBack이 팝업을 읽는 도중 끊고 들어가야 시연이 빠르므로 polite로 바꾸면 늦어질 수 있다. F11 배너가 LG에서 잘 읽히면 같은 방식으로 옮길지 정하자(의견, 미구현).
 - 검증(F1~F11 한 빌드): 5개 Gradle 작업 통과, 단위 시험 debug 1028개·release 1013개 실패 0, lintDebug 오류 0(경고 12), 병합 매니페스트 INTERNET 0·새 권한 없음.

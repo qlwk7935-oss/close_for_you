@@ -25,21 +25,20 @@ class F49Test {
         }
     }
 
-    @Test fun theTwoMeasuredMovesArePureVerticalShifts() {
+    @Test fun theTwoMeasuredMovesAreSameSizeMoves() {
         // 동준 7a3912c: APP-16 dt=db=-53, APP-17 dt=db=16, dl=dr=0.
-        assertTrue(ClickRecheck.verticalShift(RecheckMiss.ROOT_MOVED, layer, moved(0, -53, 0, -53), screenHeight))
-        assertTrue(ClickRecheck.verticalShift(RecheckMiss.ROOT_MOVED, layer, moved(0, 16, 0, 16), screenHeight))
+        assertTrue(ClickRecheck.sameSizeMove(RecheckMiss.ROOT_MOVED, layer, moved(0, -53, 0, -53)))
+        assertTrue(ClickRecheck.sameSizeMove(RecheckMiss.ROOT_MOVED, layer, moved(0, 16, 0, 16)))
     }
 
-    @Test fun anythingElseIsNotAShift() {
-        // Resized, moved sideways, not moved, too far, another reason, no live bounds.
-        assertFalse(ClickRecheck.verticalShift(RecheckMiss.ROOT_MOVED, layer, moved(0, 16, 0, 0), screenHeight))
-        assertFalse(ClickRecheck.verticalShift(RecheckMiss.ROOT_MOVED, layer, moved(10, 0, 10, 0), screenHeight))
-        assertFalse(ClickRecheck.verticalShift(RecheckMiss.ROOT_MOVED, layer, moved(0, 0, 0, 0), screenHeight))
-        assertTrue(ClickRecheck.verticalShift(RecheckMiss.ROOT_MOVED, layer, moved(0, 600, 0, 600), screenHeight))
-        assertFalse(ClickRecheck.verticalShift(RecheckMiss.ROOT_MOVED, layer, moved(0, 601, 0, 601), screenHeight))
-        assertFalse(ClickRecheck.verticalShift(RecheckMiss.ROOT_MISSING, layer, moved(0, 16, 0, 16), screenHeight))
-        assertFalse(ClickRecheck.verticalShift(RecheckMiss.ROOT_MOVED, layer, null, screenHeight))
+    @Test fun aResizeOrNoMoveIsNot() {
+        // F50 widened it to any same-size move (sideways, far: F50Test); a resize, no move, another reason, no bounds stay out.
+        assertFalse(ClickRecheck.sameSizeMove(RecheckMiss.ROOT_MOVED, layer, moved(0, 16, 0, 0)))
+        assertFalse(ClickRecheck.sameSizeMove(RecheckMiss.ROOT_MOVED, layer, moved(0, 0, 0, 0)))
+        assertFalse(ClickRecheck.sameSizeMove(RecheckMiss.ROOT_MISSING, layer, moved(0, 16, 0, 16)))
+        assertFalse(ClickRecheck.sameSizeMove(RecheckMiss.ROOT_MOVED, layer, null))
+        assertTrue(ClickRecheck.sameSizeMove(RecheckMiss.ROOT_MOVED, layer, moved(10, 0, 10, 0)))
+        assertTrue(ClickRecheck.sameSizeMove(RecheckMiss.ROOT_MOVED, layer, moved(0, screenHeight / 2, 0, screenHeight / 2)))
     }
 
     @Test fun aShiftIsReadAgainOnceThenAskedWhileStillShown() {

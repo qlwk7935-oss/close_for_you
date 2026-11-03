@@ -62,23 +62,23 @@ object ClickRecheck {
 
     /**
      * F49 (동준 7a3912c ×5: 2/5 `ROOT_MOVED dl=0 dt=-53 dr=0 db=-53` / `dt=16`, the #73 insets moving the layer just after
-     * the first frame; a web page loading does the same): the popup root kept its size and only moved up or down, by at
-     * most [SHIFT_MAX_SCREEN_RATIO] of the screen's height. Then the screen is read again and judged from the start; the
-     * old reading is never pressed at the new place (AGENTS 6-5, 6-7).
+     * the first frame; a web page loading does the same): the popup root kept its size and only moved. Then the screen is
+     * read again and judged from the start; the old reading is never pressed at the new place (AGENTS 6-5, 6-7).
+     * F50 (P01 `dl=-42 dt=821 dr=-42 db=821`, a Dialog read while its window was coming in): any move of the same size,
+     * sideways or far too. How far it moved does not make the press any less safe: nothing is pressed where it was, the
+     * fresh judgement and its own re-check decide. A change of size stays out (another node, or still opening): asked.
      */
-    fun verticalShift(miss: RecheckMiss, expected: ScreenBounds, live: ScreenBounds?, screenHeight: Int): Boolean {
+    fun sameSizeMove(miss: RecheckMiss, expected: ScreenBounds, live: ScreenBounds?): Boolean {
         if (miss != RecheckMiss.ROOT_MOVED || live == null) return false
+        val dx = live.left - expected.left
         val dy = live.top - expected.top
-        return live.left == expected.left && live.right == expected.right && live.bottom - expected.bottom == dy && dy != 0 &&
-            kotlin.math.abs(dy) <= screenHeight * SHIFT_MAX_SCREEN_RATIO
+        return live.right - expected.right == dx && live.bottom - expected.bottom == dy && (dx != 0 || dy != 0)
     }
-
-    const val SHIFT_MAX_SCREEN_RATIO = 0.25
 
     /**
      * F49: what follows an automatic press the re-check stopped (nothing was pressed).
      * - Another app in front ([RecheckGroup.PACKAGE]): quiet.
-     * - A pure up/down move ([verticalShift]) the first time for this popup ([rereadDone] false): read again
+     * - A move of the same size ([sameSizeMove]) the first time for this popup ([rereadDone] false): read again
      *   ([MissStep.REREAD]); the fresh judgement presses only the same close button ([sameTarget]).
      * - Otherwise (C decision, 재호 11/3 "팝업 그대로면 항상 묻기"): the popup still on screen ([stillShown], the button
      *   mismatch counts as shown, its root was just found): said as a failed close and asked ([MissStep.ASK]); gone or
