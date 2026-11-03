@@ -517,6 +517,9 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
             }
             return false
         }
+        // F52: when this popup was first found and found standing still (the read's end when not waited on).
+        var foundAt = SystemClock.uptimeMillis()
+        var settledAt = foundAt
         // F50: judged only once it stands still (a window still coming in moves and lacks its close).
         if (SimpleCloseEngineFeature.SETTLE_BEFORE_JUDGING) {
             val now = SystemClock.uptimeMillis()
@@ -539,6 +542,8 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
                     // What the wait cost (the usual path: one read again, about READ_AGAIN_MILLIS + one read).
                     log.latency("SETTLE_MS", now - state.firstAt)
                     log.latency("SETTLE_READS", state.reads.toLong())
+                    foundAt = state.firstAt
+                    settledAt = now
                 }
                 SettleVerdict.STILL -> Unit
             }
@@ -579,6 +584,7 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
         // read that saw no popup bounds when the popup really appeared. Which trigger caught it, too.
         log.trace(trigger.trace)
         if (firstEventAt != 0L) log.latency("DETECT_LATENCY_MS", now - firstEventAt)
+        val timingFirst = if (firstEventAt != 0L) firstEventAt else foundAt
         if (lastNoRootAt != 0L) log.latency("DETECT_GAP_MS", now - lastNoRootAt)
         // F13: where the time went: reads this search took, how many the guard refused, the last read's cost.
         log.latency("DETECT_READS", searchReads.toLong())
@@ -768,6 +774,7 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
                     decision.unknown -> SimpleTrace.DECIDED_AUTO_CLOSE_UNKNOWN
                     else -> SimpleTrace.DECIDED_AUTO_CLOSE
                 })
+                val timing = CloseTiming(timingFirst, foundAt, settledAt, SystemClock.uptimeMillis())
                 val approval = ActionDecision(analysis.token, ActionAuthorization.ALLOW_ONCE, persistentSetOf(), decision.candidate.id, DecisionSource.PRESET, NextStep.EXECUTE)
                 // Its own job: the inspection this runs in is replaced by the next window event.
                 pressing = words
@@ -806,10 +813,12 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
                     var recheckLive: ScreenBounds? = null
                     val result = try {
                         pressAndConfirm(classified, decision.candidate, preClickMove, watchFocus = moveFocus, prePress = prePress,
-                            onRecheckMiss = { miss, live -> recheckMiss = miss; recheckLive = live })
+                            onRecheckMiss = { miss, live -> recheckMiss = miss; recheckLive = live },
+                            onClicked = { timing.clicked = SystemClock.uptimeMillis() })
                     } finally {
                         if (pressing == words) pressing = null
                     }
+                    timing.returned = SystemClock.uptimeMillis()
                     // F49: a stopped press: read again (a pure up/down move, once), ask (still on screen), or quiet.
                     val missStep = recheckMiss?.let { miss ->
                         val banner = classified.root.kind == PopupRootKind.BOTTOM_BANNER
@@ -838,6 +847,7 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
                         // F24: the page settles after a close; no fast re-reads of it.
                         inspectionEvents.backOff()
                         speakClosedThenFocusPage(classified, moveFocus)
+                        timing.announced = SystemClock.uptimeMillis()
                     } else if (missStep == MissStep.REREAD) {
                         // F49: nothing pressed; the screen is read and judged again from the start (finding, kind, button,
                         // B's verdict), once for this popup. Only the same close button is pressed then, re-checked again.
@@ -908,6 +918,15 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
                         tts?.stop()
                         handlingListener?.onHandled(HandlingReport(analysis.token, classification, approval, result))
                     }
+                    // F52: this automatic close in one line of numbers (the parts add up to total).
+                    if (SimpleCloseEngineFeature.TIMING_LINE) {
+                        log.line(CloseTimingLine.line(timing, when {
+                            stop == null && PressSuccess.isConfirmed(result) -> TimingResult.CLOSED
+                            result.attempted && result.outcome == ClickOutcome.LEFT_APP -> TimingResult.LEFT_APP
+                            result.attempted -> TimingResult.NOT_CLOSED
+                            else -> TimingResult.STOPPED
+                        }))
+                    }
                   } finally {
                     if (pressing == words) pressing = null
                   }
@@ -936,6 +955,9 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
             }
             SimpleDecision.Ask -> {
                 log.trace(SimpleTrace.DECIDED_ASK)
+                if (SimpleCloseEngineFeature.TIMING_LINE) {
+                    log.line(CloseTimingLine.line(CloseTiming(timingFirst, foundAt, settledAt, SystemClock.uptimeMillis()), TimingResult.ASKED))
+                }
                 // F14: TalkBack is on the popup (it has been reading it): our first item stays short.
                 val inside = withContext(Dispatchers.Default) { collector.accessibilityFocusInside(classified.root.bounds) }
                 log.trace(when (inside) {
@@ -1564,6 +1586,8 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
         prePress: (suspend () -> Boolean)? = null,
         /** F48: why the re-check stopped the press, when it did; F49: and the root's live bounds when it was found. */
         onRecheckMiss: ((RecheckMiss, ScreenBounds?) -> Unit)? = null,
+        /** F52: the click was sent (its moment, for the `TIMING` line). */
+        onClicked: (() -> Unit)? = null,
     ): ActionResult {
         val token = popup.analysis.token
         var target = preClickTarget
@@ -1617,6 +1641,7 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
                 return ActionResult(token, ActionStatus.ATTEMPT_FAILED, SafetyReason.UNVERIFIED_TARGET, attempted = true, outcome = ClickOutcome.UNKNOWN)
             }
             log.trace(SimpleTrace.CLICKED)
+            onClicked?.invoke()
             log.trace(SimpleTrace.valueOf("CLICKED_${SimpleLabelRules.pressKind(candidate.label, candidate.role, candidate.evidence == EvidenceLevel.E4_VISUAL_ONLY).name}"))
             focusMovesByOthers = 0
             val deadline = SystemClock.uptimeMillis() + SimpleCloseEngineFeature.CONFIRM_DELAY_MILLIS

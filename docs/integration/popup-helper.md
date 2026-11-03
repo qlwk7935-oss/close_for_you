@@ -1066,6 +1066,39 @@ F26 자동 확인: 옥션 웹 감지 1.3초·재확인 308ms·`READ_DUTY_PCT` 7.
   - `SimpleTrace`(코드 5개)
   - 새 시험 `F51Test`
 
+### 8-45. F52 — 자동 닫기 한 번의 단계별 시간 한 줄 (`TIMING`, JVM 시험만, 실기기·에뮬레이터 미검증)
+
+- **목적:** 시연 영상의 "판단 + 처리 + 결과 안내 = 합계" 카드에 실제 기기 로그 값을 쓰기 위해. 지금까지는 `DETECT_LATENCY_MS`, `SETTLE_MS`, `PRE_PRESS_RECHECK_MS`, `CLOSE_RECHECK_MS`가 따로 찍혀서 한 번의 닫기로 묶어 읽기 어려웠다.
+- **줄:** tag `CfySimple`, Debug 레벨(다른 latency 줄과 같음: 디버그 빌드에서만 찍힘).
+  - `TIMING detect= settle= judge= press= confirm= announce= total= result=` (ms)
+  - 숫자와 결과 코드만 들어간다. 화면 글자·패키지·창 id는 넣지 않는다.
+  - 플래그 `SimpleCloseEngineFeature.TIMING_LINE`(기본 켬). 순수 함수 `CloseTimingLine.line`.
+- **구간 경계(시각은 uptime ms, 각 구간은 앞 구간이 끝난 곳에서 시작하므로 합이 total과 같다):**
+  - 시작: 그 탐색의 첫 이벤트(`firstEventAt`, `DETECT_LATENCY_MS`와 같은 기준). 이벤트가 없던 읽기면 팝업을 처음 찾은 읽기의 끝(이때 detect=0).
+  - **detect:** 시작 → 팝업 루트를 처음 찾은 읽기가 끝난 때(F50 멈춤 판단의 첫 목격).
+  - **settle:** 첫 목격 → 멈춘 것을 확인한 읽기가 끝난 때(`SETTLE_STABLE`/`SETTLE_LIMIT`, `SETTLE_MS`와 같음). 기다리지 않았으면 0.
+  - **judge:** 멈춤 확인 → 결정(`DECIDED_AUTO_CLOSE*`/`DECIDED_ASK`). 분석, B 분류(`classifier.classify`), 프리셋·안전 판단, 기억 규칙 조회를 포함한다.
+  - **press:** 결정 → 클릭을 보낸 때(`CLICKED`). TalkBack 초점 위치 확인, 누르기 직전 재확인(앱·루트·버튼), B의 누르기 직전 재판단(`PRE_PRESS_RECHECK_MS`)을 포함한다. 클릭하지 않았으면 재확인이 끝난 때까지.
+  - **confirm:** 클릭 → 닫힘 확인이 끝난 때. 250ms 간격으로 루트가 사라졌는지 보고, 엄격 재확인 다시 읽기(`CLOSE_RECHECK_MS`)까지 포함한다.
+  - **announce:** 닫힘 확인 → 결과 문장("광고를 닫았어요")을 **요청한** 때. TalkBack 결과 카드를 띄웠거나 우리 TTS에 넘긴 시점이다. 그 사이의 초점 정리(페이지로 옮기기, 되찾기가 조용해질 때까지 기다림)를 포함한다.
+  - **total:** 시작 → 마지막으로 도달한 경계.
+- **result:**
+  - `CLOSED`: 닫힘 확인 + 안내 요청
+  - `NOT_CLOSED`: 눌렀지만 안 닫힘(묻기로 감)
+  - `LEFT_APP`: 누른 뒤 앱을 벗어남
+  - `STOPPED`: 재확인이 누르기를 멈춤(클릭 없음, press는 재확인 끝까지)
+  - `ASKED`: 묻기로 결정. judge까지만 찍는다.
+  - 닿지 않은 구간은 빠진다(예: `NOT_CLOSED`에는 announce가 없다).
+- **한계:**
+  - **TalkBack·TTS 음성이 끝난 시점은 측정하지 않는다.** announce는 요청 시점까지다. 사용자가 실제로 다 듣기까지는 문장 길이와 말 속도만큼 더 걸린다.
+  - 시작은 "이 앱의 첫 이벤트"라서, 페이지가 먼저 뜨고 팝업이 나중에 뜨면 detect가 실제보다 길다(F10 `DETECT_GAP_MS`와 같은 한계).
+  - 디버그 빌드에서만 찍힌다(release는 다른 latency 줄처럼 꺼져 있음).
+- **바뀐 파일:**
+  - 새 파일 `simpleclose/CloseTiming.kt`(`CloseTiming`, `CloseTimingLine`, `TimingResult`)
+  - `SimpleCloseAccessibilityService`(경계 시각, `pressAndConfirm`의 `onClicked`)
+  - `SimpleCloseEngineFeature.TIMING_LINE`
+  - 새 시험 `F52Test`
+
 - 잔여 노드 쪽 이벤트 무시: TalkBack이 무엇을 읽을지는 앱이 막을 수 없다. 대신 포커스를 잔여 노드 밖으로 옮기는 것(F9)이 할 수 있는 전부. 웹 페이지가 닫힌 팝업을 DOM에 `aria-hidden` 없이 남기는 한, 사용자가 스와이프로 다시 만날 수 있다(한계로 기록).
 - 선택 창 PROMPT도 TalkBack 큐로? 가능은 하다: 선택 창 자체(이미 접근성 오버레이)에 paneTitle이 있고 TalkBack이 창을 읽으므로, "안내 맡기기" ON이면 우리 TTS PROMPT를 끄고 paneTitle/첫 버튼 포커스 낭독에 맡기는 방식. 단, 지금 PROMPT는 TalkBack이 팝업을 읽는 도중 끊고 들어가야 시연이 빠르므로 polite로 바꾸면 늦어질 수 있다. F11 배너가 LG에서 잘 읽히면 같은 방식으로 옮길지 정하자(의견, 미구현).
 - 검증(F1~F11 한 빌드): 5개 Gradle 작업 통과, 단위 시험 debug 1028개·release 1013개 실패 0, lintDebug 오류 0(경고 12), 병합 매니페스트 INTERNET 0·새 권한 없음.
