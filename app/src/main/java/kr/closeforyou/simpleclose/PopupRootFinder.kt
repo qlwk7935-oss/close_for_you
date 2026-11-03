@@ -317,9 +317,14 @@ object PopupRootFinder {
                 return PopupRoot(dim.path, dim.bounds, PopupRootKind.DIM_OVERLAY)
             }
             if (children.isNotEmpty()) continue
-            val parentPath = dim.path.substringBeforeLast('/', missingDelimiterValue = "")
+            var parentPath = dim.path.substringBeforeLast('/', missingDelimiterValue = "")
+            var siblings = nodes.filter { it.path != dim.path && it.path.startsWith("$parentPath/") }
+            // B 갤럭시 11/3 예스24: the dim sits alone in an empty box beside the sheet (NO_POPUP_ROOT): one level up.
+            if (siblings.isEmpty()) {
+                parentPath = parentPath.substringBeforeLast('/', missingDelimiterValue = "")
+                siblings = nodes.filter { it.path != dim.path && it.path.startsWith("$parentPath/") }
+            }
             val parent = byPath[parentPath] ?: continue
-            val siblings = nodes.filter { it.path != dim.path && it.path.startsWith("$parentPath/") }
             val card = siblings.firstOrNull { isCard(it, screenArea) } ?: continue
             if (siblings.any { card.contains(it) && isCloseButton(it) }) return PopupRoot(parent.path, parent.bounds, PopupRootKind.DIM_OVERLAY)
         }
