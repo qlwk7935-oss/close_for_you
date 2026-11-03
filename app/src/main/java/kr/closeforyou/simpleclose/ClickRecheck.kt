@@ -61,13 +61,45 @@ object ClickRecheck {
     }
 
     /**
-     * F48 (C decision): what the person hears when an automatic press stopped at the re-check.
-     * - The app is still in front and the popup root is still the same, only the button did not match
-     *   ([RecheckGroup.TARGET]): the popup is still there and nothing was pressed, so the failure is said the way a
-     *   failed automatic close is (F20, "대신 닫지 못했어요" with the prompt). Not for a bottom banner (F37: quiet).
-     * - Another app in front, or the popup root gone or changed: quiet, as before (the screen moved on).
+     * F49 (동준 7a3912c ×5: 2/5 `ROOT_MOVED dl=0 dt=-53 dr=0 db=-53` / `dt=16`, the #73 insets moving the layer just after
+     * the first frame; a web page loading does the same): the popup root kept its size and only moved up or down, by at
+     * most [SHIFT_MAX_SCREEN_RATIO] of the screen's height. Then the screen is read again and judged from the start; the
+     * old reading is never pressed at the new place (AGENTS 6-5, 6-7).
      */
-    fun saysFailure(miss: RecheckMiss, bottomBanner: Boolean): Boolean = miss.group == RecheckGroup.TARGET && !bottomBanner
+    fun verticalShift(miss: RecheckMiss, expected: ScreenBounds, live: ScreenBounds?, screenHeight: Int): Boolean {
+        if (miss != RecheckMiss.ROOT_MOVED || live == null) return false
+        val dy = live.top - expected.top
+        return live.left == expected.left && live.right == expected.right && live.bottom - expected.bottom == dy && dy != 0 &&
+            kotlin.math.abs(dy) <= screenHeight * SHIFT_MAX_SCREEN_RATIO
+    }
+
+    const val SHIFT_MAX_SCREEN_RATIO = 0.25
+
+    /**
+     * F49: what follows an automatic press the re-check stopped (nothing was pressed).
+     * - Another app in front ([RecheckGroup.PACKAGE]): quiet.
+     * - A pure up/down move ([verticalShift]) the first time for this popup ([rereadDone] false): read again
+     *   ([MissStep.REREAD]); the fresh judgement presses only the same close button ([sameTarget]).
+     * - Otherwise (C decision, 재호 11/3 "팝업 그대로면 항상 묻기"): the popup still on screen ([stillShown], the button
+     *   mismatch counts as shown, its root was just found): said as a failed close and asked ([MissStep.ASK]); gone or
+     *   unknown: quiet. A bottom banner is never asked about (F37).
+     */
+    fun afterMiss(miss: RecheckMiss, shift: Boolean, rereadDone: Boolean, stillShown: Boolean?, bottomBanner: Boolean): MissStep = when {
+        miss.group == RecheckGroup.PACKAGE -> MissStep.QUIET
+        shift && !rereadDone -> MissStep.REREAD
+        bottomBanner -> MissStep.QUIET
+        miss.group == RecheckGroup.TARGET || stillShown == true -> MissStep.ASK
+        else -> MissStep.QUIET
+    }
+
+    /**
+     * F49: the fresh judgement after a [MissStep.REREAD] picked the same close button: the same name, and the same place
+     * inside its popup root (offset and size), wherever the root now is.
+     */
+    fun sameTarget(oldLabel: String?, oldButton: ScreenBounds, oldRoot: ScreenBounds, newLabel: String?, newButton: ScreenBounds, newRoot: ScreenBounds): Boolean =
+        oldLabel != null && oldLabel == newLabel &&
+            oldButton.left - oldRoot.left == newButton.left - newRoot.left && oldButton.top - oldRoot.top == newButton.top - newRoot.top &&
+            oldButton.width == newButton.width && oldButton.height == newButton.height
 
     /**
      * One debug line: the reason, and for [RecheckMiss.ROOT_MOVED] how far each edge moved (pixels; no text, no id),
@@ -88,3 +120,12 @@ object ClickRecheck {
         RecheckGroup.TARGET -> SimpleTrace.RECHECK_GONE_TARGET
     }
 }
+
+/** F49: what follows a stopped automatic press ([ClickRecheck.afterMiss]). */
+enum class MissStep { QUIET, REREAD, ASK }
+
+/**
+ * F49: one pending re-read after a pure up/down move: the popup ([words], its window and words) and the close button the
+ * stopped press was for (its name and place inside the root, memory only), until [until] (uptime ms).
+ */
+class ShiftReread(val words: String, val label: String?, val button: ScreenBounds, val root: ScreenBounds, val until: Long)

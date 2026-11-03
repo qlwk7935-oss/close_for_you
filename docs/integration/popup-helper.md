@@ -962,6 +962,44 @@ F26 자동 확인: 옥션 웹 감지 1.3초·재확인 308ms·`READ_DUTY_PCT` 7.
   - 새 시험 `F48Test`
 - 동준 #73의 P34 시험 앱 수정(위쪽 여백)은 `5b701dd`(`origin/feature/d-new-popup-types-v2`)이고, integration에는 아직 없다(병합 안 함).
 
+### 8-42. F49 — 크롬 웹 클릭이 페이지에 닿게(이벤트 1종 추가), 위아래로만 밀린 팝업은 다시 판단, 팝업이 그대로면 항상 묻기 (JVM 시험만, 에뮬레이터 미검증)
+
+- **P13 웹 클릭(메인 세션 에뮬레이터 Pixel_8 API 37, WebView 145.0.7632.218, 7a3912c):**
+  - 증상: 우리 서비스만 켰을 때 3/3 `CLICKED_LABELED_CLOSE` → `NOT_CLOSED_STILL_THERE`, 페이지 콘솔에 클릭이 안 찍힘. TalkBack이나 A 서비스(typeViewScrolled를 받음)를 같이 켜면 1/1 닫힘.
+  - 근거(메인 세션이 확인한 Chromium 소스 `AccessibilityStateDelegateImpl`): 켜진 서비스의 이벤트 마스크에 VIEW_SELECTED·VIEW_SCROLLED·ANNOUNCEMENT 중 하나가 있어야 웹 접근성을 온전히 켠다. 우리 서비스 설정에는 셋 다 없었다.
+  - 고침: `ui_simple_close_service.xml` `accessibilityEventTypes`에 `typeViewScrolled`만 더했다. 권한·capability는 그대로다(`canPerformGestures` false).
+  - 이 이벤트는 `onAccessibilityEvent` 맨 앞에서 바로 버린다(`ServiceEventRules.dropAtOnce`). 트리 읽기나 재검사 예약은 없다.
+  - LG(Android 12, 옛 WebView)는 이 판정 전 버전이라 됐던 것으로 본다(메인 세션 판단).
+- **P34 위아래 밀림(동준 7a3912c ×5: 3/5 닫힘, 2/5 `RECHECK_GONE_ROOT`):**
+  - 2/5의 `RECHECK_MISS`: `reason=ROOT_MOVED dl=0 dt=-53 dr=0 db=-53`, `dl=0 dt=16 dr=0 db=16`. 시험 앱 #73 insets가 첫 화면 직후 레이어를 민 것이다.
+  - 고침: 크기가 같고 위아래로만 밀렸으면(`dl=dr=0`, `dt=db≠0`, 화면 높이의 25% 이하, `ClickRecheck.verticalShift`) 그 좌표로 누르지 않는다. `RECHECK_SHIFTED_REREAD`를 남기고 화면을 새로 읽어 감지·분류·후보·B 판정을 처음부터 다시 한다.
+    - 새 판단이 같은 닫기 버튼(같은 이름, 루트 안 같은 위치·크기, `sameTarget`)을 고르면 `RECHECK_SHIFTED_SAME_TARGET`. 그 새 판단으로 재확인부터 다시 거쳐 누른다.
+    - 다른 버튼이면 `RECHECK_SHIFTED_DIFFERENT`. 누르지 않고 실패 안내와 선택 창을 띄운다.
+    - 다시 판단은 팝업당 1번이다(`shiftRereadDone`).
+    - 다시 읽기가 3초 안에 쓰이지 않으면 `RECHECK_SHIFTED_REREAD_UNUSED`. 한 번 더 보고, 팝업이 그대로면 묻는다.
+  - 누른 적이 없으므로 규칙 6과 부딪히지 않는다. 재확인(규칙 5)과 옛 분석 금지(규칙 7)는 그대로다.
+- **APP-16(물음)과 APP-17(조용함)이 갈린 이유(코드로 찾음):**
+  - 팝업 열쇠(`PopupRoot.key`)에 경계가 들어 있어서, 밀린 레이어는 새 팝업 열쇠가 된다.
+  - 밀린 화면을 읽은 시점이 첫 누르기 작업 도중이면, 그 열쇠가 "본 것"(`seenAt`)으로 찍힌 뒤 `SAME_POPUP_COOLDOWN`으로 끝난다. 화면이 멈춰 있으면 이벤트가 더 오지 않아 조용히 끝난다(APP-17).
+  - 작업이 끝난 뒤였으면 다시 처리됐다(APP-16). 다만 그 두 번째 처리가 어느 실패 경로로 "대신 닫지 못했어요"가 됐는지는 그 회차의 줄이 있어야 확정할 수 있다.
+- **팝업이 그대로면 항상 묻기(C 결정, `ClickRecheck.afterMiss`):** 자동 누르기가 재확인에서 멈추면 다음 셋 중 하나다.
+  - 다른 앱이 앞(`PACKAGE`) → 조용히.
+  - 위아래 밀림 첫 번째 → 다시 판단.
+  - 그 밖 → 루트가 안 맞은 경우는 화면을 다시 읽어(`popupStillShown`, `PopupMemory.reappearance`, 밀린 것도 같은 팝업) `RECHECK_POPUP_STILL_SHOWN` / `_GONE` / `_UNKNOWN`을 남긴다.
+    - 그대로면 실패 안내와 선택 창(`RECHECK_ROOT_FAILED_ASKED`)이다. 버튼만 안 맞은 경우는 `RECHECK_TARGET_FAILED_ASKED`.
+    - 사라졌거나 모르면 조용히.
+    - 아래 배너는 지금처럼 조용히(F37).
+  - 다시 판단 뒤에 또 멈춘 경우도 같은 규칙으로 묻는다.
+  - 사람이 직접 고른 누르기의 STALE 안내(`speakOwnPress`)는 그대로다.
+- **바뀐 파일:**
+  - `res/xml/ui_simple_close_service.xml`
+  - 새 파일 `simpleclose/ServiceEventRules.kt`
+  - `ClickRecheck.kt`: `verticalShift`, `afterMiss`, `sameTarget`, `MissStep`, `ShiftReread`. F48의 `saysFailure`는 `afterMiss`로 바뀜.
+  - `SimpleCloseAccessibilityService.kt`
+  - `SimpleTrace`: 코드 9개
+  - `F48Test`(안내 시험 1개를 새 규칙으로)
+  - 새 시험 `F49Test`
+
 - 잔여 노드 쪽 이벤트 무시: TalkBack이 무엇을 읽을지는 앱이 막을 수 없다. 대신 포커스를 잔여 노드 밖으로 옮기는 것(F9)이 할 수 있는 전부. 웹 페이지가 닫힌 팝업을 DOM에 `aria-hidden` 없이 남기는 한, 사용자가 스와이프로 다시 만날 수 있다(한계로 기록).
 - 선택 창 PROMPT도 TalkBack 큐로? 가능은 하다: 선택 창 자체(이미 접근성 오버레이)에 paneTitle이 있고 TalkBack이 창을 읽으므로, "안내 맡기기" ON이면 우리 TTS PROMPT를 끄고 paneTitle/첫 버튼 포커스 낭독에 맡기는 방식. 단, 지금 PROMPT는 TalkBack이 팝업을 읽는 도중 끊고 들어가야 시연이 빠르므로 polite로 바꾸면 늦어질 수 있다. F11 배너가 LG에서 잘 읽히면 같은 방식으로 옮길지 정하자(의견, 미구현).
 - 검증(F1~F11 한 빌드): 5개 Gradle 작업 통과, 단위 시험 debug 1028개·release 1013개 실패 0, lintDebug 오류 0(경고 12), 병합 매니페스트 INTERNET 0·새 권한 없음.

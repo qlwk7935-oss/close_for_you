@@ -36,16 +36,16 @@ class F48Test {
         assertEquals(RecheckMiss.TARGET_NAME_CHANGED, ClickRecheck.targetMiss(true, true, true, false))
     }
 
-    @Test fun onlyAButtonMismatchIsSaidAsAFailure() {
-        for (miss in RecheckMiss.entries) {
-            val said = ClickRecheck.saysFailure(miss, bottomBanner = false)
-            assertEquals(miss.name, miss.group == RecheckGroup.TARGET, said)
+    @Test fun aButtonMismatchIsSaidAsAFailure() {
+        // F49 widened this: a popup still on screen is asked about whatever part failed (F49Test).
+        for (miss in RecheckMiss.entries.filter { it.group == RecheckGroup.TARGET }) {
+            assertEquals(MissStep.ASK, ClickRecheck.afterMiss(miss, shift = false, rereadDone = false, stillShown = null, bottomBanner = false))
             // F37: a bottom banner stays quiet.
-            assertFalse(ClickRecheck.saysFailure(miss, bottomBanner = true))
+            assertEquals(MissStep.QUIET, ClickRecheck.afterMiss(miss, shift = false, rereadDone = false, stillShown = null, bottomBanner = true))
         }
-        assertTrue(ClickRecheck.saysFailure(RecheckMiss.TARGET_NAME_CHANGED, bottomBanner = false))
-        assertFalse(ClickRecheck.saysFailure(RecheckMiss.OTHER_APP, bottomBanner = false))
-        assertFalse(ClickRecheck.saysFailure(RecheckMiss.ROOT_MISSING, bottomBanner = false))
+        assertEquals(MissStep.QUIET, ClickRecheck.afterMiss(RecheckMiss.OTHER_APP, false, false, null, false))
+        assertTrue(RecheckMiss.entries.any { it.group == RecheckGroup.TARGET })
+        assertFalse(RecheckMiss.entries.none { it.group == RecheckGroup.ROOT })
     }
 
     @Test fun traceCodesByGroup() {

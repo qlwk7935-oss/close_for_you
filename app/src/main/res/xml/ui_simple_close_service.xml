@@ -3,9 +3,13 @@
      창 이벤트만 받고, 활성 창의 트리를 읽어 팝업 루트를 찾는다. 제스처·스크린샷 권한은 쓰지 않는다.
      크롬 웹 노드: 접근성 서비스가 canRetrieveWindowContent로 켜져 있으면 크롬이 웹 내용을 노드로 내보낸다(LG 확인).
      flagRequestEnhancedWebAccessibility는 API 26부터 효과 없음(공식 문서 deprecated)이라 넣지 않는다.
-     F15: 터치·제스처 시작 이벤트는 닫힌 뒤 포커스 되찾기를 사용자가 손대는 즉시 멈추는 데만 쓴다(좌표·내용 안 읽음). -->
+     F15: 터치·제스처 시작 이벤트는 닫힌 뒤 포커스 되찾기를 사용자가 손대는 즉시 멈추는 데만 쓴다(좌표·내용 안 읽음).
+     F49: typeViewScrolled는 읽지 않고 받자마자 버린다(ServiceEventRules). 크롬(Chromium AccessibilityStateDelegateImpl)은 켜진 서비스의
+     이벤트 마스크에 VIEW_SELECTED·VIEW_SCROLLED·ANNOUNCEMENT 중 하나가 있어야 웹 접근성을 온전히 켠다. 없으면 클릭이 true여도 페이지에
+     닿지 않았다(에뮬레이터 API 37 WebView 145, 시험 앱 P13: 우리 서비스만 3/3 안 닫힘, TalkBack이나 A 서비스를 같이 켜면 닫힘).
+     권한·capability를 늘리는 것이 아니다(canPerformGestures는 그대로 false). -->
 <accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
-    android:accessibilityEventTypes="typeWindowStateChanged|typeWindowsChanged|typeWindowContentChanged|typeViewAccessibilityFocused|typeTouchInteractionStart|typeGestureDetectionStart|typeTouchExplorationGestureStart"
+    android:accessibilityEventTypes="typeWindowStateChanged|typeWindowsChanged|typeWindowContentChanged|typeViewAccessibilityFocused|typeViewScrolled|typeTouchInteractionStart|typeGestureDetectionStart|typeTouchExplorationGestureStart"
     android:accessibilityFeedbackType="feedbackGeneric"
     android:accessibilityFlags="flagReportViewIds|flagRetrieveInteractiveWindows"
     android:canPerformGestures="false"

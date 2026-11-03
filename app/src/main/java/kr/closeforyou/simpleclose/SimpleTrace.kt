@@ -43,6 +43,18 @@ enum class SimpleTrace {
     RECHECK_GONE_TARGET,
     /** F48: an automatic press stopped because only the button did not match: said as a failed close, asked. */
     RECHECK_TARGET_FAILED_ASKED,
+    /** F49: the popup root moved up or down only: read and judged again (once); the fresh button the same / another one. */
+    RECHECK_SHIFTED_REREAD,
+    RECHECK_SHIFTED_SAME_TARGET,
+    RECHECK_SHIFTED_DIFFERENT,
+    /** F49: no read used the re-read in time; the popup looked at once more (asked when still there). */
+    RECHECK_SHIFTED_REREAD_UNUSED,
+    /** F49: after a root miss the screen was read again: the popup still there / gone / no tree. */
+    RECHECK_POPUP_STILL_SHOWN,
+    RECHECK_POPUP_GONE,
+    RECHECK_POPUP_UNKNOWN,
+    /** F49: the popup root did not match but the popup is still on screen: said as a failed close, asked. */
+    RECHECK_ROOT_FAILED_ASKED,
     CLICK_TARGET_NOT_CLICKABLE,
     CLICKED,
     CLICK_REJECTED,
