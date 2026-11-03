@@ -48,6 +48,40 @@ class PromoPurchaseDeciderTest {
         assertTrue(d.toString(), d is SimpleDecision.AutoClose && d.candidate.label == "닫기")
     }
 
+    // B_DEMO_RULES.md 1-8: the link named by its promotion is never pressed; the close is.
+    @Test fun anAdLinkNamedByItsPromotionIsLeftAloneAndTheCloseIsPressed() {
+        val nodes = popup(buttons = listOf("삼성 BIG 혜택 구매하러가기", "닫기"))
+        val decided = decide(nodes, rule = true) as SimpleDecision.AutoClose
+        assertEquals("닫기", decided.candidate.label)
+        assertEquals(SimpleDecision.DenyDecision, decide(nodes, rule = false))
+    }
+
+    // 재호 11/4: the rule only ever presses a named close. With an unnamed X the popup stays asked (6-3).
+    @Test fun anAdLinkWithOnlyAnUnnamedXIsAsked() {
+        val nodes = popup(buttons = listOf("삼성 BIG 혜택 구매하러가기")) +
+            node("0/0/1/9", "android.widget.ImageButton", clickable = true, bounds = ScreenBounds(900, 720, 980, 800))
+        assertTrue(decide(nodes, rule = true) !is SimpleDecision.AutoClose)
+    }
+
+    // 재호 11/4: these are never closed by this rule.
+    @Test fun aPlainPurchaseLinkIsNotClosed() {
+        assertTrue(decide(popup(buttons = listOf("상품 구매하러 가기", "닫기")), rule = true) !is SimpleDecision.AutoClose)
+    }
+
+    @Test fun aSubscriptionLinkIsNotClosed() {
+        assertTrue(decide(popup(buttons = listOf("구독 혜택 구매하러 가기", "닫기")), rule = true) !is SimpleDecision.AutoClose)
+    }
+
+    @Test fun anAdLinkWithPaymentWordsIsNotClosed() {
+        val nodes = popup("총 결제 금액 41,000원", buttons = listOf("삼성 BIG 혜택 구매하러가기", "닫기"))
+        assertTrue(decide(nodes, rule = true) !is SimpleDecision.AutoClose)
+    }
+
+    @Test fun anAdLinkBesideAPaymentButtonIsStillNotClosed() {
+        val nodes = popup(buttons = listOf("삼성 BIG 혜택 구매하러가기", "결제하기", "닫기"))
+        assertTrue(decide(nodes, rule = true) !is SimpleDecision.AutoClose)
+    }
+
     @Test fun aCheckoutStaysDeniedWithTheRuleOn() {
         val checkout = popup("특가 상품", "총 결제 금액 41,000원", buttons = listOf("닫기", "구매하기"))
         assertEquals(SimpleDecision.DenyDecision, decide(checkout, rule = true))

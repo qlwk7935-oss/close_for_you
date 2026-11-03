@@ -45,7 +45,8 @@ internal object DecisionKinds {
     ): DecisionKind {
         val texts = analysis.texts.filter { it.text.isNotBlank() }
         val tree = texts.filter { it.source == TextSource.ACCESSIBILITY_TREE }
-        val treePromotion = tree.any { DecisionKeywords.isCoupon(it.text) || DecisionKeywords.isPromotion(it.text) }
+        val treePromotion = tree.any { DecisionKeywords.isCoupon(it.text) || DecisionKeywords.isPromotion(it.text) ||
+            (promoPurchase && DecisionDemoRules.isPromoPurchaseLink(it.text)) }
         // B_DEMO_RULES.md 1절 (proposal, off by default): a promotion's own purchase button is not its decision.
         // Only the call-to-action texts are left out of step 2; every other decision signal still counts.
         // B_DEMO_RULES.md 8-5 B안: the same for a promotion's own login invitation.
