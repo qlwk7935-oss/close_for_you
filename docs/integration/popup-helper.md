@@ -1039,6 +1039,33 @@ F26 자동 확인: 옥션 웹 감지 1.3초·재확인 308ms·`READ_DUTY_PCT` 7.
   - `F49Test`(이동 시험 2개를 새 규칙으로)
   - 새 시험 `F50Test`
 
+### 8-44. F51 — 읽기 한도에 걸린 큰 페이지에서 뒤쪽부터 한 번 더 읽기 (JVM 시험만, 실기기·에뮬레이터 미검증)
+
+- **증상**(준영 갤럭시 SM-M446K Android 16, 11/4, 예스24 웹): 노드 약 2,600개, 팝업은 걸음 순서로 약 2,500번째. 전체 읽기가 `WholeReadCap`(1,500개·0.6초)에서 멈춰 `NO_ROOT … aborted=true`.
+  - 화면 전체를 덮는 빈 상자 "닫기" 문제는 준영이 B 쪽에서 따로 고친다. F51은 읽기만 다룬다.
+- **원인(코드로 봄):**
+  - 전체 읽기는 앞에서부터(첫 자식 먼저) 걷는다. 1,500개에서 멈추면 페이지 앞부분만 남는다.
+  - `WholeReadCap.complete`는 **읽은 부분에서 찾은 팝업**만 다시 통째로 읽는다(잘린 결제·동의 버튼 보완). 읽은 부분에 팝업이 없으면 아무것도 하지 않는다.
+  - 프로브는 뒤에서부터 걷지만 200개까지이고, Dialog·어두운 배경·앞 레이어만 찾으며 노드를 남기지 않는다. 예스24 팝업은 이 셋에 걸리지 않았다(`PopupRootFinder`의 다른 규칙이 필요한 모양).
+  - 그 뒤 10초 동안은 프로브만 읽는다(`ABORTED_RETRY_MILLIS`). 그래서 팝업까지 가는 읽기가 없다.
+- **고침(`TailRead`, `TAIL_READ_AFTER_CAP`):** 전체 읽기가 한도에서 멈췄고 읽은 부분에 팝업이 없을 때만, 뒤쪽부터 한 번 더 짧게 읽는다.
+  - 마지막 자식 먼저, 크기 0인 묶음은 크기 있는 형제 뒤에, 화면 밖은 들어가지 않는다(프로브와 같은 순서). 읽은 노드는 남긴다.
+  - 앞에서 읽은 부분과 합친다(경로마다 한 번, 걸음 순서로). `PopupRootFinder`가 모든 규칙으로 판단한다.
+  - 찾은 팝업은 그 하위 트리를 다시 통째로 읽는다. 다 못 읽으면 쓰지 않는다(`SUBTREE_CUT`, F25 안전: 결제·동의 버튼이 빠진 팝업으로 판단하지 않음).
+  - 팝업이 앞쪽에 있어 읽은 부분에서 찾은 경우는 지금까지와 같다(보조 읽기 안 함).
+- **상한(숫자):**
+  - 보조 읽기 노드 400개, 시간 300ms(`TailRead.MAX_NODES`, `MAX_MILLIS`). 팝업 하위 트리 다시 읽기 200ms(`SUBTREE_MAX_MILLIS`).
+  - 한 번 읽기의 최악: 0.6초 + 0.3초 + 0.2초 = **1.1초**. 그런 페이지에서 10초에 한 번 이하(전체 읽기가 그 주기라서). F25 이전은 매번 6.1초였다.
+  - 끝에서 400개 안에 팝업이 없으면 못 찾는다(`READ_TAIL_ABORTED`). 페이지 중간 깊숙한 팝업은 여전히 놓칠 수 있다.
+- **로그(글자 없음):** `READ_TAIL_STARTED` → `READ_TAIL_FOUND`/`NONE`/`ABORTED`/`SUBTREE_CUT`, `READ_TAIL_MS`, Debug 한 줄 `TAIL_READ result= nodes= visited= ms=`.
+- **바뀐 파일:**
+  - 새 파일 `simpleclose/TailRead.kt`(`TailRead`, `TailTree`, `TailLook`, `TailWalk`, `TailOutcome`, `TailReadInfo`)
+  - `SimpleTreeCollector`(보조 읽기 호출, `liveTail`, `TreeRead.tail`)
+  - `SimpleCloseEngineFeature.TAIL_READ_AFTER_CAP`
+  - `SimpleCloseAccessibilityService`(로그)
+  - `SimpleTrace`(코드 5개)
+  - 새 시험 `F51Test`
+
 - 잔여 노드 쪽 이벤트 무시: TalkBack이 무엇을 읽을지는 앱이 막을 수 없다. 대신 포커스를 잔여 노드 밖으로 옮기는 것(F9)이 할 수 있는 전부. 웹 페이지가 닫힌 팝업을 DOM에 `aria-hidden` 없이 남기는 한, 사용자가 스와이프로 다시 만날 수 있다(한계로 기록).
 - 선택 창 PROMPT도 TalkBack 큐로? 가능은 하다: 선택 창 자체(이미 접근성 오버레이)에 paneTitle이 있고 TalkBack이 창을 읽으므로, "안내 맡기기" ON이면 우리 TTS PROMPT를 끄고 paneTitle/첫 버튼 포커스 낭독에 맡기는 방식. 단, 지금 PROMPT는 TalkBack이 팝업을 읽는 도중 끊고 들어가야 시연이 빠르므로 polite로 바꾸면 늦어질 수 있다. F11 배너가 LG에서 잘 읽히면 같은 방식으로 옮길지 정하자(의견, 미구현).
 - 검증(F1~F11 한 빌드): 5개 Gradle 작업 통과, 단위 시험 debug 1028개·release 1013개 실패 0, lintDebug 오류 0(경고 12), 병합 매니페스트 INTERNET 0·새 권한 없음.

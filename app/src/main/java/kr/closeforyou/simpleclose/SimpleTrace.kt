@@ -279,6 +279,12 @@ enum class SimpleTrace {
     VIDEO_NOT_VIDEO_CONTEXT,
     /** F25: a whole read stopped at its node or time cap ([WholeReadCap]); the part read is used. */
     READ_WHOLE_ABORTED,
+    /** F51: after a capped whole walk with no popup, the read from the end ([TailRead]) started, and how it ended. */
+    READ_TAIL_STARTED,
+    READ_TAIL_FOUND,
+    READ_TAIL_NONE,
+    READ_TAIL_ABORTED,
+    READ_TAIL_SUBTREE_CUT,
     /** F27 (self review): the same popup came back within a few seconds of a confirmed close: a failure after all. */
     CLOSE_REAPPEARED_LATE,
     /** F27: part of the popup is deeper than the walk goes: asked, never closed by itself. */

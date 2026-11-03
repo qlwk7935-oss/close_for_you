@@ -55,6 +55,8 @@ class TreeRead(
     val windowsLine: String? = null,
     /** F43: the active window was judged by the bottom sheet rule (debug `BOTTOM_SHEET_*`). */
     val bottomSheet: BottomSheetVerdict? = null,
+    /** F51: the read from the end after a capped whole walk ([TailRead]); null when it did not run. */
+    val tail: TailReadInfo? = null,
 )
 
 /** F15: how a read went (debug log `READ_*`). F16: [APP_WINDOW], an app's own popup window above its main window. */
@@ -216,14 +218,36 @@ class SimpleTreeCollector(private val service: AccessibilityService) {
                     walk(root, "0", 0, nodes, screen, count)
                     // F25 (safety): a popup cut by the cap could be missing a 결제·동의 button that must keep it asked:
                     // the popup found in the part read is read again whole, its own subtree only.
-                    val complete = if (!count.aborted) nodes else WholeReadCap.complete(nodes, screen, bounded) { path ->
+                    var complete = if (!count.aborted) nodes else WholeReadCap.complete(nodes, screen, bounded) { path ->
                         val popupCount = WalkCount()
                         subtree(root, path, screen, popupCount).also { count.visited += popupCount.visited }
+                    }
+                    // F51 (예스24 웹, the popup about the 2,500th of 2,600 nodes): no popup in the part read, one short read from the end.
+                    var tail: TailReadInfo? = null
+                    if (count.aborted && TailRead.needed(true, complete, screen, bounded)) {
+                        val tailStart = SystemClock.uptimeMillis()
+                        val tailDeadline = tailStart + TailRead.MAX_MILLIS
+                        val walked = TailRead.walk(root, liveTail(screen), TailRead.MAX_NODES, SimpleCloseEngineFeature.MAX_DEPTH) { SystemClock.uptimeMillis() > tailDeadline }
+                        var subtreeVisited = 0
+                        val (assisted, tailOutcome) = TailRead.assist(complete, walked, screen, bounded) { path ->
+                            val popupCount = WalkCount(maxVisited = WholeReadCap.MAX_NODES, deadline = SystemClock.uptimeMillis() + TailRead.SUBTREE_MAX_MILLIS)
+                            subtree(root, path, screen, popupCount).also { subtreeVisited = popupCount.visited }
+                                ?.takeIf { !popupCount.aborted && popupCount.depthCut.isEmpty() }
+                                ?.also { count.password = count.password || popupCount.password }
+                        }
+                        count.visited += walked.visited + subtreeVisited
+                        // A password field the tail saw on screen leaves the screen alone either way (F28).
+                        count.password = count.password || walked.password
+                        if (tailOutcome == TailOutcome.FOUND) {
+                            complete = assisted
+                            count.depthCut += walked.depthCut.filterNot { it in count.depthCut }
+                        }
+                        tail = TailReadInfo(tailOutcome, walked.nodes.size, walked.visited + subtreeVisited, SystemClock.uptimeMillis() - tailStart)
                     }
                     TreeRead(packageName, root.windowId, complete, screen, bounded, probeVisited + count.visited, count.skipped, mode, probeVisited,
                         probeOutcome = outcome, appWindowIgnored = appWindowIgnored, wholeAborted = aborted || count.aborted, depthCut = count.depthCut,
                         passwordSeen = count.password, address = addressOf(root, packageName, complete, lookUpAddress),
-                        boundsFromRoot = activeByRoot, windowsLine = line(), bottomSheet = judgement.sheet)
+                        boundsFromRoot = activeByRoot, windowsLine = line(), bottomSheet = judgement.sheet, tail = tail)
                 } finally {
                     windows.forEach(::release)
                 }
@@ -643,6 +667,21 @@ class SimpleTreeCollector(private val service: AccessibilityService) {
         override fun child(node: AccessibilityNodeInfo, index: Int): AccessibilityNodeInfo? = node.getChild(index)
         override fun release(node: AccessibilityNodeInfo) = this@SimpleTreeCollector.release(node)
         override fun expired() = SystemClock.uptimeMillis() > deadline
+    }
+
+    /** F51: live nodes for [TailRead]: the same snapshot and walk rule as [walk] (visible nodes kept, off-screen subtrees skipped). */
+    private fun liveTail(screen: ScreenBounds) = object : TailTree<AccessibilityNodeInfo> {
+        override fun look(node: AccessibilityNodeInfo, path: String): TailLook {
+            val visible = node.isVisibleToUser
+            val box = boundsOf(node)
+            val zero = box.width <= 0 || box.height <= 0
+            val password = visible && node.isPassword && !zero &&
+                box.left < screen.right && screen.left < box.right && box.top < screen.bottom && screen.top < box.bottom
+            return TailLook(if (visible) snapshot(node, path) else null, TreeWalkRules.descend(visible, box, screen), zero, password)
+        }
+        override fun childCount(node: AccessibilityNodeInfo) = node.childCount
+        override fun child(node: AccessibilityNodeInfo, index: Int): AccessibilityNodeInfo? = node.getChild(index)
+        override fun release(node: AccessibilityNodeInfo) = this@SimpleTreeCollector.release(node)
     }
 
     /** F15: the visible nodes at [path] and below it, with their full paths; null when the path is gone. */

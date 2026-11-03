@@ -395,6 +395,13 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
             abortedPackage = expectedPackage
             abortedAt = SystemClock.uptimeMillis()
         }
+        // F51: the read from the end after the capped walk (codes and counts only).
+        read?.tail?.let { tail ->
+            log.trace(SimpleTrace.READ_TAIL_STARTED)
+            log.trace(SimpleTrace.valueOf("READ_TAIL_${tail.outcome.name}"))
+            log.latency("READ_TAIL_MS", tail.millis)
+            log.line(tail.line())
+        }
         countDuty(readStart, readMillis)
         if (read == null) {
             searchUnavailable += 1
