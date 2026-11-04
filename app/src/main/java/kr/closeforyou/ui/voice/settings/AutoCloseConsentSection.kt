@@ -184,7 +184,7 @@ internal object ConsentText {
     /** What the preset closes, the safety line, and (not live) that the app still asks first. */
     fun bodyRes(preset: HandlingPreset, live: Boolean, unknownAutoClose: Boolean = DemoUnknownAutoClose.ENABLED): List<Int> = buildList {
         add(kindsRes(preset))
-        // Demo mode 6-0 (F7): "전부 자동 닫기" also closes a safe unknown popup; say so where it is agreed to.
+        // Demo mode 6-0 (F7, F16): "전부 자동 닫기" also closes an unknown popup with a named close and no risky button; say so where it is agreed to.
         if (unknownAutoClose && preset == HandlingPreset.CLOSE_ALL) add(R.string.ui_preset_consent_unknown_all)
         add(R.string.ui_preset_consent_safety)
         if (!live) add(R.string.ui_preset_consent_not_live)

@@ -126,7 +126,7 @@ A 서비스(`CloseForYouAccessibilityService`)·`accessibility_service_config.xm
   - 조건(모두): 프리셋 "전부 자동 닫기" + 자동 닫기 스위치 ON(처음 설정 완료), B 분류 UNKNOWN, 금지어 버튼(`SimpleLabelReject.FORBIDDEN`: 결제·구매·동의·권한·구독·삭제·설치·앱에서·열기…) 0개, 검증된 버튼이 라벨 있는 닫기 정확히 1개(라벨 없는 X는 후보가 아님, 6-3), 사기 의심 아님, USER_DECISION 아님. 클릭 직전 재확인·1회 클릭은 그대로.
   - "광고·쿠폰 닫기"·"광고만 닫기"는 UNKNOWN을 계속 묻는다. 결과 문장 "팝업을 닫았어요."(`ui_auto_obj_other`). 로그 `DECIDED_AUTO_CLOSE_UNKNOWN`.
   - 파일: `simpleclose/SimpleCloseDecider.kt`(`DemoUnknownAutoClose.ENABLED = true`로 끔/켬), 서비스(금지어 수 전달·로그), `SimpleTrace.kt`.
-  - 문구: "전부 자동 닫기"를 골랐을 때만 프리셋 아래 고정 문장을 `ui_preset_decision_fixed_close_all`("…알 수 없는 팝업은 위험한 버튼이 없고 닫는 버튼이 하나뿐일 때만 닫고, 그 밖에는 물어봐요")로, 자동 닫기 확인 창에 `ui_preset_consent_unknown_all` 한 줄 추가. 다른 프리셋 문구는 그대로("…알 수 없는 팝업도 물어봐요").
+  - 문구: "전부 자동 닫기"를 골랐을 때만 프리셋 아래 고정 문장을 `ui_preset_decision_fixed_close_all`("…알 수 없는 팝업은 위험한 버튼이 없고 닫는 버튼이 하나뿐일 때만 닫고, 그 밖에는 물어봐요", F56에서 고침, 8-49)로, 자동 닫기 확인 창에 `ui_preset_consent_unknown_all` 한 줄 추가. 다른 프리셋 문구는 그대로("…알 수 없는 팝업도 물어봐요").
   - AGENTS 6장 2번은 고치지 않음(6-0 우선).
   - 시험: `SimpleCloseDeciderTest` 세 프리셋 × (조건 충족 / 금지어 / 닫기 2개 / 사기) 매트릭스 + 건너뛰기만 있음·버튼 없음·결정·스위치 꺼짐·동의 꺼짐·11번가 시트, `PresetStorageAndTextTest` 문구 선택. 기존 시험 `unknownIsAskedEvenWhenEveryKindIsInThePreset`는 규칙이 바뀌어 "스위치 끄면 모든 프리셋에서 묻기"로 바꿈.
 - **F8 — 화면 설명과 실제 동작 맞추기 (10/31).** `PresetAutoCloseFeature.live`(C)가 false라 자동 닫기 스위치 아래·확인 창에 "자동 닫기는 곧 켜질 예정이에요. 지금은 닫기 전에 물어봐요"가 보였는데, 단순 엔진은 실제로 바로 닫았다. → `live`를 `SimpleCloseEngineFeature.enabled`를 따르게 바꿈(지금 true). 단순 엔진을 끄면 다시 false(그 문구가 돌아옴).
@@ -1182,6 +1182,26 @@ F26 자동 확인: 옥션 웹 감지 1.3초·재확인 308ms·`READ_DUTY_PCT` 7.
   - 앱이 앞에 없을 때 접근성 오버레이에서 마이크가 실제로 들어오는지는 코드만으로 알 수 없다. debug와 조건이 같다. 실기기 확인이 필요하다.
   - `RECORD_AUDIO`는 `android.hardware.microphone`을 필수 기능으로 암시한다. 스토어 배포 때는 `uses-feature required=false`를 검토해야 한다(지금은 배포 안 함, 넣지 않음).
   - `docs/DEVELOPMENT_STATUS.md` 79줄은 아직 "`RECORD_AUDIO` 미요청"이라고 적혀 있다. 팀 공용 문서라 고치지 않았다.
+
+### 8-49. F56 — "전부 자동 닫기" 동의 문구를 강력 모드에 맞춤 (문구만, 동작 코드 변경 없음)
+
+- **문제:** `ui_preset_decision_fixed_close_all`과 `ui_preset_consent_unknown_all`이 "닫는 버튼이 하나뿐"이라고 했다. 그것은 F7 규칙이다. F16 강력 모드(`STRONG_CLOSE_ALL` 켜짐)부터는 이름 있는 닫기가 여럿이어도 닫는다. 사용자는 이 문장을 보고 동의한다.
+- **코드로 확인한 강력 모드 조건(`SimpleCloseDecider.decide`, 순서대로):**
+  1. 사기 의심 → 경고만(`DenySuspicious`). 결정(`USER_DECISION`) → 설명만(`DenyDecision`).
+  2. 위험 버튼(`riskCount`)이 있으면 묻는다. 광고·쿠폰으로 분류된 팝업은 홍보형 구매·로그인 링크를 빼고 센다. **판단 불가 팝업에는 이 예외가 없다.**
+  3. "전부 자동 닫기" + 자동 닫기 스위치 + `DemoUnknownAutoClose.ENABLED` + `STRONG_CLOSE_ALL`일 때: 역할이 `CLOSE`인 후보 중 가장 분명한 것(`SimpleLabelRules.clarity`, 같으면 읽는 순서 첫 번째). 없으면 묻는다. 분류(광고·쿠폰·공지·판단 불가)는 상관없다.
+  - `forbiddenCount`는 강력 모드에서 보지 않는다. "앱에서 열기"·"설치"·"쿠폰 받기" 같은 이동 버튼은 누르지 않지만 그 때문에 묻지도 않는다.
+  - 이름 없는 X는 후보가 아니므로 누르지 않는다(6-3).
+  - 결정 뒤에 서비스가 묻기로 돌리는 경우: 전에 실패한 팝업, 앱을 벗어났던 앱, 설치 광고에 닫기 버튼만 있을 때(`InstallAdLoneClose`), 너무 깊은 트리, 연속 닫기 제한(`ChainGuard`). 누르기 직전 재확인·겹침 확인(F53)도 그대로다. 문장의 "안전 확인을 통과한 팝업만"이 이 부분이다.
+- **고친 문구:**
+  - `ui_preset_decision_fixed_close_all`: 결제·동의 같은 중요한 팝업은 어떤 방식이든 항상 직접 확인해요. 무엇인지 알 수 없는 팝업은 위험한 버튼이 없고 이름 있는 닫는 버튼이 있을 때만 닫고, 그 밖에는 물어봐요.
+  - `ui_preset_consent_unknown_all`: 무엇인지 알 수 없는 팝업도 위험한 버튼이 없고 이름 있는 닫는 버튼이 있으면 묻지 않고 닫을게요.
+  - 기본 수정안의 "닫기 버튼" 대신 "닫는 버튼"으로 썼다. 동의 대화상자 문장에는 음성 명령어("닫기" 등)를 넣지 않는다는 이 파일의 규칙 때문이다(`ui_voice_strings.xml` 자동 닫기 동의 주석).
+- **고치지 않은 것:**
+  - 다른 프리셋 문장(`ui_preset_decision_fixed`, "알 수 없는 팝업도 물어봐요")은 코드와 맞다.
+  - `DemoUnknownAutoClose` 주석의 "exactly one verified button"은 강력 모드를 껐을 때의 규칙이라 맞고, 준영이 고치기로 한 부분이라 두었다.
+  - `decision/AUTO_CLOSE.md`·`decision/README.md`의 "정확히 하나"는 B의 `DecisionAutoClose` 경로 설명이다. 강력 모드와 다른 경로라서 고치지 않았다.
+  - 위 F7 항목과 `docs/c-notes/simple-close-engine.md`의 조건은 그 회차 기록이다. 지금 규칙은 이 절과 F16 항목이다.
 
 - 잔여 노드 쪽 이벤트 무시: TalkBack이 무엇을 읽을지는 앱이 막을 수 없다. 대신 포커스를 잔여 노드 밖으로 옮기는 것(F9)이 할 수 있는 전부. 웹 페이지가 닫힌 팝업을 DOM에 `aria-hidden` 없이 남기는 한, 사용자가 스와이프로 다시 만날 수 있다(한계로 기록).
 - 선택 창 PROMPT도 TalkBack 큐로? 가능은 하다: 선택 창 자체(이미 접근성 오버레이)에 paneTitle이 있고 TalkBack이 창을 읽으므로, "안내 맡기기" ON이면 우리 TTS PROMPT를 끄고 paneTitle/첫 버튼 포커스 낭독에 맡기는 방식. 단, 지금 PROMPT는 TalkBack이 팝업을 읽는 도중 끊고 들어가야 시연이 빠르므로 polite로 바꾸면 늦어질 수 있다. F11 배너가 LG에서 잘 읽히면 같은 방식으로 옮길지 정하자(의견, 미구현).
