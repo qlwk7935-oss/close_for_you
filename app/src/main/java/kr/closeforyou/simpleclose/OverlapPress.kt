@@ -8,6 +8,7 @@ import kr.closeforyou.core.model.ClickOutcome
 import kr.closeforyou.core.model.PopupClassification
 import kr.closeforyou.core.model.ScreenBounds
 import kr.closeforyou.ui.voice.PressSuccess
+import kr.closeforyou.ui.voice.overlay.PromptSpeech
 
 /** F59: why the front popup's close is not offered or not pressed. A code only, never screen text. */
 enum class FrontPressMiss {
@@ -20,8 +21,8 @@ enum class FrontPressStep { CLOSED, NOT_PRESSED, NOT_CLOSED, LEFT_APP }
 /** F59: the front popup as read again ([kind] as [OverlapPressRules.kindOf] judges it; [suspicious] by B). */
 class FrontSeen(val popup: SimplePopup, val kind: PopupClassification, val suspicious: Boolean)
 
-/** F59: the one press an overlap prompt offers (memory only, for that prompt). [take] answers true once. */
-class FrontPress(val front: FrontTarget, val popup: SimplePopup, val candidate: CloseCandidate) {
+/** F59: the one press an overlap prompt offers (memory only, for that prompt). [kind]: as [FrontSeen.kind]. [take] answers true once. */
+class FrontPress(val front: FrontTarget, val popup: SimplePopup, val candidate: CloseCandidate, val kind: PopupClassification) {
     private var taken = false
 
     fun take(): Boolean {
@@ -90,6 +91,19 @@ object OverlapPressRules {
     fun readTarget(back: SimplePopup, press: FrontPress?): SimplePopup = press?.popup ?: back
 
     /**
+     * The words the prompt's first item shows ([TalkBackTakeoverPlan.excerpt] cuts them). As [readTarget]: with the front's close offered,
+     * the front popup's, a notice's only, and never the stopped popup's. [talkBackReadIt] does not stop them there: it says the focus was
+     * inside the stopped popup's bounds, not that TalkBack read the front. A scam in front is never offered, so its words are never here.
+     * Without a press, as an ordinary prompt: a notice's words, unless TalkBack has just read it (F14).
+     */
+    fun excerptSource(backText: String?, backKind: PopupClassification, talkBackReadIt: Boolean, press: FrontPress?): String? =
+        if (press != null) {
+            PromptSpeech.contentOrNull(press.popup.analysis).takeIf { press.kind == PopupClassification.NOTICE }
+        } else {
+            backText.takeIf { backKind == PopupClassification.NOTICE && !talkBackReadIt }
+        }
+
+    /**
      * What the look around the front popup says about [button]. A cap stopped the look: what lies over the button is not known, so no
      * press (the ordinary popup's press, which also goes on after a cap, is a separate rule, 8-46). The look runs from the end of the
      * page and goes on past the front popup, so a long page is partial even when everything after the popup was read.
@@ -102,7 +116,7 @@ object OverlapPressRules {
 
     /** The press to offer, when [miss] is null. */
     fun offer(front: FrontTarget, seen: FrontSeen): FrontPress? =
-        StrongCloseRules.pick(seen.popup.scan.candidates)?.let { FrontPress(front, seen.popup, it) }
+        StrongCloseRules.pick(seen.popup.scan.candidates)?.let { FrontPress(front, seen.popup, it, seen.kind) }
 
     /** Right before the click (AGENTS 6-5, 6-7): the same checks on a new read, and the same name as the prompt said. */
     fun recheck(press: FrontPress, seen: FrontSeen?): FrontPressMiss? {

@@ -1216,7 +1216,7 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
         val brief = talkBackReadIt && planned.options.any { it.kind == PromptOptionKind.PRESS_CANDIDATE }
         val prompt = if (SimpleCloseEngineFeature.READ_POPUP_TEXT_ON_PROMPT) planned else planned.copy(
             popupText = null,
-            shownExcerpt = planned.popupText?.takeIf { classification == PopupClassification.NOTICE && !talkBackReadIt }
+            shownExcerpt = OverlapPressRules.excerptSource(planned.popupText, classification, talkBackReadIt, frontPress)
                 ?.let { TalkBackTakeoverPlan.excerpt(it, SimpleCloseEngineFeature.PROMPT_EXCERPT_CHARS) },
             briefQuestion = brief,
         )

@@ -118,7 +118,7 @@ class F59Test {
     }
 
     @Test fun theRecheckStopsTheClickWhenAnythingChanged() {
-        val press = FrontPress(target(), seen(front()).popup, OverlapPressRules.offer(target(), seen(front()))!!.candidate)
+        val press = FrontPress(target(), seen(front()).popup, OverlapPressRules.offer(target(), seen(front()))!!.candidate, PopupClassification.NOTICE)
         assertNull(OverlapPressRules.recheck(press, seen(front())))
         // Gone, or not read whole.
         assertEquals(FrontPressMiss.UNREAD, OverlapPressRules.recheck(press, null))
@@ -244,6 +244,34 @@ class F59Test {
         assertNull(read(plain).labelRes)
         assertNull(read(SimplePromptOptions.overlapped(plain, frontKnown = true)).labelRes)
         assertNull(read(SimplePromptOptions.overlapped(plain, frontKnown = true, frontScam = true)).labelRes)
+    }
+
+    @Test fun aPressPromptShowsTheFrontNoticesWordsNeverTheStoppedPopups() {
+        val press = OverlapPressRules.offer(target(), seen(front()))!!
+        val words = OverlapPressRules.excerptSource("다른 안내", PopupClassification.NOTICE, false, press)!!
+        assertTrue(words.contains("LMS 앱 업데이트 공지"))
+        assertFalse(words.contains("다른 안내"))
+        // The stopped popup need not be a notice, and the focus being in its bounds does not say TalkBack read the front.
+        assertEquals(words, OverlapPressRules.excerptSource(null, PopupClassification.ADVERTISEMENT, true, press))
+    }
+
+    @Test fun aPressPromptOnAnAdInFrontShowsNoWords() {
+        val press = OverlapPressRules.offer(target(), seen(front(), kind = PopupClassification.ADVERTISEMENT))!!
+        assertNull(OverlapPressRules.excerptSource("다른 안내", PopupClassification.NOTICE, false, press))
+    }
+
+    @Test fun withoutAPressTheWordsAreAsBefore() {
+        assertEquals("다른 안내", OverlapPressRules.excerptSource("다른 안내", PopupClassification.NOTICE, false, null))
+        assertNull(OverlapPressRules.excerptSource("다른 안내", PopupClassification.NOTICE, true, null))
+        assertNull(OverlapPressRules.excerptSource("다른 안내", PopupClassification.ADVERTISEMENT, false, null))
+        assertNull(OverlapPressRules.excerptSource(null, PopupClassification.NOTICE, false, null))
+    }
+
+    // A scam in front is refused before any offer, so its words have no way into the excerpt.
+    @Test fun aScamsWordsAreNotShown() {
+        val scam = seen(front(), suspicious = true)
+        assertEquals(FrontPressMiss.SCAM, OverlapPressRules.miss(target(), scam))
+        assertEquals("다른 안내", OverlapPressRules.excerptSource("다른 안내", PopupClassification.NOTICE, false, press = null))
     }
 
     @Test fun theRootLineHoldsACodeOnly() {
