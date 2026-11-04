@@ -62,6 +62,8 @@ data class PromptOption(
     val buttonLabel: String? = null,
     /** F57: a fixed label from our resources instead of "'이름' 버튼으로 이동". F59: on a press, one that takes the button's name. */
     @StringRes val labelRes: Int? = null,
+    /** F59: a tap may pick this, voice may not ([kr.closeforyou.ui.voice.command.VoicePolicy]). */
+    val tapOnly: Boolean = false,
 ) {
     override fun toString(): String = "PromptOption(kind=$kind, redacted)"
 }

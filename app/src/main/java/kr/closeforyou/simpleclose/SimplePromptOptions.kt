@@ -50,7 +50,8 @@ object SimplePromptOptions {
      * F53/F57: something may lie over the popup's button. No press and no "always" (not by tap, not by voice), and its own
      * buttons are not places to go either: a double tap there would be the press just refused. [frontKnown]: one move, to the popup
      * taken to be in front. Not known: the sentence says so and only [그대로 두기] stays.
-     * F59: [pressLabel], the name of the front popup's close that passed [OverlapPressRules]: offered first, as one press, never "always".
+     * F59: [pressLabel], the name of the front popup's close that passed [OverlapPressRules]: offered first, as one press, never "always",
+     * by tap only ("in front" is a guess from the DOM order).
      * [failedNow]: that press has just not closed it.
      */
     fun overlapped(prompt: ChoicePrompt, frontKnown: Boolean, pressLabel: String? = null, failedNow: Boolean = false): ChoicePrompt {
@@ -59,7 +60,7 @@ object SimplePromptOptions {
         }
         val press = pressLabel?.takeIf { frontKnown && it.isNotBlank() }
         val options = if (frontKnown) {
-            listOfNotNull(press?.let { PromptOption(PromptOptionKind.PRESS_CANDIDATE, candidateId = FRONT_PRESS_ID, candidateRole = ButtonRole.CLOSE, buttonLabel = it.trim(), labelRes = R.string.ui_choice_press_front) }) +
+            listOfNotNull(press?.let { PromptOption(PromptOptionKind.PRESS_CANDIDATE, candidateId = FRONT_PRESS_ID, candidateRole = ButtonRole.CLOSE, buttonLabel = it.trim(), labelRes = R.string.ui_choice_press_front, tapOnly = true) }) +
                 PromptOption(PromptOptionKind.MOVE_TO_BUTTON, candidateId = FRONT_ID, labelRes = R.string.ui_choice_move_to_front) + rest
         } else {
             rest.filter { it.kind == PromptOptionKind.KEEP_OPEN }

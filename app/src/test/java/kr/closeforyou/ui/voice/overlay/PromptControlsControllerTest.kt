@@ -1,6 +1,7 @@
 package kr.closeforyou.ui.voice.overlay
 
 import kotlinx.collections.immutable.persistentListOf
+import kotlinx.collections.immutable.toImmutableList
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.test.TestScope
@@ -87,8 +88,9 @@ class PromptControlsControllerTest {
         val input = FakeInput()
         val announcer = FakeAnnouncer()
         val picked = mutableListOf<PromptOption>()
+        var refused = 0
         val controller = PromptControlsController(
-            prompt, scope.backgroundScope, PromptControlsSupport(announcer, input, { speak }, sentence), onVoiceOption = { picked += it },
+            prompt, scope.backgroundScope, PromptControlsSupport(announcer, input, { speak }, sentence, onTapOnlyRefused = { refused++ }), onVoiceOption = { picked += it },
         )
     }
 
@@ -107,6 +109,25 @@ class PromptControlsControllerTest {
         assertEquals(prompt.token, request.token)
         assertEquals(R.string.ui_voice_refused, h.controller.state.value.messageRes)
         assertTrue(h.controller.state.value.messageSpoken)
+    }
+
+    // F59: nothing reaches the tap path, so the prompt stays and its press is not used up.
+    @Test fun f59ATapOnlyOptionIsNotChosenByVoice() = runTest {
+        val tapOnly = prompt.copy(options = prompt.options.map { if (it.kind == PromptOptionKind.PRESS_CANDIDATE) it.copy(tapOnly = true) else it }.toImmutableList())
+        val h = Harness(this, prompt = tapOnly, sentence = fixed)
+        h.controller.onSpeak()
+        h.input.results.emit(VoiceUtterance.Command(VoiceCommand.CLOSE))
+        runCurrent()
+        assertTrue(h.picked.isEmpty())
+        assertEquals(1, h.refused)
+        assertEquals(R.string.ui_voice_press_front_on_screen, h.controller.state.value.messageRes)
+        assertEquals("fixed-${R.string.ui_voice_press_front_on_screen}", h.announcer.requests.single().text)
+        assertFalse(h.controller.state.value.listening)
+        // The prompt still answers: another command by voice goes through.
+        h.controller.onSpeak()
+        h.input.results.emit(VoiceUtterance.Command(VoiceCommand.KEEP_OPEN))
+        runCurrent()
+        assertEquals(PromptOptionKind.KEEP_OPEN, h.picked.single().kind)
     }
 
     @Test fun f38EverySaySentenceIsSpoken() = runTest {

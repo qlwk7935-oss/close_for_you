@@ -152,7 +152,9 @@ class AccessibilityChoiceOverlay(
     ): PromptSession {
         // Taps and voice share this one path, so a voice choice is exactly a tap's UserChoice.
         // Anything from a closed, replaced, revalidating or failed window stops at the generation check.
-        val onOption: (PromptOption, ChoiceOrigin) -> Unit = { option, origin ->
+        val onOption: (PromptOption, ChoiceOrigin) -> Unit = onOption@{ option, origin ->
+            // F59: VoicePolicy already stops this; nothing is delivered, so the prompt stays open for a tap.
+            if (origin == ChoiceOrigin.VOICE && option.tapOnly) return@onOption
             when (val selection = ChoicePromptPlanner.select(prompt, option)) {
                 // Press and keep close the prompt first; READ_CONTENT keeps it open.
                 is PromptSelection.Choice -> {

@@ -64,11 +64,13 @@ class PromptControlsSupport(
     val speakButtonState: () -> SpeakButtonState,
     /** F38: string resource → sentence for the announcer; null = the status line only shows (liveRegion). */
     val sentence: ((Int) -> String)? = null,
+    /** F59: voice named an option that is for a tap only (a code line for the log; nothing heard). */
+    val onTapOnlyRefused: () -> Unit = {},
 ) {
     companion object {
         val NONE = PromptControlsSupport(null, null, { SpeakButtonState.TURNED_OFF })
 
-        fun create(context: Context, announcer: PopupAnnouncer): PromptControlsSupport {
+        fun create(context: Context, announcer: PopupAnnouncer, onTapOnlyRefused: () -> Unit = {}): PromptControlsSupport {
             val microphone = AndroidMicrophoneAccess(context)
             val preferences = UiVoicePreferences.get(context)
             return PromptControlsSupport(
@@ -76,6 +78,7 @@ class PromptControlsSupport(
                 OnDeviceVoiceCommandInput(context),
                 { SpeakButtonPolicy.state(VoiceButtonFeature.enabled, preferences.current().voiceCommandsEnabled, microphone) },
                 context::getString,
+                onTapOnlyRefused,
             )
         }
     }
@@ -189,6 +192,10 @@ class PromptControlsController(
                 onVoiceOption(outcome.option)
             }
             is VoiceOutcome.Say -> say(outcome.textRes)
+            is VoiceOutcome.TapOnly -> {
+                say(outcome.textRes)
+                support.onTapOnlyRefused()
+            }
             VoiceOutcome.Quiet -> mutableState.update { it.copy(listening = false, messageRes = null, messageSpoken = false) }
         }
     }

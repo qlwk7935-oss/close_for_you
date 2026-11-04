@@ -291,7 +291,7 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
             PromptAnnouncementListener(this, announcer, scope, mode = {
                 if (resultBanner?.talkBackOn() == true) preferences.current().promptAnnounceMode else PromptAnnounceMode.PANE_TITLE_AND_TTS
             }, detail = { preferences.current().detail }),
-            PromptControlsSupport.create(this, announcer),
+            PromptControlsSupport.create(this, announcer, onTapOnlyRefused = { log.line(OverlapPressRules.VOICE_REFUSED_LINE) }),
             beforeClose = ::focusPageBeforeOurWindowGoes,
             // F46: the prompt's focus moves as one code line each (Debug only).
             focusTrace = { log.line(it) },
@@ -1285,7 +1285,7 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
                 val remember = choice.kind == ChoiceKind.REMEMBER_EXACT_POPUP && choice.buttonMeaningConfirmed && choice.repeatAutomationExplicitlyAllowed
                 prompted = null
                 if (choice.candidateId == SimplePromptOptions.FRONT_PRESS_ID) {
-                    if (frontPress != null && overlap != null) pressFront(popup, overlap, frontPress, answer.origin == ChoiceOrigin.VOICE)
+                    if (frontPress != null && overlap != null) pressFront(popup, overlap, frontPress)
                     return
                 }
                 val candidate = (popup.scan.candidates + listOfNotNull(popup.scan.xButton)).firstOrNull { it.id == choice.candidateId } ?: return
@@ -1365,7 +1365,7 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
     /** F59: nothing read over the front popup's button, and it still passes every check. Null = fine. Not read = not fine. */
     private suspend fun frontPressMiss(back: SimplePopup, front: FrontTarget, button: ScreenBounds, check: (FrontSeen?) -> FrontPressMiss?): FrontPressMiss? {
         val look = withContext(Dispatchers.Default) { collector.readStack(front.cover) } ?: return FrontPressMiss.UNREAD
-        if (PopupStack.overFront(button, front.cover, look) != null) return FrontPressMiss.COVERED
+        OverlapPressRules.lookMiss(button, front.cover, look)?.let { return it }
         return check(readFront(back, front))
     }
 
@@ -1391,9 +1391,9 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
      * that node (6-6); the result only after the close is confirmed. The popup behind is not pressed by itself after this
      * ([AutoPressHolds]): it is read and judged again, and asked instead of pressed. Nothing is remembered.
      */
-    private fun pressFront(back: SimplePopup, overlap: StackHit, press: FrontPress, voice: Boolean) {
+    private fun pressFront(back: SimplePopup, overlap: StackHit, press: FrontPress) {
         if (!press.take()) return
-        log.line(OverlapPressRules.chosenLine(press, voice))
+        log.line(OverlapPressRules.chosenLine(press))
         tts?.stop()
         val focusedAlready = focusedBeforeClose
         focusedBeforeClose = false

@@ -59,6 +59,9 @@ sealed interface VoiceOutcome {
     /** Nothing runs; this short fixed sentence is shown and announced (liveRegion). */
     data class Say(@StringRes val textRes: Int) : VoiceOutcome
 
+    /** F59: the option named is for a tap only. Nothing runs and the prompt stays, so a tap can still pick it; this sentence is said. */
+    data class TapOnly(@StringRes val textRes: Int) : VoiceOutcome
+
     /** Nothing runs and nothing is said. */
     data object Quiet : VoiceOutcome
 }
@@ -73,7 +76,8 @@ sealed interface VoiceOutcome {
 object VoicePolicy {
     fun decide(utterance: VoiceUtterance, prompt: ChoicePrompt): VoiceOutcome = when (utterance) {
         is VoiceUtterance.Command -> when (val action = VoiceChoiceMapper.map(utterance.command, prompt)) {
-            is VoiceAction.Choose -> VoiceOutcome.Choose(action.option)
+            is VoiceAction.Choose ->
+                if (action.option.tapOnly) VoiceOutcome.TapOnly(R.string.ui_voice_press_front_on_screen) else VoiceOutcome.Choose(action.option)
             VoiceAction.CannotPressForUser -> VoiceOutcome.Say(R.string.ui_choice_cannot_press)
             is VoiceAction.NotHandledHere -> VoiceOutcome.Say(R.string.ui_voice_not_here)
         }

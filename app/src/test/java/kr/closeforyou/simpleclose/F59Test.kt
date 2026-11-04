@@ -4,6 +4,7 @@ import kotlinx.coroutines.runBlocking
 import kr.closeforyou.R
 import kr.closeforyou.core.model.ActionResult
 import kr.closeforyou.core.model.ActionStatus
+import kr.closeforyou.core.contract.VoiceCommand
 import kr.closeforyou.core.model.ClickOutcome
 import kr.closeforyou.core.model.NodeSnapshot
 import kr.closeforyou.core.model.PopupClassification
@@ -15,6 +16,9 @@ import kr.closeforyou.simpleclose.SimpleNodes.node
 import kr.closeforyou.ui.voice.choice.ChoicePromptPlanner
 import kr.closeforyou.ui.voice.choice.PromptOptionKind
 import kr.closeforyou.ui.voice.choice.PromptSummary
+import kr.closeforyou.ui.voice.command.VoiceOutcome
+import kr.closeforyou.ui.voice.command.VoicePolicy
+import kr.closeforyou.ui.voice.command.VoiceUtterance
 import kr.closeforyou.ui.voice.settings.HandlingPreset
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -146,6 +150,75 @@ class F59Test {
         assertEquals(StackBlock.WINDOW_ABOVE, PopupStack.overFront(closeFront, cover, StackLook(emptyList(), SCREEN, windows, 1, false, 0, 1)))
     }
 
+    // The service asks the same rule when offering and right before the click (frontPressMiss).
+    @Test fun aPartialLookStopsTheOfferAndTheClick() {
+        val clean = StackLook(page() + back(), SCREEN, emptyList(), 1, false, 10, 6)
+        assertNull(OverlapPressRules.lookMiss(closeFront, cover, clean))
+        val partial = StackLook(page() + back(), SCREEN, emptyList(), 1, true, 400, 250)
+        assertEquals(FrontPressMiss.LOOK_PARTIAL, OverlapPressRules.lookMiss(closeFront, cover, partial))
+        // Something read over the button still says so when the look is whole.
+        val later = listOf(
+            node("0/0/3", bounds = ScreenBounds(120, 1000, 960, 1740)),
+            node("0/0/3/0", text = "또 다른 공지", bounds = ScreenBounds(120, 1000, 960, 1100)),
+        )
+        assertEquals(FrontPressMiss.COVERED, OverlapPressRules.lookMiss(closeFront, cover, look(page() + back() + later)))
+    }
+
+    // 8-46 unchanged: a partial look does not change what an ordinary popup's check finds.
+    @Test fun aPartialLookLeavesTheOrdinaryCheckAlone() {
+        val nodes = page() + back() + front()
+        val partial = StackLook(nodes, SCREEN, emptyList(), 1, true, 400, 250)
+        assertEquals(PopupStack.hit(closeBack, root, look(nodes))!!.block, PopupStack.hit(closeBack, root, partial)!!.block)
+        assertNull(PopupStack.block(closeFront, cover, StackLook(page(), SCREEN, emptyList(), 1, true, 400, 250)))
+    }
+
+    // readStack returns no nodes and partial=false for a root with a window id. The front never has one: PopupStack.hit makes it, in the same
+    // window, and a stopped popup with its own window or a window above gives no front.
+    @Test fun theFrontNeverHasItsOwnWindow() {
+        val nodes = page() + back() + front()
+        assertNull(PopupStack.hit(closeBack, root, look(nodes))!!.front!!.cover.windowId)
+        val later = listOf(
+            node("0/0/3", bounds = ScreenBounds(120, 1000, 960, 1740)),
+            node("0/0/3/0", text = "또 다른 공지", bounds = ScreenBounds(120, 1000, 960, 1100)),
+        )
+        val covered = PopupStack.hit(closeBack, root, look(page() + back() + later))!!
+        assertEquals(StackBlock.COVER_LATER, covered.block)
+        assertNull(covered.front!!.cover.windowId)
+        assertNull(PopupStack.hit(closeBack, root.copy(windowId = 7), look(nodes)))
+        val windows = listOf(WindowShape(1, WindowKind.APPLICATION, 1, true, SCREEN, SCREEN), WindowShape(2, WindowKind.APPLICATION, 2, true, cover.bounds, cover.bounds))
+        val above = PopupStack.hit(closeFront, root, StackLook(nodes, SCREEN, windows, 1, false, 0, 1))!!
+        assertEquals(StackBlock.WINDOW_ABOVE, above.block)
+        assertNull(above.front)
+    }
+
+    private fun promptWithPress(): kr.closeforyou.ui.voice.choice.ChoicePrompt {
+        val popup = SimplePopupAnalysis.build(page() + back(), root, "p", 7, SCREEN, 1L, 0L)
+        val planned = ChoicePromptPlanner.plan(popup.analysis, PopupClassification.NOTICE, labelPolicy = SimpleLabelPolicy, rememberChoicesEnabled = false, preset = HandlingPreset.entries.first())
+        return SimplePromptOptions.overlapped(planned, frontKnown = true, pressLabel = "닫기")
+    }
+
+    // The press is refused before anything can use it up: a tap still gets it, once.
+    @Test fun voiceDoesNotPressTheFrontATapStillCan() {
+        val shown = promptWithPress()
+        assertTrue(shown.options.single { it.candidateId == SimplePromptOptions.FRONT_PRESS_ID }.tapOnly)
+        val outcome = VoicePolicy.decide(VoiceUtterance.Command(VoiceCommand.CLOSE), shown)
+        assertEquals(VoiceOutcome.TapOnly(R.string.ui_voice_press_front_on_screen), outcome)
+        val press = OverlapPressRules.offer(target(), seen(front()))!!
+        assertTrue(press.take())
+        assertFalse(press.take())
+    }
+
+    @Test fun voiceStillWorksForTheOtherOptions() {
+        val shown = promptWithPress()
+        fun chosen(command: VoiceCommand) = (VoicePolicy.decide(VoiceUtterance.Command(command), shown) as VoiceOutcome.Choose).option.kind
+        assertEquals(PromptOptionKind.MOVE_TO_BUTTON, chosen(VoiceCommand.MOVE_TO_BUTTON))
+        assertEquals(PromptOptionKind.READ_CONTENT, chosen(VoiceCommand.READ_CONTENT))
+        assertEquals(PromptOptionKind.KEEP_OPEN, chosen(VoiceCommand.KEEP_OPEN))
+        // Without the press the prompt is F57's: no press to choose, as before.
+        val plain = SimplePromptOptions.overlapped(shown, frontKnown = true)
+        assertEquals(VoiceOutcome.Say(R.string.ui_choice_cannot_press), VoicePolicy.decide(VoiceUtterance.Command(VoiceCommand.CLOSE), plain))
+    }
+
     // AGENTS 6-6: one press per prompt; a failure is never pressed again.
     @Test fun itIsPressedOnceAndNotAgainAfterAFailure() {
         val press = OverlapPressRules.offer(target(), seen(front()))!!
@@ -220,15 +293,21 @@ class F59Test {
         val lines = listOf(
             OverlapPressRules.offeredLine(press),
             OverlapPressRules.notOfferedLine(FrontPressMiss.RISK_BUTTON),
-            OverlapPressRules.chosenLine(press, voice = false),
+            OverlapPressRules.chosenLine(press),
             OverlapPressRules.recheckFailedLine(FrontPressMiss.TARGET_CHANGED.name, closeFront),
             OverlapPressRules.resultLine(FrontPressStep.CLOSED),
+            OverlapPressRules.notOfferedLine(FrontPressMiss.LOOK_PARTIAL),
+            OverlapPressRules.recheckFailedLine(FrontPressMiss.LOOK_PARTIAL.name, closeFront),
+            OverlapPressRules.VOICE_REFUSED_LINE,
         )
         assertEquals("OVERLAP_PRESS_OFFERED cover=100,700,980,1750 to=540,1600,980,1700", lines[0])
         assertEquals("OVERLAP_PRESS_NOT_OFFERED reason=RISK_BUTTON", lines[1])
         assertEquals("OVERLAP_PRESS_CHOSEN by=TAP to=540,1600,980,1700", lines[2])
         assertEquals("OVERLAP_PRESS_RECHECK_FAILED reason=TARGET_CHANGED to=540,1600,980,1700", lines[3])
         assertEquals("OVERLAP_PRESS_RESULT code=CLOSED", lines[4])
+        assertEquals("OVERLAP_PRESS_NOT_OFFERED reason=LOOK_PARTIAL", lines[5])
+        assertEquals("OVERLAP_PRESS_RECHECK_FAILED reason=LOOK_PARTIAL to=540,1600,980,1700", lines[6])
+        assertEquals("OVERLAP_PRESS_VOICE_REFUSED", lines[7])
         lines.forEach { line -> assertFalse(line.contains("닫기") || line.contains("LMS") || line.contains("0/0/2")) }
     }
 }

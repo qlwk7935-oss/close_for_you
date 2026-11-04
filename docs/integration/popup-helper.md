@@ -1301,6 +1301,21 @@ F26 자동 확인: 옥션 웹 감지 1.3초·재확인 308ms·`READ_DUTY_PCT` 7.
   - `PromptSummary.POPUPS_OVERLAP_PRESS`, `PromptOption.labelRes`를 누르기에도 사용, 문장 2개
   - 새 시험 `F59Test`
 
+### 8-53. F59 수정 — 일부만 읽으면 안 누름, 음성으로는 안 누름 (JVM 시험만, 실기기 미검증)
+
+- **일부만 읽은 경우(우진 코드 리뷰):** `frontPressMiss`가 `readStack`의 `look.partial`을 보지 않았다. 상한으로 읽기가 멈추면 앞 팝업 위에 다른 요소가 없다고 확신할 수 없으므로, 표시와 클릭 직전 재확인 둘 다 막는다(`OverlapPressRules.lookMiss`, `FrontPressMiss.LOOK_PARTIAL`). 로그는 `OVERLAP_PRESS_NOT_OFFERED reason=LOOK_PARTIAL`, `OVERLAP_PRESS_RECHECK_FAILED reason=LOOK_PARTIAL to=`. 막히면 F57 선택창 그대로다. 일반 팝업의 `STACK_LOOK` 동작(8-46)은 바꾸지 않았다.
+- **이 수정의 대가(코드로 확인, 실제 빈도는 모름):** `readStack`은 페이지 끝에서 앞으로 읽으며 앞 팝업을 지나서도 계속 읽고, 상한은 400노드·250ms다. 그래서 앞 팝업 뒤쪽 DOM을 전부 읽었어도 페이지가 길면 `partial=true`가 되어 선택지가 나오지 않는다. LMS에서 `LOOK_PARTIAL`이 나오면 이 경우인지 먼저 확인한다.
+- **창 id가 있는 경우:** `readStack`은 `root.windowId != null`이면 노드를 읽지 않고 `partial=false`로 돌아온다. F59 대상에는 해당하지 않는다. `FrontTarget`을 만드는 곳은 `PopupStack.frontTarget` 하나이고 호출은 `PopupStack.hit`뿐이다. 거기서 앞 팝업은 `PopupRoot(cover.path, ...)` 또는 `PopupRootFinder.find`의 결과이며, `windowId`를 넣는 곳은 `bindWindow`(서비스의 최초 판단)뿐이다. 멈춘 팝업에 창 id가 있거나 위쪽 창이 가리면 `hit`은 앞을 돌려주지 않는다. `F59Test.theFrontNeverHasItsOwnWindow`로 고정했다. 코드는 더하지 않았다.
+- **한계:** `partial`은 노드 수·시간 상한만 뜻한다. 최대 깊이로 잘린 부분은 `partial`에 들어가지 않는다.
+- **음성(우진 의견, 재호 동의):** 앞 판단이 DOM 순서 추측이라 처음에는 탭으로만 받는다. 8-52의 "음성" 항목을 대신한다.
+  - `PromptOption.tapOnly`(이 선택지만 true). `VoicePolicy.decide`가 음성 "닫기"를 `VoiceOutcome.TapOnly`로 돌려준다.
+  - `PromptControlsController`는 "앞 팝업의 버튼은 화면에서 직접 눌러 주세요."를 표시·낭독하고 로그 `OVERLAP_PRESS_VOICE_REFUSED`를 남긴다. 들은 말은 남기지 않는다.
+  - 선택 경로로 가지 않으므로 창이 닫히지 않고 `FrontPress.take()`도 쓰이지 않아, 뒤에 탭으로 고를 수 있다.
+  - `AccessibilityChoiceOverlay`에도 같은 검사를 한 줄 두었다(창을 닫는 `deliver` 전).
+  - 다른 음성 선택(이동·다시 읽기·그대로 두기)과 이 선택지가 없는 선택창의 음성 "닫기"는 그대로다. `OVERLAP_PRESS_CHOSEN`은 이제 `by=TAP`뿐이다.
+- **바꾸지 않은 것:** UNKNOWN 제외, 닫힘 확인(앞 팝업 기준), 이동 코드.
+- **시험:** `F59Test`에 5개(`LOOK_PARTIAL` 표시·재확인이 함께 쓰는 규칙, 일반 검사 불변, 앞 팝업 창 id 없음, 음성 거부와 다른 음성 선택), `PromptControlsControllerTest`에 1개(거부 뒤 선택 전달 없음, 안내, 다음 음성 명령 동작). **JVM으로 못 본 것:** 서비스의 `frontPressMiss`·`frontPressOf`·`pressFront` 연결과 `PromptSession`의 탭 경로, 오버레이 한 줄 검사는 코드를 읽어서만 확인했다. "거부 뒤 실제 탭으로 눌림"은 시험하지 못했다.
+
 - 잔여 노드 쪽 이벤트 무시: TalkBack이 무엇을 읽을지는 앱이 막을 수 없다. 대신 포커스를 잔여 노드 밖으로 옮기는 것(F9)이 할 수 있는 전부. 웹 페이지가 닫힌 팝업을 DOM에 `aria-hidden` 없이 남기는 한, 사용자가 스와이프로 다시 만날 수 있다(한계로 기록).
 - 선택 창 PROMPT도 TalkBack 큐로? 가능은 하다: 선택 창 자체(이미 접근성 오버레이)에 paneTitle이 있고 TalkBack이 창을 읽으므로, "안내 맡기기" ON이면 우리 TTS PROMPT를 끄고 paneTitle/첫 버튼 포커스 낭독에 맡기는 방식. 단, 지금 PROMPT는 TalkBack이 팝업을 읽는 도중 끊고 들어가야 시연이 빠르므로 polite로 바꾸면 늦어질 수 있다. F11 배너가 LG에서 잘 읽히면 같은 방식으로 옮길지 정하자(의견, 미구현).
 - 검증(F1~F11 한 빌드): 5개 Gradle 작업 통과, 단위 시험 debug 1028개·release 1013개 실패 0, lintDebug 오류 0(경고 12), 병합 매니페스트 INTERNET 0·새 권한 없음.

@@ -11,7 +11,7 @@ import kr.closeforyou.ui.voice.PressSuccess
 
 /** F59: why the front popup's close is not offered or not pressed. A code only, never screen text. */
 enum class FrontPressMiss {
-    NO_FRONT, NOT_A_CLOSE, COVER_KIND, UNREAD, COVERED, SCAM, DECISION, UNKNOWN_KIND, RISK_BUTTON, TARGET_CHANGED, LABEL_NOT_PLAIN_CLOSE, LABEL_CHANGED, FAILED_BEFORE,
+    NO_FRONT, NOT_A_CLOSE, COVER_KIND, UNREAD, LOOK_PARTIAL, COVERED, SCAM, DECISION, UNKNOWN_KIND, RISK_BUTTON, TARGET_CHANGED, LABEL_NOT_PLAIN_CLOSE, LABEL_CHANGED, FAILED_BEFORE,
 }
 
 /** F59: what happens after the press. No step presses again (AGENTS 6-6). */
@@ -65,6 +65,17 @@ object OverlapPressRules {
         return null
     }
 
+    /**
+     * What the look around the front popup says about [button]. A cap stopped the look: what lies over the button is not known, so no
+     * press (the ordinary popup's press, which also goes on after a cap, is a separate rule, 8-46). The look runs from the end of the
+     * page and goes on past the front popup, so a long page is partial even when everything after the popup was read.
+     */
+    fun lookMiss(button: ScreenBounds, cover: PopupRoot, look: StackLook): FrontPressMiss? = when {
+        look.partial -> FrontPressMiss.LOOK_PARTIAL
+        PopupStack.overFront(button, cover, look) != null -> FrontPressMiss.COVERED
+        else -> null
+    }
+
     /** The press to offer, when [miss] is null. */
     fun offer(front: FrontTarget, seen: FrontSeen): FrontPress? =
         StrongCloseRules.pick(seen.popup.scan.candidates)?.let { FrontPress(front, seen.popup, it) }
@@ -86,7 +97,10 @@ object OverlapPressRules {
 
     fun notOfferedLine(miss: FrontPressMiss): String = "OVERLAP_PRESS_NOT_OFFERED reason=${miss.name}"
 
-    fun chosenLine(press: FrontPress, voice: Boolean): String = "OVERLAP_PRESS_CHOSEN by=${if (voice) "VOICE" else "TAP"} to=${box(press.candidate.bounds)}"
+    /** By tap only: voice stops at [kr.closeforyou.ui.voice.command.VoicePolicy]. */
+    fun chosenLine(press: FrontPress): String = "OVERLAP_PRESS_CHOSEN by=TAP to=${box(press.candidate.bounds)}"
+
+    const val VOICE_REFUSED_LINE = "OVERLAP_PRESS_VOICE_REFUSED"
 
     /** [reason]: a [FrontPressMiss] or a re-check code. */
     fun recheckFailedLine(reason: String, to: ScreenBounds): String = "OVERLAP_PRESS_RECHECK_FAILED reason=$reason to=${box(to)}"
