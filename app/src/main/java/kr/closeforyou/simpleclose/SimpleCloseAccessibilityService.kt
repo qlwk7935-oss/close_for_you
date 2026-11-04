@@ -295,7 +295,7 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
         resultBanner = TalkBackResultBanner(this, beforeFocusedDismiss = {
             lastOwnFocusAt = SystemClock.uptimeMillis()
             lastClosedMemory?.let { collector.focusPageItem(it, beforeClick = true) }
-        }, onGone = lastClosed::forget, trace = { log.trace(it) }, timeoutMillis = { log.latency("RESULT_CARD_TIMEOUT_MS", it) })
+        }, onGone = lastClosed::forget, trace = { log.trace(it) }, timeoutMillis = { log.latency("RESULT_CARD_TIMEOUT_MS", it) }, line = { log.line(it) })
         log.trace(SimpleTrace.SERVICE_CONNECTED)
     }
 
@@ -328,6 +328,8 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
             popupActivityAt = SystemClock.uptimeMillis()
             log.trace(SimpleTrace.POPUP_ACTIVITY_HINT)
         }
+        // F54: before our own events go: did the result card's focus event get here (as it would to TalkBack), and what came after it?
+        if (event.eventType == AccessibilityEvent.TYPE_VIEW_ACCESSIBILITY_FOCUSED) resultBanner?.onFocusEvent(event.windowId)
         // Our own prompt window and TTS: never a popup to handle (not logged: it would drown the rest).
         if (eventPackage == packageName) return
         if (eventPackage == VideoAdSkip.YOUTUBE_APP) {

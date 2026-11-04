@@ -1133,6 +1133,35 @@ F26 자동 확인: 옥션 웹 감지 1.3초·재확인 308ms·`READ_DUTY_PCT` 7.
   - `SimpleCloseEngineFeature`, `SimpleTrace`
   - 새 시험 `F53Test`
 
+### 8-47. F54 — "닫았어요"가 안 들림: 카드 초점 이벤트 구분과 창 목록 기다리기 (JVM 시험만, 실기기·에뮬레이터 미검증)
+
+- **증상**(우진 SM-F966N, df726f4): P13이 닫혔는데 안 들렸고, TalkBack은 P13 본문을 읽은 것 같다. 11번가 웹은 크롬에서는 정상, 네이버 앱 내 브라우저에서는 누락.
+  - 로그: `FOCUS_WAS_IN_POPUP` → `CLOSED_CONFIRMED` → `RESULT_VIA_TALKBACK`(59.525) → `RESULT_BANNER_SHOWN`·`RESULT_BANNER_FOCUSED`(59.556) → `FOCUS_RECLAIMED=0`. `FOCUS_OTHER_ON_PAGE`·`FOCUS_RECLAIM_DEFERRED`는 없음.
+- **지금 로그로 구분되지 않았던 이유(코드 확정):**
+  - `RESULT_BANNER_FOCUSED`는 우리 View의 `performAccessibilityAction`이 true를 돌려줬다는 뜻일 뿐, TalkBack이 읽었다는 뜻이 아니다.
+  - 우리 앱의 이벤트는 `eventPackage == packageName`에서 먼저 버려져서, 카드의 초점 이벤트가 왔는지 볼 수 없었다.
+  - `notificationTimeout`이 100ms라 같은 종류의 이벤트는 합쳐질 수 있다. 페이지의 이동 바로 뒤에 카드 이벤트가 오면 페이지 이동이 보이지 않을 수 있고, 그래서 `FOCUS_OTHER_*`가 없다고 페이지 이동이 없었다고 단정할 수 없다.
+- **원인 후보:**
+  - **후보 1(추측, 가장 유력, 근거 있음):** 창이 접근성 창 목록에 오르기 전에 초점을 요청해서 이벤트가 어느 서비스에도 가지 않았다. 창을 붙인 뒤 약 31ms에 요청한다(로그 59.525 → 59.556). AOSP 14 `AccessibilitySecurityPolicy.canDispatchAccessibilityEventLocked`는 창 상태·터치 종류만 항상 보내고, 초점 이벤트는 그 창이 목록에 있을 때만 보낸다. 시점 경합이라 같은 기기에서 앱에 따라 달라지는 점과도 맞는다. **Android 16·삼성에서 같은지는 확인하지 못했다.**
+  - **후보 2(추측):** 이벤트는 갔지만 페이지가 곧바로 초점을 가져갔다(100ms 안이면 안 보임).
+  - **후보 3(추측):** 초점은 카드에 있고 이벤트도 갔지만 TalkBack이 읽지 않았거나, 이어서 읽던 본문이 끊기지 않았다.
+- **넣은 로그(글자·id 없음, `CardFocusTrace`):**
+  - `CARD_FOCUS listed= waitMs= view=`: 초점을 요청할 때 창이 목록에 있었나, 얼마나 기다렸나, 요청 결과.
+  - `CARD_FOCUS_EVENT dt= onCard=`: 초점 이벤트가 카드 창에서 왔나 다른 곳에서 왔나. 우리 이벤트를 버리기 전에 본다.
+  - `CARD_FOCUS_AT dt=300|1000|2500 place= events= others=`: 그때 시스템 초점 위치(`INSIDE`/`OUTSIDE`/`NONE`/`CARD_WINDOW_UNKNOWN`)와 이벤트 수.
+  - `CARD_FOCUS_RETRY outcome=`: 다시 요청한 결과.
+- **고친 것(후보 1에 대해서만, 둘 다 초점 이동이고 누르기는 없음):**
+  - 초점 요청 전에 카드 창이 목록에 오르기를 기다린다(30ms 간격, 최대 300ms, 안 오르면 전처럼 그대로 요청).
+  - 요청 후 400ms 안에 카드 창의 초점 이벤트가 안 오면 서비스 쪽 경로로 1번만 다시 요청한다(F44 `refocusNode`, 이미 초점이면 지웠다가 다시).
+  - `announceForAccessibility()`는 쓰지 않는다. 포커스 규칙은 CLAUDE.local 3-2 시연 모드 예외 범위다.
+- **고치지 않은 것:** 후보 2·3은 로그를 본 뒤 판단한다. 이벤트가 왔는데 안 들리는 경우(후보 3)는 우리가 관찰할 수 없다. TTS로 한 번 더 말하는 방법은 소리가 겹쳐서(F11) 넣지 않았다.
+- **F52 관계:** announce는 여전히 카드를 붙인 시점까지이고, 이 기다림은 그 뒤에 일어나므로 `TIMING`에 들어가지 않는다.
+- **바뀐 파일:**
+  - 새 파일 `simpleclose/CardFocusTrace.kt`
+  - `TalkBackResultBanner`
+  - `SimpleCloseAccessibilityService`(콜백, 우리 이벤트를 버리기 전 전달)
+  - 새 시험 `F54Test`
+
 - 잔여 노드 쪽 이벤트 무시: TalkBack이 무엇을 읽을지는 앱이 막을 수 없다. 대신 포커스를 잔여 노드 밖으로 옮기는 것(F9)이 할 수 있는 전부. 웹 페이지가 닫힌 팝업을 DOM에 `aria-hidden` 없이 남기는 한, 사용자가 스와이프로 다시 만날 수 있다(한계로 기록).
 - 선택 창 PROMPT도 TalkBack 큐로? 가능은 하다: 선택 창 자체(이미 접근성 오버레이)에 paneTitle이 있고 TalkBack이 창을 읽으므로, "안내 맡기기" ON이면 우리 TTS PROMPT를 끄고 paneTitle/첫 버튼 포커스 낭독에 맡기는 방식. 단, 지금 PROMPT는 TalkBack이 팝업을 읽는 도중 끊고 들어가야 시연이 빠르므로 polite로 바꾸면 늦어질 수 있다. F11 배너가 LG에서 잘 읽히면 같은 방식으로 옮길지 정하자(의견, 미구현).
 - 검증(F1~F11 한 빌드): 5개 Gradle 작업 통과, 단위 시험 debug 1028개·release 1013개 실패 0, lintDebug 오류 0(경고 12), 병합 매니페스트 INTERNET 0·새 권한 없음.
