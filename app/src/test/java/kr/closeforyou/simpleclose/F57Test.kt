@@ -26,7 +26,7 @@ class F57Test {
     private val closeBack = ScreenBounds(540, 1500, 990, 1700)
     private val root = PopupRoot("0/0/1", card, PopupRootKind.FRONT_LAYER)
     private val cover = PopupRoot("0/0/2", ScreenBounds(100, 700, 980, 1750), PopupRootKind.FRONT_LAYER)
-    private val hold = OverlapMoveHold("7:back", root, cover, startedAt = 1_000)
+    private val hold = MoveHold("7:back", root, cover, startedAt = 1_000)
 
     private fun page() = listOf(
         node("0", "android.widget.FrameLayout", bounds = SCREEN),
@@ -44,31 +44,31 @@ class F57Test {
 
     // 18:18:34 MOVED_TO_BUTTON, 18:18:34.945 STACK_BLOCKED: the same popup read again 0.5 s later.
     @Test fun afterAMoveTheSamePopupIsNotAskedAgain() {
-        assertEquals(HoldStep.KEEP, OverlapMoveRules.step(hold, 1_544, 0, "7:back", root, coverPresent = true))
+        assertEquals(HoldStep.KEEP, MoveHoldRules.step(hold, 1_544, 0, "7:back", root, coverPresent = true))
         // Well past the old 10 s cooldown: finding the button and a double tap.
-        assertEquals(HoldStep.KEEP, OverlapMoveRules.step(hold, 25_000, 0, "7:back", root, coverPresent = true))
+        assertEquals(HoldStep.KEEP, MoveHoldRules.step(hold, 25_000, 0, "7:back", root, coverPresent = true))
         // Unknown about the cover: stays quiet, never presses on a guess.
-        assertEquals(HoldStep.KEEP, OverlapMoveRules.step(hold, 2_000, 0, "7:back", root, coverPresent = null))
+        assertEquals(HoldStep.KEEP, MoveHoldRules.step(hold, 2_000, 0, "7:back", root, coverPresent = null))
         // The cover itself read as the popup: still the same two.
-        assertEquals(HoldStep.KEEP, OverlapMoveRules.step(hold, 2_000, 0, "7:front", cover, coverPresent = true))
+        assertEquals(HoldStep.KEEP, MoveHoldRules.step(hold, 2_000, 0, "7:front", cover, coverPresent = true))
     }
 
     @Test fun touchesGiveMoreTimeUpToTheLimit() {
-        val q = OverlapMoveRules.QUIET_MILLIS
-        assertEquals(HoldStep.END_TIMEOUT, OverlapMoveRules.step(hold, 1_000 + q, 0, "7:back", root, true))
-        assertEquals(HoldStep.KEEP, OverlapMoveRules.step(hold, 1_000 + q, 20_000, "7:back", root, true))
-        assertEquals(HoldStep.END_TIMEOUT, OverlapMoveRules.step(hold, 1_000 + OverlapMoveRules.MAX_MILLIS, 1_000 + OverlapMoveRules.MAX_MILLIS - 1, "7:back", root, true))
+        val q = MoveHoldRules.QUIET_MILLIS
+        assertEquals(HoldStep.END_TIMEOUT, MoveHoldRules.step(hold, 1_000 + q, 0, "7:back", root, true))
+        assertEquals(HoldStep.KEEP, MoveHoldRules.step(hold, 1_000 + q, 20_000, "7:back", root, true))
+        assertEquals(HoldStep.END_TIMEOUT, MoveHoldRules.step(hold, 1_000 + MoveHoldRules.MAX_MILLIS, 1_000 + MoveHoldRules.MAX_MILLIS - 1, "7:back", root, true))
         assertTrue(q > SimpleCloseEngineFeature.SAME_POPUP_COOLDOWN_MILLIS)
     }
 
     // D: the person closed the front popup: the one behind is judged again.
     @Test fun aRealChangeEndsIt() {
-        assertEquals(HoldStep.END_COVER_GONE, OverlapMoveRules.step(hold, 2_000, 0, "7:back", root, coverPresent = false))
-        assertEquals(HoldStep.END_OTHER_POPUP, OverlapMoveRules.step(hold, 2_000, 0, "7:new", PopupRoot("0/0/9", ScreenBounds(0, 0, 500, 500), PopupRootKind.FRONT_LAYER), true))
-        assertEquals(HoldStep.END_POPUP_GONE, OverlapMoveRules.stepNoRoot(hold, 2_000, 0, rootPresent = false))
-        assertEquals(HoldStep.KEEP, OverlapMoveRules.stepNoRoot(hold, 2_000, 0, rootPresent = true))
-        assertEquals(HoldStep.KEEP, OverlapMoveRules.stepNoRoot(hold, 2_000, 0, rootPresent = null))
-        assertEquals(HoldStep.END_TIMEOUT, OverlapMoveRules.stepNoRoot(hold, 1_000 + OverlapMoveRules.QUIET_MILLIS, 0, rootPresent = true))
+        assertEquals(HoldStep.END_COVER_GONE, MoveHoldRules.step(hold, 2_000, 0, "7:back", root, coverPresent = false))
+        assertEquals(HoldStep.END_OTHER_POPUP, MoveHoldRules.step(hold, 2_000, 0, "7:new", PopupRoot("0/0/9", ScreenBounds(0, 0, 500, 500), PopupRootKind.FRONT_LAYER), true))
+        assertEquals(HoldStep.END_POPUP_GONE, MoveHoldRules.stepNoRoot(hold, 2_000, 0, rootPresent = false))
+        assertEquals(HoldStep.KEEP, MoveHoldRules.stepNoRoot(hold, 2_000, 0, rootPresent = true))
+        assertEquals(HoldStep.KEEP, MoveHoldRules.stepNoRoot(hold, 2_000, 0, rootPresent = null))
+        assertEquals(HoldStep.END_TIMEOUT, MoveHoldRules.stepNoRoot(hold, 1_000 + MoveHoldRules.QUIET_MILLIS, 0, rootPresent = true))
     }
 
     @Test fun aMoveGoesToTheCoversNamedCloseNeverToTheStoppedButton() {
@@ -151,6 +151,6 @@ class F57Test {
     @Test fun theLinesHoldBoundsAndCodesOnly() {
         val target = FrontTarget(cover, "0/0/2/2", ScreenBounds(540, 1600, 980, 1700), FrontKind.CLOSE)
         assertEquals("OVERLAP_MOVE target=CLOSE cover=100,700,980,1750 to=540,1600,980,1700 moved=true", PopupStack.moveLine(target, true))
-        assertEquals("OVERLAP_HOLD_END reason=END_COVER_GONE afterMs=4200", OverlapMoveRules.line(HoldStep.END_COVER_GONE, 4_200))
+        assertEquals("MOVE_HOLD_END reason=END_COVER_GONE afterMs=4200", MoveHoldRules.line(HoldStep.END_COVER_GONE, 4_200))
     }
 }

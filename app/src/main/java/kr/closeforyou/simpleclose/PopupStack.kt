@@ -164,48 +164,11 @@ object PopupStack {
     fun moveLine(front: FrontTarget, moved: Boolean): String =
         "OVERLAP_MOVE target=${front.kind.name} cover=${box(front.cover.bounds)} to=${box(front.bounds)} moved=$moved"
 
+    /** F58: where an ordinary [버튼으로 이동] went: the button's role code and bounds (never its name). */
+    fun buttonMoveLine(role: String, to: ScreenBounds): String = "BUTTON_MOVE role=$role to=${box(to)}"
+
     /** Which popup was picked this read. */
     fun pickLine(root: PopupRoot, mode: TreeReadMode): String = "ROOT_PICK kind=${root.kind.name} root=${box(root.bounds)} mode=${mode.name}"
 
     private fun box(b: ScreenBounds) = "${b.left},${b.top},${b.right},${b.bottom}"
-}
-
-/** F57: why the quiet time after a move ended, or that it goes on. */
-enum class HoldStep { KEEP, END_TIMEOUT, END_COVER_GONE, END_OTHER_POPUP, END_POPUP_GONE }
-
-/** F57: the person chose to go to the popup in front: [words] (the stopped popup), [root], [cover] are left alone for a while. */
-class OverlapMoveHold(val words: String, val root: PopupRoot, val cover: PopupRoot, val startedAt: Long)
-
-/**
- * F57 (우진 SM-F966N 4d9a134 canvas.suwon: USER_CHOSE_MOVE, MOVED_TO_BUTTON, 0.5 s later STACK_BLOCKED_COVER_LATER, the same prompt
- * again, the focus taken before a double tap). The move's own focus event starts a read; the 10 s cooldown had run out while the
- * prompt was up (it is not refreshed then), so the popup was asked about again. After a move nothing is asked, pressed or focused
- * for this popup for [QUIET_MILLIS] after the person's last touch (finding a button by swiping, hearing it, a double tap: the
- * 10 s cooldown was too short on the device; each touch gives more time), at most [MAX_MILLIS]. It ends sooner when the screen really
- * changes: the cover gone (the person closed it: the popup behind is judged again), another popup, or the popup gone. Pure; JVM tested.
- */
-object OverlapMoveRules {
-    const val QUIET_MILLIS = 30_000L
-    const val MAX_MILLIS = 120_000L
-
-    fun timedOut(hold: OverlapMoveHold, now: Long, lastTouchAt: Long): Boolean =
-        now - maxOf(hold.startedAt, lastTouchAt) >= QUIET_MILLIS || now - hold.startedAt >= MAX_MILLIS
-
-    /** A read found [root] with [words]. The cover itself picked as the popup is still the same two popups. [coverPresent] null = unknown. */
-    fun step(hold: OverlapMoveHold, now: Long, lastTouchAt: Long, words: String, root: PopupRoot, coverPresent: Boolean?): HoldStep = when {
-        timedOut(hold, now, lastTouchAt) -> HoldStep.END_TIMEOUT
-        root.path == hold.cover.path || root.bounds == hold.cover.bounds -> HoldStep.KEEP
-        words != hold.words -> HoldStep.END_OTHER_POPUP
-        coverPresent == false -> HoldStep.END_COVER_GONE
-        else -> HoldStep.KEEP
-    }
-
-    /** A read found no popup: only the popup's own node going away ends it ([rootPresent] null = unknown). */
-    fun stepNoRoot(hold: OverlapMoveHold, now: Long, lastTouchAt: Long, rootPresent: Boolean?): HoldStep = when {
-        timedOut(hold, now, lastTouchAt) -> HoldStep.END_TIMEOUT
-        rootPresent == false -> HoldStep.END_POPUP_GONE
-        else -> HoldStep.KEEP
-    }
-
-    fun line(step: HoldStep, afterMillis: Long): String = "OVERLAP_HOLD_END reason=${step.name} afterMs=$afterMillis"
 }

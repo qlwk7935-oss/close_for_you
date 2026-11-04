@@ -108,11 +108,8 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
     /** F53: the last confirmed close left another popup on screen. */
     private var otherPopupLeft = false
 
-    /** F57: the person went to the popup in front: quiet about this popup for a while ([OverlapMoveRules]). */
-    private var overlapHold: OverlapMoveHold? = null
-
-    /** F57: popups [autoFailed] holds only because something lay over the button (nothing failed): judged afresh once it went. */
-    private val stackStopped = LinkedHashSet<String>()
+    /** F57/F58: the person chose a move: quiet about this popup for a while ([MoveHoldRules]). */
+    private var moveHold: MoveHold? = null
     /** F10: the last read that found no popup (0 = none yet); the popup appeared after it. */
     private var lastNoRootAt = 0L
     /** F13: reads in the current search (debug numbers only): all, and those the collection guard refused. */
@@ -180,6 +177,9 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
      * pressed again while they stay), and the popup an automatic press is working on right now.
      */
     private val autoFailed = LinkedHashSet<String>()
+
+    /** F58: [autoFailed] entries that are holds, not failures. */
+    private val autoHolds = AutoPressHolds(autoFailed)
     /** F49: a pending re-read after a stopped press on a popup that only moved up or down; popups already re-read once. */
     private var shiftReread: ShiftReread? = null
     /** F50: the last read of the popup root being waited for to stand still, and the re-read scheduled for it. */
@@ -522,11 +522,11 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
         if (root == null) {
             log.trace(if (videoAdWaiting) SimpleTrace.VIDEO_SKIP_WAITING else SimpleTrace.NO_POPUP_ROOT)
             lastNoRootAt = SystemClock.uptimeMillis()
-            // F57: the stopped popup itself went away: the quiet time after a move ends.
-            overlapHold?.let { hold ->
+            // F57/F58: the popup itself went away (the person may have closed it): the quiet time after a move ends.
+            moveHold?.let { hold ->
                 val present = withContext(Dispatchers.Default) { collector.rootStillPresent(hold.root) }
-                val step = OverlapMoveRules.stepNoRoot(hold, SystemClock.uptimeMillis(), lastTouchAt, present)
-                if (step != HoldStep.KEEP) endOverlapHold(hold, step)
+                val step = MoveHoldRules.stepNoRoot(hold, SystemClock.uptimeMillis(), lastTouchAt, present)
+                if (step != HoldStep.KEEP) endMoveHold(hold, step)
             }
             // F50: why, as codes and counts (only when it changed).
             if (!videoAdWaiting) {
@@ -571,22 +571,19 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
             .copy(foundByProbe = read.mode == TreeReadMode.POPUP_SUBTREE, depthCut = read.depthCut.any { it == root.path || it.startsWith("${root.path}/") })
         val key = popup.coarseKey
         val now = SystemClock.uptimeMillis()
-        // F57: the person is on the way to the popup in front: not asked, not pressed, the focus left alone, unless the screen changed.
-        overlapHold?.let { hold ->
+        // F57/F58: the person is on the way to a button: not asked, not pressed, the focus left alone, unless the screen changed.
+        moveHold?.let { hold ->
             val popupWords = "${read.windowId}:${popup.analysis.token.contentDigest}"
-            val present = withContext(Dispatchers.Default) { collector.rootStillPresent(hold.cover) }
-            val step = OverlapMoveRules.step(hold, now, lastTouchAt, popupWords, root, present)
+            val present = hold.cover?.let { cover -> withContext(Dispatchers.Default) { collector.rootStillPresent(cover) } }
+            val step = MoveHoldRules.step(hold, now, lastTouchAt, popupWords, root, present)
             if (step == HoldStep.KEEP) {
-                log.trace(SimpleTrace.OVERLAP_HOLD_QUIET)
+                log.trace(SimpleTrace.MOVE_HOLD_QUIET)
                 endSearch()
                 return true
             }
-            endOverlapHold(hold, step)
-            if (step == HoldStep.END_COVER_GONE) {
-                // The popup behind is judged again, as new: nothing ever failed on it.
-                seenAt.remove(key)
-                if (stackStopped.remove(popupWords)) autoFailed.remove(popupWords)
-            }
+            endMoveHold(hold, step)
+            // The popup behind is judged again, as new: nothing ever failed on it.
+            if (step == HoldStep.END_COVER_GONE) seenAt.remove(key)
         }
         // Seen within the cooldown (it stayed on screen, or was just handled): once is enough, quietly.
         val last = seenAt[key]
@@ -655,6 +652,7 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
                 lateFailure = true
                 log.trace(SimpleTrace.CLOSE_REAPPEARED_LATE)
                 autoFailed += words
+                autoHolds.failed(words)
                 if (label != null) failedButtons.getOrPut(words) { mutableSetOf() } += label
                 if (withContext(Dispatchers.Default) { remembered.get(RememberedPopup.keyOf(read.packageName, popup)) } != null) {
                     withContext(Dispatchers.Default) { remembered.remove(RememberedPopup.keyOf(read.packageName, popup)) }
@@ -884,9 +882,7 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
                     } else if (stackHit != null) {
                         // F53: nothing pressed: something may lie over the button. Asked, no press; not pressed by itself while it lies there.
                         tts?.stop()
-                        rememberAutoFailed(classified)
-                        stackStopped += words
-                        if (stackStopped.size > 32) stackStopped.remove(stackStopped.first())
+                        autoHolds.hold(words)
                         log.trace(SimpleTrace.STACK_ASKED)
                         if (prompted == null) ask(classified, classification, talkBackReadIt = false, overlap = stackHit)
                     } else if (PressSuccess.isConfirmed(result)) {
@@ -1350,6 +1346,9 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
         val x = popup.scan.xButton?.copy(label = getString(R.string.ui_simple_x_button))
         val candidate = (popup.scan.riskButtons + popup.scan.candidates + listOfNotNull(x)).firstOrNull { it.id == candidateId } ?: return
         val path = candidate.nodePath ?: return
+        // F58: this focus move starts a read; the person is left to find the button and press it themselves.
+        startMoveHold(popup, cover = null)
+        log.line(PopupStack.buttonMoveLine(candidate.role.name, candidate.bounds))
         if (resultBanner?.talkBackOn() == true) {
             lastOwnFocusAt = SystemClock.uptimeMillis()
             val node = collector.nodeAt(path, popup.root.windowId)
@@ -1377,11 +1376,11 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
     /**
      * F57: the move of an overlap prompt: to the popup taken to be in front, never to the stopped popup's own button (a double tap
      * there would be the press just refused). Only a focus move; the node must still be where it was read. Then quiet about
-     * this popup for a while ([OverlapMoveRules]). TalkBack off or refused: our TTS says where it is. Bounds and codes in the log.
+     * this popup for a while ([MoveHoldRules]). TalkBack off or refused: our TTS says where it is. Bounds and codes in the log.
      */
     private fun moveToFront(popup: SimplePopup, front: FrontTarget) {
         log.trace(SimpleTrace.USER_CHOSE_MOVE)
-        overlapHold = OverlapMoveHold(keyOf(popup), popup.root, front.cover, SystemClock.uptimeMillis())
+        startMoveHold(popup, front.cover)
         val moved = resultBanner?.talkBackOn() == true && run {
             lastOwnFocusAt = SystemClock.uptimeMillis()
             val node = collector.nodeAt(front.path)
@@ -1411,10 +1410,21 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
         scope.launch { announcer.announce(AnnouncementRequest(null, AnnouncementKind.POPUP_FOUND, getString(R.string.ui_move_front_position, place))) }
     }
 
-    /** F57: the quiet time after a move is over, and why (a code and a number). */
-    private fun endOverlapHold(hold: OverlapMoveHold, step: HoldStep) {
-        if (overlapHold === hold) overlapHold = null
-        log.line(OverlapMoveRules.line(step, SystemClock.uptimeMillis() - hold.startedAt))
+    /**
+     * F57/F58: nothing asked, pressed or focused for this popup for a while; our own watch on the focus ends too. And it is not
+     * pressed by itself after that time either ([AutoPressHolds], AGENTS 6-7): the person chose to go to it.
+     */
+    private fun startMoveHold(popup: SimplePopup, cover: PopupRoot?) {
+        endReclaim(null)
+        moveHold = MoveHold(keyOf(popup), popup.root, cover, SystemClock.uptimeMillis())
+        autoHolds.hold(keyOf(popup))
+    }
+
+    /** F57/F58: the quiet time after a move is over, and why (a code and a number). */
+    private fun endMoveHold(hold: MoveHold, step: HoldStep) {
+        if (moveHold === hold) moveHold = null
+        if (MoveHoldRules.releasesAuto(step)) autoHolds.release(hold.words)
+        log.line(MoveHoldRules.line(step, SystemClock.uptimeMillis() - hold.startedAt))
     }
 
     /**
@@ -1469,6 +1479,7 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
     /** F20: this popup is not pressed automatically again this session (asked instead). */
     private fun rememberAutoFailed(popup: SimplePopup) {
         autoFailed += keyOf(popup)
+        autoHolds.failed(keyOf(popup))
         if (autoFailed.size > 32) autoFailed.remove(autoFailed.first())
     }
 
@@ -2117,8 +2128,8 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
         autoFailed.clear()
         shiftReread = null
         shiftRereadDone.clear()
-        overlapHold = null
-        stackStopped.clear()
+        moveHold = null
+        autoHolds.clear()
         settle = null
         settleReread?.cancel()
         lastNoRootLine = null

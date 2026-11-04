@@ -296,7 +296,7 @@ enum class SimpleTrace {
     OVERLAP_MOVED_TO_FRONT_CLOSE,
     OVERLAP_MOVED_TO_FRONT_FIRST,
     OVERLAP_MOVE_FAILED,
-    OVERLAP_HOLD_QUIET,
+    MOVE_HOLD_QUIET,
     CLOSE_OTHER_POPUP_LEFT,
     /** F27 (self review): the same popup came back within a few seconds of a confirmed close: a failure after all. */
     CLOSE_REAPPEARED_LATE,
