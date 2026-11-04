@@ -196,6 +196,7 @@ internal fun PromptSummary.textRes(): Int = when (this) {
     PromptSummary.UNKNOWN -> R.string.ui_choice_summary_unknown
     PromptSummary.AUTO_CLOSE_FAILED -> R.string.ui_choice_summary_auto_failed
     PromptSummary.SUSPICIOUS -> R.string.ui_choice_summary_suspicious
+    PromptSummary.POPUPS_OVERLAP -> R.string.ui_choice_summary_overlap
 }
 
 @Composable

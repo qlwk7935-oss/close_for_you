@@ -11,6 +11,7 @@ import android.view.accessibility.AccessibilityNodeInfo
 import android.view.inputmethod.InputMethodManager
 import kotlinx.collections.immutable.persistentSetOf
 import kotlinx.collections.immutable.toImmutableList
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -37,6 +38,7 @@ import kr.closeforyou.core.model.DecisionSource
 import kr.closeforyou.core.model.HandlingReport
 import kr.closeforyou.core.model.EvidenceLevel
 import kr.closeforyou.core.model.NextStep
+import kr.closeforyou.core.model.NodeSnapshot
 import kr.closeforyou.ui.voice.choice.PromptSummary
 import kr.closeforyou.core.model.PopupClassification
 import kr.closeforyou.core.model.SafetyReason
@@ -102,6 +104,9 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
     private var lastInspectAt = 0L
     /** F5: when the first helped-app event of the current search came (0 = none pending); debug latency only. */
     private var firstEventAt = 0L
+
+    /** F53: the last confirmed close left another popup on screen. */
+    private var otherPopupLeft = false
     /** F10: the last read that found no popup (0 = none yet); the popup appeared after it. */
     private var lastNoRootAt = 0L
     /** F13: reads in the current search (debug numbers only): all, and those the collection guard refused. */
@@ -583,6 +588,7 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
         // F10: first event -> here overstates when the page itself loaded first; the gap since the last
         // read that saw no popup bounds when the popup really appeared. Which trigger caught it, too.
         log.trace(trigger.trace)
+        log.line(PopupStack.pickLine(root, read.mode))
         if (firstEventAt != 0L) log.latency("DETECT_LATENCY_MS", now - firstEventAt)
         val timingFirst = if (firstEventAt != 0L) firstEventAt else foundAt
         if (lastNoRootAt != 0L) log.latency("DETECT_GAP_MS", now - lastNoRootAt)
@@ -811,10 +817,12 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
                     resultBanner?.dismissForNextPopup()
                     var recheckMiss: RecheckMiss? = null
                     var recheckLive: ScreenBounds? = null
+                    var stackBlock: StackBlock? = null
                     val result = try {
                         pressAndConfirm(classified, decision.candidate, preClickMove, watchFocus = moveFocus, prePress = prePress,
                             onRecheckMiss = { miss, live -> recheckMiss = miss; recheckLive = live },
-                            onClicked = { timing.clicked = SystemClock.uptimeMillis() })
+                            onClicked = { timing.clicked = SystemClock.uptimeMillis() },
+                            pressedBy = "AUTO", stackNodes = read.nodes, onStackBlock = { stackBlock = it })
                     } finally {
                         if (pressing == words) pressing = null
                     }
@@ -842,10 +850,17 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
                         if (prompted == null && stop.fresh != null) {
                             if (stop.suspicious) askSuspicious(stop.fresh) else ask(stop.fresh, stop.kind, talkBackReadIt = false)
                         }
+                    } else if (stackBlock != null) {
+                        // F53: nothing pressed: something may lie over the button. Asked, moves only; never pressed by itself again.
+                        tts?.stop()
+                        rememberAutoFailed(classified)
+                        log.trace(SimpleTrace.STACK_ASKED)
+                        if (prompted == null) ask(classified, classification, talkBackReadIt = false, overlapped = true)
                     } else if (PressSuccess.isConfirmed(result)) {
                         noteClosed(words, decision.candidate)
                         // F24: the page settles after a close; no fast re-reads of it.
                         inspectionEvents.backOff()
+                        readNextIfOtherPopupLeft(read.packageName)
                         speakClosedThenFocusPage(classified, moveFocus)
                         timing.announced = SystemClock.uptimeMillis()
                     } else if (missStep == MissStep.REREAD) {
@@ -965,7 +980,17 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
                     false -> SimpleTrace.FOCUS_WAS_OUTSIDE
                     null -> SimpleTrace.FOCUS_WAS_UNKNOWN
                 })
-                ask(classified, classification, talkBackReadIt = inside == true && !lateFailure, failedNow = lateFailure)
+                // F53: its buttons may lie under something: then they are not offered as a press at all.
+                val buttons = popup.scan.candidates.map { it.bounds } + listOfNotNull(popup.scan.xButton?.bounds)
+                val covered = try {
+                    buttons.isNotEmpty() && stackBlockOf(classified, buttons, read.nodes) != null
+                } catch (e: CancellationException) {
+                    // The next event replaced this inspection during the look: its read must not end quietly in the cooldown.
+                    seenAt.remove(key)
+                    throw e
+                }
+                if (covered) log.trace(SimpleTrace.STACK_ASKED)
+                ask(classified, classification, talkBackReadIt = inside == true && !lateFailure, failedNow = lateFailure, overlapped = covered)
             }
         }
         return true
@@ -987,7 +1012,7 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
         var movedNow = false
         val watch = reclaim
         val kindOfPopup = AutoDecisionSpeech.kindOf(popup.analysis.classification)
-        val closedSentence = getString(R.string.ui_auto_closed_one, getString(AutoDecisionSpeech.objectRes(kindOfPopup)))
+        val closedSentence = getString(if (otherPopupLeft) R.string.ui_auto_closed_one_other_left else R.string.ui_auto_closed_one, getString(AutoDecisionSpeech.objectRes(kindOfPopup)))
         // F41: the card offers [방금 닫은 내용 듣기] only for a popup that had words; kept once a card is up.
         lastClosedMemory = PopupMemory.of(popup)
         val heard = PromptSpeech.contentOrNull(popup.analysis)?.let { PromptSpeech.content(this, popup.analysis) }
@@ -1146,7 +1171,7 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
      * 못했어요."). F21: buttons that failed on this popup are never offered again (AGENTS 6-6), the next one is.
      * The popup's risky buttons (결제·동의·권한…) are offered as [버튼으로 이동] only, never as a press.
      */
-    private fun ask(popup: SimplePopup, classification: PopupClassification, talkBackReadIt: Boolean, failedNow: Boolean = false) {
+    private fun ask(popup: SimplePopup, classification: PopupClassification, talkBackReadIt: Boolean, failedNow: Boolean = false, overlapped: Boolean = false) {
         val presenter = overlay ?: return
         val planned = ChoicePromptPlanner.plan(
             popup.analysis, classification, labelPolicy = SimpleLabelPolicy,
@@ -1183,7 +1208,12 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
         // (a decision, or a risky button beside it), it is still a place to go: [X 모양 닫기 버튼으로 이동], never pressed by us.
         val xMove = popup.scan.xButton?.takeIf { x == null }?.copy(label = getString(R.string.ui_simple_x_button))
         if (xMove != null) log.trace(SimpleTrace.X_BUTTON_MOVE_OFFERED)
-        val shown = SimplePromptOptions.adjust(withRemember, listOfNotNull(xMove) + popup.scan.riskButtons, failedButtons[keyOf(popup)].orEmpty(), failedNow)
+        val xName = popup.scan.xButton?.copy(label = getString(R.string.ui_simple_x_button))
+        val shown = if (overlapped) {
+            SimplePromptOptions.overlapped(prompt, popup.scan.candidates + listOfNotNull(xName) + popup.scan.riskButtons)
+        } else {
+            SimplePromptOptions.adjust(withRemember, listOfNotNull(xMove) + popup.scan.riskButtons, failedButtons[keyOf(popup)].orEmpty(), failedNow)
+        }
         prompted = popup
         focusedBeforeClose = false
         // F41: the next popup: what the last card would say is forgotten.
@@ -1226,13 +1256,21 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
                 focusedBeforeClose = false
                 jobs.runAction {
                     // Our window goes away under TalkBack's focus: it must land on the page, not the popup's leftovers.
-                    val result = pressAndConfirm(popup, candidate, moveFocus = !focusedAlready, watchFocus = true)
+                    var stackBlock: StackBlock? = null
+                    val result = pressAndConfirm(popup, candidate, moveFocus = !focusedAlready, watchFocus = true, onStackBlock = { stackBlock = it })
                     // F31 (B_DEMO_RULES.md 6-2): the person's press may open the next popup too; not counted as automatic.
                     if (result.attempted) chainGuard.pressed(popup.snapshot.token.packageName, keyOf(popup), SystemClock.uptimeMillis(), automatic = false)
                     when {
+                        // F53: not pressed, something may lie over the button: asked again, moves only (AGENTS 6-5, 6-6).
+                        stackBlock != null -> {
+                            tts?.stop()
+                            log.trace(SimpleTrace.STACK_ASKED)
+                            if (prompted == null) ask(popup, popup.analysis.classification, talkBackReadIt = false, overlapped = true)
+                        }
                         PressSuccess.isConfirmed(result) -> {
                             noteClosed(keyOf(popup), candidate)
                             inspectionEvents.backOff()
+                            readNextIfOtherPopupLeft(popup.snapshot.token.packageName)
                             if (remember) {
                                 RememberedPopupRules.ruleFor(popup.snapshot.token.packageName, popup, candidate)?.let { rule ->
                                     withContext(Dispatchers.Default) { remembered.put(rule) }
@@ -1588,11 +1626,22 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
         onRecheckMiss: ((RecheckMiss, ScreenBounds?) -> Unit)? = null,
         /** F52: the click was sent (its moment, for the `TIMING` line). */
         onClicked: (() -> Unit)? = null,
+        /** F53: who pressed, for the `PRESS_TARGET` line; the read's nodes when just read (an automatic press); stopped by what lies over it. */
+        pressedBy: String = "USER",
+        stackNodes: List<NodeSnapshot> = emptyList(),
+        onStackBlock: ((StackBlock) -> Unit)? = null,
     ): ActionResult {
         val token = popup.analysis.token
         var target = preClickTarget
         preClickTarget = null
+        otherPopupLeft = false
         run {
+            // F53: before the focus moves and the re-check, so nothing sits between the re-check and the click.
+            stackBlockOf(popup, listOf(candidate.bounds), stackNodes)?.let { block ->
+                endReclaim(null)
+                onStackBlock?.invoke(block)
+                return ActionResult(token, ActionStatus.BLOCKED, SafetyReason.STALE_SCREEN, attempted = false)
+            }
             if (SimpleCloseEngineFeature.FOCUS_PAGE_BEFORE_CLICK && moveFocus) {
                 // Before the re-check, so nothing sits between the re-check and the click. F12/F13: straight to
                 // a place that survives the close (the toolbar, above the popup), never beside it or the WebView.
@@ -1641,6 +1690,7 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
                 return ActionResult(token, ActionStatus.ATTEMPT_FAILED, SafetyReason.UNVERIFIED_TARGET, attempted = true, outcome = ClickOutcome.UNKNOWN)
             }
             log.trace(SimpleTrace.CLICKED)
+            log.line(PopupStack.pressLine(pressedBy, popup.root, candidate.bounds))
             onClicked?.invoke()
             log.trace(SimpleTrace.valueOf("CLICKED_${SimpleLabelRules.pressKind(candidate.label, candidate.role, candidate.evidence == EvidenceLevel.E4_VISUAL_ONLY).name}"))
             focusMovesByOthers = 0
@@ -1687,6 +1737,7 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
                 var previous: Reappearance? = null
                 var reads = 0
                 var back: Boolean
+                var otherFound = false
                 while (true) {
                     delay(SimpleCloseEngineFeature.CLOSE_RECHECK_MILLIS)
                     val found = withContext(Dispatchers.Default) {
@@ -1695,8 +1746,15 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
                             capMillis = if (popup.foundByProbe) RECHECK_CAP_MILLIS else WholeReadCap.MAX_MILLIS,
                             appWindows = popup.root.kind == PopupRootKind.APP_WINDOW, lookUpAddress = false)
                             ?: return@withContext null
-                        val root = PopupRootFinder.find(again.nodes, again.screen, again.activeWindowBounded) ?: return@withContext null
-                        memory.reappearance(root, again.nodes, again.screen)
+                        val root = PopupRootFinder.find(again.nodes, again.screen, again.activeWindowBounded)
+                        if (root == null) {
+                            otherFound = false
+                            return@withContext null
+                        }
+                        memory.reappearance(root, again.nodes, again.screen).also {
+                            // F53: gone, and another popup there (a banner hides nothing).
+                            otherFound = it == null && root.kind != PopupRootKind.BOTTOM_BANNER
+                        }
                     }
                     reads += 1
                     val verdict = RecheckRules.verdict(found, previous)
@@ -1713,6 +1771,10 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
                         break
                     }
                     previous = found
+                }
+                if (!back && otherFound && SimpleCloseEngineFeature.STACK_CHECK_BEFORE_PRESS) {
+                    otherPopupLeft = true
+                    log.trace(SimpleTrace.CLOSE_OTHER_POPUP_LEFT)
                 }
                 log.latency("CLOSE_RECHECK_MS", SystemClock.uptimeMillis() - recheckStart)
                 log.latency("CLOSE_RECHECK_READS", reads.toLong())
@@ -1852,6 +1914,42 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
             }
             if (path == rootPath || '/' !in path) return null
             path = path.substringBeforeLast('/')
+        }
+    }
+
+    /**
+     * F53: what may lie over any of [buttons] ([PopupStack]; [known]: nodes just read, added to the look). Null = nothing
+     * that was read, the look could not be made, or this popup's press is not about one in front. The line has codes and bounds only.
+     */
+    private suspend fun stackBlockOf(popup: SimplePopup, buttons: List<ScreenBounds>, known: List<NodeSnapshot>): StackBlock? {
+        if (!SimpleCloseEngineFeature.STACK_CHECK_BEFORE_PRESS || !PopupStack.applies(popup.root)) return null
+        val read = withContext(Dispatchers.Default) { collector.readStack(popup.root) }
+        if (read == null) {
+            log.trace(SimpleTrace.STACK_UNREAD)
+            return null
+        }
+        val look = StackLook(TailRead.merge(read.nodes, known), read.screen, read.windows, read.baseWindowId, read.partial, read.visited, read.millis)
+        for (button in buttons) {
+            val block = PopupStack.block(button, popup.root, look)
+            if (block != null || button === buttons.last()) log.line(PopupStack.line(block, button, popup.root, look))
+            if (block != null) {
+                log.trace(SimpleTrace.valueOf("STACK_BLOCKED_${block.name}"))
+                return block
+            }
+        }
+        return null
+    }
+
+    /**
+     * F53: the press closed its popup and another one is on screen: said with the result ([otherPopupLeft]), and the screen is
+     * read again once the sentence went (as a window event; a popup seen before is not held back by the cooldown).
+     */
+    private fun readNextIfOtherPopupLeft(packageName: String) {
+        if (!otherPopupLeft) return
+        seenAt.clear()
+        scope.launch {
+            delay(SimpleCloseEngineFeature.NEXT_POPUP_READ_MILLIS)
+            inspectionEvents.onEvent(packageName, SimpleInspectionEvent.WINDOW)
         }
     }
 

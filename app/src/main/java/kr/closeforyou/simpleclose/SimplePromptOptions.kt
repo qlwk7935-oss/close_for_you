@@ -44,6 +44,15 @@ object SimplePromptOptions {
         )
     }
 
+    /**
+     * F53: something may lie over the popup's button. No press and no "always" (not by tap, not by voice); its buttons as
+     * [버튼으로 이동] only, the person finds out which one is in front.
+     */
+    fun overlapped(prompt: ChoicePrompt, buttons: List<CloseCandidate>): ChoicePrompt = adjust(
+        prompt.copy(options = prompt.options.filterNot { it.kind == PromptOptionKind.PRESS_CANDIDATE || it.kind == PromptOptionKind.REMEMBER_ALWAYS }.toImmutableList()),
+        buttons,
+    ).copy(summary = PromptSummary.POPUPS_OVERLAP, cannotPressForUser = false, briefQuestion = false)
+
     fun place(bounds: ScreenBounds, screen: ScreenBounds): ScreenPlace {
         val centre = (bounds.top + bounds.bottom) / 2 - screen.top
         val third = screen.height / 3

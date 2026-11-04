@@ -1099,6 +1099,40 @@ F26 자동 확인: 옥션 웹 감지 1.3초·재확인 308ms·`READ_DUTY_PCT` 7.
   - `SimpleCloseEngineFeature.TIMING_LINE`
   - 새 시험 `F52Test`
 
+### 8-46. F53 — 겹친 팝업: 가려졌을 수 있는 버튼은 누르지 않기 (JVM 시험만, 실기기·에뮬레이터 미검증)
+
+- **증상**(우진 SM-F966N, 크롬, canvas.suwon.ac.kr, TalkBack 켬, df726f4): 앞에 LMS 앱 업데이트 공지가 있었는데 [닫기]를 고르니 뒤에 가려진 팝업만 닫혔다. 카드는 "팝업을 닫았어요"라고 했고 앞 공지는 남았다.
+  - 로그: `DETECTED_ALERTDIALOG … ASKED`(10:29:31) → `DETECTED_FRONT_LAYER … ASKED`(10:30:08) → `CLICKED_LABELED_CLOSE`, `CLOSED_CONFIRMED`, `RESULT_BANNER_*`(10:30:20).
+  - 사진·전체 로그는 아직 없다. 어느 노드가 앞이었는지는 **확정하지 못했다.**
+- **코드로 확인한 것:**
+  - **팝업 고르기(`PopupRootFinder.find`):** Dialog 클래스(여럿이면 걸음 순서로 마지막) → 크기가 제한된 창 → 어두운 배경 → 앞 레이어(뒤에서부터, 이름 있는 닫기 필수) → 카드 → 창 → 배너. 찾으면 바로 끝이라 **다른 팝업은 보지 않는다.** "걸음 순서가 늦으면 위에 그려졌다"로 가정하지만, 웹은 DOM 순서이고 z-index는 트리에 없다.
+  - **ALERTDIALOG와 FRONT_LAYER가 따로 잡힌 이유:** 읽기마다 찾은 하나만 쓰기 때문이다. Dialog가 읽기에 들어 있으면 항상 Dialog가 이기므로, FRONT_LAYER가 나온 10:30:08 읽기에는 Dialog가 **없었다.** 코드상 두 경우가 가능하다(어느 쪽인지는 미확정): (a) 첫 팝업이 사라졌다. (b) 프로브가 뒤에서 200개 안에 레이어만 찾아 그 하위 트리만 읽었다(`POPUP_SUBTREE`, Dialog가 DOM 앞쪽이면 못 봄).
+  - **누르는 경로(`pressAndConfirm`):** 앱·루트·버튼 세 가지만 재확인했고 **가려짐 확인은 없었다**(총괄의 grep이 맞다). 읽어 주는 팝업과 누르는 팝업은 코드상 같은 `SimplePopup`이다. 문제는 그 팝업이 눈에 보이는 앞 팝업과 다를 수 있다는 점이다.
+  - **`ACTION_CLICK`은 가려져도 그 노드에 닿는다.** 이번 사례의 동작과 맞는다(화면 위치 판정을 거치지 않음, 코드로 본 것은 아니고 관찰).
+  - **`CLOSED_CONFIRMED`는 그 팝업에 대해서는 맞았다.** 뒤 팝업 루트가 사라졌고, 다시 읽어 찾은 팝업은 글자가 달라 `reappearance`가 null이었다. 다른 팝업이 남았는지는 보지 않았고, 문장만 단정했다.
+- **고침(`PopupStack`, 플래그 `STACK_CHECK_BEFORE_PRESS`):**
+  - 누르기 직전(자동·사용자 모두, 재확인 전)과 묻기 직전에 버튼 위를 본다. 코드: `WINDOW_ABOVE`, `COVER_LATER`, `POPUP_OVERLAP`. 버튼 가운데 점이 그 상자 안에 있을 때만 해당한다.
+    - `WINDOW_ABOVE`: 레이어가 더 높은 앱 창. 창에는 레이어가 있어서 확실하다.
+    - `COVER_LATER`: 걸음 순서가 뒤이고, 팝업이나 조상의 형제이고, 좌우 가장자리에 닿지 않고, 화면 5~70% 크기이고, 내용이 있는 상자.
+    - `POPUP_OVERLAP`: 같은 규칙(`PopupRootFinder`)으로 찾은 다른 팝업.
+  - 걸리면 **누르지 않는다**(다시 누르기·좌표 탭 없음). 선택 창 첫 줄은 "팝업이 겹쳐 있어요. 어느 쪽이 앞인지 알 수 없어서 대신 누르지 않아요."이고, 선택지는 [버튼으로 이동]·[내용 다시 읽기]·[그대로 두기]뿐이다(누르기·앞으로 항상 없음, 음성도 같음). 이 팝업은 자동으로 다시 누르지 않는다.
+  - 닫은 뒤 다시 읽어서 다른 팝업을 찾으면 문장이 "… 닫았어요. 다른 팝업이 아직 남아 있어요."가 되고(`CLOSE_OTHER_POPUP_LEFT`), 1.5초 뒤 다시 읽어 그 팝업을 처리한다(쿨다운 비움). 아래 배너는 세지 않는다.
+  - 로그(글자·경로·id 없음, 경계와 코드만): `ROOT_PICK kind= root= mode=`, `STACK_LOOK block= button= others= [종류:경계] partial= visited= ms=`, `PRESS_TARGET by=USER|AUTO kind= root= button=`, `STACK_BLOCKED_*`, `STACK_ASKED`, `STACK_UNREAD`.
+- **비용:** 트리 끝에서부터 400노드·250ms(팝업 자기 하위 트리 제외). 자동 닫기는 누르기 직전 1번, 묻기는 묻기 직전 1번 + 누르기 직전 1번. 자기 창 팝업은 창 목록만 본다.
+- **한계(된다고 적지 않는다):**
+  - **웹 내부에서 앞뒤를 알 방법이 없다.** 트리에 z-index가 없고, `isVisibleToUser`가 가림을 반영하는지 확인하지 못했다. 그래서 웹은 "겹치면 어느 쪽이 앞인지 모른다"로 처리한다. 앞 팝업을 골라 내는 것이 아니다.
+  - 팝업처럼 보이지 않고, 걸음 순서도 앞이고, 400노드 밖이면 못 본다. 그때는 지금처럼 누른다(`partial=true`). 큰 페이지에서 전부 읽으려면 시간이 F25 이전으로 돌아가므로 일부러 그렇게 뒀다.
+  - 투명한 흔적(닫힌 뒤 DOM에 남은 레이어)도 겹침으로 칠 수 있다. 그 사이트는 묻기로 바뀐다. 리허설에서 확인이 필요하다.
+  - 닫은 뒤 다른 팝업 확인은 그 다시 읽기가 닿은 범위까지다(프로브로 찾은 팝업이면 프로브만).
+- **바뀐 파일:**
+  - 새 파일 `simpleclose/PopupStack.kt`
+  - `SimpleTreeCollector.readStack`, `TailRead.WALK_ORDER` 공개
+  - `SimpleCloseAccessibilityService`
+  - `SimplePromptOptions.overlapped`, `PromptSummary.POPUPS_OVERLAP`, `ChoicePromptContent`
+  - 문장 2개(`ui_voice_strings.xml`)
+  - `SimpleCloseEngineFeature`, `SimpleTrace`
+  - 새 시험 `F53Test`
+
 - 잔여 노드 쪽 이벤트 무시: TalkBack이 무엇을 읽을지는 앱이 막을 수 없다. 대신 포커스를 잔여 노드 밖으로 옮기는 것(F9)이 할 수 있는 전부. 웹 페이지가 닫힌 팝업을 DOM에 `aria-hidden` 없이 남기는 한, 사용자가 스와이프로 다시 만날 수 있다(한계로 기록).
 - 선택 창 PROMPT도 TalkBack 큐로? 가능은 하다: 선택 창 자체(이미 접근성 오버레이)에 paneTitle이 있고 TalkBack이 창을 읽으므로, "안내 맡기기" ON이면 우리 TTS PROMPT를 끄고 paneTitle/첫 버튼 포커스 낭독에 맡기는 방식. 단, 지금 PROMPT는 TalkBack이 팝업을 읽는 도중 끊고 들어가야 시연이 빠르므로 polite로 바꾸면 늦어질 수 있다. F11 배너가 LG에서 잘 읽히면 같은 방식으로 옮길지 정하자(의견, 미구현).
 - 검증(F1~F11 한 빌드): 5개 Gradle 작업 통과, 단위 시험 debug 1028개·release 1013개 실패 0, lintDebug 오류 0(경고 12), 병합 매니페스트 INTERNET 0·새 권한 없음.

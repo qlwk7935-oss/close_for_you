@@ -20,7 +20,8 @@ import kr.closeforyou.ui.voice.settings.PerAppAutoCloseGateFeature
 /** Hedged summary: a display classification can be wrong, so the sentence never asserts it. */
 /** [AUTO_CLOSE_FAILED] (F20): the engine pressed a close for the person and the popup stayed; asked right after. */
 /** [SUSPICIOUS] (F34): B's scam check; nothing is pressed for the person, only [버튼으로 이동] to its close. */
-enum class PromptSummary { LIKELY_AD, LIKELY_VIDEO_AD, LIKELY_NOTICE, LIKELY_COUPON, NEEDS_REVIEW, UNKNOWN, AUTO_CLOSE_FAILED, SUSPICIOUS }
+/** [POPUPS_OVERLAP] (F53): something may lie over the button; nothing is pressed for the person, only [버튼으로 이동]. */
+enum class PromptSummary { LIKELY_AD, LIKELY_VIDEO_AD, LIKELY_NOTICE, LIKELY_COUPON, NEEDS_REVIEW, UNKNOWN, AUTO_CLOSE_FAILED, SUSPICIOUS, POPUPS_OVERLAP }
 
 /**
  * MOVE_TO_BUTTON appears only while [MoveToButtonFeature.enabled]; it never presses anything.

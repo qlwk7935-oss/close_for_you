@@ -126,6 +126,16 @@ object SimpleCloseEngineFeature {
     const val TIMING_LINE: Boolean = true
 
     /**
+     * F53 (우진 SM-F966N canvas.suwon.ac.kr: [닫기] closed a popup behind the notice in front): right before a press, a look at
+     * what lies over the button ([PopupStack]); covered = not pressed, asked with [버튼으로 이동] only. After a close, another
+     * popup found is said, and read next. False = as before F53.
+     */
+    const val STACK_CHECK_BEFORE_PRESS: Boolean = true
+
+    /** F53: after a close with another popup left, the screen is read again this long later (the result sentence goes first). */
+    const val NEXT_POPUP_READ_MILLIS: Long = 1_500L
+
+    /**
      * F31 (B_DEMO_RULES.md 6-2, numbers to be checked on the LG with 11번가-like chains): more than [CHAIN_MAX_AUTO]
      * automatic closes in one app within [CHAIN_WINDOW_MILLIS] are asked (`CHAIN_GUARD_ASKED_RATE`), and so is another
      * popup that appears within [CHAIN_NEW_POPUP_AFTER_PRESS_MILLIS] of our own press (`CHAIN_GUARD_ASKED_NEW_POPUP_AFTER_PRESS`).
