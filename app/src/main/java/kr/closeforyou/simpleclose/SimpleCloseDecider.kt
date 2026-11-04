@@ -170,7 +170,7 @@ enum class WordHint(val kind: PopupClassification?) {
  * a decision word in it (결제·구매·동의·권한·구독·삭제·설치·앱에서 열기…, [SimpleLabelReject.FORBIDDEN]),
  * exactly one verified button and it is a labeled close, not suspicious, not USER_DECISION; the target
  * is still re-checked right before the press. "광고·쿠폰 닫기" and "광고만 닫기" keep asking.
- * AGENTS 6-2 is not changed; this switch turns it off.
+ * This relaxes AGENTS 6-2 under 6-0 (the demo's relaxations); this switch turns it off.
  */
 object DemoUnknownAutoClose {
     const val ENABLED: Boolean = true
