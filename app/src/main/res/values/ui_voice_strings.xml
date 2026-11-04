@@ -144,7 +144,6 @@
     <string name="ui_settings_mic_needed">마이크가 허용되지 않았어요. 음성 명령을 쓰려면 허용해 주세요.</string>
     <string name="ui_settings_mic_allow">마이크 허용</string>
     <string name="ui_settings_mic_denied">허용되지 않았어요. 휴대폰 설정의 앱 권한에서 바꿀 수 있어요.</string>
-    <string name="ui_settings_mic_not_in_version">아직 이 앱 버전에서는 음성 명령을 쓸 수 없어요.</string>
     <string name="ui_settings_mic_device_unsupported">이 기기는 기기 안 음성 인식을 지원하지 않아서 음성 명령을 쓸 수 없어요.</string>
     <string name="ui_settings_section_rules">기억한 팝업</string>
     <string name="ui_settings_rules_empty">기억한 팝업이 없어요.</string>

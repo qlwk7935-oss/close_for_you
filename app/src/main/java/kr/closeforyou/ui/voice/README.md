@@ -43,7 +43,7 @@ debug 전용(`app/src/debug/.../ui/voice/debug/`): `ChoicePreviewActivity`(가�
 - 실패한 누르기는 다시 누르지 않는다. 화면이 바뀌었으면(STALE) 예전 분석으로 다시 묻지 않는다.
 - TalkBack 포커스는 사용자가 요청할 때만(버튼으로 이동) 옮긴다. 선택 창은 `FLAG_NOT_FOCUSABLE`.
 - 화면 글자·인식 문장은 로그·파일에 남기지 않는다(`toString()`은 redacted). `announceForAccessibility()`는 쓰지 않는다.
-- 음성 명령은 [말하기]를 누를 때 한 번만 듣는다. 원격 인식기 없음, INTERNET 권한 없음. `RECORD_AUDIO`는 debug 매니페스트에만 있다 → release에서는 [말하기]가 숨겨진다(A에게 main 매니페스트 추가 요청 예정). 선택 창 아래 [말하기]·[다시 듣기]·[그만 말하기]는 `overlay/PromptControls.kt`(`PromptControlsSupport.create`로 켬).
+- 음성 명령은 [말하기]를 누를 때 한 번만 듣는다. 원격 인식기 없음, INTERNET 권한 없음. `RECORD_AUDIO`는 공통 매니페스트에 있고(F55, debug·release 같음), 권한은 [마이크 허용]을 누를 때만 요청한다.
 
 ## 미검증 (실기기·연동)
 

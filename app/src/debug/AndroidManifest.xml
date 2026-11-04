@@ -3,8 +3,6 @@
     <permission
         android:name="kr.closeforyou.permission.SYNTHETIC_CAPTURE_TEST"
         android:protectionLevel="signature" />
-    <!-- C(ui/voice) debug only: push-to-talk voice command test on the preview screen (on-device recognizer). -->
-    <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <application>
         <!-- Only debug builds. No image/text IPC, no service activation or arbitrary app selection. -->
         <provider

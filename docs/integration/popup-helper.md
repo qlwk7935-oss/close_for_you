@@ -92,7 +92,7 @@ A 서비스(`CloseForYouAccessibilityService`)·`accessibility_service_config.xm
 ## 7. 남은 문제
 
 - 두 엔진 동시 켜기를 코드로 막지 않는다(안내 문구와 이 문서뿐).
-- release에는 `RECORD_AUDIO`가 없다(debug 매니페스트에만). 설정의 음성 명령 마이크 허용은 release에서 동작하지 않는다 — 새 권한이라 이번에 넣지 않음(사용자 확인 필요).
+- `RECORD_AUDIO`는 F55부터 공통 매니페스트에 있다(debug·release 같음, 8-48). release에서 음성 명령이 실제로 도는지는 실기기 미검증이다(release APK가 서명 안 됨, 아래).
 - `configChanges`가 LG에서 설정 복귀 시 Activity 재생성을 실제로 막는지 미확인(4-6, 원인 구성 변경 미확인).
 - 11번가 설치 시트는 B main에서 NOTICE → 프리셋 “광고만 닫기”에서는 묻는다. B `feature/decision-web-overlay` 병합 시 광고로 바뀜(B 판단).
 - debug 빌드에는 “닫을까요? 미리보기” 아이콘과 시험 접근성 서비스가 하나씩 더 있다(debug 전용, release엔 없음).
@@ -1161,6 +1161,27 @@ F26 자동 확인: 옥션 웹 감지 1.3초·재확인 308ms·`READ_DUTY_PCT` 7.
   - `TalkBackResultBanner`
   - `SimpleCloseAccessibilityService`(콜백, 우리 이벤트를 버리기 전 전달)
   - 새 시험 `F54Test`
+
+### 8-48. F55 — `RECORD_AUDIO`를 공통 매니페스트로 (재호 승인, 빌드·매니페스트 확인만, 실기기 미검증)
+
+- **바꾼 것:** `app/src/debug/AndroidManifest.xml`에서 `app/src/main/AndroidManifest.xml`로 옮겼다. 낡은 "C TODO" 주석을 지금 상태로 고쳤다. debug 매니페스트에는 시험 provider·미리보기·시험 서비스가 남아 있어 파일은 그대로 둔다.
+- **이 문서의 앞선 기록:** 위쪽 표들의 "release에는 없음"은 그 회차 당시 기록이다. 지금은 이 절이 맞다.
+- **코드로 확인한 것:**
+  - **마이크를 쓰는 때:** `SpeechRecognizer.startListening`은 두 곳뿐이고(`OnDeviceVoiceCommandInput`, `OnDeviceDictation`), 시작 경로는 [말하기](`PromptControls.onSpeak`)와 [말로 찾기](`VoiceSearch.onPress`) 버튼뿐이다. 항상 켜 두는 듣기는 없다.
+  - **권한 요청 시점:** `RequestPermission`은 설정의 [마이크 허용], 도와줄 앱의 [마이크 허용], debug 미리보기 버튼의 클릭에서만 호출된다. 화면을 열 때 자동으로 요청하는 코드는 없다. 처음 설정(온보딩)에는 마이크 요청이 없다.
+  - **거부했을 때:** [말하기]·[말로 찾기]를 숨기고(`SpeakButtonState.PERMISSION_NEEDED`), 선택 창은 한 줄 안내, 도와줄 앱은 키보드 안내, 설정은 "휴대폰 설정의 앱 권한에서 바꿀 수 있어요"를 보여 준다. 탭·TalkBack 선택지는 그대로 동작한다. 선택 창이 뜬 뒤 권한이 사라져도 시작 전에 다시 확인하고(`OnDeviceRecognition.availability`), 인식기 권한 오류는 `Unavailable`로 끝난다.
+  - **기기 안 인식만:** API 31+이고 기기 안 인식기가 있을 때만 쓴다. 서버로 넘어가지 않는다. 없는 기기(LG 벨벳)에서는 버튼을 숨긴다.
+- **정리한 것:** `SpeakButtonState.NOT_IN_THIS_VERSION`, `MicrophoneAccess.declared()`, 문장 `ui_settings_mic_not_in_version`("아직 이 앱 버전에서는…")을 지웠다. 이제 어떤 빌드에서도 나올 수 없는 상태다. 빌드 타입 분기는 원래 없었고 이것이 전부다. 시험 1개가 함께 빠졌다(`notDeclaredMeansNotInThisVersion`).
+- **합쳐진 매니페스트(`aapt dump permissions`):**
+  - debug: `android.permission.RECORD_AUDIO`, `kr.closeforyou.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION`(선언·사용), `kr.closeforyou.permission.SYNTHETIC_CAPTURE_TEST`(선언, debug 전용)
+  - release: `android.permission.RECORD_AUDIO`, `kr.closeforyou.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION`(선언·사용)
+  - `INTERNET`·`ACCESS_NETWORK_STATE`는 둘 다 없다. 새로 생긴 다른 권한도 없다.
+- **release 서명:** `signingConfig`가 없어 `app-release-unsigned.apk`이고 `apksigner verify`는 `DOES NOT VERIFY`다. 기기에 바로 설치할 수 없다. 시연은 계속 debug APK로 한다.
+- **남은 문제:**
+  - release 음성 명령은 실기기에서 한 번도 돌려 보지 않았다(서명 안 됨).
+  - 앱이 앞에 없을 때 접근성 오버레이에서 마이크가 실제로 들어오는지는 코드만으로 알 수 없다. debug와 조건이 같다. 실기기 확인이 필요하다.
+  - `RECORD_AUDIO`는 `android.hardware.microphone`을 필수 기능으로 암시한다. 스토어 배포 때는 `uses-feature required=false`를 검토해야 한다(지금은 배포 안 함, 넣지 않음).
+  - `docs/DEVELOPMENT_STATUS.md` 79줄은 아직 "`RECORD_AUDIO` 미요청"이라고 적혀 있다. 팀 공용 문서라 고치지 않았다.
 
 - 잔여 노드 쪽 이벤트 무시: TalkBack이 무엇을 읽을지는 앱이 막을 수 없다. 대신 포커스를 잔여 노드 밖으로 옮기는 것(F9)이 할 수 있는 전부. 웹 페이지가 닫힌 팝업을 DOM에 `aria-hidden` 없이 남기는 한, 사용자가 스와이프로 다시 만날 수 있다(한계로 기록).
 - 선택 창 PROMPT도 TalkBack 큐로? 가능은 하다: 선택 창 자체(이미 접근성 오버레이)에 paneTitle이 있고 TalkBack이 창을 읽으므로, "안내 맡기기" ON이면 우리 TTS PROMPT를 끄고 paneTitle/첫 버튼 포커스 낭독에 맡기는 방식. 단, 지금 PROMPT는 TalkBack이 팝업을 읽는 도중 끊고 들어가야 시연이 빠르므로 polite로 바꾸면 늦어질 수 있다. F11 배너가 LG에서 잘 읽히면 같은 방식으로 옮길지 정하자(의견, 미구현).
