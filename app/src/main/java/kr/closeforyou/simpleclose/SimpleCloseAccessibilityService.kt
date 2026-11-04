@@ -1014,16 +1014,16 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
                 })
                 // F53: its buttons may lie under something: then they are not offered as a press at all.
                 val buttons = popup.scan.candidates.map { it.bounds } + listOfNotNull(popup.scan.xButton?.bounds)
-                var frontPress: FrontPress? = null
+                var front: FrontOffer? = null
                 val covered = try {
-                    (if (buttons.isEmpty()) null else stackHitOf(classified, buttons, read.nodes))?.also { frontPress = frontPressOf(classified, it) }
+                    (if (buttons.isEmpty()) null else stackHitOf(classified, buttons, read.nodes))?.also { front = frontPressOf(classified, it) }
                 } catch (e: CancellationException) {
                     // The next event replaced this inspection during the look: its read must not end quietly in the cooldown.
                     seenAt.remove(key)
                     throw e
                 }
                 if (covered != null) log.trace(SimpleTrace.STACK_ASKED)
-                ask(classified, classification, talkBackReadIt = inside == true && !lateFailure, failedNow = lateFailure, overlap = covered, frontPress = frontPress)
+                ask(classified, classification, talkBackReadIt = inside == true && !lateFailure, failedNow = lateFailure, overlap = covered, frontPress = front?.press, frontScam = front?.scam == true)
             }
         }
         return true
@@ -1204,7 +1204,7 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
      * 못했어요."). F21: buttons that failed on this popup are never offered again (AGENTS 6-6), the next one is.
      * The popup's risky buttons (결제·동의·권한…) are offered as [버튼으로 이동] only, never as a press.
      */
-    private fun ask(popup: SimplePopup, classification: PopupClassification, talkBackReadIt: Boolean, failedNow: Boolean = false, overlap: StackHit? = null, frontPress: FrontPress? = null) {
+    private fun ask(popup: SimplePopup, classification: PopupClassification, talkBackReadIt: Boolean, failedNow: Boolean = false, overlap: StackHit? = null, frontPress: FrontPress? = null, frontScam: Boolean = false) {
         val presenter = overlay ?: return
         val planned = ChoicePromptPlanner.plan(
             popup.analysis, classification, labelPolicy = SimpleLabelPolicy,
@@ -1243,7 +1243,7 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
         if (xMove != null) log.trace(SimpleTrace.X_BUTTON_MOVE_OFFERED)
         if (overlap != null && overlap.front == null) log.trace(SimpleTrace.STACK_NO_FRONT)
         val shown = if (overlap != null) {
-            SimplePromptOptions.overlapped(prompt, frontKnown = overlap.front != null, pressLabel = frontPress?.candidate?.label, failedNow = failedNow)
+            SimplePromptOptions.overlapped(prompt, frontKnown = overlap.front != null, pressLabel = frontPress?.candidate?.label, failedNow = failedNow, frontScam = frontScam)
         } else {
             SimplePromptOptions.adjust(withRemember, listOfNotNull(xMove) + popup.scan.riskButtons, failedButtons[keyOf(popup)].orEmpty(), failedNow)
         }
@@ -1277,7 +1277,7 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
             ChoiceKind.READ_CONTENT -> {
                 log.trace(SimpleTrace.USER_CHOSE_READ)
                 val announcer = tts ?: return
-                scope.launch { announcer.announce(AnnouncementRequest(choice.token, AnnouncementKind.CONTENT, PromptSpeech.content(this@SimpleCloseAccessibilityService, popup.analysis))) }
+                scope.launch { announcer.announce(AnnouncementRequest(choice.token, AnnouncementKind.CONTENT, PromptSpeech.content(this@SimpleCloseAccessibilityService, OverlapPressRules.readTarget(popup, frontPress).analysis))) }
             }
             ChoiceKind.CLOSE_ONCE, ChoiceKind.SKIP_ONCE, ChoiceKind.REMEMBER_EXACT_POPUP -> {
                 log.trace(SimpleTrace.USER_CHOSE_PRESS)
@@ -1348,8 +1348,8 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
 
     /** F53/F59: asked about a popup something may lie over; the front popup's close is offered when it passes [OverlapPressRules]. */
     private suspend fun askOverlapped(popup: SimplePopup, classification: PopupClassification, hit: StackHit?) {
-        val press = hit?.let { frontPressOf(popup, it) }
-        if (prompted == null) ask(popup, classification, talkBackReadIt = false, overlap = hit, frontPress = press)
+        val front = hit?.let { frontPressOf(popup, it) }
+        if (prompted == null) ask(popup, classification, talkBackReadIt = false, overlap = hit, frontPress = front?.press, frontScam = front?.scam == true)
     }
 
     /** F59: the front popup's own subtree read and judged as an ordinary popup. Null = it could not be read whole. */
@@ -1362,28 +1362,28 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
         return FrontSeen(built, OverlapPressRules.kindOf(built, classifier.classify(built.analysis), suspicious), suspicious)
     }
 
-    /** F59: nothing read over the front popup's button, and it still passes every check. Null = fine. Not read = not fine. */
+    /** F59: nothing read over the front popup's button, and it still passes every check. Null = fine. Not read = not fine. A scam says so first. */
     private suspend fun frontPressMiss(back: SimplePopup, front: FrontTarget, button: ScreenBounds, check: (FrontSeen?) -> FrontPressMiss?): FrontPressMiss? {
-        val look = withContext(Dispatchers.Default) { collector.readStack(front.cover) } ?: return FrontPressMiss.UNREAD
-        OverlapPressRules.lookMiss(button, front.cover, look)?.let { return it }
-        return check(readFront(back, front))
+        val seen = if (OverlapPressRules.readable(front)) readFront(back, front) else null
+        val look = withContext(Dispatchers.Default) { collector.readStack(front.cover) }
+        return OverlapPressRules.firstMiss(front, seen, if (look == null) FrontPressMiss.UNREAD else OverlapPressRules.lookMiss(button, front.cover, look), check)
     }
 
-    /** F59: what the overlap prompt may press, or null with the reason in the log (a code). */
-    private suspend fun frontPressOf(back: SimplePopup, hit: StackHit): FrontPress? {
+    /** F59: what the overlap prompt may press or must warn about; when no press, the reason is in the log (a code). */
+    private suspend fun frontPressOf(back: SimplePopup, hit: StackHit): FrontOffer {
         val front = hit.front
-        OverlapPressRules.miss(front, null).takeUnless { it == FrontPressMiss.UNREAD }?.let {
-            log.line(OverlapPressRules.notOfferedLine(it))
-            return null
+        if (front == null) {
+            log.line(OverlapPressRules.notOfferedLine(FrontPressMiss.NO_FRONT))
+            return FrontOffer(null, scam = false)
         }
         var seen: FrontSeen? = null
-        val miss = frontPressMiss(back, front!!, front.bounds) { read ->
+        val miss = frontPressMiss(back, front, front.bounds) { read ->
             seen = read
             OverlapPressRules.miss(front, read, read?.let { failedButtons[keyOf(it.popup)] }.orEmpty())
         }
         val press = seen?.takeIf { miss == null }?.let { OverlapPressRules.offer(front, it) }
         log.line(if (press != null) OverlapPressRules.offeredLine(press) else OverlapPressRules.notOfferedLine(miss ?: FrontPressMiss.TARGET_CHANGED))
-        return press
+        return FrontOffer(press, scam = miss == FrontPressMiss.SCAM)
     }
 
     /**
@@ -1414,6 +1414,8 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
             log.line(OverlapPressRules.resultLine(step))
             when (step) {
                 FrontPressStep.CLOSED -> {
+                    // Only a log, for now (DOM가 닫힌 팝업을 남기는 사이트, 8-54): nothing said or asked depends on it.
+                    log.line(OverlapPressRules.rootLeftLine(withContext(Dispatchers.Default) { collector.rootStillPresent(press.front.cover) }))
                     noteClosed(keyOf(press.popup), press.candidate)
                     inspectionEvents.backOff()
                     readAgainSoon(packageName)

@@ -16,6 +16,7 @@ import kr.closeforyou.simpleclose.SimpleNodes.node
 import kr.closeforyou.ui.voice.choice.ChoicePromptPlanner
 import kr.closeforyou.ui.voice.choice.PromptOptionKind
 import kr.closeforyou.ui.voice.choice.PromptSummary
+import kr.closeforyou.ui.voice.choice.textRes
 import kr.closeforyou.ui.voice.command.VoiceOutcome
 import kr.closeforyou.ui.voice.command.VoicePolicy
 import kr.closeforyou.ui.voice.command.VoiceUtterance
@@ -189,6 +190,66 @@ class F59Test {
         val above = PopupStack.hit(closeFront, root, StackLook(nodes, SCREEN, windows, 1, false, 0, 1))!!
         assertEquals(StackBlock.WINDOW_ABOVE, above.block)
         assertNull(above.front)
+    }
+
+    // Read and a scam: said first, whatever else there is to say.
+    @Test fun aScamInFrontComesBeforeEveryOtherCode() {
+        val scam = seen(front(), suspicious = true)
+        val rest: (FrontSeen?) -> FrontPressMiss? = { OverlapPressRules.miss(target(), it) }
+        assertEquals(FrontPressMiss.SCAM, OverlapPressRules.firstMiss(target(), scam, FrontPressMiss.LOOK_PARTIAL, rest))
+        assertEquals(FrontPressMiss.SCAM, OverlapPressRules.firstMiss(target(), scam, FrontPressMiss.COVERED, rest))
+        assertEquals(FrontPressMiss.SCAM, OverlapPressRules.firstMiss(target(), scam, FrontPressMiss.UNREAD, rest))
+        assertEquals(FrontPressMiss.SCAM, OverlapPressRules.firstMiss(target(kind = FrontKind.FIRST), scam, null, rest))
+    }
+
+    // Not read: not known, as before, in the same order as before.
+    @Test fun notReadSaysNothingAboutAScam() {
+        val rest: (FrontSeen?) -> FrontPressMiss? = { OverlapPressRules.miss(target(), it) }
+        assertEquals(FrontPressMiss.LOOK_PARTIAL, OverlapPressRules.firstMiss(target(), null, FrontPressMiss.LOOK_PARTIAL, rest))
+        assertEquals(FrontPressMiss.COVERED, OverlapPressRules.firstMiss(target(), null, FrontPressMiss.COVERED, rest))
+        assertEquals(FrontPressMiss.UNREAD, OverlapPressRules.firstMiss(target(), null, null, rest))
+        assertEquals(FrontPressMiss.NOT_A_CLOSE, OverlapPressRules.firstMiss(target(kind = FrontKind.FIRST), null, FrontPressMiss.LOOK_PARTIAL, rest))
+        val banner = PopupRoot("0/0/2", cover.bounds, PopupRootKind.BOTTOM_BANNER)
+        assertFalse(OverlapPressRules.readable(target(on = banner)))
+        // Read and fine: the other codes still count.
+        assertEquals(FrontPressMiss.LOOK_PARTIAL, OverlapPressRules.firstMiss(target(), seen(front()), FrontPressMiss.LOOK_PARTIAL, rest))
+        assertNull(OverlapPressRules.firstMiss(target(), seen(front()), null, rest))
+    }
+
+    @Test fun aScamInFrontWarnsAndOffersNoPress() {
+        val popup = SimplePopupAnalysis.build(page() + back(), root, "p", 7, SCREEN, 1L, 0L)
+        val planned = ChoicePromptPlanner.plan(popup.analysis, PopupClassification.NOTICE, labelPolicy = SimpleLabelPolicy, rememberChoicesEnabled = false, preset = HandlingPreset.entries.first())
+        val shown = SimplePromptOptions.overlapped(planned, frontKnown = true, pressLabel = "닫기", frontScam = true)
+        assertEquals(PromptSummary.POPUPS_OVERLAP_FRONT_SCAM, shown.summary)
+        assertEquals(R.string.ui_choice_summary_overlap_front_scam, shown.summary.textRes())
+        assertTrue(shown.options.none { it.kind == PromptOptionKind.PRESS_CANDIDATE || it.kind == PromptOptionKind.REMEMBER_ALWAYS })
+        assertNotNull(shown.options.singleOrNull { it.kind == PromptOptionKind.MOVE_TO_BUTTON && it.candidateId == SimplePromptOptions.FRONT_ID })
+        assertNotNull(shown.options.singleOrNull { it.kind == PromptOptionKind.KEEP_OPEN })
+        // Voice cannot press there either: nothing to press.
+        assertEquals(VoiceOutcome.Say(R.string.ui_choice_cannot_press), VoicePolicy.decide(VoiceUtterance.Command(VoiceCommand.CLOSE), shown))
+        // Without the scam nothing changes.
+        assertEquals(PromptSummary.POPUPS_OVERLAP, SimplePromptOptions.overlapped(planned, frontKnown = true).summary)
+    }
+
+    // What is read goes with what would be closed.
+    @Test fun theFrontsWordsAreReadOnlyWhereItsCloseIsOffered() {
+        val backPopup = SimplePopupAnalysis.build(page() + back(), root, "p", 7, SCREEN, 1L, 0L)
+        val press = OverlapPressRules.offer(target(), seen(front()))!!
+        assertTrue(OverlapPressRules.readTarget(backPopup, press) === press.popup)
+        assertTrue(OverlapPressRules.readTarget(backPopup, null) === backPopup)
+        fun read(prompt: kr.closeforyou.ui.voice.choice.ChoicePrompt) = prompt.options.single { it.kind == PromptOptionKind.READ_CONTENT }
+        val shown = promptWithPress()
+        assertEquals(R.string.ui_choice_read_front_content, read(shown).labelRes)
+        val plain = ChoicePromptPlanner.plan(backPopup.analysis, PopupClassification.NOTICE, labelPolicy = SimpleLabelPolicy, rememberChoicesEnabled = false, preset = HandlingPreset.entries.first())
+        assertNull(read(plain).labelRes)
+        assertNull(read(SimplePromptOptions.overlapped(plain, frontKnown = true)).labelRes)
+        assertNull(read(SimplePromptOptions.overlapped(plain, frontKnown = true, frontScam = true)).labelRes)
+    }
+
+    @Test fun theRootLineHoldsACodeOnly() {
+        assertEquals("OVERLAP_PRESS_ROOT_LEFT value=true", OverlapPressRules.rootLeftLine(true))
+        assertEquals("OVERLAP_PRESS_ROOT_LEFT value=false", OverlapPressRules.rootLeftLine(false))
+        assertEquals("OVERLAP_PRESS_ROOT_LEFT value=null", OverlapPressRules.rootLeftLine(null))
     }
 
     private fun promptWithPress(): kr.closeforyou.ui.voice.choice.ChoicePrompt {

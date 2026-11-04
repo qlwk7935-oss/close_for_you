@@ -1316,6 +1316,21 @@ F26 자동 확인: 옥션 웹 감지 1.3초·재확인 308ms·`READ_DUTY_PCT` 7.
 - **바꾸지 않은 것:** UNKNOWN 제외, 닫힘 확인(앞 팝업 기준), 이동 코드.
 - **시험:** `F59Test`에 5개(`LOOK_PARTIAL` 표시·재확인이 함께 쓰는 규칙, 일반 검사 불변, 앞 팝업 창 id 없음, 음성 거부와 다른 음성 선택), `PromptControlsControllerTest`에 1개(거부 뒤 선택 전달 없음, 안내, 다음 음성 명령 동작). **JVM으로 못 본 것:** 서비스의 `frontPressMiss`·`frontPressOf`·`pressFront` 연결과 `PromptSession`의 탭 경로, 오버레이 한 줄 검사는 코드를 읽어서만 확인했다. "거부 뒤 실제 탭으로 눌림"은 시험하지 못했다.
 
+### 8-54. F59 수정 — 준영 코드 리뷰 3건 (JVM 시험만, 실기기 미검증)
+
+- **A. 내용 읽기:** 눌러 주기 선택지가 있는 선택창의 읽기는 앞 팝업 내용을 읽는다(`OverlapPressRules.readTarget`). 뒤 내용을 듣고 앞 팝업을 닫게 되는 것을 막는다. 그 창에서만 선택지 이름이 "앞 팝업 내용 읽기"(`ui_choice_read_front_content`)이고, 첫 줄 "앞에 있는 팝업의 버튼만 눌러 줄 수 있어요"와 맞는다. 눌러 주기가 없는 겹침 창·일반 창은 그대로 멈춘 팝업을 읽는다. 음성 "다시 읽어"도 같은 경로다.
+- **B. 앞 팝업 사기 의심:** 앞 팝업을 읽었고 B가 사기 의심으로 보면 첫 줄이 `ui_choice_summary_overlap_front_scam`("팝업이 겹쳐 있어요. 앞에 있는 팝업은 사기일 수 있으니 대신 누르지 않아요. 아무것도 누르지 마세요.")이 된다. 누르기는 없고 이동·그대로 두기는 유지한다. 로그는 기존 `OVERLAP_PRESS_NOT_OFFERED reason=SCAM`이다.
+  - **판정 순서(코드로 확인):** 이전에는 `LOOK_PARTIAL`·`COVERED`·`UNREAD`(읽기 전 상태)와 `NOT_A_CLOSE`가 앞 팝업을 읽기 전에 돌아와 `SCAM`을 볼 수 없었다. 이제 먼저 앞 팝업을 읽고, 사기 의심이면 다른 코드보다 먼저 `SCAM`이다(`OverlapPressRules.firstMiss`). 클릭 직전 재확인도 같은 순서다.
+  - **이름 없는 닫기(FrontKind.FIRST)인 앞 팝업도 이제 읽는다.** 사기 팝업은 이름 있는 닫기가 없을 수 있기 때문이다. 그래서 이 경우 선택창마다 읽기가 한 번 더 든다(`PRE_PRESS_READ_CAP_MILLIS` 상한).
+  - **읽지 못한 경우**(읽기 상한, 납작한 배너·영상 덮개)는 사기 여부를 모르므로 지금처럼 일반 겹침 문구다. 사기가 아니라는 뜻이 아니다.
+  - 앞이라고 본 카드가 실제 팝업이 아닌 페이지 카드여도 글자가 B 규칙에 걸리면 경고가 나올 수 있다(거짓 경고 쪽 실패).
+- **C. 로그만:** 눌러 주기 결과가 `CLOSED`이면 `OVERLAP_PRESS_ROOT_LEFT value=true|false|null`을 남긴다(`collector.rootStillPresent(cover)`, 안내 전). 동작은 바꾸지 않았다.
+  - `CLOSED`는 확인 폴링에서 이미 `rootStillPresent == false`를 본 뒤에만 나온다. 그래서 이 값은 대개 `false`이고, `true`면 닫힘 확인 뒤 같은 자리에 뿌리가 다시 보인 것이다.
+  - **DOM에 닫힌 팝업이 보이는 채 남는 사이트는 `CLOSED`까지 오지 못한다.** 폴링 내내 `true`라 `NOT_CLOSED`가 되고 기존 `NOT_CLOSED_STILL_THERE`가 남는다. "못 닫았어요" 오판은 이 코드와 화면 사진으로 본다.
+- **바꾸지 않은 것:** UNKNOWN 제외, 닫힘 판단, 이동 코드, 음성 정책.
+- **발견, 고치지 않음:** `shownExcerpt`(NOTICE이고 TalkBack이 읽지 않은 경우 선택창에 보이는 발췌)는 눌러 주기 창에서도 멈춘 뒤 팝업의 글이다. 앞 팝업을 닫는 창에 뒤 내용이 보이는 문제가 A와 같다.
+- **시험:** `F59Test`에 5개(사기 우선, 읽지 못하면 말하지 않음, 경고 창의 선택지, 읽을 대상과 이름, 로그 줄). **JVM으로 못 본 것:** 서비스의 `frontPressMiss`·`frontPressOf`·`ask`·`onAnswer` 연결, `rootStillPresent` 호출, 선택지 이름 표시는 코드를 읽어서만 확인했다.
+
 - 잔여 노드 쪽 이벤트 무시: TalkBack이 무엇을 읽을지는 앱이 막을 수 없다. 대신 포커스를 잔여 노드 밖으로 옮기는 것(F9)이 할 수 있는 전부. 웹 페이지가 닫힌 팝업을 DOM에 `aria-hidden` 없이 남기는 한, 사용자가 스와이프로 다시 만날 수 있다(한계로 기록).
 - 선택 창 PROMPT도 TalkBack 큐로? 가능은 하다: 선택 창 자체(이미 접근성 오버레이)에 paneTitle이 있고 TalkBack이 창을 읽으므로, "안내 맡기기" ON이면 우리 TTS PROMPT를 끄고 paneTitle/첫 버튼 포커스 낭독에 맡기는 방식. 단, 지금 PROMPT는 TalkBack이 팝업을 읽는 도중 끊고 들어가야 시연이 빠르므로 polite로 바꾸면 늦어질 수 있다. F11 배너가 LG에서 잘 읽히면 같은 방식으로 옮길지 정하자(의견, 미구현).
 - 검증(F1~F11 한 빌드): 5개 Gradle 작업 통과, 단위 시험 debug 1028개·release 1013개 실패 0, lintDebug 오류 0(경고 12), 병합 매니페스트 INTERNET 0·새 권한 없음.

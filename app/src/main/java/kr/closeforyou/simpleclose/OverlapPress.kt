@@ -31,6 +31,9 @@ class FrontPress(val front: FrontTarget, val popup: SimplePopup, val candidate: 
     }
 }
 
+/** F59: what the overlap prompt may say about the front popup: the one press, or (read whole, B's scam check) a warning instead. */
+class FrontOffer(val press: FrontPress?, val scam: Boolean)
+
 /**
  * F59 (우진 SM-F966N, TalkBack 켬, Chrome LMS 겹침 공지: a move was moved=true, the person's double tap closed it 0 of 3 with our app on,
  * 2 of 3 with TalkBack alone). The overlap prompt may press the close of the popup taken to be in front, once, when the person chose it.
@@ -49,8 +52,7 @@ object OverlapPressRules {
     /** Null = it may be offered. [failedNames]: normalized names that were pressed on this popup and did not close it. */
     fun miss(front: FrontTarget?, seen: FrontSeen?, failedNames: Set<String> = emptySet()): FrontPressMiss? {
         if (front == null) return FrontPressMiss.NO_FRONT
-        if (front.kind != FrontKind.CLOSE) return FrontPressMiss.NOT_A_CLOSE
-        if (front.cover.members != null || !PopupStack.applies(front.cover)) return FrontPressMiss.COVER_KIND
+        structural(front)?.let { return it }
         if (seen == null) return FrontPressMiss.UNREAD
         if (seen.suspicious) return FrontPressMiss.SCAM
         if (seen.kind == PopupClassification.USER_DECISION) return FrontPressMiss.DECISION
@@ -64,6 +66,28 @@ object OverlapPressRules {
         if (pick.label?.let(ButtonLabelRules::normalize) in failedNames) return FrontPressMiss.FAILED_BEFORE
         return null
     }
+
+    private fun structural(front: FrontTarget): FrontPressMiss? {
+        if (front.kind != FrontKind.CLOSE) return FrontPressMiss.NOT_A_CLOSE
+        return if (readable(front)) null else FrontPressMiss.COVER_KIND
+    }
+
+    /** A cover with its own subtree: a flat banner's or a video cover's front is not read as a popup. */
+    fun readable(front: FrontTarget): Boolean = front.cover.members == null && PopupStack.applies(front.cover)
+
+    /**
+     * The order of the checks. A front popup that was read and looks like a scam says so first: a partial look, something over its
+     * button or no named close do not hide the warning. Not read ([seen] null): whether it is a scam is not known, and nothing is said.
+     * [lookMiss]: [lookMiss] on the look, or UNREAD with no look. [check]: the rest, on the read.
+     */
+    fun firstMiss(front: FrontTarget, seen: FrontSeen?, lookMiss: FrontPressMiss?, check: (FrontSeen?) -> FrontPressMiss?): FrontPressMiss? =
+        when {
+            seen?.suspicious == true -> FrontPressMiss.SCAM
+            else -> structural(front) ?: lookMiss ?: check(seen)
+        }
+
+    /** [내용 다시 읽기] goes with what the prompt can press: the front popup's words when its close is offered, otherwise the stopped popup's. */
+    fun readTarget(back: SimplePopup, press: FrontPress?): SimplePopup = press?.popup ?: back
 
     /**
      * What the look around the front popup says about [button]. A cap stopped the look: what lies over the button is not known, so no
@@ -101,6 +125,9 @@ object OverlapPressRules {
     fun chosenLine(press: FrontPress): String = "OVERLAP_PRESS_CHOSEN by=TAP to=${box(press.candidate.bounds)}"
 
     const val VOICE_REFUSED_LINE = "OVERLAP_PRESS_VOICE_REFUSED"
+
+    /** After a confirmed close: [present] is whether the front popup's root node is there now (null = the tree could not be read). */
+    fun rootLeftLine(present: Boolean?): String = "OVERLAP_PRESS_ROOT_LEFT value=$present"
 
     /** [reason]: a [FrontPressMiss] or a re-check code. */
     fun recheckFailedLine(reason: String, to: ScreenBounds): String = "OVERLAP_PRESS_RECHECK_FAILED reason=$reason to=${box(to)}"
