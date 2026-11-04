@@ -1,0 +1,234 @@
+package kr.closeforyou.simpleclose
+
+import kotlinx.coroutines.runBlocking
+import kr.closeforyou.R
+import kr.closeforyou.core.model.ActionResult
+import kr.closeforyou.core.model.ActionStatus
+import kr.closeforyou.core.model.ClickOutcome
+import kr.closeforyou.core.model.NodeSnapshot
+import kr.closeforyou.core.model.PopupClassification
+import kr.closeforyou.core.model.SafetyReason
+import kr.closeforyou.core.model.ScreenBounds
+import kr.closeforyou.decision.DecisionPopupClassifier
+import kr.closeforyou.simpleclose.SimpleNodes.SCREEN
+import kr.closeforyou.simpleclose.SimpleNodes.node
+import kr.closeforyou.ui.voice.choice.ChoicePromptPlanner
+import kr.closeforyou.ui.voice.choice.PromptOptionKind
+import kr.closeforyou.ui.voice.choice.PromptSummary
+import kr.closeforyou.ui.voice.settings.HandlingPreset
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
+import org.junit.Test
+
+/** F59: the overlap prompt may press the named close of the popup taken to be in front, once, when nothing about it is doubtful. */
+class F59Test {
+    private val card = ScreenBounds(90, 600, 990, 1800)
+    private val closeBack = ScreenBounds(540, 1500, 990, 1700)
+    private val closeFront = ScreenBounds(540, 1600, 980, 1700)
+    private val root = PopupRoot("0/0/1", card, PopupRootKind.FRONT_LAYER)
+    private val cover = PopupRoot("0/0/2", ScreenBounds(100, 700, 980, 1750), PopupRootKind.FRONT_LAYER)
+
+    private fun page() = listOf(
+        node("0", "android.widget.FrameLayout", bounds = SCREEN),
+        node("0/0", "android.webkit.WebView", bounds = ScreenBounds(0, 200, 1080, 2340)),
+        node("0/0/0", text = "강의 목록", bounds = ScreenBounds(0, 200, 1080, 2340)),
+    )
+
+    private fun back() = listOf(
+        node("0/0/1", bounds = card),
+        node("0/0/1/0", text = "다른 안내", bounds = ScreenBounds(90, 600, 990, 700)),
+        node("0/0/1/1", "android.widget.Button", text = "닫기", clickable = true, bounds = closeBack),
+    )
+
+    private fun front(closeLabel: String? = "닫기", vararg more: NodeSnapshot) = listOf(
+        node("0/0/2", bounds = cover.bounds),
+        node("0/0/2/0", text = "LMS 앱 업데이트 공지", bounds = ScreenBounds(100, 700, 980, 900)),
+        node("0/0/2/1", "android.widget.Button", text = closeLabel, clickable = true, bounds = closeFront),
+    ) + more
+
+    private fun look(nodes: List<NodeSnapshot>) = StackLook(nodes, SCREEN, emptyList(), 1, false, nodes.size, 6)
+
+    private fun target(path: String = "0/0/2/1", bounds: ScreenBounds = closeFront, kind: FrontKind = FrontKind.CLOSE, on: PopupRoot = cover) =
+        FrontTarget(on, path, bounds, kind)
+
+    private fun seen(nodes: List<NodeSnapshot>, kind: PopupClassification = PopupClassification.NOTICE, suspicious: Boolean = false) =
+        FrontSeen(SimplePopupAnalysis.build(nodes, cover, "p", 7, SCREEN, 1L, 0L), kind, suspicious)
+
+    @Test fun aPlainCloseInAKnownPopupIsOffered() {
+        assertNull(OverlapPressRules.miss(target(), seen(front())))
+        val press = OverlapPressRules.offer(target(), seen(front()))!!
+        assertEquals("0/0/2/1", press.candidate.nodePath)
+        // F57's own path gets here: the target found over the stopped popup.
+        val hit = PopupStack.hit(closeBack, root, look(page() + back() + front()))!!
+        assertEquals(FrontKind.CLOSE, hit.front!!.kind)
+        assertNull(OverlapPressRules.miss(hit.front, seen(front())))
+    }
+
+    @Test fun noFrontOrNoNamedCloseIsNotOffered() {
+        assertEquals(FrontPressMiss.NO_FRONT, OverlapPressRules.miss(null, seen(front())))
+        assertEquals(FrontPressMiss.NOT_A_CLOSE, OverlapPressRules.miss(target(kind = FrontKind.FIRST), seen(front())))
+        assertEquals(FrontPressMiss.UNREAD, OverlapPressRules.miss(target(), null))
+        val banner = PopupRoot("0/0/2", cover.bounds, PopupRootKind.BOTTOM_BANNER)
+        assertEquals(FrontPressMiss.COVER_KIND, OverlapPressRules.miss(target(on = banner), seen(front())))
+    }
+
+    // An unnamed X is never a candidate: nothing to pick, and frontTarget never calls it a close.
+    @Test fun anUnnamedXIsNotOffered() {
+        val nodes = page() + back() + front(closeLabel = null)
+        val hit = PopupStack.hit(closeBack, root, look(nodes))!!
+        assertEquals(FrontKind.FIRST, hit.front!!.kind)
+        assertEquals(FrontPressMiss.NOT_A_CLOSE, OverlapPressRules.miss(hit.front, seen(front(closeLabel = null))))
+        assertEquals(FrontPressMiss.TARGET_CHANGED, OverlapPressRules.miss(target(), seen(front(closeLabel = null))))
+    }
+
+    // ButtonLabelRules: "오늘 하루 보지 않기" closes and also changes something; the engine's own rules call it a close, the shared ones do not.
+    @Test fun aCloseThatDoesMoreIsNotOffered() {
+        assertEquals(FrontPressMiss.LABEL_NOT_PLAIN_CLOSE, OverlapPressRules.miss(target(), seen(front(closeLabel = "오늘 하루 보지 않기"))))
+    }
+
+    @Test fun whatTheExistingJudgementsRefuseIsNotOffered() {
+        assertEquals(FrontPressMiss.SCAM, OverlapPressRules.miss(target(), seen(front(), suspicious = true)))
+        assertEquals(FrontPressMiss.DECISION, OverlapPressRules.miss(target(), seen(front(), PopupClassification.USER_DECISION)))
+        assertEquals(FrontPressMiss.UNKNOWN_KIND, OverlapPressRules.miss(target(), seen(front(), PopupClassification.UNKNOWN)))
+    }
+
+    @Test fun aRiskyButtonBesideTheCloseIsNotOffered() {
+        val pay = node("0/0/2/2", "android.widget.Button", text = "결제하기", clickable = true, bounds = ScreenBounds(100, 1600, 500, 1700))
+        assertEquals(FrontPressMiss.RISK_BUTTON, OverlapPressRules.miss(target(), seen(front("닫기", pay))))
+        // A promotion's purchase button stops a popup being asked elsewhere; here it still counts.
+        val buy = node("0/0/2/2", "android.widget.Button", text = "지금 구매하기", clickable = true, bounds = ScreenBounds(100, 1600, 500, 1700))
+        assertEquals(FrontPressMiss.RISK_BUTTON, OverlapPressRules.miss(target(), seen(front("닫기", buy), PopupClassification.ADVERTISEMENT)))
+    }
+
+    @Test fun theStoppedPopupsButtonIsNeverTheTarget() {
+        val hit = PopupStack.hit(closeBack, root, look(page() + back() + front()))!!
+        val press = OverlapPressRules.offer(hit.front!!, seen(front()))!!
+        assertFalse(press.candidate.nodePath!!.startsWith(root.path))
+        // A target inside the stopped popup does not match what the front popup's own scan picks.
+        assertEquals(FrontPressMiss.TARGET_CHANGED, OverlapPressRules.miss(target(path = "0/0/1/1", bounds = closeBack), seen(front())))
+    }
+
+    @Test fun theRecheckStopsTheClickWhenAnythingChanged() {
+        val press = FrontPress(target(), seen(front()).popup, OverlapPressRules.offer(target(), seen(front()))!!.candidate)
+        assertNull(OverlapPressRules.recheck(press, seen(front())))
+        // Gone, or not read whole.
+        assertEquals(FrontPressMiss.UNREAD, OverlapPressRules.recheck(press, null))
+        // Moved.
+        val moved = listOf(front()[0], front()[1], node("0/0/2/1", "android.widget.Button", text = "닫기", clickable = true, bounds = ScreenBounds(540, 1500, 980, 1600)))
+        assertEquals(FrontPressMiss.TARGET_CHANGED, OverlapPressRules.recheck(press, seen(moved)))
+        // Another path.
+        val path = listOf(front()[0], front()[1], node("0/0/2/2", "android.widget.Button", text = "닫기", clickable = true, bounds = closeFront))
+        assertEquals(FrontPressMiss.TARGET_CHANGED, OverlapPressRules.recheck(press, seen(path)))
+        // Another name at the same place.
+        assertEquals(FrontPressMiss.LABEL_CHANGED, OverlapPressRules.recheck(press, seen(front(closeLabel = "공지 닫기"))))
+        assertEquals(FrontPressMiss.LABEL_NOT_PLAIN_CLOSE, OverlapPressRules.recheck(press, seen(front(closeLabel = "오늘 하루 보지 않기"))))
+        // Became a decision, or grew a risky button.
+        assertEquals(FrontPressMiss.DECISION, OverlapPressRules.recheck(press, seen(front(), PopupClassification.USER_DECISION)))
+        val pay = node("0/0/2/2", "android.widget.Button", text = "결제하기", clickable = true, bounds = ScreenBounds(100, 1600, 500, 1700))
+        assertEquals(FrontPressMiss.RISK_BUTTON, OverlapPressRules.recheck(press, seen(front("닫기", pay))))
+    }
+
+    @Test fun somethingLaterOverTheFrontStopsItTheStoppedPopupDoesNot() {
+        // Only the popup behind: nothing over the front.
+        assertNull(PopupStack.overFront(closeFront, cover, look(page() + back())))
+        // A card later in the page over the same button.
+        val later = listOf(
+            node("0/0/3", bounds = ScreenBounds(120, 1000, 960, 1740)),
+            node("0/0/3/0", text = "또 다른 공지", bounds = ScreenBounds(120, 1000, 960, 1100)),
+        )
+        assertEquals(StackBlock.COVER_LATER, PopupStack.overFront(closeFront, cover, look(page() + back() + later)))
+        // A window above is sure.
+        val windows = listOf(WindowShape(1, WindowKind.APPLICATION, 1, true, SCREEN, SCREEN), WindowShape(2, WindowKind.APPLICATION, 2, true, cover.bounds, cover.bounds))
+        assertEquals(StackBlock.WINDOW_ABOVE, PopupStack.overFront(closeFront, cover, StackLook(emptyList(), SCREEN, windows, 1, false, 0, 1)))
+    }
+
+    // AGENTS 6-6: one press per prompt; a failure is never pressed again.
+    @Test fun itIsPressedOnceAndNotAgainAfterAFailure() {
+        val press = OverlapPressRules.offer(target(), seen(front()))!!
+        assertTrue(press.take())
+        assertFalse(press.take())
+        val token = press.popup.analysis.token
+        val notClosed = ActionResult(token, ActionStatus.MECHANICAL_SUCCESS, null, attempted = true, outcome = ClickOutcome.STILL_PRESENT)
+        assertEquals(FrontPressStep.NOT_CLOSED, OverlapPressRules.after(notClosed))
+        val rejected = ActionResult(token, ActionStatus.ATTEMPT_FAILED, SafetyReason.UNVERIFIED_TARGET, attempted = true, outcome = ClickOutcome.UNKNOWN)
+        assertEquals(FrontPressStep.NOT_CLOSED, OverlapPressRules.after(rejected))
+        assertEquals(FrontPressStep.NOT_PRESSED, OverlapPressRules.after(ActionResult(token, ActionStatus.STALE, SafetyReason.STALE_SCREEN, attempted = false)))
+        assertEquals(FrontPressStep.LEFT_APP, OverlapPressRules.after(ActionResult(token, ActionStatus.MECHANICAL_SUCCESS, null, attempted = true, outcome = ClickOutcome.LEFT_APP)))
+        assertEquals(FrontPressStep.CLOSED, OverlapPressRules.after(ActionResult(token, ActionStatus.MECHANICAL_SUCCESS, null, attempted = true, outcome = ClickOutcome.CLOSED_CONFIRMED)))
+        // The failed name is not offered again on this popup.
+        assertEquals(FrontPressMiss.FAILED_BEFORE, OverlapPressRules.miss(target(), seen(front()), setOf("닫기")))
+    }
+
+    // After the front popup closed: the one behind is judged again, and an automatic close of it becomes a question.
+    @Test fun thePopupBehindIsNotPressedByItself() {
+        val failed = LinkedHashSet<String>()
+        val holds = AutoPressHolds(failed)
+        holds.hold("7:back")
+        // The engine's check: `decided is AutoClose && words in autoFailed` -> Ask; the remembered path checks the same set.
+        assertTrue("7:back" in failed)
+    }
+
+    @Test fun thePromptOffersThePressFirstNeverAlwaysAndNameInIt() {
+        val popup = SimplePopupAnalysis.build(page() + back(), root, "p", 7, SCREEN, 1L, 0L)
+        val planned = ChoicePromptPlanner.plan(popup.analysis, PopupClassification.NOTICE, labelPolicy = SimpleLabelPolicy, rememberChoicesEnabled = false, preset = HandlingPreset.entries.first())
+        val shown = SimplePromptOptions.overlapped(planned, frontKnown = true, pressLabel = "닫기")
+        assertEquals(PromptSummary.POPUPS_OVERLAP_PRESS, shown.summary)
+        val first = shown.options.first()
+        assertEquals(PromptOptionKind.PRESS_CANDIDATE, first.kind)
+        assertEquals(SimplePromptOptions.FRONT_PRESS_ID, first.candidateId)
+        assertEquals("닫기", first.buttonLabel)
+        assertEquals(R.string.ui_choice_press_front, first.labelRes)
+        assertEquals(1, shown.options.count { it.kind == PromptOptionKind.PRESS_CANDIDATE })
+        assertTrue(shown.options.none { it.kind == PromptOptionKind.REMEMBER_ALWAYS })
+        assertNotNull(shown.options.singleOrNull { it.kind == PromptOptionKind.MOVE_TO_BUTTON && it.candidateId == SimplePromptOptions.FRONT_ID })
+        assertNotNull(shown.options.singleOrNull { it.kind == PromptOptionKind.KEEP_OPEN })
+        // The move comes after the press.
+        assertEquals(PromptOptionKind.MOVE_TO_BUTTON, shown.options[1].kind)
+        assertNotEquals(SimplePromptOptions.FRONT_ID, SimplePromptOptions.FRONT_PRESS_ID)
+    }
+
+    // Anything else: F57 exactly.
+    @Test fun withoutAPressThePromptIsF57s() {
+        val popup = SimplePopupAnalysis.build(page() + back(), root, "p", 7, SCREEN, 1L, 0L)
+        val planned = ChoicePromptPlanner.plan(popup.analysis, PopupClassification.NOTICE, labelPolicy = SimpleLabelPolicy, rememberChoicesEnabled = false, preset = HandlingPreset.entries.first())
+        val move = SimplePromptOptions.overlapped(planned, frontKnown = true)
+        assertEquals(PromptSummary.POPUPS_OVERLAP, move.summary)
+        assertTrue(move.options.none { it.kind == PromptOptionKind.PRESS_CANDIDATE })
+        val none = SimplePromptOptions.overlapped(planned, frontKnown = false, pressLabel = "닫기")
+        assertEquals(PromptSummary.POPUPS_OVERLAP_NO_MOVE, none.summary)
+        assertEquals(listOf(PromptOptionKind.KEEP_OPEN), none.options.map { it.kind })
+        // After a failed press: said so, no press.
+        val failed = SimplePromptOptions.overlapped(planned, frontKnown = true, failedNow = true)
+        assertEquals(PromptSummary.AUTO_CLOSE_FAILED, failed.summary)
+        assertTrue(failed.options.none { it.kind == PromptOptionKind.PRESS_CANDIDATE })
+    }
+
+    // The words of the LMS notice are not known yet: this fixture only shows the kind check does not refuse a plain notice.
+    @Test fun aPlainNoticeHasAKnownKind() = runBlocking {
+        val popup = seen(front()).popup
+        val kind = OverlapPressRules.kindOf(popup, DecisionPopupClassifier().classify(popup.analysis), suspicious = false)
+        assertNotEquals(PopupClassification.UNKNOWN, kind)
+        assertNotEquals(PopupClassification.USER_DECISION, kind)
+    }
+
+    @Test fun theLinesHoldCodesAndBoundsOnly() {
+        val press = OverlapPressRules.offer(target(), seen(front()))!!
+        val lines = listOf(
+            OverlapPressRules.offeredLine(press),
+            OverlapPressRules.notOfferedLine(FrontPressMiss.RISK_BUTTON),
+            OverlapPressRules.chosenLine(press, voice = false),
+            OverlapPressRules.recheckFailedLine(FrontPressMiss.TARGET_CHANGED.name, closeFront),
+            OverlapPressRules.resultLine(FrontPressStep.CLOSED),
+        )
+        assertEquals("OVERLAP_PRESS_OFFERED cover=100,700,980,1750 to=540,1600,980,1700", lines[0])
+        assertEquals("OVERLAP_PRESS_NOT_OFFERED reason=RISK_BUTTON", lines[1])
+        assertEquals("OVERLAP_PRESS_CHOSEN by=TAP to=540,1600,980,1700", lines[2])
+        assertEquals("OVERLAP_PRESS_RECHECK_FAILED reason=TARGET_CHANGED to=540,1600,980,1700", lines[3])
+        assertEquals("OVERLAP_PRESS_RESULT code=CLOSED", lines[4])
+        lines.forEach { line -> assertFalse(line.contains("닫기") || line.contains("LMS") || line.contains("0/0/2")) }
+    }
+}

@@ -23,7 +23,8 @@ import kr.closeforyou.ui.voice.settings.PerAppAutoCloseGateFeature
 /** [SUSPICIOUS] (F34): B's scam check; nothing is pressed for the person, only [버튼으로 이동] to its close. */
 /** [POPUPS_OVERLAP] (F53): something may lie over the button; nothing is pressed for the person, a move to the popup in front only. */
 /** [POPUPS_OVERLAP_NO_MOVE] (F57): the same, and no popup in front could be told: nothing to go to either. */
-enum class PromptSummary { LIKELY_AD, LIKELY_VIDEO_AD, LIKELY_NOTICE, LIKELY_COUPON, NEEDS_REVIEW, UNKNOWN, AUTO_CLOSE_FAILED, SUSPICIOUS, POPUPS_OVERLAP, POPUPS_OVERLAP_NO_MOVE }
+/** [POPUPS_OVERLAP_PRESS] (F59): the same, and the close of the popup in front can be pressed for the person, once. */
+enum class PromptSummary { LIKELY_AD, LIKELY_VIDEO_AD, LIKELY_NOTICE, LIKELY_COUPON, NEEDS_REVIEW, UNKNOWN, AUTO_CLOSE_FAILED, SUSPICIOUS, POPUPS_OVERLAP, POPUPS_OVERLAP_NO_MOVE, POPUPS_OVERLAP_PRESS }
 
 /**
  * MOVE_TO_BUTTON appears only while [MoveToButtonFeature.enabled]; it never presses anything.
@@ -59,7 +60,7 @@ data class PromptOption(
     val candidateRole: ButtonRole? = null,
     /** Screen text: shown and spoken, never logged. */
     val buttonLabel: String? = null,
-    /** F57: a fixed label from our resources instead of "'이름' 버튼으로 이동". */
+    /** F57: a fixed label from our resources instead of "'이름' 버튼으로 이동". F59: on a press, one that takes the button's name. */
     @StringRes val labelRes: Int? = null,
 ) {
     override fun toString(): String = "PromptOption(kind=$kind, redacted)"

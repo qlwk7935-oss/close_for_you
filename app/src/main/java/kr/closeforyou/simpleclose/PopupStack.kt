@@ -85,6 +85,17 @@ object PopupStack {
     }
 
     /**
+     * F59: what may lie over a button of [cover], the popup taken to be in front, right before a press. The stopped popup behind it is
+     * earlier in the page and does not count; a window above, a later card or another later popup does.
+     */
+    fun overFront(button: ScreenBounds, cover: PopupRoot, look: StackLook): StackBlock? {
+        if (windowAbove(button, look.windows, look.baseWindowId)) return StackBlock.WINDOW_ABOVE
+        if (coverNode(button, cover, look.nodes, look.screen) != null) return StackBlock.COVER_LATER
+        val later = others(look.nodes, cover, look.screen).any { holds(it.bounds, button) && TailRead.WALK_ORDER.compare(rootMark(it), rootMark(cover)) > 0 }
+        return if (later) StackBlock.POPUP_OVERLAP else null
+    }
+
+    /**
      * Where a move goes inside [cover]: its plainest named close; else its first named text; else its first clickable with no
      * risky word; else the cover itself when it has a name. Null = nothing to go to. Never the blocked popup's own button.
      */

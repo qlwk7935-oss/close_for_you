@@ -1262,6 +1262,45 @@ F26 자동 확인: 옥션 웹 감지 1.3초·재확인 308ms·`READ_DUTY_PCT` 7.
   - `SimpleCloseAccessibilityService`, `SimpleTrace`
   - `F57Test`(이름), 새 시험 `F58Test`
 
+### 8-52. F59 — 겹침 선택창의 "앞 팝업의 '닫기' 버튼 눌러 주기" (JVM 시험만, 실기기 미검증, LMS에서 ACTION_CLICK으로 실제 닫히는지 모름)
+
+- **배경**(우진 SM-F966N, TalkBack 켬, Chrome LMS 겹침 공지): [앞에 있는 팝업으로 이동] 뒤 초점 요청은 `moved=true`인데 TalkBack 두 번 탭으로 닫기가 앱 켬 0/3, 앱 끔(TalkBack만) 2/3. 완료 기준은 "화면을 안 보고 끝까지 닫을 수 있는가"이고 `moved=true`는 성공이 아니다.
+- **동작:** 겹침 선택창 맨 앞에 앞 팝업의 닫기를 앱이 눌러 주는 선택지를 넣는다. 그 뒤에 기존 [앞에 있는 팝업으로 이동], [내용 다시 읽기], [그대로 두기]가 온다. 첫 줄은 "팝업이 겹쳐 있어요. 앞에 있는 팝업의 버튼만 눌러 줄 수 있어요."이다.
+- **표시 조건(`OverlapPressRules.miss`, 하나라도 아니면 F57 그대로):**
+  - `FrontKind.CLOSE`이고 공용 `ButtonLabelRules`가 CLOSE로 보는 이름. 라벨 없는 X·`FIRST`·"오늘 하루 보지 않기"(`LABEL_NOT_PLAIN_CLOSE`)는 제외.
+  - 앞 팝업을 처음부터 끝까지 다시 읽을 수 있음(`readPopupAgain`, 못 읽으면 `UNREAD`).
+  - 기존 판정 재사용: 사기 의심(`RememberChoiceRules.suspiciousByB`), 결정·판단 불가(B 분류기와 일반 팝업과 같은 힌트, `kindOf`), 위험 버튼(`scan.riskCount`·`riskButtons`, 홍보 구매 예외를 적용하지 않음). 새 규칙은 없다.
+  - 고른 버튼이 다시 읽은 앞 팝업에서 뽑은 버튼과 경로·위치가 같음(`TARGET_CHANGED`). 이 팝업에서 이미 실패한 이름이 아님(`FAILED_BEFORE`).
+  - 그 버튼 위에 더 뒤쪽 DOM의 카드·팝업이나 위쪽 창이 없음(`PopupStack.overFront`, `COVERED`). 멈춘 뒤쪽 팝업은 세지 않는다.
+  - 멈춘 뒤쪽 팝업의 자기 버튼은 어떤 경우에도 대상이 아니다.
+- **판단 불가(UNKNOWN)는 표시하지 않는다.** 지시문의 "결정·사기 의심·판단 불가"를 그대로 따랐다. LMS 공지가 B에서 UNKNOWN이면 이 선택지는 안 나오고 `OVERLAP_PRESS_NOT_OFFERED reason=UNKNOWN_KIND`가 남는다.
+- **실행(고른 뒤 1회):**
+  - 고르는 순간 뒤 팝업을 `AutoPressHolds`에 넣는다. `FrontPress.take()`로 한 선택창에서 한 번만 실행한다.
+  - 기존 `pressAndConfirm` 재확인: 앱, 앞 팝업 뿌리 위치, 대상 노드(보임·사용 가능·클릭 가능·이름).
+  - `prePress`(클릭 직전): 위에 덮인 것을 다시 보고, 앞 팝업을 다시 읽어 표시 조건 전부와 이름이 같은지 다시 본다. 못 읽으면 누르지 않는다.
+  - `clickOnce`는 그 노드에 `ACTION_CLICK` 한 번. 재시도·좌표 탭 없음.
+  - 일반 `stackHitOf` 검사는 이 경로에서 건너뛴다(`lookOverButton=false`): 뒤쪽 팝업이 겹침으로 잡혀 항상 막히기 때문이다. `overFront`가 대신한다.
+- **결과:**
+  - `CLOSED`: 닫힘 확인(기존 경로, #76의 다른 팝업 판단 포함) 뒤에만 안내한다. 화면을 다시 읽어 뒤 팝업을 새로 판단한다. 자동 닫기 판단이 나와도 묻기로 간다(`AUTO_CLOSE_SKIPPED_AFTER_FAIL`, 세션 동안).
+  - `NOT_PRESSED`: 안내 뒤 다시 읽어 다시 묻는다.
+  - `NOT_CLOSED`: "대신 닫지 못했어요."와 함께 이동·그대로 두기로 다시 묻는다. 이 이름은 이 팝업에서 다시 제안하지 않는다(6-6).
+  - `LEFT_APP`: 안내만 한다.
+- **기억 없음:** "앞으로 항상"은 이 경로에 없다.
+- **음성:** 말하기 버튼의 "닫기"는 선택창의 누르기 선택지가 하나일 때 이 선택지를 고른다(기존 `VoiceChoiceMapper`). 재확인은 같다.
+- **로그(코드와 좌표만):** `OVERLAP_PRESS_OFFERED cover= to=`, `OVERLAP_PRESS_NOT_OFFERED reason=`, `OVERLAP_PRESS_CHOSEN by=TAP|VOICE to=`, `OVERLAP_PRESS_RECHECK_FAILED reason= to=`, `OVERLAP_PRESS_RESULT code=`, 기존 `PRESS_TARGET by=OVERLAP`, `CLICKED`, `CLOSED_CONFIRMED`.
+- **한계(된다고 적지 않는다):**
+  - **"앞"은 DOM 순서로 본 추측이다.** z-index로 반대면 눈에 보이지 않는 팝업을 닫는다. 이 경우 위험 단어 없는 이름 있는 닫기만 누르게 되지만, 눈앞의 공지는 그대로일 수 있다.
+  - 위를 살피는 읽기에는 상한이 있어(8-46) 읽지 못한 것은 누르기를 막지 못한다.
+  - 앞과 뒤 팝업에 같은 본문 글자가 있으면 `PopupMemory`가 "다시 나타남"으로 보아 실제로 닫혔는데 `NOT_CLOSED`가 될 수 있다.
+  - 서비스 연결(`pressFront`, `prePress`)은 JVM 시험이 없다. 규칙만 시험했고 연결은 코드를 읽어 확인했다.
+- **이동 코드:** 고치지 않았다. 코드에서 본 사실: `OverlayWindowKeeper.deliver`가 선택창을 지운 직후 같은 흐름에서 `moveToFront`가 초점을 요청한다. 기다림이 없다. 이것이 TalkBack과 부딪히는지는 **추측**이고 실측 근거가 없다.
+- **바뀐 파일:**
+  - 새 파일 `simpleclose/OverlapPress.kt`
+  - `PopupStack.overFront`, `SimplePromptOptions.overlapped`
+  - `SimpleCloseAccessibilityService`(`askOverlapped`, `readFront`, `frontPressMiss`, `frontPressOf`, `pressFront`, `readAgainSoon`, `lookOverButton`)
+  - `PromptSummary.POPUPS_OVERLAP_PRESS`, `PromptOption.labelRes`를 누르기에도 사용, 문장 2개
+  - 새 시험 `F59Test`
+
 - 잔여 노드 쪽 이벤트 무시: TalkBack이 무엇을 읽을지는 앱이 막을 수 없다. 대신 포커스를 잔여 노드 밖으로 옮기는 것(F9)이 할 수 있는 전부. 웹 페이지가 닫힌 팝업을 DOM에 `aria-hidden` 없이 남기는 한, 사용자가 스와이프로 다시 만날 수 있다(한계로 기록).
 - 선택 창 PROMPT도 TalkBack 큐로? 가능은 하다: 선택 창 자체(이미 접근성 오버레이)에 paneTitle이 있고 TalkBack이 창을 읽으므로, "안내 맡기기" ON이면 우리 TTS PROMPT를 끄고 paneTitle/첫 버튼 포커스 낭독에 맡기는 방식. 단, 지금 PROMPT는 TalkBack이 팝업을 읽는 도중 끊고 들어가야 시연이 빠르므로 polite로 바꾸면 늦어질 수 있다. F11 배너가 LG에서 잘 읽히면 같은 방식으로 옮길지 정하자(의견, 미구현).
 - 검증(F1~F11 한 빌드): 5개 Gradle 작업 통과, 단위 시험 debug 1028개·release 1013개 실패 0, lintDebug 오류 0(경고 12), 병합 매니페스트 INTERNET 0·새 권한 없음.

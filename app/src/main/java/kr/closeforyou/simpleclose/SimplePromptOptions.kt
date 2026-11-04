@@ -3,6 +3,7 @@ package kr.closeforyou.simpleclose
 import kotlinx.collections.immutable.toImmutableList
 import kr.closeforyou.R
 import kr.closeforyou.core.model.ButtonLabelRules
+import kr.closeforyou.core.model.ButtonRole
 import kr.closeforyou.core.model.CloseCandidate
 import kr.closeforyou.core.model.ScreenBounds
 import kr.closeforyou.ui.voice.choice.ChoicePrompt
@@ -49,18 +50,27 @@ object SimplePromptOptions {
      * F53/F57: something may lie over the popup's button. No press and no "always" (not by tap, not by voice), and its own
      * buttons are not places to go either: a double tap there would be the press just refused. [frontKnown]: one move, to the popup
      * taken to be in front. Not known: the sentence says so and only [그대로 두기] stays.
+     * F59: [pressLabel], the name of the front popup's close that passed [OverlapPressRules]: offered first, as one press, never "always".
+     * [failedNow]: that press has just not closed it.
      */
-    fun overlapped(prompt: ChoicePrompt, frontKnown: Boolean): ChoicePrompt {
+    fun overlapped(prompt: ChoicePrompt, frontKnown: Boolean, pressLabel: String? = null, failedNow: Boolean = false): ChoicePrompt {
         val rest = prompt.options.filterNot {
             it.kind == PromptOptionKind.PRESS_CANDIDATE || it.kind == PromptOptionKind.REMEMBER_ALWAYS || it.kind == PromptOptionKind.MOVE_TO_BUTTON
         }
+        val press = pressLabel?.takeIf { frontKnown && it.isNotBlank() }
         val options = if (frontKnown) {
-            listOf(PromptOption(PromptOptionKind.MOVE_TO_BUTTON, candidateId = FRONT_ID, labelRes = R.string.ui_choice_move_to_front)) + rest
+            listOfNotNull(press?.let { PromptOption(PromptOptionKind.PRESS_CANDIDATE, candidateId = FRONT_PRESS_ID, candidateRole = ButtonRole.CLOSE, buttonLabel = it.trim(), labelRes = R.string.ui_choice_press_front) }) +
+                PromptOption(PromptOptionKind.MOVE_TO_BUTTON, candidateId = FRONT_ID, labelRes = R.string.ui_choice_move_to_front) + rest
         } else {
             rest.filter { it.kind == PromptOptionKind.KEEP_OPEN }
         }
         return prompt.copy(
-            summary = if (frontKnown) PromptSummary.POPUPS_OVERLAP else PromptSummary.POPUPS_OVERLAP_NO_MOVE,
+            summary = when {
+                failedNow -> PromptSummary.AUTO_CLOSE_FAILED
+                press != null -> PromptSummary.POPUPS_OVERLAP_PRESS
+                frontKnown -> PromptSummary.POPUPS_OVERLAP
+                else -> PromptSummary.POPUPS_OVERLAP_NO_MOVE
+            },
             cannotPressForUser = false,
             briefQuestion = false,
             options = options.toImmutableList(),
@@ -69,6 +79,9 @@ object SimplePromptOptions {
 
     /** F57: the move option's id: where it goes is the prompt's [StackHit.front], not one of the popup's own buttons. */
     const val FRONT_ID = "overlap:front"
+
+    /** F59: the press option's id: what it presses is the prompt's [FrontPress], never one of the stopped popup's buttons. */
+    const val FRONT_PRESS_ID = "overlap:front-press"
 
     fun place(bounds: ScreenBounds, screen: ScreenBounds): ScreenPlace {
         val centre = (bounds.top + bounds.bottom) / 2 - screen.top
