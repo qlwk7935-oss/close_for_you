@@ -106,6 +106,26 @@ object SimpleCloseEngineFeature {
     const val PRE_PRESS_READ_CAP_MILLIS = 250L
 
     /**
+     * F50 (에뮬레이터 P01: a Dialog judged while its window was still coming in): a popup root is judged only once two
+     * reads in a row found it standing still ([SettleRules]), at most a second after it was first seen.
+     */
+    const val SETTLE_BEFORE_JUDGING: Boolean = true
+
+    /**
+     * F51 (준영 SM-M446K 예스24 웹: the popup about the 2,500th of 2,600 nodes, the whole walk stopped at 1,500): after a
+     * whole walk that stopped at [WholeReadCap] with no popup root, one short read from the end of the tree ([TailRead],
+     * its own caps). False = as before F51.
+     */
+    const val TAIL_READ_AFTER_CAP: Boolean = true
+
+    /**
+     * F52 (시연 영상 "판단 + 처리 + 결과 안내" 시간): one debug line per automatic close or ask,
+     * `TIMING detect= settle= judge= press= confirm= announce= total= result=` ([CloseTimingLine]); numbers and a result
+     * code only. Logged like the other latency lines (debuggable builds). False = no line.
+     */
+    const val TIMING_LINE: Boolean = true
+
+    /**
      * F31 (B_DEMO_RULES.md 6-2, numbers to be checked on the LG with 11번가-like chains): more than [CHAIN_MAX_AUTO]
      * automatic closes in one app within [CHAIN_WINDOW_MILLIS] are asked (`CHAIN_GUARD_ASKED_RATE`), and so is another
      * popup that appears within [CHAIN_NEW_POPUP_AFTER_PRESS_MILLIS] of our own press (`CHAIN_GUARD_ASKED_NEW_POPUP_AFTER_PRESS`).

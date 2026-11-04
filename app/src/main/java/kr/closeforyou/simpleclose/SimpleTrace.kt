@@ -37,6 +37,28 @@ enum class SimpleTrace {
     USER_CHOSE_KEEP,
     USER_CHOSE_READ,
     RECHECK_TARGET_GONE,
+    /** F48: which part of the re-check failed (with RECHECK_TARGET_GONE; detail: a `RECHECK_MISS reason=` line). */
+    RECHECK_GONE_PACKAGE,
+    RECHECK_GONE_ROOT,
+    RECHECK_GONE_TARGET,
+    /** F48: an automatic press stopped because only the button did not match: said as a failed close, asked. */
+    RECHECK_TARGET_FAILED_ASKED,
+    /** F49: the popup root moved up or down only: read and judged again (once); the fresh button the same / another one. */
+    RECHECK_SHIFTED_REREAD,
+    RECHECK_SHIFTED_SAME_TARGET,
+    RECHECK_SHIFTED_DIFFERENT,
+    /** F49: no read used the re-read in time; the popup looked at once more (asked when still there). */
+    RECHECK_SHIFTED_REREAD_UNUSED,
+    /** F49: after a root miss the screen was read again: the popup still there / gone / no tree. */
+    RECHECK_POPUP_STILL_SHOWN,
+    RECHECK_POPUP_GONE,
+    RECHECK_POPUP_UNKNOWN,
+    /** F49: the popup root did not match but the popup is still on screen: said as a failed close, asked. */
+    RECHECK_ROOT_FAILED_ASKED,
+    /** F50: the popup root is read again before it is judged (it just appeared or moved) / stood still / still moving at the limit. */
+    SETTLE_WAIT,
+    SETTLE_STABLE,
+    SETTLE_LIMIT,
     CLICK_TARGET_NOT_CLICKABLE,
     CLICKED,
     CLICK_REJECTED,
@@ -257,6 +279,12 @@ enum class SimpleTrace {
     VIDEO_NOT_VIDEO_CONTEXT,
     /** F25: a whole read stopped at its node or time cap ([WholeReadCap]); the part read is used. */
     READ_WHOLE_ABORTED,
+    /** F51: after a capped whole walk with no popup, the read from the end ([TailRead]) started, and how it ended. */
+    READ_TAIL_STARTED,
+    READ_TAIL_FOUND,
+    READ_TAIL_NONE,
+    READ_TAIL_ABORTED,
+    READ_TAIL_SUBTREE_CUT,
     /** F27 (self review): the same popup came back within a few seconds of a confirmed close: a failure after all. */
     CLOSE_REAPPEARED_LATE,
     /** F27: part of the popup is deeper than the walk goes: asked, never closed by itself. */
@@ -335,6 +363,41 @@ enum class SimpleTrace {
     RESULT_CARD_HOLD_MAX,
     RESULT_CARD_TIMED_OUT,
     RESULT_CARD_REPLACED_BY_NEXT,
+    /**
+     * F43 ([WindowBoundsRules.bottomSheet]): the active app window, with nothing wider of its app listed, is sheet-shaped at
+     * the bottom: ACCEPTED as the popup window / REJECTED_SPLIT (a split-screen divider or another app window above it).
+     */
+    BOTTOM_SHEET_WINDOW_ACCEPTED,
+    BOTTOM_SHEET_REJECTED_SPLIT,
+    /**
+     * F44 ([TalkBackResultBanner.refocus], [CardFocusRules]): the focus put back on the result card through the
+     * service's node (BY_NODE), the same after clearing its stale flag (AFTER_CLEAR), or our View (BY_VIEW, the card's
+     * window not listed); refused = FOCUS_RECLAIM_CARD_REFUSED. RESULT_CARD_WINDOW_UNKNOWN: the card's overlay window
+     * was not found among the windows (focus checks fell back to the View), once per card.
+     */
+    FOCUS_RECLAIM_CARD_BY_NODE,
+    FOCUS_RECLAIM_CARD_AFTER_CLEAR,
+    FOCUS_RECLAIM_CARD_BY_VIEW,
+    RESULT_CARD_WINDOW_UNKNOWN,
+    /**
+     * F45: [방금 닫은 내용 듣기] pressed: the card's clock started again from the press, its new limit the debug line
+     * `RESULT_CARD_READ_HOLD_MS=<ms>` ([ResultCardClock.readHoldMillis]).
+     */
+    RESULT_CARD_RESTARTED_ON_READ,
+    /**
+     * F47 ([ReclaimDeferral]): a focus move we did not make is taken back only after a short wait (DEFERRED);
+     * the person's touch or gesture came with it, so it is theirs (SKIPPED_USER_MOVE, the watch ends).
+     * Our prompt's first focus: looked after (HOLD_STARTED), moved away by TalkBack or the app (LOST), put back
+     * (RECLAIMED / RECLAIM_FAILED), ended by the person's touch (HOLD_END_BY_USER) or after 2 times (HOLD_LIMIT).
+     */
+    FOCUS_RECLAIM_DEFERRED,
+    FOCUS_RECLAIM_SKIPPED_USER_MOVE,
+    PROMPT_FOCUS_HOLD_STARTED,
+    PROMPT_FOCUS_LOST,
+    PROMPT_FOCUS_RECLAIMED,
+    PROMPT_FOCUS_RECLAIM_FAILED,
+    PROMPT_FOCUS_HOLD_END_BY_USER,
+    PROMPT_FOCUS_HOLD_LIMIT,
     ;
 
     companion object {

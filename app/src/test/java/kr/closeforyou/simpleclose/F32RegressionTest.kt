@@ -68,9 +68,10 @@ class F32RegressionTest {
         assertEquals(ActiveWindowReject.NO_WIDER_SAME_APP_WINDOW, alone(ScreenBounds(0, 0, 540, 2460)))
         // Picture in picture: small, in a corner.
         assertEquals(ActiveWindowReject.NO_WIDER_SAME_APP_WINDOW, alone(ScreenBounds(600, 1900, 1040, 2150)))
-        // A small banner window at the top, a bottom sheet window.
+        // A small banner window at the top.
         assertEquals(ActiveWindowReject.NO_WIDER_SAME_APP_WINDOW, alone(ScreenBounds(0, 80, 1080, 300)))
-        assertEquals(ActiveWindowReject.NO_WIDER_SAME_APP_WINDOW, alone(ScreenBounds(0, 1600, 1080, 2460)))
+        // F43 (준영 SM-M446K, 시험 앱 P33): a bottom sheet window alone is now a popup window (F43Test).
+        assertNull(alone(ScreenBounds(0, 1600, 1080, 2460)))
         // A keyboard is not an application window.
         val ime = WindowShape(3, WindowKind.INPUT_METHOD, 25, null, ScreenBounds(0, 1500, 1080, 2340), null)
         assertEquals(ActiveWindowReject.NOT_APPLICATION, WindowBoundsRules.activeBounded(ime, listOf(ime), lg))

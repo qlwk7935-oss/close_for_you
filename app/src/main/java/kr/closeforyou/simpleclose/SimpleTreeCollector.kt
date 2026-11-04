@@ -53,6 +53,10 @@ class TreeRead(
     val boundsFromRoot: Boolean = false,
     /** F32: the windows of this read as one debug line of codes ([WindowBoundsRules.line]); logged when it changes. */
     val windowsLine: String? = null,
+    /** F43: the active window was judged by the bottom sheet rule (debug `BOTTOM_SHEET_*`). */
+    val bottomSheet: BottomSheetVerdict? = null,
+    /** F51: the read from the end after a capped whole walk ([TailRead]); null when it did not run. */
+    val tail: TailReadInfo? = null,
 )
 
 /** F15: how a read went (debug log `READ_*`). F16: [APP_WINDOW], an app's own popup window above its main window. */
@@ -125,7 +129,8 @@ class SimpleTreeCollector(private val service: AccessibilityService) {
                     // F32: every window as a shape (its root's package compared in memory only), the active one with its root view.
                     val shapes = windows.map { shapeOf(it, packageName) }.map { if (it.id == root.windowId) it.copy(root = boundsOf(root)) else it }
                     val active = shapes.firstOrNull { it.id == root.windowId }
-                    val activeReject = if (active == null) ActiveWindowReject.NOT_LISTED else WindowBoundsRules.activeBounded(active, shapes, screen)
+                    val judgement = if (active == null) ActiveJudgement(ActiveWindowReject.NOT_LISTED) else WindowBoundsRules.activeJudgement(active, shapes, screen)
+                    val activeReject = judgement.reject
                     val bounded = activeReject == null
                     val activeByRoot = bounded && active != null && !WindowBoundsRules.bounded(active.window, null, screen)
                     val appRejects = mutableListOf<AppWindowReject>()
@@ -160,7 +165,7 @@ class SimpleTreeCollector(private val service: AccessibilityService) {
                                     return@collect TreeRead(packageName, window.id, nodes, screen, true, count.visited, count.skipped,
                                         TreeReadMode.APP_WINDOW, popupWindowId = window.id, depthCut = count.depthCut,
                                         passwordSeen = count.password, address = addressOf(root, packageName, nodes, lookUpAddress),
-                                        boundsFromRoot = windowByRoot, windowsLine = line())
+                                        boundsFromRoot = windowByRoot, windowsLine = line(), bottomSheet = judgement.sheet)
                                 }
                                 appRejects += if (count.aborted) AppWindowReject.CUT else AppWindowReject.NOT_POPUP
                                 appWindowIgnored = true
@@ -197,13 +202,13 @@ class SimpleTreeCollector(private val service: AccessibilityService) {
                                     probeVisited + count.visited, count.skipped, TreeReadMode.POPUP_SUBTREE, probeVisited, probeOutcome = outcome,
                                     appWindowIgnored = appWindowIgnored, depthCut = count.depthCut,
                                     passwordSeen = count.password, address = addressOf(root, packageName, nodes, lookUpAddress),
-                                    windowsLine = line())
+                                    windowsLine = line(), bottomSheet = judgement.sheet)
                             }
                         }
                         mode = TreeReadMode.FULL_AFTER_PROBE
                         if (!wholeIfProbeMisses) {
                             return@collect TreeRead(packageName, root.windowId, emptyList(), screen, false, probeVisited, 0, mode, probeVisited,
-                                probeOutcome = outcome, appWindowIgnored = appWindowIgnored, wholeAborted = aborted, windowsLine = line())
+                                probeOutcome = outcome, appWindowIgnored = appWindowIgnored, wholeAborted = aborted, windowsLine = line(), bottomSheet = judgement.sheet)
                         }
                     }
                     val nodes = ArrayList<NodeSnapshot>(256)
@@ -213,14 +218,36 @@ class SimpleTreeCollector(private val service: AccessibilityService) {
                     walk(root, "0", 0, nodes, screen, count)
                     // F25 (safety): a popup cut by the cap could be missing a 결제·동의 button that must keep it asked:
                     // the popup found in the part read is read again whole, its own subtree only.
-                    val complete = if (!count.aborted) nodes else WholeReadCap.complete(nodes, screen, bounded) { path ->
+                    var complete = if (!count.aborted) nodes else WholeReadCap.complete(nodes, screen, bounded) { path ->
                         val popupCount = WalkCount()
                         subtree(root, path, screen, popupCount).also { count.visited += popupCount.visited }
+                    }
+                    // F51 (예스24 웹, the popup about the 2,500th of 2,600 nodes): no popup in the part read, one short read from the end.
+                    var tail: TailReadInfo? = null
+                    if (count.aborted && TailRead.needed(true, complete, screen, bounded)) {
+                        val tailStart = SystemClock.uptimeMillis()
+                        val tailDeadline = tailStart + TailRead.MAX_MILLIS
+                        val walked = TailRead.walk(root, liveTail(screen), TailRead.MAX_NODES, SimpleCloseEngineFeature.MAX_DEPTH) { SystemClock.uptimeMillis() > tailDeadline }
+                        var subtreeVisited = 0
+                        val (assisted, tailOutcome) = TailRead.assist(complete, walked, screen, bounded) { path ->
+                            val popupCount = WalkCount(maxVisited = WholeReadCap.MAX_NODES, deadline = SystemClock.uptimeMillis() + TailRead.SUBTREE_MAX_MILLIS)
+                            subtree(root, path, screen, popupCount).also { subtreeVisited = popupCount.visited }
+                                ?.takeIf { !popupCount.aborted && popupCount.depthCut.isEmpty() }
+                                ?.also { count.password = count.password || popupCount.password }
+                        }
+                        count.visited += walked.visited + subtreeVisited
+                        // A password field the tail saw on screen leaves the screen alone either way (F28).
+                        count.password = count.password || walked.password
+                        if (tailOutcome == TailOutcome.FOUND) {
+                            complete = assisted
+                            count.depthCut += walked.depthCut.filterNot { it in count.depthCut }
+                        }
+                        tail = TailReadInfo(tailOutcome, walked.nodes.size, walked.visited + subtreeVisited, SystemClock.uptimeMillis() - tailStart)
                     }
                     TreeRead(packageName, root.windowId, complete, screen, bounded, probeVisited + count.visited, count.skipped, mode, probeVisited,
                         probeOutcome = outcome, appWindowIgnored = appWindowIgnored, wholeAborted = aborted || count.aborted, depthCut = count.depthCut,
                         passwordSeen = count.password, address = addressOf(root, packageName, complete, lookUpAddress),
-                        boundsFromRoot = activeByRoot, windowsLine = line())
+                        boundsFromRoot = activeByRoot, windowsLine = line(), bottomSheet = judgement.sheet, tail = tail)
                 } finally {
                     windows.forEach(::release)
                 }
@@ -304,32 +331,43 @@ class SimpleTreeCollector(private val service: AccessibilityService) {
      * (for a Dialog root) still a Dialog class. A few binder calls instead of a full tree read, so the
      * click re-check and the closed check stay fast. Null when the tree is unavailable.
      */
-    fun rootStillPresent(root: PopupRoot): Boolean? {
-        val active = service.rootInActiveWindow ?: return null
+    fun rootStillPresent(root: PopupRoot): Boolean? = when (rootRecheck(root).miss) {
+        null -> true
+        RecheckMiss.ROOT_UNREADABLE -> null
+        else -> false
+    }
+
+    /** F48: [rootStillPresent] with why not ([ClickRecheck.rootMiss]) and the live bounds when the node was found. */
+    fun rootRecheck(root: PopupRoot): RootRecheck {
+        val active = service.rootInActiveWindow ?: return RootRecheck(RecheckMiss.ROOT_UNREADABLE)
         release(active)
-        val node = nodeAt(root.path, root.windowId) ?: return false
+        val node = nodeAt(root.path, root.windowId) ?: return RootRecheck(RecheckMiss.ROOT_MISSING)
         try {
-            if (!node.isVisibleToUser) return false
             val bounds = Rect().also(node::getBoundsInScreen)
-            if (ScreenBounds(bounds.left, bounds.top, bounds.right, bounds.bottom) != root.bounds) return false
-            if (root.kind == PopupRootKind.ALERT_DIALOG && node.className?.contains("dialog", ignoreCase = true) != true) return false
-            return true
+            val live = ScreenBounds(bounds.left, bounds.top, bounds.right, bounds.bottom)
+            val isDialog = node.className?.contains("dialog", ignoreCase = true) == true
+            return RootRecheck(ClickRecheck.rootMiss(node.isVisibleToUser, live, root.bounds, root.kind == PopupRootKind.ALERT_DIALOG, isDialog), live)
         } catch (e: RuntimeException) {
-            return null
+            return RootRecheck(RecheckMiss.ROOT_UNREADABLE)
         } finally {
             release(node)
         }
     }
 
     /** The live node at [candidate]'s path still carries the same name (own text/description or its subtree's). */
-    fun targetMatches(candidate: CloseCandidate, windowId: Int? = null): Boolean {
-        val path = candidate.nodePath ?: return false
-        val node = nodeAt(path, windowId) ?: return false
+    fun targetMatches(candidate: CloseCandidate, windowId: Int? = null): Boolean = targetMiss(candidate, windowId) == null
+
+    /** F48: [targetMatches] with why not ([ClickRecheck.targetMiss]); null = it matches. */
+    fun targetMiss(candidate: CloseCandidate, windowId: Int? = null): RecheckMiss? {
+        val path = candidate.nodePath ?: return RecheckMiss.TARGET_MISSING
+        val node = nodeAt(path, windowId) ?: return RecheckMiss.TARGET_MISSING
         try {
             // F27 (review #5): still clickable itself, so the click never climbs to a parent (an ad card's link).
-            return node.isVisibleToUser && node.isEnabled && node.isClickable && liveName(node) == candidate.label
+            // The name is read only when the rest holds, as before (a few binder calls fewer).
+            ClickRecheck.targetMiss(node.isVisibleToUser, node.isEnabled, node.isClickable, sameName = true)?.let { return it }
+            return ClickRecheck.targetMiss(visible = true, enabled = true, clickable = true, sameName = liveName(node) == candidate.label)
         } catch (e: RuntimeException) {
-            return false
+            return RecheckMiss.TARGET_UNREADABLE
         } finally {
             release(node)
         }
@@ -535,6 +573,16 @@ class SimpleTreeCollector(private val service: AccessibilityService) {
         return node
     }
 
+    /** F50: the window [windowId] is still in the window list; null when the list could not be read. */
+    fun windowListed(windowId: Int): Boolean? {
+        val windows = try { service.windows.orEmpty() } catch (e: RuntimeException) { return null }
+        try {
+            return windows.any { it.id == windowId }
+        } finally {
+            windows.forEach(::release)
+        }
+    }
+
     private fun windowRoot(windowId: Int): AccessibilityNodeInfo? {
         val windows = service.windows.orEmpty()
         try {
@@ -565,6 +613,7 @@ class SimpleTreeCollector(private val service: AccessibilityService) {
             AccessibilityWindowInfo.TYPE_INPUT_METHOD -> WindowKind.INPUT_METHOD
             AccessibilityWindowInfo.TYPE_SYSTEM -> WindowKind.SYSTEM
             AccessibilityWindowInfo.TYPE_ACCESSIBILITY_OVERLAY -> WindowKind.ACCESSIBILITY_OVERLAY
+            AccessibilityWindowInfo.TYPE_SPLIT_SCREEN_DIVIDER -> WindowKind.SPLIT_DIVIDER
             else -> WindowKind.OTHER
         }
         // Application windows only: one binder call each (the others are never a popup of the app).
@@ -618,6 +667,21 @@ class SimpleTreeCollector(private val service: AccessibilityService) {
         override fun child(node: AccessibilityNodeInfo, index: Int): AccessibilityNodeInfo? = node.getChild(index)
         override fun release(node: AccessibilityNodeInfo) = this@SimpleTreeCollector.release(node)
         override fun expired() = SystemClock.uptimeMillis() > deadline
+    }
+
+    /** F51: live nodes for [TailRead]: the same snapshot and walk rule as [walk] (visible nodes kept, off-screen subtrees skipped). */
+    private fun liveTail(screen: ScreenBounds) = object : TailTree<AccessibilityNodeInfo> {
+        override fun look(node: AccessibilityNodeInfo, path: String): TailLook {
+            val visible = node.isVisibleToUser
+            val box = boundsOf(node)
+            val zero = box.width <= 0 || box.height <= 0
+            val password = visible && node.isPassword && !zero &&
+                box.left < screen.right && screen.left < box.right && box.top < screen.bottom && screen.top < box.bottom
+            return TailLook(if (visible) snapshot(node, path) else null, TreeWalkRules.descend(visible, box, screen), zero, password)
+        }
+        override fun childCount(node: AccessibilityNodeInfo) = node.childCount
+        override fun child(node: AccessibilityNodeInfo, index: Int): AccessibilityNodeInfo? = node.getChild(index)
+        override fun release(node: AccessibilityNodeInfo) = this@SimpleTreeCollector.release(node)
     }
 
     /** F15: the visible nodes at [path] and below it, with their full paths; null when the path is gone. */

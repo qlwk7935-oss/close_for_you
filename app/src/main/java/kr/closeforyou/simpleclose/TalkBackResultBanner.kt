@@ -11,7 +11,10 @@ import android.view.Gravity
 import android.view.View
 import android.view.WindowManager
 import android.view.accessibility.AccessibilityManager
+import android.graphics.Rect
 import android.view.accessibility.AccessibilityNodeInfo
+import android.view.accessibility.AccessibilityWindowInfo
+import kr.closeforyou.core.model.ScreenBounds
 import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.TextView
@@ -41,6 +44,11 @@ import android.widget.TextView
  * F42: a card with that button no longer goes after a fixed time: [ResultCardClock] keeps it while TalkBack's
  * focus is inside it (up to 15 s), takes it away 2 s after the focus leaves, and otherwise waits as long as the
  * person's accessibility timeout setting asks. [trace] / [timeoutMillis] are debug codes and a number only.
+ *
+ * F44 (우진 SM-F966N: the page took the focus, our View still said it was focused, so [refocus] was refused and the
+ * card was "held" for 15 s while the person heard the page): whether the focus is on the card, and putting it back,
+ * go through the service ([CardFocusRules]): the system's accessibility focus, and the card's node in its overlay
+ * window. Nodes are looked up and released in the same call (AGENTS 5); the View way is only a fallback.
  */
 class TalkBackResultBanner(
     private val service: AccessibilityService,
@@ -61,6 +69,12 @@ class TalkBackResultBanner(
     private var sentenceView: TextView? = null
     private var buttonView: View? = null
     private var focusMode = false
+    /** F45: the shown card's clock (null without the button), when it was shown, and its first timeout. */
+    private var clock: ResultCardClock? = null
+    private var clockStartedAt = 0L
+    private var cardTimeout = 0L
+    /** F44: RESULT_CARD_WINDOW_UNKNOWN once per card. */
+    private var windowUnknownLogged = false
 
     /** TalkBack (touch exploration) is on: results should go through it. */
     fun talkBackOn(): Boolean = service.getSystemService(AccessibilityManager::class.java)?.isTouchExplorationEnabled == true
@@ -126,6 +140,7 @@ class TalkBackResultBanner(
             sentenceView = view
             buttonView = button
             focusMode = takeFocus
+            windowUnknownLogged = false
             view.post {
                 val onScreen = view.isAttachedToWindow && view.isShown
                 if (!takeFocus) {
@@ -149,7 +164,11 @@ class TalkBackResultBanner(
             } else {
                 val timeout = ResultCardClock.timeoutMillis(takeFocus, hasButton = true, ::recommendedTimeout)
                 timeoutMillis(timeout)
-                watch(root, ResultCardClock(timeout), SystemClock.uptimeMillis())
+                val cardClock = ResultCardClock(timeout)
+                clock = cardClock
+                clockStartedAt = SystemClock.uptimeMillis()
+                cardTimeout = timeout
+                watch(root, cardClock, clockStartedAt)
             }
             true
         } catch (e: RuntimeException) {
@@ -177,8 +196,50 @@ class TalkBackResultBanner(
         }, ResultCardClock.CHECK_MILLIS)
     }
 
+    /** F44: the system's accessibility focus is on the card (its sentence or button); the View's flag only as a fallback. */
     private fun focusInside(): Boolean =
-        listOfNotNull(sentenceView, buttonView).any(::hasAccessibilityFocus)
+        CardFocusRules.inside(focusPlace()) { listOfNotNull(sentenceView, buttonView).any(::hasAccessibilityFocus) }
+
+    /** F44: the card's on-screen bounds, from its root view. */
+    private fun cardBounds(): ScreenBounds? {
+        val root = shown ?: return null
+        if (root.width <= 0 || root.height <= 0) return null
+        val at = IntArray(2)
+        root.getLocationOnScreen(at)
+        return ScreenBounds(at[0], at[1], at[0] + root.width, at[1] + root.height)
+    }
+
+    /** F44: [block] with the card's overlay window (looked up now, recycled after); null when it is not listed. */
+    private fun <T> withCardWindow(block: (AccessibilityWindowInfo) -> T): T? {
+        val card = cardBounds() ?: return null
+        val windows = try { service.windows } catch (_: RuntimeException) { return null }
+        try {
+            val overlays = windows.filter { it.type == AccessibilityWindowInfo.TYPE_ACCESSIBILITY_OVERLAY }
+            val id = CardFocusRules.cardWindow(card, overlays.map { w ->
+                val r = Rect().also(w::getBoundsInScreen)
+                w.id to ScreenBounds(r.left, r.top, maxOf(r.right, r.left), maxOf(r.bottom, r.top))
+            })
+            return overlays.firstOrNull { it.id == id }?.let(block)
+        } finally {
+            @Suppress("DEPRECATION") windows.forEach { it.recycle() }
+        }
+    }
+
+    /** F44: where the system's accessibility focus is, compared with the card's window (ids compared, never logged). */
+    private fun focusPlace(): CardFocusPlace {
+        val cardId = withCardWindow { it.id }
+        if (cardId == null) {
+            if (!windowUnknownLogged) {
+                windowUnknownLogged = true
+                trace(SimpleTrace.RESULT_CARD_WINDOW_UNKNOWN)
+            }
+            return CardFocusRules.place(null, null)
+        }
+        val focused = try { service.findFocus(AccessibilityNodeInfo.FOCUS_ACCESSIBILITY) } catch (_: RuntimeException) { null }
+        val focusedId = focused?.windowId
+        @Suppress("DEPRECATION") focused?.recycle()
+        return CardFocusRules.place(cardId, focusedId)
+    }
 
     /** The person's accessibility timeout ("조치를 취할 시간") for a card with words and a button. */
     private fun recommendedTimeout(original: Int): Int = try {
@@ -199,25 +260,79 @@ class TalkBackResultBanner(
         dismiss(focusPage = false)
     }
 
-    /** F17: TalkBack's focus back on the card (the page took it during the reclaim watch); false when there is no card. */
+    /**
+     * F17: TalkBack's focus back on the card (the page took it during the reclaim watch); false when there is no card.
+     * F44: through the service, on the sentence's node in the card's overlay window. Refused because the node still
+     * says "focused" (the page has the focus): its focus is cleared and asked once more (a focus move, not a click).
+     * Only when the window is not found, our View the old way (then clear and focus). The way is traced ([CardRefocus]).
+     */
     fun refocus(): Boolean {
         val view = sentenceView ?: return false
-        return focusMode && view.performAccessibilityAction(AccessibilityNodeInfo.ACTION_ACCESSIBILITY_FOCUS, null)
+        if (!focusMode) return false
+        val outcome = withCardWindow(::refocusNode)
+            ?: if (refocusView(view)) CardRefocus.BY_VIEW else CardRefocus.REFUSED
+        trace(CardFocusRules.trace(outcome))
+        return outcome != CardRefocus.REFUSED
     }
+
+    private fun refocusNode(window: AccessibilityWindowInfo): CardRefocus {
+        val root = try { window.root } catch (_: RuntimeException) { null } ?: return CardRefocus.REFUSED
+        // The sentence is the window's root, or (F41) the first child of the card's layout.
+        val sentence = if (root.childCount == 0) root else try { root.getChild(0) } catch (_: RuntimeException) { null }
+        try {
+            if (sentence == null) return CardRefocus.REFUSED
+            if (sentence.performAction(AccessibilityNodeInfo.ACTION_ACCESSIBILITY_FOCUS)) return CardRefocus.BY_NODE
+            sentence.performAction(AccessibilityNodeInfo.ACTION_CLEAR_ACCESSIBILITY_FOCUS)
+            return if (sentence.performAction(AccessibilityNodeInfo.ACTION_ACCESSIBILITY_FOCUS)) CardRefocus.BY_NODE_AFTER_CLEAR else CardRefocus.REFUSED
+        } catch (_: RuntimeException) {
+            return CardRefocus.REFUSED
+        } finally {
+            @Suppress("DEPRECATION") if (sentence != null && sentence !== root) sentence.recycle()
+            @Suppress("DEPRECATION") root.recycle()
+        }
+    }
+
+    private fun refocusView(view: TextView): Boolean = try {
+        view.performAccessibilityAction(AccessibilityNodeInfo.ACTION_ACCESSIBILITY_FOCUS, null) || run {
+            view.performAccessibilityAction(AccessibilityNodeInfo.ACTION_CLEAR_ACCESSIBILITY_FOCUS, null)
+            view.performAccessibilityAction(AccessibilityNodeInfo.ACTION_ACCESSIBILITY_FOCUS, null)
+        }
+    } catch (_: RuntimeException) {
+        false
+    }
+
+    /**
+     * F45: [방금 닫은 내용 듣기] was pressed and [chars] characters are being read at [rate]: the card's clock starts
+     * again from now ([ResultCardClock.restartOnRead]). Returns the new limit in ms (debug line), null without a card.
+     */
+    fun restartForRead(chars: Int, rate: Float?): Long? {
+        val cardClock = clock ?: return null
+        if (shown == null) return null
+        val hold = ResultCardClock.readHoldMillis(chars, rate, cardTimeout)
+        cardClock.restartOnRead(SystemClock.uptimeMillis() - clockStartedAt, hold)
+        return hold
+    }
+
+    /** F47: the system's accessibility focus is on the shown card now (its sentence or button). */
+    fun focusIsOnCard(): Boolean = shown != null && focusInside()
 
     /** A card shown with the focus is on screen: the reclaim watch puts the focus back here. */
     val holdsFocusTarget: Boolean get() = shown != null && focusMode
 
     fun dismiss(focusPage: Boolean = true) {
         val view = shown ?: return
-        shown = null
         val sentence = sentenceView
         val button = buttonView
+        // F17: removed under TalkBack's focus, the focus could fall back into the old popup: the page first.
+        // F41: also when the person had swiped onto the card's button. F44: the system's focus, asked before the card goes.
+        val holdsFocus = focusPage && (focusMode || button != null) && CardFocusRules.inside(focusPlace()) {
+            (focusMode && sentence != null && hasAccessibilityFocus(sentence)) || (button != null && hasAccessibilityFocus(button))
+        }
+        shown = null
         sentenceView = null
         buttonView = null
-        // F17: removed under TalkBack's focus, the focus could fall back into the old popup: the page first.
-        // F41: also when the person had swiped onto the card's button.
-        if (focusPage && ((focusMode && sentence != null && hasAccessibilityFocus(sentence)) || (button != null && hasAccessibilityFocus(button)))) {
+        clock = null
+        if (holdsFocus) {
             try { beforeFocusedDismiss() } catch (_: RuntimeException) {}
         }
         focusMode = false

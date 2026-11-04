@@ -9,6 +9,7 @@ import android.view.Gravity
 import android.view.View
 import android.view.WindowManager
 import android.view.accessibility.AccessibilityNodeInfo
+import android.view.accessibility.AccessibilityWindowInfo
 import androidx.annotation.StringRes
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
@@ -59,6 +60,10 @@ class AccessibilityChoiceOverlay(
      * fall back into the popup). Main thread; nothing from a stale window reaches it.
      */
     private val beforeClose: (PromptAnswer) -> Unit = {},
+    /** F46: one debug line per focus move ([PromptFocusRules.line]: codes and counts, no title, text or id). */
+    private val focusTrace: (String) -> Unit = {},
+    /** F47: the window's first focus move (FIRST_ITEM) succeeded: the caller may look after it. Once per window. */
+    private val onFirstFocus: (PromptFocus) -> Unit = {},
 ) : ChoicePromptPresenter {
     /** One prompt's voice controller and coroutine scope; [onTap] carries its generation. */
     private class PromptSession(
@@ -239,6 +244,9 @@ class AccessibilityChoiceOverlay(
         title = service.getString(R.string.ui_choice_pane_title)
     }
 
+    /** F46: [WindowFocus]'s look at the window list: our prompt's root (exactly one match), the match count, counts. */
+    private class FoundWindows(val root: AccessibilityNodeInfo?, val matches: Int, val counts: OwnWindowCounts)
+
     private companion object {
         /** C's prompt has a few dozen nodes; the cap only guards against a runaway walk. */
         const val MAX_NODES = 300
@@ -304,31 +312,81 @@ class AccessibilityChoiceOverlay(
     /**
      * Moves TalkBack's accessibility focus to a tagged node of C's own prompt window, through the
      * service (it needs flagRetrieveInteractiveWindows and flagReportViewIds, as A's config has).
-     * Looked up fresh each time; no node is kept. Nothing is logged. Device unverified.
+     * Looked up fresh each time; no node is kept. Device unverified.
+     *
+     * F46 (우진 SM-F966N: 11번가 결정 팝업, the prompt shown, the focus never came): each try's outcome is kept
+     * ([PromptFocusOutcome]) and [finished] writes one debug line ([focusTrace]). A refused focus action is asked once
+     * more after clearing the node's focus (F44: on that phone a View's focus flag stays set after the focus left);
+     * only a focus move, nothing is pressed.
      */
     private inner class WindowFocus(private val generation: Long) : PromptFocus {
         override val enabled = true
+        private val tally = PromptFocusTally()
+        private var firstReported = false
 
         override fun moveTo(target: TakeoverFocusTarget): Boolean {
-            if (keeper.status != OverlayWindowStatus.SHOWING || keeper.windowGeneration != generation) return false
-            return try {
-                val node = ownWindowRoot()?.let { findByViewId(it, target.tag) } ?: return false
-                node.refresh() && node.isVisibleToUser && node.performAction(AccessibilityNodeInfo.ACTION_ACCESSIBILITY_FOCUS)
+            if (keeper.status != OverlayWindowStatus.SHOWING || keeper.windowGeneration != generation) {
+                tally.add(PromptFocusOutcome.NOT_SHOWING, null)
+                return false
+            }
+            var counts: OwnWindowCounts? = null
+            val outcome = try {
+                val found = ownWindowRoot()
+                val root = found.root
+                if (root == null) {
+                    counts = found.counts
+                    PromptFocusRules.windowOutcome(found.matches) ?: PromptFocusOutcome.NO_OWN_WINDOW
+                } else {
+                    val node = findByViewId(root, target.tag)
+                    if (node == null) PromptFocusOutcome.NO_TARGET_NODE else PromptFocusRules.nodeOutcome(
+                        visible = node.refresh() && node.isVisibleToUser,
+                        alreadyFocused = { systemFocusIs(node) },
+                        focus = { node.performAction(AccessibilityNodeInfo.ACTION_ACCESSIBILITY_FOCUS) },
+                        clear = { node.performAction(AccessibilityNodeInfo.ACTION_CLEAR_ACCESSIBILITY_FOCUS) },
+                    )
+                }
             } catch (e: RuntimeException) {
                 // The window went away while looking (a binder or stale-node failure): just not moved.
-                false
+                PromptFocusOutcome.ERROR
+            }
+            tally.add(outcome, counts)
+            return outcome.moved
+        }
+
+        override fun finished(target: TakeoverFocusTarget, attempts: Int) {
+            try { focusTrace(tally.line(target, attempts)) } catch (_: RuntimeException) {}
+            val moved = tally.lastMoved
+            tally.clear()
+            if (target == TakeoverFocusTarget.FIRST_ITEM && moved && !firstReported) {
+                firstReported = true
+                try { onFirstFocus(this) } catch (_: RuntimeException) {}
             }
         }
 
-        private fun ownWindowRoot(): AccessibilityNodeInfo? {
+        /** The system's accessibility focus (not the node's own flag) is on [node]. */
+        private fun systemFocusIs(node: AccessibilityNodeInfo): Boolean {
+            val focused = service.findFocus(AccessibilityNodeInfo.FOCUS_ACCESSIBILITY) ?: return false
+            return focused == node
+        }
+
+        /** Our prompt's root when exactly one window is it; otherwise no root, and what was listed (counts only). */
+        private fun ownWindowRoot(): FoundWindows {
             val title = service.getString(R.string.ui_choice_pane_title)
             val state = windowState
+            var own = 0
+            var titleNull = 0
+            var titleOther = 0
             val matches = service.windows.orEmpty().mapNotNull { window ->
                 val root = window.root ?: return@mapNotNull null
                 val facts = WindowFacts(window.id, window.type, window.title, root.packageName)
+                if (facts.type == AccessibilityWindowInfo.TYPE_ACCESSIBILITY_OVERLAY && facts.rootPackageName?.toString() == service.packageName) {
+                    own += 1
+                    val windowTitle = facts.title?.toString()
+                    if (windowTitle == null) titleNull += 1 else if (windowTitle != title) titleOther += 1
+                }
                 root.takeIf { ChoiceOverlayIdentity.isOwnOverlayWindow(facts, service.packageName, title, state) }
             }
-            return matches.singleOrNull()
+            return FoundWindows(matches.singleOrNull(), matches.size, OwnWindowCounts(own, titleNull, titleOther))
         }
 
         private fun findByViewId(root: AccessibilityNodeInfo, id: String): AccessibilityNodeInfo? {

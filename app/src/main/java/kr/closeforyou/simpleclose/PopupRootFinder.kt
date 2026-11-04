@@ -503,6 +503,12 @@ object WindowBoundsRules {
 
     fun area(b: ScreenBounds): Long = maxOf(0, b.width).toLong() * maxOf(0, b.height)
 
+    private fun overlap(a: ScreenBounds, b: ScreenBounds): Long {
+        val w = minOf(a.right, b.right) - maxOf(a.left, b.left)
+        val h = minOf(a.bottom, b.bottom) - maxOf(a.top, b.top)
+        return if (w > 0 && h > 0) w.toLong() * h else 0L
+    }
+
     /**
      * F32 (LG 11/1 16:00, 시험 앱 P04 still NO_POPUP_ROOT after F30, no WINDOW_BOUNDS_FROM_ROOT): Android drops from
      * `getWindows()` a window wholly covered by the touchable regions above it, and a touch-modal Dialog's touchable
@@ -513,18 +519,68 @@ object WindowBoundsRules {
      * A split-screen or freeform app (window = root, nothing wider of its own) stays a normal window.
      * Null = bounded; otherwise why not (debug code only).
      */
-    fun activeBounded(active: WindowShape, all: List<WindowShape>, screen: ScreenBounds): ActiveWindowReject? {
-        if (active.kind != WindowKind.APPLICATION) return ActiveWindowReject.NOT_APPLICATION
-        if (!bounded(active.window, active.root, screen)) return ActiveWindowReject.NOT_BOUNDED
+    fun activeBounded(active: WindowShape, all: List<WindowShape>, screen: ScreenBounds): ActiveWindowReject? =
+        activeJudgement(active, all, screen).reject
+
+    /** [activeBounded], and (F43) whether the bottom sheet rule decided it ([ActiveJudgement.sheet], debug codes). */
+    fun activeJudgement(active: WindowShape, all: List<WindowShape>, screen: ScreenBounds): ActiveJudgement {
+        if (active.kind != WindowKind.APPLICATION) return ActiveJudgement(ActiveWindowReject.NOT_APPLICATION)
+        if (!bounded(active.window, active.root, screen)) return ActiveJudgement(ActiveWindowReject.NOT_BOUNDED)
         val root = active.root
-        if (root != null && area(root) > 0 && area(active.window) > area(root) * TOUCH_MODAL_RATIO) return null
+        if (root != null && area(root) > 0 && area(active.window) > area(root) * TOUCH_MODAL_RATIO) return ActiveJudgement(null)
         // F33 (LG 11/1, fbc54ae: `WINDOWS app=1 [S?:wPrN A*S:wPrP] active=NO_WIDER_SAME_APP_WINDOW`): the Dialog came with
         // its own size and nothing else of the app was listed. A floating window in the middle of the screen is a dialog.
-        if (floating(shown(active.window, active.root), screen)) return null
-        val shownArea = area(shown(active.window, active.root))
-        val wider = all.any { it.id != active.id && it.kind == WindowKind.APPLICATION && it.samePackage == true && area(it.window) > shownArea }
-        return if (wider) null else ActiveWindowReject.NO_WIDER_SAME_APP_WINDOW
+        val shown = shown(active.window, active.root)
+        if (floating(shown, screen)) return ActiveJudgement(null)
+        val shownArea = area(shown)
+        // F43: the wider window must lie under the active one (half of it or more), as an activity under its Dialog does;
+        // the same app's other window in split screen (above or beside it) is not one.
+        val wider = all.any {
+            it.id != active.id && it.kind == WindowKind.APPLICATION && it.samePackage == true && area(it.window) > shownArea &&
+                overlap(it.window, shown) * 2 >= shownArea
+        }
+        if (wider) return ActiveJudgement(null)
+        // F43 (준영 SM-M446K Android 16, c279ee3, 시험 앱 P33: `A*S:wPrP active=NO_WIDER_SAME_APP_WINDOW`): a Dialog
+        // stuck to the bottom (BottomSheetDialog shape) is not floating in the middle, and the activity under it is not listed.
+        return when (bottomSheet(active, shown, all, screen)) {
+            null -> ActiveJudgement(ActiveWindowReject.NO_WIDER_SAME_APP_WINDOW)
+            BottomSheetVerdict.ACCEPTED -> ActiveJudgement(null, BottomSheetVerdict.ACCEPTED)
+            BottomSheetVerdict.REJECTED_SPLIT -> ActiveJudgement(ActiveWindowReject.BOTTOM_SHEET_SPLIT, BottomSheetVerdict.REJECTED_SPLIT)
+        }
     }
+
+    /**
+     * F43: the active app window's [shown] part is a bottom sheet popup when it is sheet-shaped:
+     * - at least [SHEET_MIN_WIDTH_RATIO] of the screen's width,
+     * - its bottom within [SHEET_BOTTOM_SLACK_RATIO] of the screen's bottom (room for a navigation bar),
+     * - at most [SHEET_MAX_HEIGHT_RATIO] of the screen's height (a 50:50 split half is taller) and at least
+     *   [SHEET_MIN_AREA_RATIO] of its area;
+     * and it is not the lower part of a split screen ([BottomSheetVerdict.REJECTED_SPLIT]):
+     * - no split-screen divider window is listed, and
+     * - no other application window (another app, or the same app in another window) sits above it (its bottom at
+     *   or above the sheet's top): in split screen the upper app is on screen, so it is listed.
+     * The activity under a Dialog sheet is either not listed (covered by the touch-modal Dialog) or full-screen, never above.
+     * Null = not sheet-shaped (the old answer stands).
+     */
+    fun bottomSheet(active: WindowShape, shown: ScreenBounds, all: List<WindowShape>, screen: ScreenBounds): BottomSheetVerdict? {
+        val h = screen.height
+        val sheetShaped = shown.width >= screen.width * SHEET_MIN_WIDTH_RATIO &&
+            shown.bottom >= screen.bottom - h * SHEET_BOTTOM_SLACK_RATIO &&
+            shown.height <= h * SHEET_MAX_HEIGHT_RATIO &&
+            area(shown) >= area(screen) * SHEET_MIN_AREA_RATIO
+        if (!sheetShaped) return null
+        val divider = all.any { it.kind == WindowKind.SPLIT_DIVIDER }
+        val appAbove = all.any {
+            it.id != active.id && it.kind == WindowKind.APPLICATION && area(it.window) > 0 &&
+                it.window.bottom <= shown.top + h * SHEET_BOTTOM_SLACK_RATIO
+        }
+        return if (divider || appAbove) BottomSheetVerdict.REJECTED_SPLIT else BottomSheetVerdict.ACCEPTED
+    }
+
+    const val SHEET_MIN_WIDTH_RATIO = 0.9
+    const val SHEET_BOTTOM_SLACK_RATIO = 0.08
+    const val SHEET_MAX_HEIGHT_RATIO = 0.45
+    const val SHEET_MIN_AREA_RATIO = 0.05
 
     /**
      * F33: [FLOATING_MIN_RATIO]~[FLOATING_MAX_RATIO] of the screen, its middle within 10% (across) and 20% (down) of the
@@ -601,13 +657,19 @@ object PopupActivityName {
 }
 
 /** F32: an accessibility window's kind, as the debug line and [WindowBoundsRules.activeBounded] need it. */
-enum class WindowKind(val code: String) { APPLICATION("A"), INPUT_METHOD("I"), SYSTEM("S"), ACCESSIBILITY_OVERLAY("O"), OTHER("X") }
+enum class WindowKind(val code: String) { APPLICATION("A"), INPUT_METHOD("I"), SYSTEM("S"), ACCESSIBILITY_OVERLAY("O"), SPLIT_DIVIDER("D"), OTHER("X") }
 
 /** F32: one window of a read: its kind, z-order, whether its root is the read app's, its bounds and its root view's. Memory only. */
 data class WindowShape(val id: Int, val kind: WindowKind, val layer: Int, val samePackage: Boolean?, val window: ScreenBounds, val root: ScreenBounds?)
 
 /** F32: why the active window is not taken as a bounded popup window (debug code only). */
-enum class ActiveWindowReject { NOT_LISTED, NOT_APPLICATION, NOT_BOUNDED, NO_WIDER_SAME_APP_WINDOW }
+enum class ActiveWindowReject { NOT_LISTED, NOT_APPLICATION, NOT_BOUNDED, NO_WIDER_SAME_APP_WINDOW, BOTTOM_SHEET_SPLIT }
+
+/** F43: the bottom sheet rule's answer ([WindowBoundsRules.bottomSheet]), debug `BOTTOM_SHEET_WINDOW_ACCEPTED` / `BOTTOM_SHEET_REJECTED_SPLIT`. */
+enum class BottomSheetVerdict { ACCEPTED, REJECTED_SPLIT }
+
+/** F43: why the active window is (not) a bounded popup window, and whether the bottom sheet rule decided it. */
+data class ActiveJudgement(val reject: ActiveWindowReject?, val sheet: BottomSheetVerdict? = null)
 
 /** F32: why an application window above the active one was not read as the popup (debug code only). */
 enum class AppWindowReject { NO_ROOT, OTHER_PACKAGE, NOT_BOUNDED, NOT_POPUP, CUT }

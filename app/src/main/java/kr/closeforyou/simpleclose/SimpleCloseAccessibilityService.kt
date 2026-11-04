@@ -40,6 +40,7 @@ import kr.closeforyou.core.model.NextStep
 import kr.closeforyou.ui.voice.choice.PromptSummary
 import kr.closeforyou.core.model.PopupClassification
 import kr.closeforyou.core.model.SafetyReason
+import kr.closeforyou.core.model.ScreenBounds
 import kr.closeforyou.R
 import kr.closeforyou.decision.DecisionDemoRules
 import kr.closeforyou.decision.DecisionPopupClassifier
@@ -61,9 +62,12 @@ import kr.closeforyou.ui.voice.overlay.PromptAnnounceMode
 import kr.closeforyou.ui.voice.overlay.PromptAnnouncementListener
 import kr.closeforyou.ui.voice.overlay.PromptAnswer
 import kr.closeforyou.ui.voice.overlay.PromptControlsSupport
+import kr.closeforyou.ui.voice.overlay.PromptFocus
 import kr.closeforyou.ui.voice.overlay.PromptShowResult
 import kr.closeforyou.ui.voice.overlay.PromptSpeech
 import kr.closeforyou.ui.voice.overlay.TalkBackTakeoverPlan
+import kr.closeforyou.ui.voice.overlay.TakeoverFocusTarget
+import kr.closeforyou.ui.voice.settings.SpeechRates
 import kr.closeforyou.ui.voice.settings.UiVoicePreferences
 import kr.closeforyou.ui.voice.settings.autoCloseKinds
 
@@ -139,6 +143,11 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
      * [preClickTarget]: a copy of the node focused right before the press, its first target.
      */
     private var reclaim: FocusReclaim? = null
+    /** F47: the person's last touch or gesture event (uptime ms, -1 = none), and every focus move we saw from another app. */
+    private var lastTouchAt = -1L
+    private var focusMoveSeq = 0L
+    /** F47: our prompt's first focus, looked after for [ReclaimDeferral.PROMPT_HOLD_MILLIS]. */
+    private var promptHold: PromptHold? = null
     private var preClickTarget: AccessibilityNodeInfo? = null
     /** F17: the popup the focused result card is about, so the card's removal moves the focus to the page, not back there. */
     private var lastClosedMemory: PopupMemory? = null
@@ -160,6 +169,14 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
      * pressed again while they stay), and the popup an automatic press is working on right now.
      */
     private val autoFailed = LinkedHashSet<String>()
+    /** F49: a pending re-read after a stopped press on a popup that only moved up or down; popups already re-read once. */
+    private var shiftReread: ShiftReread? = null
+    /** F50: the last read of the popup root being waited for to stand still, and the re-read scheduled for it. */
+    private var settle: SettleState? = null
+    private var settleReread: Job? = null
+    /** F50: the last `NO_ROOT` line (logged only when it changes). */
+    private var lastNoRootLine: String? = null
+    private val shiftRereadDone = LinkedHashSet<String>()
     /** F21: per popup (same key), the normalized names of buttons pressed there that did not close it: never offered again. */
     private val failedButtons = LinkedHashMap<String, MutableSet<String>>()
     private val kept = LinkedHashSet<String>()
@@ -262,6 +279,13 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
             }, detail = { preferences.current().detail }),
             PromptControlsSupport.create(this, announcer),
             beforeClose = ::focusPageBeforeOurWindowGoes,
+            // F46: the prompt's focus moves as one code line each (Debug only).
+            focusTrace = { log.line(it) },
+            // F47: the first focus came: looked after for a short while.
+            onFirstFocus = { focus ->
+                promptHold = PromptHold(focus, SystemClock.uptimeMillis())
+                log.trace(SimpleTrace.PROMPT_FOCUS_HOLD_STARTED)
+            },
         )
         resultBanner = TalkBackResultBanner(this, beforeFocusedDismiss = {
             lastOwnFocusAt = SystemClock.uptimeMillis()
@@ -272,8 +296,16 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         if (event == null || overlay == null) return
+        // F49: subscribed only so Chromium serves its full accessibility (ui_simple_close_service.xml); never read.
+        if (ServiceEventRules.dropAtOnce(event.eventType)) return
         // F15: the person touches the screen or makes a gesture: the focus is theirs again.
         if (event.eventType in USER_TOUCH_EVENTS) {
+            lastTouchAt = SystemClock.uptimeMillis()
+            // F47: the person touches our prompt or the page: the prompt's first focus is theirs now.
+            if (promptHold != null) {
+                promptHold = null
+                log.trace(SimpleTrace.PROMPT_FOCUS_HOLD_END_BY_USER)
+            }
             // F17: the double tap that chose [닫기] on our window can arrive after the watch began: not a new touch.
             val watch = reclaim
             if (watch != null && SystemClock.uptimeMillis() - watch.armedAt > SimpleCloseEngineFeature.FOCUS_RECLAIM_TOUCH_GRACE_MILLIS) {
@@ -305,7 +337,11 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
             SystemClock.uptimeMillis() - lastOwnFocusAt > OWN_FOCUS_ECHO_MILLIS) {
             focusMovesByOthers += 1
         }
-        if (event.eventType == AccessibilityEvent.TYPE_VIEW_ACCESSIBILITY_FOCUSED) reclaim?.let { focusMovedDuringReclaim(it, event) }
+        if (event.eventType == AccessibilityEvent.TYPE_VIEW_ACCESSIBILITY_FOCUSED) {
+            focusMoveSeq += 1
+            promptHold?.let(::focusMovedDuringPromptHold)
+            reclaim?.let { focusMovedDuringReclaim(it, event) }
+        }
         val kind = when (event.eventType) {
             AccessibilityEvent.TYPE_VIEW_ACCESSIBILITY_FOCUSED -> SimpleInspectionEvent.TALKBACK_FOCUS
             AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED -> contentKind(event)
@@ -359,6 +395,13 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
             abortedPackage = expectedPackage
             abortedAt = SystemClock.uptimeMillis()
         }
+        // F51: the read from the end after the capped walk (codes and counts only).
+        read?.tail?.let { tail ->
+            log.trace(SimpleTrace.READ_TAIL_STARTED)
+            log.trace(SimpleTrace.valueOf("READ_TAIL_${tail.outcome.name}"))
+            log.latency("READ_TAIL_MS", tail.millis)
+            log.line(tail.line())
+        }
         countDuty(readStart, readMillis)
         if (read == null) {
             searchUnavailable += 1
@@ -392,6 +435,11 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
         var videoAdWaiting = false
         if (read.appWindowIgnored) log.trace(SimpleTrace.APP_WINDOW_IGNORED)
         if (read.boundsFromRoot) log.trace(SimpleTrace.WINDOW_BOUNDS_FROM_ROOT)
+        when (read.bottomSheet) {
+            BottomSheetVerdict.ACCEPTED -> log.trace(SimpleTrace.BOTTOM_SHEET_WINDOW_ACCEPTED)
+            BottomSheetVerdict.REJECTED_SPLIT -> log.trace(SimpleTrace.BOTTOM_SHEET_REJECTED_SPLIT)
+            null -> Unit
+        }
         // F32: the windows of the read as one code line, only when it changed (not per event).
         read.windowsLine?.takeIf { it != lastWindowsLine }?.let { lastWindowsLine = it; log.line(it) }
         // F22 (LG 11/1: VIDEO_AD_MARKER_FOUND ×64 in a shopping app, a banner's "AD"): video ads only in YouTube.
@@ -461,7 +509,44 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
         if (root == null) {
             log.trace(if (videoAdWaiting) SimpleTrace.VIDEO_SKIP_WAITING else SimpleTrace.NO_POPUP_ROOT)
             lastNoRootAt = SystemClock.uptimeMillis()
+            // F50: why, as codes and counts (only when it changed).
+            if (!videoAdWaiting) {
+                val off = sinceAborted?.let { WholeReadCap.ABORTED_RETRY_MILLIS - it }?.takeIf { it > 0 }
+                NoRootLine.line(read.mode, read.probeOutcome, read.nodes, read.screen, read.wholeAborted, off)
+                    .takeIf { it != lastNoRootLine }?.let { lastNoRootLine = it; log.line(it) }
+            }
             return false
+        }
+        // F52: when this popup was first found and found standing still (the read's end when not waited on).
+        var foundAt = SystemClock.uptimeMillis()
+        var settledAt = foundAt
+        // F50: judged only once it stands still (a window still coming in moves and lacks its close).
+        if (SimpleCloseEngineFeature.SETTLE_BEFORE_JUDGING) {
+            val now = SystemClock.uptimeMillis()
+            val (verdict, state) = SettleRules.next(settle, SettleRules.key(root.windowId ?: read.windowId, root.kind, root.path),
+                root.bounds, SettleRules.members(root, read.nodes), now)
+            settle = state
+            when (verdict) {
+                SettleVerdict.WAIT -> {
+                    log.trace(SimpleTrace.SETTLE_WAIT)
+                    val pkg = read.packageName
+                    settleReread?.cancel()
+                    settleReread = scope.launch {
+                        delay(SettleRules.READ_AGAIN_MILLIS)
+                        inspectionEvents.onEvent(pkg, SimpleInspectionEvent.WINDOW)
+                    }
+                    return true
+                }
+                SettleVerdict.STABLE, SettleVerdict.LIMIT -> {
+                    log.trace(if (verdict == SettleVerdict.STABLE) SimpleTrace.SETTLE_STABLE else SimpleTrace.SETTLE_LIMIT)
+                    // What the wait cost (the usual path: one read again, about READ_AGAIN_MILLIS + one read).
+                    log.latency("SETTLE_MS", now - state.firstAt)
+                    log.latency("SETTLE_READS", state.reads.toLong())
+                    foundAt = state.firstAt
+                    settledAt = now
+                }
+                SettleVerdict.STILL -> Unit
+            }
         }
         val popup = SimplePopupAnalysis.build(read.nodes, root, read.packageName, read.windowId, read.screen, screenVersion, SystemClock.uptimeMillis())
             .copy(foundByProbe = read.mode == TreeReadMode.POPUP_SUBTREE, depthCut = read.depthCut.any { it == root.path || it.startsWith("${root.path}/") })
@@ -471,7 +556,9 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
         val last = seenAt[key]
         seenAt[key] = now
         if (seenAt.size > 32) seenAt.remove(seenAt.keys.first())
-        if (last != null && now - last < SimpleCloseEngineFeature.SAME_POPUP_COOLDOWN_MILLIS) {
+        // F49: the re-read after a stopped press on a popup that moved is this popup's fresh judgement, not a repeat.
+        val rereading = shiftReread?.let { it.words == "${read.windowId}:${popup.analysis.token.contentDigest}" && now <= it.until } == true
+        if (!rereading && last != null && now - last < SimpleCloseEngineFeature.SAME_POPUP_COOLDOWN_MILLIS) {
             log.trace(SimpleTrace.SAME_POPUP_COOLDOWN)
             endSearch()
             return true
@@ -497,6 +584,7 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
         // read that saw no popup bounds when the popup really appeared. Which trigger caught it, too.
         log.trace(trigger.trace)
         if (firstEventAt != 0L) log.latency("DETECT_LATENCY_MS", now - firstEventAt)
+        val timingFirst = if (firstEventAt != 0L) firstEventAt else foundAt
         if (lastNoRootAt != 0L) log.latency("DETECT_GAP_MS", now - lastNoRootAt)
         // F13: where the time went: reads this search took, how many the guard refused, the last read's cost.
         log.latency("DETECT_READS", searchReads.toLong())
@@ -667,6 +755,18 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
         } else if (lateCloseSince.remove(waitKey) != null && decision is SimpleDecision.AutoClose) {
             log.trace(SimpleTrace.LATE_CLOSE_APPEARED)
         }
+        // F49: the fresh judgement after a re-read: used once, then forgotten (whatever was decided).
+        val reread = shiftReread?.takeIf { it.words == words }?.also { shiftReread = null }
+        if (reread != null && decision is SimpleDecision.AutoClose &&
+            !ClickRecheck.sameTarget(reread.label, reread.button, reread.root, decision.candidate.label, decision.candidate.bounds, classified.root.bounds)) {
+            // Another button now: not pressed by itself; said as a failed close and asked.
+            log.trace(SimpleTrace.RECHECK_SHIFTED_DIFFERENT)
+            rememberAutoFailed(classified)
+            tts?.stop()
+            if (prompted == null) ask(classified, classification, talkBackReadIt = false, failedNow = true)
+            return true
+        }
+        if (reread != null && decision is SimpleDecision.AutoClose) log.trace(SimpleTrace.RECHECK_SHIFTED_SAME_TARGET)
         when (decision) {
             is SimpleDecision.AutoClose -> {
                 log.trace(when {
@@ -674,6 +774,7 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
                     decision.unknown -> SimpleTrace.DECIDED_AUTO_CLOSE_UNKNOWN
                     else -> SimpleTrace.DECIDED_AUTO_CLOSE
                 })
+                val timing = CloseTiming(timingFirst, foundAt, settledAt, SystemClock.uptimeMillis())
                 val approval = ActionDecision(analysis.token, ActionAuthorization.ALLOW_ONCE, persistentSetOf(), decision.candidate.id, DecisionSource.PRESET, NextStep.EXECUTE)
                 // Its own job: the inspection this runs in is replaced by the next window event.
                 pressing = words
@@ -708,10 +809,29 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
                     lastClosed.forget()
                     // F42: and its card (held while focused) goes now.
                     resultBanner?.dismissForNextPopup()
+                    var recheckMiss: RecheckMiss? = null
+                    var recheckLive: ScreenBounds? = null
                     val result = try {
-                        pressAndConfirm(classified, decision.candidate, preClickMove, watchFocus = moveFocus, prePress = prePress)
+                        pressAndConfirm(classified, decision.candidate, preClickMove, watchFocus = moveFocus, prePress = prePress,
+                            onRecheckMiss = { miss, live -> recheckMiss = miss; recheckLive = live },
+                            onClicked = { timing.clicked = SystemClock.uptimeMillis() })
                     } finally {
                         if (pressing == words) pressing = null
+                    }
+                    timing.returned = SystemClock.uptimeMillis()
+                    // F49: a stopped press: read again (a pure up/down move, once), ask (still on screen), or quiet.
+                    val missStep = recheckMiss?.let { miss ->
+                        val banner = classified.root.kind == PopupRootKind.BOTTOM_BANNER
+                        val shift = ClickRecheck.sameSizeMove(miss, classified.root.bounds, recheckLive)
+                        val done = words in shiftRereadDone
+                        val look = miss.group == RecheckGroup.ROOT && !(shift && !done) && !banner
+                        val shown = if (look) popupStillShown(classified) else null
+                        if (look) log.trace(when (shown) {
+                            true -> SimpleTrace.RECHECK_POPUP_STILL_SHOWN
+                            false -> SimpleTrace.RECHECK_POPUP_GONE
+                            null -> SimpleTrace.RECHECK_POPUP_UNKNOWN
+                        })
+                        ClickRecheck.afterMiss(miss, shift, done, shown, banner)
                     }
                     if (result.attempted) chainGuard.pressed(read.packageName, words, SystemClock.uptimeMillis(), automatic = true)
                     val stop = stopped
@@ -727,6 +847,42 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
                         // F24: the page settles after a close; no fast re-reads of it.
                         inspectionEvents.backOff()
                         speakClosedThenFocusPage(classified, moveFocus)
+                        timing.announced = SystemClock.uptimeMillis()
+                    } else if (missStep == MissStep.REREAD) {
+                        // F49: nothing pressed; the screen is read and judged again from the start (finding, kind, button,
+                        // B's verdict), once for this popup. Only the same close button is pressed then, re-checked again.
+                        shiftRereadDone += words
+                        if (shiftRereadDone.size > 32) shiftRereadDone.remove(shiftRereadDone.first())
+                        val mine = ShiftReread(words, decision.candidate.label, decision.candidate.bounds, classified.root.bounds,
+                            SystemClock.uptimeMillis() + SHIFT_REREAD_MILLIS)
+                        shiftReread = mine
+                        log.trace(SimpleTrace.RECHECK_SHIFTED_REREAD)
+                        // After this job (a look-up is refused while an action runs), as a window event (not throttled).
+                        val pkg = read.packageName
+                        scope.launch {
+                            delay(SHIFT_REREAD_DELAY_MILLIS)
+                            inspectionEvents.onEvent(pkg, SimpleInspectionEvent.WINDOW)
+                            // No read used it (filtered, refused, no tree): the popup still on screen is asked about.
+                            delay(SHIFT_REREAD_MILLIS)
+                            if (shiftReread !== mine) return@launch
+                            shiftReread = null
+                            log.trace(SimpleTrace.RECHECK_SHIFTED_REREAD_UNUSED)
+                            if (prompted == null && !jobs.busy && popupStillShown(classified) == true && prompted == null) {
+                                rememberAutoFailed(classified)
+                                tts?.stop()
+                                log.trace(SimpleTrace.RECHECK_ROOT_FAILED_ASKED)
+                                ask(classified, classification, talkBackReadIt = false, failedNow = true)
+                            }
+                        }
+                    } else if (missStep == MissStep.ASK) {
+                        // F48/F49 (C decision): the app is in front and the popup still on screen, nothing was pressed (no
+                        // second press either, AGENTS 6-6): said as a failed close and asked, with the button still offered
+                        // (the person's own press is re-checked again). Not pressed automatically again.
+                        endReclaim(null)
+                        tts?.stop()
+                        rememberAutoFailed(classified)
+                        log.trace(if (recheckMiss?.group == RecheckGroup.TARGET) SimpleTrace.RECHECK_TARGET_FAILED_ASKED else SimpleTrace.RECHECK_ROOT_FAILED_ASKED)
+                        if (prompted == null) ask(classified, classification, talkBackReadIt = false, failedNow = true)
                     } else if (result.attempted && result.outcome != ClickOutcome.LEFT_APP) {
                         // F20: pressed and not closed (or back again): no card, no focus move, no second press; the
                         // person is asked right away, without the button that failed.
@@ -762,6 +918,15 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
                         tts?.stop()
                         handlingListener?.onHandled(HandlingReport(analysis.token, classification, approval, result))
                     }
+                    // F52: this automatic close in one line of numbers (the parts add up to total).
+                    if (SimpleCloseEngineFeature.TIMING_LINE) {
+                        log.line(CloseTimingLine.line(timing, when {
+                            stop == null && PressSuccess.isConfirmed(result) -> TimingResult.CLOSED
+                            result.attempted && result.outcome == ClickOutcome.LEFT_APP -> TimingResult.LEFT_APP
+                            result.attempted -> TimingResult.NOT_CLOSED
+                            else -> TimingResult.STOPPED
+                        }))
+                    }
                   } finally {
                     if (pressing == words) pressing = null
                   }
@@ -790,6 +955,9 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
             }
             SimpleDecision.Ask -> {
                 log.trace(SimpleTrace.DECIDED_ASK)
+                if (SimpleCloseEngineFeature.TIMING_LINE) {
+                    log.line(CloseTimingLine.line(CloseTiming(timingFirst, foundAt, settledAt, SystemClock.uptimeMillis()), TimingResult.ASKED))
+                }
                 // F14: TalkBack is on the popup (it has been reading it): our first item stays short.
                 val inside = withContext(Dispatchers.Default) { collector.accessibilityFocusInside(classified.root.bounds) }
                 log.trace(when (inside) {
@@ -921,6 +1089,14 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
         endReclaim(null)
         val content = lastClosed.current()
         log.trace(if (content != null) SimpleTrace.RESULT_HEAR_CLOSED_READ else SimpleTrace.RESULT_HEAR_CLOSED_GONE)
+        // F45: the card stays for the reading, counted from this press (the length only, never the words).
+        if (content != null) {
+            val rate = SpeechRates.resolve(preferences.current().speechRate, SpeechRates.systemRatePercent(this))
+            resultBanner?.restartForRead(content.length, rate)?.let { hold ->
+                log.trace(SimpleTrace.RESULT_CARD_RESTARTED_ON_READ)
+                log.latency("RESULT_CARD_READ_HOLD_MS", hold)
+            }
+        }
         announcer.stop()
         val request = if (content != null) {
             AnnouncementRequest(null, AnnouncementKind.CONTENT, content)
@@ -1169,11 +1345,16 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
     /** F21: this button did not close this popup: not pressed automatically again, and not offered again. */
     private fun rememberFailed(popup: SimplePopup, candidate: CloseCandidate) {
         val key = keyOf(popup)
-        autoFailed += key
-        if (autoFailed.size > 32) autoFailed.remove(autoFailed.first())
+        rememberAutoFailed(popup)
         val name = ButtonLabelRules.normalize(candidate.label ?: getString(R.string.ui_simple_x_button))
         failedButtons.getOrPut(key) { mutableSetOf() } += name
         if (failedButtons.size > 32) failedButtons.remove(failedButtons.keys.first())
+    }
+
+    /** F20: this popup is not pressed automatically again this session (asked instead). */
+    private fun rememberAutoFailed(popup: SimplePopup) {
+        autoFailed += keyOf(popup)
+        if (autoFailed.size > 32) autoFailed.remove(autoFailed.first())
     }
 
     private fun videoTrace(diag: VideoAdDiag): SimpleTrace? = when (diag) {
@@ -1194,6 +1375,7 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
      * into the popup, which it read again (LG 11/1). Main thread, a bounded walk; nothing is clicked.
      */
     private fun focusPageBeforeOurWindowGoes(answer: PromptAnswer) {
+        promptHold = null
         val kind = (answer as? PromptAnswer.Picked)?.choice?.kind ?: return
         if (kind != ChoiceKind.CLOSE_ONCE && kind != ChoiceKind.SKIP_ONCE && kind != ChoiceKind.REMEMBER_EXACT_POPUP) return
         val popup = prompted ?: return
@@ -1231,37 +1413,35 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
             val ours = if (target != null) focused?.second == target else now - lastOwnFocusAt <= OWN_FOCUS_ECHO_MILLIS
             if (!ours) log.trace(if (FocusReclaimRules.intoPopup(focused?.first, watch.memory)) SimpleTrace.FOCUS_OTHER_INTO_POPUP else SimpleTrace.FOCUS_OTHER_ON_PAGE)
             val cardHoldsFocus = watch.onBanner && resultBanner?.holdsFocusTarget == true
-            when (FocusReclaimRules.decide(focused?.first, ours, watch.memory, watch.count, SimpleCloseEngineFeature.FOCUS_RECLAIM_MAX, cardHoldsFocus)) {
+            when (val verdict = FocusReclaimRules.decide(focused?.first, ours, watch.memory, watch.count, SimpleCloseEngineFeature.FOCUS_RECLAIM_MAX, cardHoldsFocus)) {
                 ReclaimVerdict.OUR_OWN, ReclaimVerdict.LEAVE -> Unit
                 ReclaimVerdict.LIMIT -> endReclaim(SimpleTrace.FOCUS_RECLAIM_LIMIT)
-                ReclaimVerdict.RECLAIM_TO_CARD -> {
-                    lastOwnFocusAt = now
-                    if (resultBanner?.refocus() == true) {
-                        watch.count += 1
-                        watch.lastMoveAt = now
-                        log.trace(SimpleTrace.FOCUS_RECLAIM_PAGE_TO_CARD)
-                    } else {
-                        log.trace(SimpleTrace.FOCUS_RECLAIM_CARD_REFUSED)
-                    }
-                }
-                ReclaimVerdict.RECLAIM -> {
-                    lastOwnFocusAt = now
-                    if (watch.onBanner && resultBanner?.refocus() == true) {
-                        watch.count += 1
-                        watch.lastMoveAt = now
-                    } else if (target != null && collector.refocus(target)) {
-                        watch.count += 1
-                        watch.lastMoveAt = now
-                    } else {
-                        // F17: no node to go back to yet (or it is gone): take a page place now, not after the close.
-                        val focus = collector.focusPageItemKeeping(watch.memory, beforeClick = true)
-                        watch.target = focus.node
-                        if (focus.moved) {
-                            watch.count += 1
-                            watch.lastMoveAt = now
-                            log.trace(SimpleTrace.FOCUS_RECLAIM_TARGET_TAKEN)
-                        } else {
-                            log.trace(SimpleTrace.FOCUS_RECLAIM_NO_TARGET)
+                ReclaimVerdict.RECLAIM_TO_CARD, ReclaimVerdict.RECLAIM -> {
+                    // F47: not at once: the swipe that made this move may tell us so a little later.
+                    log.trace(SimpleTrace.FOCUS_RECLAIM_DEFERRED)
+                    val seq = focusMoveSeq
+                    scope.launch {
+                        delay(ReclaimDeferral.DEFER_MILLIS)
+                        val at = SystemClock.uptimeMillis()
+                        val toCard = verdict == ReclaimVerdict.RECLAIM_TO_CARD
+                        val after = ReclaimDeferral.afterDefer(
+                            active = reclaim === watch && at <= watch.until,
+                            moveAt = now,
+                            lastUserAt = ReclaimDeferral.userTouchAfterGrace(lastTouchAt, watch.armedAt, SimpleCloseEngineFeature.FOCUS_RECLAIM_TOUCH_GRACE_MILLIS),
+                            newerMove = focusMoveSeq != seq,
+                            alreadyBack = toCard && resultBanner?.focusIsOnCard() == true,
+                            reclaimed = watch.count,
+                            max = SimpleCloseEngineFeature.FOCUS_RECLAIM_MAX,
+                        )
+                        when (after) {
+                            DeferVerdict.RECLAIM -> if (toCard) reclaimToCard(watch, at) else reclaimToTarget(watch, at)
+                            DeferVerdict.SKIPPED_USER_MOVE -> {
+                                log.trace(SimpleTrace.FOCUS_RECLAIM_SKIPPED_USER_MOVE)
+                                // The touch event itself may have ended this watch already.
+                                if (reclaim === watch) endReclaim(SimpleTrace.FOCUS_RECLAIM_STOPPED_BY_USER)
+                            }
+                            DeferVerdict.LIMIT -> if (reclaim === watch) endReclaim(SimpleTrace.FOCUS_RECLAIM_LIMIT)
+                            DeferVerdict.ENDED, DeferVerdict.SUPERSEDED, DeferVerdict.ALREADY_BACK -> Unit
                         }
                     }
                 }
@@ -1271,12 +1451,116 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
         }
     }
 
+    /** F39: TalkBack's focus back on the result card (after F47's wait). */
+    private fun reclaimToCard(watch: FocusReclaim, now: Long) {
+        lastOwnFocusAt = now
+        if (resultBanner?.refocus() == true) {
+            watch.count += 1
+            watch.lastMoveAt = now
+            log.trace(SimpleTrace.FOCUS_RECLAIM_PAGE_TO_CARD)
+        } else {
+            log.trace(SimpleTrace.FOCUS_RECLAIM_CARD_REFUSED)
+        }
+    }
+
+    /** F15/F17: TalkBack's focus out of the old popup, onto the card or our page target (after F47's wait). */
+    private fun reclaimToTarget(watch: FocusReclaim, now: Long) {
+        val target = watch.target
+        lastOwnFocusAt = now
+        if (watch.onBanner && resultBanner?.refocus() == true) {
+            watch.count += 1
+            watch.lastMoveAt = now
+        } else if (target != null && collector.refocus(target)) {
+            watch.count += 1
+            watch.lastMoveAt = now
+        } else {
+            // F17: no node to go back to yet (or it is gone): take a page place now, not after the close.
+            val focus = collector.focusPageItemKeeping(watch.memory, beforeClick = true)
+            watch.target = focus.node
+            if (focus.moved) {
+                watch.count += 1
+                watch.lastMoveAt = now
+                log.trace(SimpleTrace.FOCUS_RECLAIM_TARGET_TAKEN)
+            } else {
+                log.trace(SimpleTrace.FOCUS_RECLAIM_NO_TARGET)
+            }
+        }
+    }
+
+    /**
+     * F47: a focus move into another app while our prompt's first focus is looked after (TalkBack or the app put it
+     * back on the popup, 우진 11번가 2/3): after [ReclaimDeferral.DEFER_MILLIS], with no touch or gesture of the person
+     * and the prompt still up, the focus goes back to the prompt's first item, at most [ReclaimDeferral.PROMPT_HOLD_MAX]
+     * times. Only a focus move; the person's touch ends it at once.
+     */
+    private fun focusMovedDuringPromptHold(hold: PromptHold) {
+        val now = SystemClock.uptimeMillis()
+        if (!ReclaimDeferral.promptHoldOn(hold.startedAt, now) || prompted == null) {
+            promptHold = null
+            return
+        }
+        log.trace(SimpleTrace.PROMPT_FOCUS_LOST)
+        val seq = focusMoveSeq
+        scope.launch {
+            delay(ReclaimDeferral.DEFER_MILLIS)
+            val after = ReclaimDeferral.afterDefer(
+                active = promptHold === hold && prompted != null,
+                moveAt = now,
+                lastUserAt = lastTouchAt,
+                newerMove = focusMoveSeq != seq,
+                alreadyBack = false,
+                reclaimed = hold.count,
+                max = ReclaimDeferral.PROMPT_HOLD_MAX,
+            )
+            when (after) {
+                DeferVerdict.RECLAIM -> {
+                    val moved = hold.focus.moveTo(TakeoverFocusTarget.FIRST_ITEM)
+                    hold.focus.finished(TakeoverFocusTarget.FIRST_ITEM, 1)
+                    if (moved) {
+                        hold.count += 1
+                        log.trace(SimpleTrace.PROMPT_FOCUS_RECLAIMED)
+                    } else {
+                        log.trace(SimpleTrace.PROMPT_FOCUS_RECLAIM_FAILED)
+                    }
+                }
+                DeferVerdict.SKIPPED_USER_MOVE -> {
+                    if (promptHold === hold) promptHold = null
+                    log.trace(SimpleTrace.PROMPT_FOCUS_HOLD_END_BY_USER)
+                }
+                DeferVerdict.LIMIT -> {
+                    if (promptHold === hold) promptHold = null
+                    log.trace(SimpleTrace.PROMPT_FOCUS_HOLD_LIMIT)
+                }
+                DeferVerdict.ENDED, DeferVerdict.SUPERSEDED, DeferVerdict.ALREADY_BACK -> Unit
+            }
+        }
+    }
+
     private fun endReclaim(reason: SimpleTrace?) {
         val watch = reclaim ?: return
         reclaim = null
         reason?.let(log::trace)
         log.latency("FOCUS_RECLAIMED", watch.count.toLong())
         watch.target = null
+    }
+
+    /**
+     * F49: after a stopped press, is [popup] still on screen? F50 (P01: `RECHECK_POPUP_GONE` while its Dialog window was
+     * still listed): not by its old place. A popup with its own window ([PopupRoot.windowId]): that window still listed
+     * and its app in front ([StillShownRules.byWindow]). One in the page's window: the screen read again and the popup's
+     * words found in a popup root anywhere ([PopupMemory.foundAnywhere]). True / false; null = no tree or unknown.
+     */
+    private suspend fun popupStillShown(popup: SimplePopup): Boolean? = withContext(Dispatchers.Default) {
+        val token = popup.analysis.token
+        val windowId = popup.root.windowId
+        if (windowId != null) {
+            return@withContext StillShownRules.byWindow(collector.foregroundPackage(), token.packageName, collector.windowListed(windowId))
+        }
+        val again = collector.read(token.packageName, ::allowsApp, wholeIfProbeMisses = !popup.foundByProbe,
+            capMillis = if (popup.foundByProbe) RECHECK_CAP_MILLIS else WholeReadCap.MAX_MILLIS,
+            appWindows = popup.root.kind == PopupRootKind.APP_WINDOW, lookUpAddress = false) ?: return@withContext null
+        val root = PopupRootFinder.find(again.nodes, again.screen, again.activeWindowBounded) ?: return@withContext false
+        PopupMemory.of(popup).foundAnywhere(root, again.nodes, again.screen)
     }
 
     /** The person's own press that did not confirm a close: said at once, no follow-up press (AGENTS 6-6). */
@@ -1300,6 +1584,10 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
         watchFocus: Boolean,
         /** F31: true = do not press (B's verdict changed right before it, [prePressStop]). */
         prePress: (suspend () -> Boolean)? = null,
+        /** F48: why the re-check stopped the press, when it did; F49: and the root's live bounds when it was found. */
+        onRecheckMiss: ((RecheckMiss, ScreenBounds?) -> Unit)? = null,
+        /** F52: the click was sent (its moment, for the `TIMING` line). */
+        onClicked: (() -> Unit)? = null,
     ): ActionResult {
         val token = popup.analysis.token
         var target = preClickTarget
@@ -1317,13 +1605,19 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
                     reclaim?.let { if (it.target == null) it.target = focus.node }
                 }
             }
-            val stillThere = withContext(Dispatchers.Default) {
-                collector.foregroundPackage() == token.packageName && collector.rootStillPresent(popup.root) == true &&
-                    collector.targetMatches(candidate, popup.root.windowId)
+            // F48: the same three checks in the same order, each telling why it failed (codes and edge offsets only).
+            val miss = withContext<Pair<RecheckMiss, ScreenBounds?>?>(Dispatchers.Default) {
+                ClickRecheck.packageMiss(collector.foregroundPackage(), token.packageName)?.let { return@withContext it to null }
+                val root = collector.rootRecheck(popup.root)
+                root.miss?.let { return@withContext it to root.live }
+                collector.targetMiss(candidate, popup.root.windowId)?.let { it to null }
             }
-            if (!stillThere) {
+            if (miss != null) {
                 endReclaim(null)
                 log.trace(SimpleTrace.RECHECK_TARGET_GONE)
+                log.trace(ClickRecheck.trace(miss.first.group))
+                log.line(ClickRecheck.line(miss.first, popup.root.bounds, miss.second))
+                onRecheckMiss?.invoke(miss.first, miss.second)
                 return ActionResult(token, ActionStatus.STALE, SafetyReason.STALE_SCREEN, attempted = false)
             }
             if (prePress != null && prePress()) {
@@ -1347,6 +1641,7 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
                 return ActionResult(token, ActionStatus.ATTEMPT_FAILED, SafetyReason.UNVERIFIED_TARGET, attempted = true, outcome = ClickOutcome.UNKNOWN)
             }
             log.trace(SimpleTrace.CLICKED)
+            onClicked?.invoke()
             log.trace(SimpleTrace.valueOf("CLICKED_${SimpleLabelRules.pressKind(candidate.label, candidate.role, candidate.evidence == EvidenceLevel.E4_VISUAL_ONLY).name}"))
             focusMovesByOthers = 0
             val deadline = SystemClock.uptimeMillis() + SimpleCloseEngineFeature.CONFIRM_DELAY_MILLIS
@@ -1645,6 +1940,11 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
         lastClosed.forget()
         skippedAt.clear()
         autoFailed.clear()
+        shiftReread = null
+        shiftRereadDone.clear()
+        settle = null
+        settleReread?.cancel()
+        lastNoRootLine = null
         failedButtons.clear()
         recentlyClosed.clear()
         failedSkips.clear()
@@ -1679,6 +1979,10 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
         const val REAPPEAR_WINDOW_MILLIS = 5_000L
         /** F26 (LG 11/1 올리브영 앱: CLOSE_RECHECK_MS 905): the strict re-check's read has this much, probe included. */
         const val RECHECK_CAP_MILLIS = 250L
+        /** F49: how long a re-read after a moved popup waits to be used (the next read of it is its judgement). */
+        const val SHIFT_REREAD_MILLIS = 3_000L
+        /** F49: the re-read starts this long after the stopped press's job (it must have ended). */
+        const val SHIFT_REREAD_DELAY_MILLIS = 150L
         /** F31: what 강력 모드 (and a remembered rule) closes: every kind but decisions and scams. */
         val STRONG_KINDS = setOf(PopupClassification.ADVERTISEMENT, PopupClassification.COUPON, PopupClassification.NOTICE, PopupClassification.UNKNOWN)
         /** F36: a counting-down video cover is read again this often, for at most this long. */
@@ -1712,6 +2016,11 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
  * is on. F17: [armedAt] (touches just after it are the press's own double tap), [onBanner] (the focused
  * result card is the place to go back to).
  */
+/** F47: our prompt's first focus ([focus], its window only), looked after since [startedAt]; [count] times taken back. */
+private class PromptHold(val focus: PromptFocus, val startedAt: Long) {
+    var count = 0
+}
+
 private class FocusReclaim(val memory: PopupMemory, var target: AccessibilityNodeInfo?, val armedAt: Long) {
     var until = Long.MAX_VALUE
     var count = 0

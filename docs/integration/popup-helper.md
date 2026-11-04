@@ -814,6 +814,291 @@ F26 자동 확인: 옥션 웹 감지 1.3초·재확인 308ms·`READ_DUTY_PCT` 7.
 - 진단(글자 없음): `RESULT_CARD_TIMEOUT_MS=<첫 시간 ms>`, `RESULT_CARD_HELD_FOCUS`(시간이 지났지만 초점이 있어 유지), `RESULT_CARD_FOCUS_LEFT`, `RESULT_CARD_HOLD_MAX`(15초까지 초점이 있어 사라짐), `RESULT_CARD_TIMED_OUT`, `RESULT_CARD_REPLACED_BY_NEXT`
 - 실기기 확인 필요: 오버레이 창 안 View의 `isAccessibilityFocused`가 TalkBack 초점을 그대로 보여 주는지(LG Android 12).
 
+### 8-36. F43 — P33 아래 시트를 못 찾음 (JVM 시험만, 실기기 미검증)
+
+- **증상**(준영 갤럭시 SM-M446K Android 16, c279ee3): P33이 TalkBack을 켜도 꺼도 `NO_POPUP_ROOT`. 진단 줄 `WINDOWS app=1 [... A*S:wPrP] active=NO_WIDER_SAME_APP_WINDOW`.
+- **원인(코드로 확인):** `WindowBoundsRules.activeBounded`는 활성 앱 창을 아래 셋 중 하나일 때만 팝업 창으로 본다.
+  - 창이 보이는 부분보다 1.2배 이상 크다(F30, 터치를 다 받는 Dialog).
+  - 화면 가운데 떠 있다(F33 `floating`: 가운데에서 가로 10%·세로 20% 안).
+  - 같은 앱의 더 큰 창이 함께 보인다(F12).
+  - P33 시트는 창과 뿌리가 같은 크기라 첫째가 아니다. 아래에 붙어 가운데가 아래로 치우치니 둘째도 아니다. 뒤 활동 창은 목록에 없어서 셋째도 아니다. 그래서 `NO_WIDER_SAME_APP_WINDOW`로 일반 창이 되고, 그 안에서 팝업 뿌리를 찾지 못했다. 실제 앱의 `BottomSheetDialog`도 같은 경로다.
+- **고침(`WindowBoundsRules.bottomSheet`):** 위 셋에 해당하지 않으면, 활성 앱 창이 아래 시트 모양인지 본다.
+  - 시트 모양: 폭이 화면의 90% 이상, 아래 끝이 화면 아래에서 8% 안(내비게이션 바 자리), 높이가 화면의 45% 이하(50:50 분할 화면 반쪽은 이보다 높다), 넓이가 화면의 5% 이상.
+  - 분할 화면 구분(`BOTTOM_SHEET_REJECTED_SPLIT`): 분할 화면 구분선 창(`TYPE_SPLIT_SCREEN_DIVIDER`, 진단 줄 `D`)이 목록에 있거나, 다른 앱 창(다른 앱이든 같은 앱의 다른 창이든)이 시트 위에 있으면(그 창의 아래 끝 ≤ 시트 위 끝 + 8%) 분할 화면으로 보고 받지 않는다. 분할 화면에서는 위쪽 앱이 화면에 보이므로 목록에 나온다. Dialog 시트 뒤의 활동 창은 목록에 없거나 화면 전체라서 "위에 있는 창"이 아니다.
+  - 같이 바꾼 것: F12의 "같은 앱의 더 큰 창"은 활성 창 아래에 깔려 있어야(활성 창 넓이의 절반 이상 겹침) 인정한다. 같은 앱을 위·아래 두 창으로 띄운 분할 화면에서 위 창이 더 크다는 이유만으로 아래 창을 팝업으로 보던 구멍을 막는다. Dialog와 그 활동 창은 늘 겹치므로 기존 사례는 그대로다.
+- 진단(글자 없음): `BOTTOM_SHEET_WINDOW_ACCEPTED`, `BOTTOM_SHEET_REJECTED_SPLIT`, 진단 줄 `active=BOTTOM_SHEET_SPLIT`, 창 종류 `D`(분할 구분선).
+- 고정한 기존 판정(`F43Test`, `F32RegressionTest`): P14 화면 전체 활동(NOT_BOUNDED), P15 토스트(시스템 창), 토스트 크기 앱 창, 아래 얇은 띠, 위 배너 창, 바닥에서 뜬 창, 50:50 분할 반쪽, F33 가운데 Dialog, F30 터치를 다 받는 Dialog, F12 활동 위 Dialog, 키보드. F33 시험의 "아래 시트 창만 있을 때 거절" 한 줄만 F43 뜻대로 "받음"으로 바꿨다. F29(닫힘 재확인) 시험은 노드 단위라 그대로 통과한다.
+- 검증(F43): 5개 Gradle 작업 통과, 단위 시험 debug 1330개·release 1315개 실패 0(`F43Test` 4개 추가), lintDebug 오류 0(경고 14), INTERNET 0.
+- 위험: 시트 창이 닫히는 애니메이션 동안 목록에 남으면 엄격 재확인이 잠깐 "다시 나타남"으로 볼 수 있다(F33 가운데 Dialog와 같은 조건, LG P04에서는 문제 없었음). 실기기 확인 필요.
+
+### 8-37. F44 — 결과 카드 초점 되찾기·유지가 갤럭시에서 실패 (JVM 시험만, 실기기 미검증)
+
+- **증상**(우진 SM-F966N, c279ee3, TalkBack 켬, P04 [닫기] 직접 탭, 2회): `RESULT_BANNER_FOCUSED` → 0.9초 뒤 `FOCUS_OTHER_ON_PAGE` → `FOCUS_RECLAIM_CARD_REFUSED` → `FOCUS_RECLAIMED=0` → 10초 `RESULT_CARD_HELD_FOCUS` → 15초 `RESULT_CARD_HOLD_MAX`. 사용자는 "닫았어요" 대신 P04 본문을 들었다.
+- **원인:**
+  - 되찾기(`refocus`)와 유지 판단(`focusInside`) 둘 다 우리 프로세스 View의 접근성 초점 표시(`isAccessibilityFocused`)를 봤다.
+  - 로그로 보면, 페이지가 초점을 가져간 뒤에도 이 표시가 남아 있었다. 그래서 `View.performAccessibilityAction(ACTION_ACCESSIBILITY_FOCUS)`가 "이미 초점"으로 false를 냈고, 유지 판단은 계속 "카드 안"이라고 했다.
+  - AOSP `AccessibilityWindowManager`는 초점 창이 바뀌면(`TYPE_VIEW_ACCESSIBILITY_FOCUSED`, `mAccessibilityFocusedWindowId != windowId`) 이전 창에 `clearAccessibilityFocusLocked`를 부른다. 이 호출은 핸들러로 미뤄 실행되고, 그 창 연결의 `clearAccessibilityFocus()`를 부른다.
+  - 따라서 순정 코드라면 표시가 지워져야 한다. 갤럭시에서 이 해제가 우리 오버레이 창에 닿지 않았거나 늦은 것은 **추정**이다. 제조사 소스로 확인하지 못했다.
+- **고침(`CardFocusRules`, `TalkBackResultBanner`):**
+  - 초점이 카드에 있는지는 시스템에 묻는다. `findFocus(FOCUS_ACCESSIBILITY)`로 얻은 노드의 창이 카드의 접근성 오버레이 창인지 본다.
+  - 카드 창 찾기: `getWindows()`의 `TYPE_ACCESSIBILITY_OVERLAY` 창 중 카드 View 화면 경계와 80% 이상 서로 겹치는 창. 우리 선택 창은 크기가 달라 걸리지 않는다.
+  - 창 id는 같음·다름·모름으로만 비교하고 로그에 남기지 않는다.
+  - 되찾기: 카드 창 뿌리(문장만 있으면 뿌리, F41 버튼이 있으면 첫 자식)의 노드에 서비스 쪽 `performAction(ACTION_ACCESSIBILITY_FOCUS)`를 한다. 거절되면(남은 표시) 그 노드의 초점을 지우고(`ACTION_CLEAR_ACCESSIBILITY_FOCUS`) 한 번만 다시 요청한다. 초점 이동이지 누르기가 아니다.
+  - 카드 창을 못 찾을 때만 예전 View 경로(지운 뒤 요청)를 쓴다.
+  - 노드는 그 호출 안에서 찾고 바로 놓는다(AGENTS 5장).
+  - 유지 판단: 시스템이 "카드 안"이라고 할 때만 유지한다. 페이지로 나가면 F42 규칙대로 `RESULT_CARD_FOCUS_LEFT`가 찍히고 2초 뒤 사라진다. 카드 창을 못 찾을 때만 View 표시를 쓴다(15초 상한 그대로).
+  - 사라질 때 페이지로 초점을 옮기는 F17 판단도 같은 시스템 기준이다.
+- 진단(글자 없음): `FOCUS_RECLAIM_CARD_BY_NODE`, `FOCUS_RECLAIM_CARD_AFTER_CLEAR`, `FOCUS_RECLAIM_CARD_BY_VIEW`, (기존) `FOCUS_RECLAIM_CARD_REFUSED`, `RESULT_CARD_WINDOW_UNKNOWN`(카드마다 1회).
+- 검증(F44): 5개 Gradle 작업 통과, 단위 시험 debug 1335개·release 1320개 실패 0(`F44Test` 5개 추가), lintDebug 오류 0(경고 15: 대체 View 경로의 `AccessibilityFocus` 경고 1개 추가, 시연 모드 6-0 범위), INTERNET 0.
+- 위험: 서비스가 0.5초마다 창 목록과 초점을 묻는다(카드가 떠 있는 최대 15초 동안 호출 2회씩). 실기기 확인 필요.
+- 실측(11/2 밤, 총괄 전달): 우진 SM-F966N `ac66631`에서 직접 닫기·음성 닫기·내용 듣기 각 5/5 통과. `FOCUS_RECLAIM_CARD_AFTER_CLEAR`가 반복해서 나와 "View 표시가 남는다"는 추정을 뒷받침한다(LG에서는 0회). LG도 통과.
+
+### 8-38. F45 — [방금 닫은 내용 듣기]를 누르면 카드 시간을 다시 센다 (JVM 시험만, 실기기 미검증)
+
+- **증상**(우진 SM-F966N, `ac66631`): `RESULT_HEAR_CLOSED_READ` 직후 `RESULT_CARD_HOLD_MAX`. `ResultCardClock`이 카드가 뜬 때부터 15초를 세서, 늦게 누르면 긴 내용을 읽는 도중 카드가 사라질 수 있다. 사라질 때 F17이 초점을 페이지로 옮긴다. 낭독이 실제로 끊기는지는 실기기에서 확인하지 못했다.
+- **고침:**
+  - 누르는 순간 `ResultCardClock.restartOnRead`로 시계를 다시 시작한다.
+  - 유지 상한 `readHoldMillis` = 15초 + 글자 수 × 200ms ÷ 말 빠르기. 최대 60초이고, 카드 자체 시간(F42의 `getRecommendedTimeoutMillis` 값)보다 짧지 않다.
+  - 200ms는 1배속 한국어 TTS가 띄어쓰기 포함 초당 약 5글자를 읽는다는 **추정**이다(측정하지 않음). 말 빠르기는 우리 설정(`SpeechRates.resolve`, 시스템 TTS 빠르기 따름)이며, 0.5배보다 느리면 0.5배로 친다.
+  - 예: 100글자, 1배속이면 35초.
+  - 다시 시작한 뒤에도 초점이 카드 밖으로 나가면 2초 뒤 사라진다(F42 그대로).
+  - TalkBack이 꺼져 초점이 없으면 상한까지 남는다.
+  - 다시 누르면 다시 센다.
+  - 낭독 중인지는 묻지 않고 시간만 본다.
+  - 글자 수만 쓰고 글자는 로그에 남기지 않는다.
+- 진단: `RESULT_CARD_RESTARTED_ON_READ`, `RESULT_CARD_READ_HOLD_MS=<ms>`.
+- 검증(F45): 5개 Gradle 작업 통과, 단위 시험 debug 1340개·release 1325개 실패 0(`F45Test` 5개 추가), lintDebug 오류 0(경고 15, 그대로), INTERNET 0.
+- 한계(F45): 60초가 넘는 긴 내용(1배속 약 225글자 이상)은 상한에서 카드가 사라진다. 낭독은 우리 TTS가 계속하지만, F17 초점 이동 때 TalkBack이 페이지 항목을 말하며 겹칠 수 있다(실기기 확인 필요).
+
+### 8-39. F46 — 선택 창 첫 초점이 갤럭시에서 안 옴: 진단 줄 + 비우고 다시 요청 (JVM 시험만, 실기기 미검증)
+
+- **증상**(우진 SM-F966N, `ac66631`, TalkBack 켬, [선택 창이 뜨면 안내를 맡기기] 켬, 11번가 앱 동의 포함 팝업 2회): `CLASSIFIED_DECISION` → `BLOCKED_RISKY` → `DECISION_ASKED` → `ASKED`. 선택 창은 뜨지만 초점이 오지 않았다. LG P04는 정상.
+- **코드 확인:**
+  - 결정 팝업(`DECISION_ASKED`)도 일반 묻기(P04 `DECIDED_ASK`)와 같은 `ask()` → 같은 `takeOver` 분기를 탄다.
+  - 둘 다 `READ_POPUP_TEXT_ON_PROMPT = false`라 `popupText`가 없어서 `oneVoice`이다. `FIRST_ITEM`을 25ms 간격으로 최대 40번 시도하고, 성공하면 TalkBack만 읽는다.
+  - 결정 팝업은 `cannotPressForUser`와 첫 줄 문장만 다르다. 초점 경로의 차이는 코드에서 찾지 못했다.
+- **원인 후보(추정, 실기기 확인 전):**
+  1. 갤럭시에서 View 초점 표시가 안 지워져 FOCUS가 거절됨(F44에서 결과 카드로 확인된 현상, `FOCUS_RECLAIM_CARD_AFTER_CLEAR` 반복). 선택 창도 같은 Compose 노드 경로라 가능성이 높다. 고침에 넣었다.
+  2. 창 제목 비교 실패(`NO_OWN_WINDOW`). `ChoiceOverlayIdentity`는 창 제목이 `ui_choice_pane_title`과 같아야 우리 창으로 본다. 제목은 `LayoutParams.title`로만 준다. 이것이 `AccessibilityWindowInfo.getTitle()`에 그대로 나오는지는 확인하지 못했다(**추측**, LG에서는 맞음). 새 진단 줄의 `own=`·`titleNull=`·`titleOther=`로 구분한다.
+  3. 실제 앱(11번가)에서는 TalkBack이 팝업을 읽으며 스스로 초점을 옮긴다. 우리 요청이 성공(`OK`)해도 그 뒤 TalkBack이 가져갈 수 있다. 진단 줄이 `result=OK`인데 초점이 없으면 이 경우다.
+- **고침(`PromptFocusDiagnosis.kt`, `AccessibilityChoiceOverlay.WindowFocus`):**
+  - 시도마다 결과를 `PromptFocusOutcome`으로 남긴다.
+    - 옮김: `OK`, `AFTER_CLEAR`, `ALREADY_FOCUSED`
+    - 못 옮김: `NOT_SHOWING`, `NO_OWN_WINDOW`, `MANY_OWN_WINDOWS`, `NO_TARGET_NODE`, `NOT_VISIBLE`, `REFUSED`, `ERROR`
+  - FOCUS가 거절되면 방법을 바꾼다.
+    - 시스템 초점(`findFocus`)이 이미 그 노드에 있으면 그대로 둔다(`ALREADY_FOCUSED`).
+    - 아니면 그 노드의 초점을 지우고(`ACTION_CLEAR_ACCESSIBILITY_FOCUS`) 한 번 더 요청한다(`AFTER_CLEAR`). 초점 이동이지 누르기가 아니다.
+    - `CHOICE_BUTTON` 이동도 같은 경로를 쓴다.
+  - 초점 이동 한 번(최대 40번 시도)이 끝나면 Debug 빌드에서만 `CfySimple`에 한 줄을 남긴다. 화면 글자·창 제목·id는 없다.
+    - 형식: `PROMPT_FOCUS target=FIRST_ITEM result=<마지막> attempts=<n> tries=[<결과:횟수>…] own=<우리 앱 오버레이 창 수> titleNull=<제목 없음> titleOther=<다른 제목>`
+    - 창 수 셋은 우리 창을 못 찾은 시도가 있을 때만 붙는다.
+- 공용 계약(core/model·contract)은 바꾸지 않았다. `PromptFocus`에 기본 구현이 있는 `finished`를 더한 것은 C 패키지 안의 인터페이스다.
+- 실측(11/3, 총괄 전달, `76245ff`): 우진 11번가 결정 팝업 3회 모두 `PROMPT_FOCUS target=FIRST_ITEM result=OK`(tries `NO_OWN_WINDOW:2`, `OK:1`). 그런데 초점은 1/3만 선택 창에 남았다. 원인 후보 3("요청은 성공했는데 뒤이어 초점을 가져감")에 해당하며 F47에서 다룬다.
+- 검증(F46): 5개 Gradle 작업 통과, 단위 시험 debug 1345개·release 1330개 실패 0(`F46Test` 5개 추가), lintDebug 오류 0(경고 15, 그대로), INTERNET 0.
+
+### 8-40. F47 — 되찾기 유예: 사용자 스와이프는 되돌리지 않고, 선택 창 첫 초점은 지킨다 (JVM 시험만, 실기기 미검증)
+
+- **증상 1**(우진 SM-F966N, `76245ff`, TalkBack 켬): 결과 카드에서 한 손가락 스와이프로 페이지로 나가려 하면 되돌아왔다.
+  - 로그: `FOCUS_OTHER_ON_PAGE` 25.131 → `FOCUS_RECLAIM_CARD_AFTER_CLEAR`·`FOCUS_RECLAIM_PAGE_TO_CARD` 25.134 → `FOCUS_RECLAIM_STOPPED_BY_USER` 25.348.
+  - 스와이프의 터치 이벤트가 초점 이동보다 약 214ms 늦게 왔는데, 되찾기는 3ms 만에 했다.
+- **증상 2**(같은 기기, 11번가 결정 팝업): `PROMPT_FOCUS result=OK`였는데 2/3은 첫 줄로 온 직후 초점이 원래 팝업으로 돌아갔다.
+- **고침(`ReclaimDeferral`, 순수):** 우리가 하지 않은 초점 이동을 보면 바로 되찾지 않고 `DEFER_MILLIS` 400ms 기다린다(`FOCUS_RECLAIM_DEFERRED`).
+  - 그사이에 사용자의 터치·제스처 이벤트가 오면 사용자 이동으로 보고 되찾지 않는다(`FOCUS_RECLAIM_SKIPPED_USER_MOVE`, 감시 종료). 이동 전 `USER_BEFORE_MILLIS` 500ms 안에 온 이벤트도 같다. 이벤트 종류는 `TYPE_TOUCH_INTERACTION_START`, `TYPE_GESTURE_DETECTION_START`, `TYPE_TOUCH_EXPLORATION_GESTURE_START`이며, 서비스 설정이 받는 것은 이 셋뿐이다.
+  - 그 뒤에 다른 초점 이동이 또 왔으면 그 이동의 유예가 정한다.
+  - 초점이 이미 카드에 돌아와 있으면 아무것도 안 한다.
+  - 최대 횟수(3번)는 그대로다.
+  - 400ms의 근거: 실측 지연 214ms(한 번, 우리 서비스 `notificationTimeout` 100ms)의 약 2배. 페이지가 스스로 초점을 가져간 경우에는 TalkBack이 많이 읽기 전에 되찾을 수 있는 길이다.
+- **F17 터치 유예(800ms) 확인:**
+  - 감시를 시작한 직후 800ms 안의 터치는 [닫기]를 고른 두 번 탭으로 보고 무시한다. 새 규칙에서도 이 터치는 사용자 이동으로 세지 않는다(`userTouchAfterGrace`).
+  - 실측 로그에서는 감시 시작(누른 순간)과 스와이프 사이가 카드 표시(0.9초 전)보다 길었으므로, 이 유예가 원인은 아니다(추정).
+  - 다만 감시 시작 뒤 800ms 안의 진짜 스와이프는 지금도 무시된다(한계).
+- **선택 창 첫 초점 지키기:** 첫 초점이 성공하면(`OK`·`AFTER_CLEAR`·`ALREADY_FOCUSED`, 창마다 한 번) 2초 동안 지킨다(`PROMPT_FOCUS_HOLD_STARTED`).
+  - 다른 앱 쪽으로 초점이 가면 `PROMPT_FOCUS_LOST`를 남기고 같은 400ms 유예를 거친다. 사용자 조작이 없고 선택 창이 그대로면 첫 항목으로 되찾는다(`PROMPT_FOCUS_RECLAIMED`, 실패하면 `_RECLAIM_FAILED`). 최대 2번까지이고, 넘으면 `PROMPT_FOCUS_HOLD_LIMIT`.
+  - 사용자 터치·제스처가 오면 즉시 끝난다(`PROMPT_FOCUS_HOLD_END_BY_USER`). 사용자가 고르거나 선택 창이 사라져도 끝난다.
+  - TalkBack 안내 맡기기 설정이 꺼져 있으면 `PromptFocus.NONE`이라 시작하지 않는다.
+- **바뀐 파일:**
+  - 새 파일 `simpleclose/ReclaimDeferral.kt`
+  - `SimpleCloseAccessibilityService.kt`(유예, `reclaimToCard`·`reclaimToTarget`으로 분리, `PromptHold`)
+  - `TalkBackResultBanner.focusIsOnCard`
+  - `AccessibilityChoiceOverlay`(`onFirstFocus`)
+  - `PromptFocusTally.lastMoved`
+  - `SimpleTrace`
+  - 새 시험 `F47Test`
+- 검증(F47): 5개 Gradle 작업 통과, 단위 시험 debug 1351개·release 1336개 실패 0(`F47Test` 6개 추가), lintDebug 오류 0(경고 15, 그대로), INTERNET 0.
+
+### 8-41. F48 — 누르기 직전 재확인이 왜 멈췄는지 나눠 남기고, 버튼만 안 맞으면 실패를 알린다 (JVM 시험만, 원인 미확정)
+
+- **증상**(동준 에뮬레이터 API 37, 76245ff, 시험 앱 P34 큰 레이어 #73 위쪽 여백 수정본, TalkBack 꺼짐 추정): `DETECTED_DIM_OVERLAY` → `CLASSIFIED_AD` → `BLOCKED_FORBIDDEN` → `CANDIDATE_FOUND` → `DECIDED_AUTO_CLOSE_STRONG` → `RECHECK_TARGET_GONE`. 그 뒤 안내 없이 끝났고(STOP len=0), 레이어는 그대로였다. 전날 b9827d3에서는 `CLICKED_LABELED_CLOSE`로 닫혔다.
+- **원인: 확정하지 못했다.** 코드로 확인한 것:
+  - 재확인(`pressAndConfirm`의 세 조건)과 `rootStillPresent`·`targetMatches`는 b9827d3과 76245ff 사이에 바뀌지 않았다.
+  - F43은 P34에 닿지 않는다. P34 레이어는 액티비티 창 안에 있고, 그 창은 화면 전체라 `bounded`가 거짓이다. 그래서 F43이 고친 `activeJudgement`의 뒤쪽(같은 앱 더 큰 창·아래 시트)까지 가지 않는다.
+  - P34는 `DIM_OVERLAY`라 창 id를 묶지 않는다(`bindWindow`). 세 조건 모두 그 순간의 활성 창에서 본다. 이것도 예전과 같다.
+  - LG 벨벳은 ac66631(F43 이후)에서 P34 자동 닫힘을 통과했다(11/2 23:06~, TalkBack 끔).
+  - F44~F47은 TalkBack 초점 쪽만 바꿨다. 자동 닫기 경로에서 새로 끼는 것은 F42의 `dismissForNextPopup`뿐인데, 카드가 없으면(TalkBack 끔) 아무것도 하지 않는다.
+  - → 같은 코드에서 에뮬레이터 실행마다 결과가 다른 것으로 보인다(타이밍·화면 상태). 세 조건 중 무엇이 거짓이었는지는 로그에 없었다.
+- **후보(추정, 확인 필요):**
+  - (가) 화면이 바뀌는 순간이라 활성 창이 잠깐 없음 → `NO_ACTIVE_WINDOW`.
+  - (나) 읽은 뒤 레이어 위치가 바뀜 → `ROOT_MOVED`. 예: #73 수정의 상태 표시줄 여백이 늦게 들어감, 창이 열리는 애니메이션 중에 읽음. `dt=`가 상태 표시줄 높이면 여백 쪽이다.
+  - (다) 버튼이 아직 누를 수 없거나 이름이 다름 → `TARGET_*`.
+- **바꾼 것:**
+  - **재확인 자체는 그대로다.** 세 조건, 순서, 정확히 같은 경계, 같은 이름 모두 이전과 같다(AGENTS 6-5·6-7).
+  - 실패하면 `RECHECK_TARGET_GONE`(기존 코드) 뒤에 원인을 남긴다.
+    - 갈래 코드: `RECHECK_GONE_PACKAGE` / `_ROOT` / `_TARGET`.
+    - Debug 한 줄: `RECHECK_MISS reason=…`. 이유는 `NO_ACTIVE_WINDOW`, `OTHER_APP`, `ROOT_UNREADABLE`, `ROOT_MISSING`, `ROOT_HIDDEN`, `ROOT_MOVED`, `ROOT_NOT_DIALOG`, `TARGET_MISSING`, `TARGET_HIDDEN`, `TARGET_DISABLED`, `TARGET_NOT_CLICKABLE`, `TARGET_NAME_CHANGED`, `TARGET_UNREADABLE`.
+    - `ROOT_MOVED`면 네 변이 움직인 픽셀 `dl= dt= dr= db=`도 남긴다. 글자·id·패키지는 남기지 않는다.
+  - **안내(C 결정):** 앱이 그대로 앞이고 팝업 루트도 그대로인데 버튼만 안 맞은 경우(`TARGET_*`)는 자동 닫기 실패와 같은 경로로 알린다(F20). `RECHECK_TARGET_FAILED_ASKED`를 남기고, 선택 창 첫 줄로 "대신 닫지 못했어요"를 말한다.
+    - 누른 것이 없으므로 그 버튼은 선택지에 남긴다. 사람이 고르면 다시 재확인한다.
+    - 이 팝업은 이 세션에서 다시 자동으로 누르지 않는다(`autoFailed`).
+    - 아래 배너(F37)는 지금처럼 조용히 둔다.
+  - 다른 앱으로 갔거나(`PACKAGE`) 팝업 루트가 사라지거나 바뀐 경우(`ROOT`)는 지금처럼 조용하다.
+- **P34를 통과시키는 수정은 하지 않았다.** 원인을 모른 채 재확인을 다시 하거나 느슨하게 하면 6-5·6-7을 약하게 할 수 있다. 에뮬레이터에서 `RECHECK_MISS` 줄을 받은 뒤 정한다.
+  - (가)라면: 활성 창이 없을 때만 잠깐 다시 보는 방안(세 조건은 그대로).
+  - (나)라면: 새로 읽어 다시 판단하는 방안(옛 분석으로 누르지 않음).
+- **바뀐 파일:**
+  - 새 파일 `simpleclose/ClickRecheck.kt`(순수)
+  - `SimpleTreeCollector`: `rootRecheck`·`targetMiss`. 기존 `rootStillPresent`·`targetMatches`는 이것을 감싸며 답이 같다.
+  - `SimpleCloseAccessibilityService`: `pressAndConfirm`의 `onRecheckMiss`, 자동 경로의 안내 분기, `rememberAutoFailed`.
+  - `SimpleTrace`: 코드 4개.
+  - 새 시험 `F48Test`
+- 동준 #73의 P34 시험 앱 수정(위쪽 여백)은 `5b701dd`(`origin/feature/d-new-popup-types-v2`)이고, integration에는 아직 없다(병합 안 함).
+
+### 8-42. F49 — 크롬 웹 클릭이 페이지에 닿게(이벤트 1종 추가), 위아래로만 밀린 팝업은 다시 판단, 팝업이 그대로면 항상 묻기 (JVM 시험만, 에뮬레이터 미검증)
+
+- **P13 웹 클릭(메인 세션 에뮬레이터 Pixel_8 API 37, WebView 145.0.7632.218, 7a3912c):**
+  - 증상: 우리 서비스만 켰을 때 3/3 `CLICKED_LABELED_CLOSE` → `NOT_CLOSED_STILL_THERE`, 페이지 콘솔에 클릭이 안 찍힘. TalkBack이나 A 서비스(typeViewScrolled를 받음)를 같이 켜면 1/1 닫힘.
+  - 근거(메인 세션이 확인한 Chromium 소스 `AccessibilityStateDelegateImpl`): 켜진 서비스의 이벤트 마스크에 VIEW_SELECTED·VIEW_SCROLLED·ANNOUNCEMENT 중 하나가 있어야 웹 접근성을 온전히 켠다. 우리 서비스 설정에는 셋 다 없었다.
+  - 고침: `ui_simple_close_service.xml` `accessibilityEventTypes`에 `typeViewScrolled`만 더했다. 권한·capability는 그대로다(`canPerformGestures` false).
+  - 이 이벤트는 `onAccessibilityEvent` 맨 앞에서 바로 버린다(`ServiceEventRules.dropAtOnce`). 트리 읽기나 재검사 예약은 없다.
+  - LG(Android 12, 옛 WebView)는 이 판정 전 버전이라 됐던 것으로 본다(메인 세션 판단).
+- **P34 위아래 밀림(동준 7a3912c ×5: 3/5 닫힘, 2/5 `RECHECK_GONE_ROOT`):**
+  - 2/5의 `RECHECK_MISS`: `reason=ROOT_MOVED dl=0 dt=-53 dr=0 db=-53`, `dl=0 dt=16 dr=0 db=16`. 시험 앱 #73 insets가 첫 화면 직후 레이어를 민 것이다.
+  - 고침: 크기가 같고 위아래로만 밀렸으면(`dl=dr=0`, `dt=db≠0`, 화면 높이의 25% 이하, `ClickRecheck.verticalShift`) 그 좌표로 누르지 않는다. `RECHECK_SHIFTED_REREAD`를 남기고 화면을 새로 읽어 감지·분류·후보·B 판정을 처음부터 다시 한다.
+    - 새 판단이 같은 닫기 버튼(같은 이름, 루트 안 같은 위치·크기, `sameTarget`)을 고르면 `RECHECK_SHIFTED_SAME_TARGET`. 그 새 판단으로 재확인부터 다시 거쳐 누른다.
+    - 다른 버튼이면 `RECHECK_SHIFTED_DIFFERENT`. 누르지 않고 실패 안내와 선택 창을 띄운다.
+    - 다시 판단은 팝업당 1번이다(`shiftRereadDone`).
+    - 다시 읽기가 3초 안에 쓰이지 않으면 `RECHECK_SHIFTED_REREAD_UNUSED`. 한 번 더 보고, 팝업이 그대로면 묻는다.
+  - 누른 적이 없으므로 규칙 6과 부딪히지 않는다. 재확인(규칙 5)과 옛 분석 금지(규칙 7)는 그대로다.
+- **APP-16(물음)과 APP-17(조용함)이 갈린 이유(코드로 찾음):**
+  - 팝업 열쇠(`PopupRoot.key`)에 경계가 들어 있어서, 밀린 레이어는 새 팝업 열쇠가 된다.
+  - 밀린 화면을 읽은 시점이 첫 누르기 작업 도중이면, 그 열쇠가 "본 것"(`seenAt`)으로 찍힌 뒤 `SAME_POPUP_COOLDOWN`으로 끝난다. 화면이 멈춰 있으면 이벤트가 더 오지 않아 조용히 끝난다(APP-17).
+  - 작업이 끝난 뒤였으면 다시 처리됐다(APP-16). 다만 그 두 번째 처리가 어느 실패 경로로 "대신 닫지 못했어요"가 됐는지는 그 회차의 줄이 있어야 확정할 수 있다.
+- **팝업이 그대로면 항상 묻기(C 결정, `ClickRecheck.afterMiss`):** 자동 누르기가 재확인에서 멈추면 다음 셋 중 하나다.
+  - 다른 앱이 앞(`PACKAGE`) → 조용히.
+  - 위아래 밀림 첫 번째 → 다시 판단.
+  - 그 밖 → 루트가 안 맞은 경우는 화면을 다시 읽어(`popupStillShown`, `PopupMemory.reappearance`, 밀린 것도 같은 팝업) `RECHECK_POPUP_STILL_SHOWN` / `_GONE` / `_UNKNOWN`을 남긴다.
+    - 그대로면 실패 안내와 선택 창(`RECHECK_ROOT_FAILED_ASKED`)이다. 버튼만 안 맞은 경우는 `RECHECK_TARGET_FAILED_ASKED`.
+    - 사라졌거나 모르면 조용히.
+    - 아래 배너는 지금처럼 조용히(F37).
+  - 다시 판단 뒤에 또 멈춘 경우도 같은 규칙으로 묻는다.
+  - 사람이 직접 고른 누르기의 STALE 안내(`speakOwnPress`)는 그대로다.
+- **바뀐 파일:**
+  - `res/xml/ui_simple_close_service.xml`
+  - 새 파일 `simpleclose/ServiceEventRules.kt`
+  - `ClickRecheck.kt`: `verticalShift`, `afterMiss`, `sameTarget`, `MissStep`, `ShiftReread`. F48의 `saysFailure`는 `afterMiss`로 바뀜.
+  - `SimpleCloseAccessibilityService.kt`
+  - `SimpleTrace`: 코드 9개
+  - `F48Test`(안내 시험 1개를 새 규칙으로)
+  - 새 시험 `F49Test`
+
+### 8-43. F50 — 창이 멈춘 뒤 판단, 창으로 "팝업 그대로" 판단, 감지 없음 진단 (JVM 시험만, 에뮬레이터 미검증)
+
+- **증상**(메인 세션 에뮬레이터 Pixel_8 API 37, c0dbf75, 시험 앱 1f990c7, TalkBack 끔). 서비스는 매 회 다시 시작했다.
+  - **P01 6회:** 닫힘 2, 물음 3, 조용히 끝 1.
+    - 물음 3회: `READ_WHOLE_ABORTED` → `DETECTED_DIALOG_WINDOW` → `POPUP_TEXTS=3` → `CANDIDATE_NONE` → `DECIDED_ASK`. 닫힌 회차는 `POPUP_TEXTS=4`, `CANDIDATE_FOUND`였다. 창이 열리는 애니메이션 중에 읽어서 닫기 버튼이 아직 트리에 없었다.
+    - 조용히 끝 1회: `RECHECK_MISS reason=ROOT_MOVED dl=-42 dt=821 dr=-42 db=821` → `RECHECK_POPUP_GONE`. 그런데 대화상자 창은 화면에 그대로 있었다.
+  - **P34 8회:** 3회는 13초 동안 `DETECTED_*`가 없었다(읽기 9번).
+- **1. 멈춘 뒤 판단(`SettleRules`, `SETTLE_BEFORE_JUDGING`):**
+  - 팝업 루트를 처음 봤거나, 직전 읽기와 비교해 경계나 루트 안 노드 수가 바뀌었으면 판단(분류·후보·결정)을 미룬다. `SETTLE_WAIT`를 남기고 150ms 뒤 다시 읽는다(창 이벤트로).
+  - 두 번 연속 같으면 판단한다(`SETTLE_STABLE`). 처음 본 지 1초가 지났거나 5번 읽어도 계속 바뀌면 그때 상태로 판단한다(`SETTLE_LIMIT`, 지금까지의 규칙).
+  - 기다리는 동안에는 누르지도 말하지도 않는다.
+  - 값의 근거: Android 기본 애니메이션 시간 `config_shortAnimTime` 200ms, `config_mediumAnimTime` 400ms, `config_longAnimTime` 500ms.
+    - 150ms마다 읽으면 들어오는 창을 적어도 한 번은 움직이는 중에, 그다음은 멈춘 뒤에 본다.
+    - 상한 1초는 가장 긴 값의 2배다.
+  - 같은 팝업인지는 창·종류·경로로 본다(경계는 넣지 않음). 2초 동안 안 보이면 새로 본 것으로 친다.
+  - 정상 경로 비용: 새 팝업마다 다시 읽기 한 번(150ms + 읽기 한 번). `SETTLE_MS`·`SETTLE_READS`로 남긴다.
+  - "후보 없음이면 한 번 더 읽기"는 따로 넣지 않았다. 닫기 버튼이 늦게 생기면 노드 수가 바뀌므로 settle이 다시 읽는다.
+- **2. 팝업 그대로 판단(`popupStillShown`):**
+  - 자기 창이 있는 팝업(`PopupRoot.windowId`, Dialog 창 등): 그 창이 아직 창 목록에 있고 그 앱이 앞이면 그대로다(`StillShownRules.byWindow`). 경계는 보지 않는다.
+  - 페이지 창 안 팝업: 다시 읽어서 팝업 루트 안에 우리 글자가 있으면 그대로다(`PopupMemory.foundAnywhere`, 위치는 비교 안 함).
+  - 원인: 예전 판단은 첫 읽기 자리(애니메이션 중, 821px 아래)와 겹치는지를 봤다. 그래서 멈춘 대화상자를 "사라짐"으로 봤다.
+- **다시 판단 대상 넓힘(`ClickRecheck.sameSizeMove`):** 크기가 같은 이동이면 좌우·멀리 움직여도 F49 다시 판단(새로 읽어 처음부터, 팝업당 1번)을 한다. 25% 상한은 뺐다.
+  - 근거: 옛 좌표로 누르지 않고, 새 판단과 그 판단의 재확인이 정한다. 그래서 이동 거리는 안전과 상관없다.
+  - 크기가 바뀐 경우는 여전히 넣지 않는다(다른 노드거나 아직 열리는 중). 그대로면 묻는다.
+- **3. 감지 없음 진단:** `NO_POPUP_ROOT` 때 Debug 한 줄을 남긴다. 직전 줄과 다를 때만 남긴다.
+  - 형식: `NO_ROOT mode= probe= nodes= shown= clickable= bigBlank= namedClose= aborted= wholeOffMs=`.
+  - 글자·id·패키지는 없고, 개수와 코드뿐이다.
+  - 코드로 보이는 후보(추정): 전체 읽기가 600ms 상한에서 끊기면(`READ_WHOLE_ABORTED`) 10초 동안 전체 읽기를 하지 않는다. 그동안 probe가 레이어를 못 찾으면 읽기마다 노드 0개로 끝날 수 있다. 이 줄의 `wholeOffMs`와 `nodes=0`, `probe=MISS`로 확인할 수 있다. 원인이 확인되지 않아 고치지는 않았다.
+- **바뀐 파일:**
+  - 새 파일 `simpleclose/PopupSettle.kt`(`SettleRules`, `StillShownRules`, `NoRootLine`)
+  - `PopupMemory.foundAnywhere`
+  - `ClickRecheck.sameSizeMove`(F49의 `verticalShift` 대신)
+  - `SimpleTreeCollector.windowListed`
+  - `SimpleCloseEngineFeature.SETTLE_BEFORE_JUDGING`
+  - `SimpleCloseAccessibilityService`
+  - `SimpleTrace`(코드 3개)
+  - `F49Test`(이동 시험 2개를 새 규칙으로)
+  - 새 시험 `F50Test`
+
+### 8-44. F51 — 읽기 한도에 걸린 큰 페이지에서 뒤쪽부터 한 번 더 읽기 (JVM 시험만, 실기기·에뮬레이터 미검증)
+
+- **증상**(준영 갤럭시 SM-M446K Android 16, 11/4, 예스24 웹): 노드 약 2,600개, 팝업은 걸음 순서로 약 2,500번째. 전체 읽기가 `WholeReadCap`(1,500개·0.6초)에서 멈춰 `NO_ROOT … aborted=true`.
+  - 화면 전체를 덮는 빈 상자 "닫기" 문제는 준영이 B 쪽에서 따로 고친다. F51은 읽기만 다룬다.
+- **원인(코드로 봄):**
+  - 전체 읽기는 앞에서부터(첫 자식 먼저) 걷는다. 1,500개에서 멈추면 페이지 앞부분만 남는다.
+  - `WholeReadCap.complete`는 **읽은 부분에서 찾은 팝업**만 다시 통째로 읽는다(잘린 결제·동의 버튼 보완). 읽은 부분에 팝업이 없으면 아무것도 하지 않는다.
+  - 프로브는 뒤에서부터 걷지만 200개까지이고, Dialog·어두운 배경·앞 레이어만 찾으며 노드를 남기지 않는다. 예스24 팝업은 이 셋에 걸리지 않았다(`PopupRootFinder`의 다른 규칙이 필요한 모양).
+  - 그 뒤 10초 동안은 프로브만 읽는다(`ABORTED_RETRY_MILLIS`). 그래서 팝업까지 가는 읽기가 없다.
+- **고침(`TailRead`, `TAIL_READ_AFTER_CAP`):** 전체 읽기가 한도에서 멈췄고 읽은 부분에 팝업이 없을 때만, 뒤쪽부터 한 번 더 짧게 읽는다.
+  - 마지막 자식 먼저, 크기 0인 묶음은 크기 있는 형제 뒤에, 화면 밖은 들어가지 않는다(프로브와 같은 순서). 읽은 노드는 남긴다.
+  - 앞에서 읽은 부분과 합친다(경로마다 한 번, 걸음 순서로). `PopupRootFinder`가 모든 규칙으로 판단한다.
+  - 찾은 팝업은 그 하위 트리를 다시 통째로 읽는다. 다 못 읽으면 쓰지 않는다(`SUBTREE_CUT`, F25 안전: 결제·동의 버튼이 빠진 팝업으로 판단하지 않음).
+  - 팝업이 앞쪽에 있어 읽은 부분에서 찾은 경우는 지금까지와 같다(보조 읽기 안 함).
+- **상한(숫자):**
+  - 보조 읽기 노드 400개, 시간 300ms(`TailRead.MAX_NODES`, `MAX_MILLIS`). 팝업 하위 트리 다시 읽기 200ms(`SUBTREE_MAX_MILLIS`).
+  - 한 번 읽기의 최악: 0.6초 + 0.3초 + 0.2초 = **1.1초**. 그런 페이지에서 10초에 한 번 이하(전체 읽기가 그 주기라서). F25 이전은 매번 6.1초였다.
+  - 끝에서 400개 안에 팝업이 없으면 못 찾는다(`READ_TAIL_ABORTED`). 페이지 중간 깊숙한 팝업은 여전히 놓칠 수 있다.
+- **로그(글자 없음):** `READ_TAIL_STARTED` → `READ_TAIL_FOUND`/`NONE`/`ABORTED`/`SUBTREE_CUT`, `READ_TAIL_MS`, Debug 한 줄 `TAIL_READ result= nodes= visited= ms=`.
+- **바뀐 파일:**
+  - 새 파일 `simpleclose/TailRead.kt`(`TailRead`, `TailTree`, `TailLook`, `TailWalk`, `TailOutcome`, `TailReadInfo`)
+  - `SimpleTreeCollector`(보조 읽기 호출, `liveTail`, `TreeRead.tail`)
+  - `SimpleCloseEngineFeature.TAIL_READ_AFTER_CAP`
+  - `SimpleCloseAccessibilityService`(로그)
+  - `SimpleTrace`(코드 5개)
+  - 새 시험 `F51Test`
+
+### 8-45. F52 — 자동 닫기 한 번의 단계별 시간 한 줄 (`TIMING`, JVM 시험만, 실기기·에뮬레이터 미검증)
+
+- **목적:** 시연 영상의 "판단 + 처리 + 결과 안내 = 합계" 카드에 실제 기기 로그 값을 쓰기 위해. 지금까지는 `DETECT_LATENCY_MS`, `SETTLE_MS`, `PRE_PRESS_RECHECK_MS`, `CLOSE_RECHECK_MS`가 따로 찍혀서 한 번의 닫기로 묶어 읽기 어려웠다.
+- **줄:** tag `CfySimple`, Debug 레벨(다른 latency 줄과 같음: 디버그 빌드에서만 찍힘).
+  - `TIMING detect= settle= judge= press= confirm= announce= total= result=` (ms)
+  - 숫자와 결과 코드만 들어간다. 화면 글자·패키지·창 id는 넣지 않는다.
+  - 플래그 `SimpleCloseEngineFeature.TIMING_LINE`(기본 켬). 순수 함수 `CloseTimingLine.line`.
+- **구간 경계(시각은 uptime ms, 각 구간은 앞 구간이 끝난 곳에서 시작하므로 합이 total과 같다):**
+  - 시작: 그 탐색의 첫 이벤트(`firstEventAt`, `DETECT_LATENCY_MS`와 같은 기준). 이벤트가 없던 읽기면 팝업을 처음 찾은 읽기의 끝(이때 detect=0).
+  - **detect:** 시작 → 팝업 루트를 처음 찾은 읽기가 끝난 때(F50 멈춤 판단의 첫 목격).
+  - **settle:** 첫 목격 → 멈춘 것을 확인한 읽기가 끝난 때(`SETTLE_STABLE`/`SETTLE_LIMIT`, `SETTLE_MS`와 같음). 기다리지 않았으면 0.
+  - **judge:** 멈춤 확인 → 결정(`DECIDED_AUTO_CLOSE*`/`DECIDED_ASK`). 분석, B 분류(`classifier.classify`), 프리셋·안전 판단, 기억 규칙 조회를 포함한다.
+  - **press:** 결정 → 클릭을 보낸 때(`CLICKED`). TalkBack 초점 위치 확인, 누르기 직전 재확인(앱·루트·버튼), B의 누르기 직전 재판단(`PRE_PRESS_RECHECK_MS`)을 포함한다. 클릭하지 않았으면 재확인이 끝난 때까지.
+  - **confirm:** 클릭 → 닫힘 확인이 끝난 때. 250ms 간격으로 루트가 사라졌는지 보고, 엄격 재확인 다시 읽기(`CLOSE_RECHECK_MS`)까지 포함한다.
+  - **announce:** 닫힘 확인 → 결과 문장("광고를 닫았어요")을 **요청한** 때. TalkBack 결과 카드를 띄웠거나 우리 TTS에 넘긴 시점이다. 그 사이의 초점 정리(페이지로 옮기기, 되찾기가 조용해질 때까지 기다림)를 포함한다.
+  - **total:** 시작 → 마지막으로 도달한 경계.
+- **result:**
+  - `CLOSED`: 닫힘 확인 + 안내 요청
+  - `NOT_CLOSED`: 눌렀지만 안 닫힘(묻기로 감)
+  - `LEFT_APP`: 누른 뒤 앱을 벗어남
+  - `STOPPED`: 재확인이 누르기를 멈춤(클릭 없음, press는 재확인 끝까지)
+  - `ASKED`: 묻기로 결정. judge까지만 찍는다.
+  - 닿지 않은 구간은 빠진다(예: `NOT_CLOSED`에는 announce가 없다).
+- **한계:**
+  - **TalkBack·TTS 음성이 끝난 시점은 측정하지 않는다.** announce는 요청 시점까지다. 사용자가 실제로 다 듣기까지는 문장 길이와 말 속도만큼 더 걸린다.
+  - 시작은 "이 앱의 첫 이벤트"라서, 페이지가 먼저 뜨고 팝업이 나중에 뜨면 detect가 실제보다 길다(F10 `DETECT_GAP_MS`와 같은 한계).
+  - 디버그 빌드에서만 찍힌다(release는 다른 latency 줄처럼 꺼져 있음).
+- **바뀐 파일:**
+  - 새 파일 `simpleclose/CloseTiming.kt`(`CloseTiming`, `CloseTimingLine`, `TimingResult`)
+  - `SimpleCloseAccessibilityService`(경계 시각, `pressAndConfirm`의 `onClicked`)
+  - `SimpleCloseEngineFeature.TIMING_LINE`
+  - 새 시험 `F52Test`
+
 - 잔여 노드 쪽 이벤트 무시: TalkBack이 무엇을 읽을지는 앱이 막을 수 없다. 대신 포커스를 잔여 노드 밖으로 옮기는 것(F9)이 할 수 있는 전부. 웹 페이지가 닫힌 팝업을 DOM에 `aria-hidden` 없이 남기는 한, 사용자가 스와이프로 다시 만날 수 있다(한계로 기록).
 - 선택 창 PROMPT도 TalkBack 큐로? 가능은 하다: 선택 창 자체(이미 접근성 오버레이)에 paneTitle이 있고 TalkBack이 창을 읽으므로, "안내 맡기기" ON이면 우리 TTS PROMPT를 끄고 paneTitle/첫 버튼 포커스 낭독에 맡기는 방식. 단, 지금 PROMPT는 TalkBack이 팝업을 읽는 도중 끊고 들어가야 시연이 빠르므로 polite로 바꾸면 늦어질 수 있다. F11 배너가 LG에서 잘 읽히면 같은 방식으로 옮길지 정하자(의견, 미구현).
 - 검증(F1~F11 한 빌드): 5개 Gradle 작업 통과, 단위 시험 debug 1028개·release 1013개 실패 0, lintDebug 오류 0(경고 12), 병합 매니페스트 INTERNET 0·새 권한 없음.

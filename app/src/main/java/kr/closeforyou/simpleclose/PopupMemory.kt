@@ -57,6 +57,16 @@ class PopupMemory(
         )
     }
 
+    /**
+     * F50: this popup found again anywhere on screen (moved too: its first read may have been mid-animation): one of
+     * [root]'s named nodes on screen has one of our words. No place is compared. For a popup in the page's own window,
+     * where no window of its own tells whether it is still there ([StillShownRules]).
+     */
+    fun foundAnywhere(root: PopupRoot, nodes: List<NodeSnapshot>, screen: ScreenBounds): Boolean = nodes.any { node ->
+        root.contains(node) && PopupRootFinder.isVisible(node, screen) &&
+            ((node.text?.isNotBlank() == true && node.text in texts) || (node.contentDescription?.isNotBlank() == true && node.contentDescription in texts))
+    }
+
     /** Wholly above the popup's area (F9 fallback ①); false when the area is unknown. */
     fun above(nodeBounds: ScreenBounds): Boolean = area != null && nodeBounds.bottom <= area.top
 
