@@ -49,6 +49,8 @@ object SimpleLabelRules {
         "체험", "승인", "송금", "이체", "해지", "탈퇴", "개인정보", "열기", "앱에서",
         // B review 11/1: switching something on or signing up, in any verb form ("켜고", "수신하고", "다운받고").
         "켜", "수신", "충전", "신청", "응모", "다운",
+        // B_DEMO_RULES.md 12절: words for paying that were only in other lists ("구입 닫기" was pressed).
+        "구입", "결재", "납부", "출금",
     )
     private val FORBIDDEN_EN = setOf(
         "buy", "purchase", "pay", "payment", "order", "agree", "accept", "allow", "permission", "install",
@@ -64,7 +66,11 @@ object SimpleLabelRules {
      * "확인 후 닫기", "광고 보고 닫기"): the button does that action, then closes. Only a front that names
      * what is closed ("앱설치 안내 레이어 닫기", "배너 닫기") is a close.
      */
-    private val ACTION_THEN_CLOSE = Regex("""(고|후에?|며|서|면|및|해)\s*닫기\s*[\]\)>]?$""")
+    // B_DEMO_RULES.md 12절: not the last syllable of a noun ("광고 닫기", "공고 닫기", "화면 닫기", "안내서 닫기"), and a verb
+    // before it is an action too ("쿠폰 사용하기 닫기", "특가 보러 가기 닫기").
+    private val ACTION_THEN_CLOSE = Regex("""((?<![광공최재])고|후에?|며|(?<![내명안])서|(?<![화전표앞뒤])면|및|해|하기|가기)\s*닫기\s*[\]\)>]?$""")
+    /** B_DEMO_RULES.md 12절: "안 닫기", "자동 닫기", "확인 닫기", "쿠폰 적용 닫기" do not name something to close. */
+    private val NOT_A_CLOSE_FRONT = Regex("""(^|\s)(안|자동|확인|적용|사용|참여)\s*닫기\s*[\]\)>]?$""")
     private val WEB_STAY = listOf("모바일 웹으로 볼래요", "모바일 웹으로 볼게요", "모바일웹으로 볼래요", "모바일웹으로 볼게요",
         "웹으로 볼래요", "웹으로 볼게요", "웹으로 계속 보기", "모바일웹으로 보기", "모바일 웹으로 보기", "웹으로 보기")
     private val DIM_CLOSE = listOf("배경을 눌러 닫기", "배경을 눌러서 닫기", "배경 눌러 닫기")
@@ -118,7 +124,7 @@ object SimpleLabelRules {
         // A "○○ 닫기" label may describe an install sheet ("앱설치 안내 레이어 닫기"); only that form
         // tolerates the install word, and only when nothing else forbidden is in front.
         val closeTail = v2 && ENDS_WITH_CLOSE.matches(normalized) && normalized !in DIM_CLOSE
-        if (closeTail && ACTION_THEN_CLOSE.containsMatchIn(normalized)) return reject(SimpleLabelReject.FORBIDDEN)
+        if (closeTail && (ACTION_THEN_CLOSE.containsMatchIn(normalized) || NOT_A_CLOSE_FRONT.containsMatchIn(normalized))) return reject(SimpleLabelReject.FORBIDDEN)
         if (isForbidden(normalized, allowInstallWord = closeTail)) return reject(SimpleLabelReject.FORBIDDEN)
         // F21: "설치"/"다운로드" may only name what is closed ("앱설치 안내 레이어 닫기"), never be done ("설치하고 닫기", "설치 후 닫기").
         if (closeTail && INSTALL_ACTION.containsMatchIn(normalized)) return reject(SimpleLabelReject.FORBIDDEN)

@@ -20,8 +20,10 @@ internal object DecisionKeywords {
     // (e.g. "결제 선택 필요"). "설치" is grade P (navigation), so an install advertisement stays one.
     private val userDecisionKo = listOf(
         "결제", "구매", "구독", "동의", "권한", "허용", "삭제", "가입", "로그인", "계정", "개인정보",
-        "승인", "송금", "이체", "해지", "탈퇴",
+        "승인", "송금", "이체", "해지", "탈퇴", "구입", "결재", "납부", "출금",
     )
+    // B_DEMO_RULES.md 12절: everyday words that only contain a decision word ("감동의 가격", "유아동의류", "건강해지는").
+    private val notDecisionWords = Regex("[감운활행아이노충파]동의|동의보감|해지(는|고|면|다|며|길|니|네)")
     private val userDecisionEn = Regex(
         "$EN_START(pay|payment|purchase|buy|subscribe|subscription|consent|agree|accept|permission|allow|delete|login|log in|sign in|sign up|account|personal (information|data))$EN_END",
         RegexOption.IGNORE_CASE,
@@ -53,14 +55,16 @@ internal object DecisionKeywords {
     // Wording that says the popup's own meaning is unconfirmed. Not "여부" alone: "참여 여부" is ordinary.
     private val uncertainKo = listOf("미확인", "확인되지 않", "알 수 없", "불명")
 
-    fun isUserDecision(text: String): Boolean =
-        userDecisionKo.any { it in text } || userDecisionEn.containsMatchIn(text)
+    fun isUserDecision(text: String): Boolean {
+        val words = notDecisionWords.replace(text, " ")
+        return userDecisionKo.any { it in words } || userDecisionEn.containsMatchIn(text)
+    }
 
     // R1 (OVERWARNING_STUDY.md), narrowed after A's review of #30. Only purchase and membership words
     // count, and only as the condition itself: "가입하면", "결제 시", "구매하면", "sign up and get".
     // Consent, permission, personal data, deletion, cancellation and transfers never do.
     private val conditionedDecision = Regex(
-        """(결제|구매|구독|가입|로그인)\s?(하면|하시면|하고|할 때|하실 때|시(?=[\s,.!]|$))""" +
+        """(결제|구매|구입|구독|가입|로그인)\s?(하면|하시면|하고|할 때|하실 때|시(?=[\s,.!]|$))""" +
             """|$EN_START(sign up|subscribe|buy|purchase|pay|log in|sign in)$EN_END(\s+now)?\s+(and|to)\s+get$EN_END""" +
             """|$EN_START(when|if)\s+you\s+(sign up|subscribe|buy|purchase|pay|log in|sign in)$EN_END""",
         RegexOption.IGNORE_CASE,
@@ -90,7 +94,8 @@ internal object DecisionKeywords {
     fun withoutPaymentBenefits(text: String): String =
         if (isBenefitMention(text)) paymentBenefit.replace(paymentCondition.replace(text, " "), " ") else text
 
-    private val benefitWord = Regex("""할인|쿠폰|포인트|혜택|이벤트|특가|무료|증정|적립|배송|$EN_START(off|free|bonus|coupon)$EN_END""", RegexOption.IGNORE_CASE)
+    private val benefitWord = Regex("""할인|쿠폰|포인트|혜택|이벤트|특가|무료|증정|적립|배송|축하|선물|기념|$EN_START(off|free|bonus|coupon)$EN_END""", RegexOption.IGNORE_CASE)
+    private val benefitAmount = Regex("""[0-9]+\s?(%|퍼센트|원)""")
     // A question or A's fixed summary ("결제 선택 필요") is always a decision, never a mention.
     private val asksForDecision = Regex("""\?|하시겠|할까요|시겠어요|필요""")
 
@@ -98,11 +103,12 @@ internal object DecisionKeywords {
      * True only when every decision word in [text] sits inside a purchase or membership condition
      * of a benefit ("가입하면 포인트를 드립니다"). Any other decision word in the same text, such as
      * "개인정보 제공에 동의하세요" or "지금 결제하세요", keeps it a decision, as do questions, A's fixed
-     * summaries and texts no longer than a button name (10 chars).
+     * summaries and texts no longer than a button name (10 chars) that name no amount.
      */
     fun isBenefitMention(text: String): Boolean {
         // A short text is usually a button name, except a sign-up benefit named as a noun: it names no action to take.
-        if ((text.length <= 10 && !memberBenefit.containsMatchIn(text)) || !benefitWord.containsMatchIn(text) || asksForDecision.containsMatchIn(text)) return false
+        // B_DEMO_RULES.md 12절: an amount makes it a sentence, so one digit does not decide ("구매 시 5% 할인", "구매 시 10% 할인").
+        if ((text.length <= 10 && !memberBenefit.containsMatchIn(text) && !benefitAmount.containsMatchIn(text)) || !benefitWord.containsMatchIn(text) || asksForDecision.containsMatchIn(text)) return false
         val rest = stripBenefitConditions(text)
         return rest != text && !isUserDecision(rest)
     }
@@ -138,10 +144,23 @@ internal object DecisionKeywords {
     // ("보 안경" is not 보안). English words use ASCII boundaries, not `\b`, whose meaning next to
     // Hangul differs between the JDK and Android (ICU): "upgrade하세요" must match on both.
 
-    /** The text as written, its folded form, and the folded form with no spaces. */
+    /** The text as written, its folded form, and that form with a lone letter joined to what follows ("허 용해", "동 의 합 니 다"). */
     fun guardForms(text: String): List<String> {
         val folded = fold(text)
-        return listOf(text, folded, folded.replace(" ", "")).distinct()
+        return listOf(text, folded, joinSpacedLetters(folded)).distinct()
+    }
+
+    // B_DEMO_RULES.md 12절: joining every word invented decision and scam words across real words ("상품권 한정" 권한,
+    // "이상 금액" 상금, "가구 입고" 구입). Only a lone letter is joined to the word after it now.
+    private fun joinSpacedLetters(folded: String): String {
+        val out = StringBuilder()
+        var afterLone = true
+        for (token in folded.split(' ')) {
+            if (!afterLone) out.append(' ')
+            out.append(token)
+            afterLone = token.length == 1
+        }
+        return out.toString()
     }
 
     // Format characters (U+200B, U+FEFF...) and Hangul fillers that render as nothing.
@@ -159,7 +178,8 @@ internal object DecisionKeywords {
     // Today's English decision words (userDecisionEn) with ASCII boundaries, plus switching things on.
     private val decisionEn = en(
         "pay|payment|purchase|buy|subscribe|subscription|consent|agree|accept|permission|allow|delete|login|log in|" +
-            "sign in|sign up|signup|account|personal (information|data)|turn on|enable",
+            "sign in|sign up|signup|sign-up|log-in|account|personal (information|data)|turn on|enable|" +
+            "(permission|purchase|payment|subscription|account)s|(confirm|your) order",
     )
     // Consent-like wording that is not in today's list: 수락, 켜기, 선택하세요, bare 신청, 무료 체험.
     private val consentKo = Regex(
@@ -177,7 +197,9 @@ internal object DecisionKeywords {
             "apply now|install now|start (your )?(free )?trial|free trial|continue to|join now|enroll",
     )
     // Money taken later without asking again.
-    private val recurringCharge = Regex("자동\\s?(갱신|연장|결제|이체)|정기\\s?(결제|구독)|${EN_START}auto[- ]?renew", RegexOption.IGNORE_CASE)
+    private val recurringCharge = Regex("자동\\s?(갱신|연장|결제|이체)|정기\\s?(결제|구독)|이후\\s?(월|매월|매달)\\s?[0-9]|${EN_START}auto[- ]?renew", RegexOption.IGNORE_CASE)
+    // Payment details being asked for ("카드 정보 등록이 필요합니다").
+    private val paymentDetails = Regex("(카드|계좌)\\s?(정보|번호)")
     // A polite question asking the person to act or accept ("주문하시겠어요?", "보러 가실래요?"). A bare
     // "?" is not one: "아직도 정가로 사세요?" or "오늘 뭐 먹지?" are only ad copy.
     private val askToAct = Regex("하시겠|겠습니까|시겠어요|시겠나요|할까요|드릴까요|실래요")
@@ -199,7 +221,7 @@ internal object DecisionKeywords {
         }
         return word || forms.any { f ->
             consentKo.containsMatchIn(f) || actionRequestKo.containsMatchIn(f) || actionRequestEn.containsMatchIn(f) ||
-                recurringCharge.containsMatchIn(f) || askToAct.containsMatchIn(f)
+                recurringCharge.containsMatchIn(f) || askToAct.containsMatchIn(f) || paymentDetails.containsMatchIn(f)
         }
     }
 
@@ -212,7 +234,7 @@ internal object DecisionKeywords {
     // "증정" are not enough: "핵심 포인트", "혜택 받기", "광고를 보고 보상" and "1+1 증정" are not coupons.
     private val couponKo = Regex(
         "쿠폰|적립금|마일리지|캐시백|상품권|이용권|할인권|교환권|관람권|기프티콘|스탬프|룰렛|출석\\s?(체크|보상|이벤트)|" +
-            "포인트\\s?(를|가|을)?\\s?(지급|적립|증정|선물|충전|드려|드립|받|쌓)|" +
+            "포인트\\s?(를|가|을)?\\s?(지급|적립|증정|선물|드려|드립|받|쌓)|" +
             "([0-9][0-9,]*|천|만)\\s?(원|포인트|p)\\s?(이|가)?\\s?(적립|지급|캐시백)|" +
             "(적립|지급|증정|드려요|드립니다)\\S*\\s?([0-9][0-9,]*|천|만)\\s?포인트",
         RegexOption.IGNORE_CASE,
@@ -243,14 +265,18 @@ internal object DecisionKeywords {
     // Prize-win, infection, hacking, cleaner and urgent-install claims: never a coupon or an ad to close.
     // "축하", "선정" and "1등" alone are ordinary ("생일 축하 쿠폰", "브랜드 대상 선정", "1등급 한우").
     private val suspiciousKo = Regex(
-        "당첨|상금|경품\\s?(수령|당첨)|선정되셨|1등\\s?(에\\s?)?(당첨|선정)|축하.{0,20}(당첨|선정|경품)|(당첨|선정|경품).{0,20}축하|" +
-            "감염|바이러스|악성\\s?코드|해킹|(휴대폰|휴대전화|기기|배터리|폰)(이|가)\\s?(위험|손상|느려)|(손상|감염)\\s?(되었|됐)|" +
+        // B_DEMO_RULES.md 12절: no announcement of winners, "보상금" or a health notice ("독감 바이러스 예방접종", "해킹 피해 예방").
+        "당첨(?!자\\s?(발표|공지|안내))|(?<![보배이])상금|경품\\s?(수령|당첨)|선정되셨|(고객|회원|귀하|대상자).{0,15}선정되었|1등\\s?(에\\s?)?(당첨|선정)|" +
+            "축하.{0,20}(당첨|선정|경품)|(당첨|선정|경품).{0,20}축하|축하합니다.{0,30}(상품권|현금|[0-9]+만\\s?원).{0,15}지급|" +
+            "(휴대폰|휴대전화|핸드폰|스마트폰|폰|기기|단말).{0,15}(바이러스|감염|해킹)|(바이러스|악성\\s?코드).{0,10}(발견|감지|치료|제거)|악성\\s?코드|바이러스\\s?감염(?!.{0,10}(예방|주의|안내|증))|" +
+            "(감염|해킹)\\s?(되었|됐|위험|당했|감지|발견)|위협.{0,12}(발견|감지)|(검사|스캔|치료)\\s?하세요|지금\\s?(검사|최적화)|" +
+            "(휴대폰|휴대전화|스마트폰|기기|배터리|폰|속도|성능)(이|가)\\s?(위험|손상|느려)|(손상|감염)\\s?(되었|됐)|" +
             "(즉시|긴급)\\s?(설치|정리|치료|업데이트)|긴급\\s?업데이트|(메모리|저장\\s?공간|용량|캐시|정크)(이|가|을|를)?\\s?(부족|정리|청소|최적화)|" +
-            "(휴대폰|폰|기기)(을|를)?\\s?(즉시|지금|바로)?\\s?(정리|청소|최적화)|무료\\s?(아이폰|갤럭시)",
+            "(휴대폰|폰|기기)(을|를)?\\s?(즉시|지금|바로)?\\s?(정리|청소|최적화)|무료.{0,10}(아이폰|갤럭시)|(아이폰|갤럭시).{0,15}무료",
     )
     private val suspiciousEn = en(
         "you('ve| have)? won|winner|congratulations|congrats|you('ve| have)? been selected|you are selected|viruse?s?|" +
-            "infected|malware|hacked|claim (your )?(prize|reward)|clean (your )?phone|storage (is )?(almost )?full",
+            "infected|malware|hacked|claim (your )?(prize|reward)|clean (your )?phone|storage (is )?(almost )?full|at risk|scan now",
     )
 
     fun isCoupon(text: String): Boolean = spaced(text).any { couponKo.containsMatchIn(it) || couponEn.containsMatchIn(it) }
