@@ -196,13 +196,15 @@ internal fun PromptSummary.textRes(): Int = when (this) {
     PromptSummary.UNKNOWN -> R.string.ui_choice_summary_unknown
     PromptSummary.AUTO_CLOSE_FAILED -> R.string.ui_choice_summary_auto_failed
     PromptSummary.SUSPICIOUS -> R.string.ui_choice_summary_suspicious
+    PromptSummary.POPUPS_OVERLAP -> R.string.ui_choice_summary_overlap
+    PromptSummary.POPUPS_OVERLAP_NO_MOVE -> R.string.ui_choice_summary_overlap_no_move
 }
 
 @Composable
 private fun PromptOption.label(pressButtonCount: Int): String = when (kind) {
     PromptOptionKind.PRESS_CANDIDATE -> stringResource(R.string.ui_choice_press_candidate, shownName(pressButtonCount))
     PromptOptionKind.REMEMBER_ALWAYS -> stringResource(R.string.ui_choice_remember_always, shownName(pressButtonCount))
-    PromptOptionKind.MOVE_TO_BUTTON -> stringResource(R.string.ui_choice_move_to_button, buttonLabel.orEmpty())
+    PromptOptionKind.MOVE_TO_BUTTON -> labelRes?.let { stringResource(it) } ?: stringResource(R.string.ui_choice_move_to_button, buttonLabel.orEmpty())
     PromptOptionKind.READ_CONTENT -> stringResource(R.string.ui_choice_read_content)
     PromptOptionKind.KEEP_OPEN -> stringResource(R.string.ui_choice_keep_open)
     PromptOptionKind.STOP_ASKING -> stringResource(R.string.ui_choice_stop_asking)

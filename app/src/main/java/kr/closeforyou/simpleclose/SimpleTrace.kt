@@ -287,6 +287,19 @@ enum class SimpleTrace {
     READ_TAIL_NONE,
     READ_TAIL_ABORTED,
     READ_TAIL_SUBTREE_CUT,
+    /** F53: what may lie over the button: stopped by it ([StackBlock]), asked; the look could not be made; another popup left after a close. */
+    STACK_BLOCKED_WINDOW_ABOVE,
+    STACK_BLOCKED_COVER_LATER,
+    STACK_BLOCKED_POPUP_OVERLAP,
+    STACK_ASKED,
+    STACK_UNREAD,
+    /** F57: no popup in front could be told: no move offered; the move went to its close or first node; asked nothing for now; that time ended. */
+    STACK_NO_FRONT,
+    OVERLAP_MOVED_TO_FRONT_CLOSE,
+    OVERLAP_MOVED_TO_FRONT_FIRST,
+    OVERLAP_MOVE_FAILED,
+    MOVE_HOLD_QUIET,
+    CLOSE_OTHER_POPUP_LEFT,
     /** F27 (self review): the same popup came back within a few seconds of a confirmed close: a failure after all. */
     CLOSE_REAPPEARED_LATE,
     /** F27: part of the popup is deeper than the walk goes: asked, never closed by itself. */

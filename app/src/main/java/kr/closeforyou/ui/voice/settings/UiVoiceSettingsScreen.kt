@@ -227,7 +227,7 @@ fun UiVoiceSettingsScreen(
     /** [VoiceButtonFeature]; false hides the whole voice section. */
     voiceFeatureEnabled: Boolean = false,
     /** Microphone state ignoring the switch (the switch is shown separately). */
-    microphoneState: SpeakButtonState = SpeakButtonState.NOT_IN_THIS_VERSION,
+    microphoneState: SpeakButtonState = SpeakButtonState.DEVICE_UNSUPPORTED,
     microphoneDenied: Boolean = false,
     onVoiceCommandsChange: (Boolean) -> Unit = {},
     onAllowMicrophone: () -> Unit = {},
@@ -486,7 +486,6 @@ private fun VoiceSection(
         SpeakButtonState.SHOWN, SpeakButtonState.TURNED_OFF -> R.string.ui_settings_mic_granted
         SpeakButtonState.PERMISSION_NEEDED ->
             if (microphoneDenied) R.string.ui_settings_mic_denied else R.string.ui_settings_mic_needed
-        SpeakButtonState.NOT_IN_THIS_VERSION -> R.string.ui_settings_mic_not_in_version
         SpeakButtonState.DEVICE_UNSUPPORTED -> R.string.ui_settings_mic_device_unsupported
     }
     Text(stringResource(line))

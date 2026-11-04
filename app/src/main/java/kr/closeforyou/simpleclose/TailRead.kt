@@ -116,7 +116,7 @@ object TailRead {
         SimpleCloseEngineFeature.TAIL_READ_AFTER_CAP && wholeAborted &&
             PopupRootFinder.find(partial, screen, bounded)?.path?.takeIf { it != ROOT } == null
 
-    private val WALK_ORDER = Comparator<NodeSnapshot> { a, b ->
+    val WALK_ORDER = Comparator<NodeSnapshot> { a, b ->
         val x = a.path.split('/')
         val y = b.path.split('/')
         for (i in 0 until minOf(x.size, y.size)) {

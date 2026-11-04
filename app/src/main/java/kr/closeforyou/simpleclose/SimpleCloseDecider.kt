@@ -17,6 +17,7 @@ sealed interface SimpleDecision {
     /**
      * Preset says close this kind and exactly one close button is verified: press it without asking.
      * [unknown]: a popup B could not judge, closed under [DemoUnknownAutoClose] ("전부 자동 닫기" only).
+     * [strong]: F16 강력 모드 ([StrongCloseRules]): any kind, one named close or more, the plainest is pressed.
      */
     data class AutoClose(val candidate: CloseCandidate, val unknown: Boolean = false, val strong: Boolean = false) : SimpleDecision
 

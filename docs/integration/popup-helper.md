@@ -92,7 +92,7 @@ A 서비스(`CloseForYouAccessibilityService`)·`accessibility_service_config.xm
 ## 7. 남은 문제
 
 - 두 엔진 동시 켜기를 코드로 막지 않는다(안내 문구와 이 문서뿐).
-- release에는 `RECORD_AUDIO`가 없다(debug 매니페스트에만). 설정의 음성 명령 마이크 허용은 release에서 동작하지 않는다 — 새 권한이라 이번에 넣지 않음(사용자 확인 필요).
+- `RECORD_AUDIO`는 F55부터 공통 매니페스트에 있다(debug·release 같음, 8-48). release에서 음성 명령이 실제로 도는지는 실기기 미검증이다(release APK가 서명 안 됨, 아래).
 - `configChanges`가 LG에서 설정 복귀 시 Activity 재생성을 실제로 막는지 미확인(4-6, 원인 구성 변경 미확인).
 - 11번가 설치 시트는 B main에서 NOTICE → 프리셋 “광고만 닫기”에서는 묻는다. B `feature/decision-web-overlay` 병합 시 광고로 바뀜(B 판단).
 - debug 빌드에는 “닫을까요? 미리보기” 아이콘과 시험 접근성 서비스가 하나씩 더 있다(debug 전용, release엔 없음).
@@ -126,7 +126,7 @@ A 서비스(`CloseForYouAccessibilityService`)·`accessibility_service_config.xm
   - 조건(모두): 프리셋 "전부 자동 닫기" + 자동 닫기 스위치 ON(처음 설정 완료), B 분류 UNKNOWN, 금지어 버튼(`SimpleLabelReject.FORBIDDEN`: 결제·구매·동의·권한·구독·삭제·설치·앱에서·열기…) 0개, 검증된 버튼이 라벨 있는 닫기 정확히 1개(라벨 없는 X는 후보가 아님, 6-3), 사기 의심 아님, USER_DECISION 아님. 클릭 직전 재확인·1회 클릭은 그대로.
   - "광고·쿠폰 닫기"·"광고만 닫기"는 UNKNOWN을 계속 묻는다. 결과 문장 "팝업을 닫았어요."(`ui_auto_obj_other`). 로그 `DECIDED_AUTO_CLOSE_UNKNOWN`.
   - 파일: `simpleclose/SimpleCloseDecider.kt`(`DemoUnknownAutoClose.ENABLED = true`로 끔/켬), 서비스(금지어 수 전달·로그), `SimpleTrace.kt`.
-  - 문구: "전부 자동 닫기"를 골랐을 때만 프리셋 아래 고정 문장을 `ui_preset_decision_fixed_close_all`("…알 수 없는 팝업은 위험한 버튼이 없고 닫는 버튼이 하나뿐일 때만 닫고, 그 밖에는 물어봐요")로, 자동 닫기 확인 창에 `ui_preset_consent_unknown_all` 한 줄 추가. 다른 프리셋 문구는 그대로("…알 수 없는 팝업도 물어봐요").
+  - 문구: "전부 자동 닫기"를 골랐을 때만 프리셋 아래 고정 문장을 `ui_preset_decision_fixed_close_all`("…알 수 없는 팝업은 위험한 버튼이 없고 닫는 버튼이 하나뿐일 때만 닫고, 그 밖에는 물어봐요", F56에서 고침, 8-49)로, 자동 닫기 확인 창에 `ui_preset_consent_unknown_all` 한 줄 추가. 다른 프리셋 문구는 그대로("…알 수 없는 팝업도 물어봐요").
   - AGENTS 6장 2번은 고치지 않음(6-0 우선).
   - 시험: `SimpleCloseDeciderTest` 세 프리셋 × (조건 충족 / 금지어 / 닫기 2개 / 사기) 매트릭스 + 건너뛰기만 있음·버튼 없음·결정·스위치 꺼짐·동의 꺼짐·11번가 시트, `PresetStorageAndTextTest` 문구 선택. 기존 시험 `unknownIsAskedEvenWhenEveryKindIsInThePreset`는 규칙이 바뀌어 "스위치 끄면 모든 프리셋에서 묻기"로 바꿈.
 - **F8 — 화면 설명과 실제 동작 맞추기 (10/31).** `PresetAutoCloseFeature.live`(C)가 false라 자동 닫기 스위치 아래·확인 창에 "자동 닫기는 곧 켜질 예정이에요. 지금은 닫기 전에 물어봐요"가 보였는데, 단순 엔진은 실제로 바로 닫았다. → `live`를 `SimpleCloseEngineFeature.enabled`를 따르게 바꿈(지금 true). 단순 엔진을 끄면 다시 false(그 문구가 돌아옴).
@@ -1098,6 +1098,169 @@ F26 자동 확인: 옥션 웹 감지 1.3초·재확인 308ms·`READ_DUTY_PCT` 7.
   - `SimpleCloseAccessibilityService`(경계 시각, `pressAndConfirm`의 `onClicked`)
   - `SimpleCloseEngineFeature.TIMING_LINE`
   - 새 시험 `F52Test`
+
+### 8-46. F53 — 겹친 팝업: 가려졌을 수 있는 버튼은 누르지 않기 (JVM 시험만, 실기기·에뮬레이터 미검증)
+
+- **증상**(우진 SM-F966N, 크롬, canvas.suwon.ac.kr, TalkBack 켬, df726f4): 앞에 LMS 앱 업데이트 공지가 있었는데 [닫기]를 고르니 뒤에 가려진 팝업만 닫혔다. 카드는 "팝업을 닫았어요"라고 했고 앞 공지는 남았다.
+  - 로그: `DETECTED_ALERTDIALOG … ASKED`(10:29:31) → `DETECTED_FRONT_LAYER … ASKED`(10:30:08) → `CLICKED_LABELED_CLOSE`, `CLOSED_CONFIRMED`, `RESULT_BANNER_*`(10:30:20).
+  - 사진·전체 로그는 아직 없다. 어느 노드가 앞이었는지는 **확정하지 못했다.**
+- **코드로 확인한 것:**
+  - **팝업 고르기(`PopupRootFinder.find`):** Dialog 클래스(여럿이면 걸음 순서로 마지막) → 크기가 제한된 창 → 어두운 배경 → 앞 레이어(뒤에서부터, 이름 있는 닫기 필수) → 카드 → 창 → 배너. 찾으면 바로 끝이라 **다른 팝업은 보지 않는다.** "걸음 순서가 늦으면 위에 그려졌다"로 가정하지만, 웹은 DOM 순서이고 z-index는 트리에 없다.
+  - **ALERTDIALOG와 FRONT_LAYER가 따로 잡힌 이유:** 읽기마다 찾은 하나만 쓰기 때문이다. Dialog가 읽기에 들어 있으면 항상 Dialog가 이기므로, FRONT_LAYER가 나온 10:30:08 읽기에는 Dialog가 **없었다.** 코드상 두 경우가 가능하다(어느 쪽인지는 미확정): (a) 첫 팝업이 사라졌다. (b) 프로브가 뒤에서 200개 안에 레이어만 찾아 그 하위 트리만 읽었다(`POPUP_SUBTREE`, Dialog가 DOM 앞쪽이면 못 봄).
+  - **누르는 경로(`pressAndConfirm`):** 앱·루트·버튼 세 가지만 재확인했고 **가려짐 확인은 없었다**(총괄의 grep이 맞다). 읽어 주는 팝업과 누르는 팝업은 코드상 같은 `SimplePopup`이다. 문제는 그 팝업이 눈에 보이는 앞 팝업과 다를 수 있다는 점이다.
+  - **`ACTION_CLICK`은 가려져도 그 노드에 닿는다.** 이번 사례의 동작과 맞는다(화면 위치 판정을 거치지 않음, 코드로 본 것은 아니고 관찰).
+  - **`CLOSED_CONFIRMED`는 그 팝업에 대해서는 맞았다.** 뒤 팝업 루트가 사라졌고, 다시 읽어 찾은 팝업은 글자가 달라 `reappearance`가 null이었다. 다른 팝업이 남았는지는 보지 않았고, 문장만 단정했다.
+- **고침(`PopupStack`, 플래그 `STACK_CHECK_BEFORE_PRESS`):**
+  - 누르기 직전(자동·사용자 모두, 재확인 전)과 묻기 직전에 버튼 위를 본다. 코드: `WINDOW_ABOVE`, `COVER_LATER`, `POPUP_OVERLAP`. 버튼 가운데 점이 그 상자 안에 있을 때만 해당한다.
+    - `WINDOW_ABOVE`: 레이어가 더 높은 앱 창. 창에는 레이어가 있어서 확실하다.
+    - `COVER_LATER`: 걸음 순서가 뒤이고, 팝업이나 조상의 형제이고, 좌우 가장자리에 닿지 않고, 화면 5~70% 크기이고, 내용이 있는 상자.
+    - `POPUP_OVERLAP`: 같은 규칙(`PopupRootFinder`)으로 찾은 다른 팝업.
+  - 걸리면 **누르지 않는다**(다시 누르기·좌표 탭 없음). 선택 창 첫 줄은 "팝업이 겹쳐 있어요. 어느 쪽이 앞인지 알 수 없어서 대신 누르지 않아요."이고, 선택지는 [버튼으로 이동]·[내용 다시 읽기]·[그대로 두기]뿐이다(누르기·앞으로 항상 없음, 음성도 같음). 이 팝업은 자동으로 다시 누르지 않는다.
+  - 닫은 뒤 다시 읽어서 다른 팝업을 찾으면 문장이 "… 닫았어요. 다른 팝업이 아직 남아 있어요."가 되고(`CLOSE_OTHER_POPUP_LEFT`), 1.5초 뒤 다시 읽어 그 팝업을 처리한다(쿨다운 비움). 아래 배너는 세지 않는다.
+  - 로그(글자·경로·id 없음, 경계와 코드만): `ROOT_PICK kind= root= mode=`, `STACK_LOOK block= button= others= [종류:경계] partial= visited= ms=`, `PRESS_TARGET by=USER|AUTO kind= root= button=`, `STACK_BLOCKED_*`, `STACK_ASKED`, `STACK_UNREAD`.
+- **비용:** 트리 끝에서부터 400노드·250ms(팝업 자기 하위 트리 제외). 자동 닫기는 누르기 직전 1번, 묻기는 묻기 직전 1번 + 누르기 직전 1번. 자기 창 팝업은 창 목록만 본다.
+- **한계(된다고 적지 않는다):**
+  - **웹 내부에서 앞뒤를 알 방법이 없다.** 트리에 z-index가 없고, `isVisibleToUser`가 가림을 반영하는지 확인하지 못했다. 그래서 웹은 "겹치면 어느 쪽이 앞인지 모른다"로 처리한다. 앞 팝업을 골라 내는 것이 아니다.
+  - 팝업처럼 보이지 않고, 걸음 순서도 앞이고, 400노드 밖이면 못 본다. 그때는 지금처럼 누른다(`partial=true`). 큰 페이지에서 전부 읽으려면 시간이 F25 이전으로 돌아가므로 일부러 그렇게 뒀다.
+  - 투명한 흔적(닫힌 뒤 DOM에 남은 레이어)도 겹침으로 칠 수 있다. 그 사이트는 묻기로 바뀐다. 리허설에서 확인이 필요하다.
+  - 닫은 뒤 다른 팝업 확인은 그 다시 읽기가 닿은 범위까지다(프로브로 찾은 팝업이면 프로브만).
+- **바뀐 파일:**
+  - 새 파일 `simpleclose/PopupStack.kt`
+  - `SimpleTreeCollector.readStack`, `TailRead.WALK_ORDER` 공개
+  - `SimpleCloseAccessibilityService`
+  - `SimplePromptOptions.overlapped`, `PromptSummary.POPUPS_OVERLAP`, `ChoicePromptContent`
+  - 문장 2개(`ui_voice_strings.xml`)
+  - `SimpleCloseEngineFeature`, `SimpleTrace`
+  - 새 시험 `F53Test`
+
+### 8-47. F54 — "닫았어요"가 안 들림: 카드 초점 이벤트 구분과 창 목록 기다리기 (JVM 시험만, 실기기·에뮬레이터 미검증)
+
+- **증상**(우진 SM-F966N, df726f4): P13이 닫혔는데 안 들렸고, TalkBack은 P13 본문을 읽은 것 같다. 11번가 웹은 크롬에서는 정상, 네이버 앱 내 브라우저에서는 누락.
+  - 로그: `FOCUS_WAS_IN_POPUP` → `CLOSED_CONFIRMED` → `RESULT_VIA_TALKBACK`(59.525) → `RESULT_BANNER_SHOWN`·`RESULT_BANNER_FOCUSED`(59.556) → `FOCUS_RECLAIMED=0`. `FOCUS_OTHER_ON_PAGE`·`FOCUS_RECLAIM_DEFERRED`는 없음.
+- **지금 로그로 구분되지 않았던 이유(코드 확정):**
+  - `RESULT_BANNER_FOCUSED`는 우리 View의 `performAccessibilityAction`이 true를 돌려줬다는 뜻일 뿐, TalkBack이 읽었다는 뜻이 아니다.
+  - 우리 앱의 이벤트는 `eventPackage == packageName`에서 먼저 버려져서, 카드의 초점 이벤트가 왔는지 볼 수 없었다.
+  - `notificationTimeout`이 100ms라 같은 종류의 이벤트는 합쳐질 수 있다. 페이지의 이동 바로 뒤에 카드 이벤트가 오면 페이지 이동이 보이지 않을 수 있고, 그래서 `FOCUS_OTHER_*`가 없다고 페이지 이동이 없었다고 단정할 수 없다.
+- **원인 후보:**
+  - **후보 1(추측, 가장 유력, 근거 있음):** 창이 접근성 창 목록에 오르기 전에 초점을 요청해서 이벤트가 어느 서비스에도 가지 않았다. 창을 붙인 뒤 약 31ms에 요청한다(로그 59.525 → 59.556). AOSP 14 `AccessibilitySecurityPolicy.canDispatchAccessibilityEventLocked`는 창 상태·터치 종류만 항상 보내고, 초점 이벤트는 그 창이 목록에 있을 때만 보낸다. 시점 경합이라 같은 기기에서 앱에 따라 달라지는 점과도 맞는다. **Android 16·삼성에서 같은지는 확인하지 못했다.**
+  - **후보 2(추측):** 이벤트는 갔지만 페이지가 곧바로 초점을 가져갔다(100ms 안이면 안 보임).
+  - **후보 3(추측):** 초점은 카드에 있고 이벤트도 갔지만 TalkBack이 읽지 않았거나, 이어서 읽던 본문이 끊기지 않았다.
+- **넣은 로그(글자·id 없음, `CardFocusTrace`):**
+  - `CARD_FOCUS listed= waitMs= view=`: 초점을 요청할 때 창이 목록에 있었나, 얼마나 기다렸나, 요청 결과.
+  - `CARD_FOCUS_EVENT dt= onCard=`: 초점 이벤트가 카드 창에서 왔나 다른 곳에서 왔나. 우리 이벤트를 버리기 전에 본다.
+  - `CARD_FOCUS_AT dt=300|1000|2500 place= events= others=`: 그때 시스템 초점 위치(`INSIDE`/`OUTSIDE`/`NONE`/`CARD_WINDOW_UNKNOWN`)와 이벤트 수.
+  - `CARD_FOCUS_RETRY outcome=`: 다시 요청한 결과.
+- **고친 것(후보 1에 대해서만, 둘 다 초점 이동이고 누르기는 없음):**
+  - 초점 요청 전에 카드 창이 목록에 오르기를 기다린다(30ms 간격, 최대 300ms, 안 오르면 전처럼 그대로 요청).
+  - 요청 후 400ms 안에 카드 창의 초점 이벤트가 안 오면 서비스 쪽 경로로 1번만 다시 요청한다(F44 `refocusNode`, 이미 초점이면 지웠다가 다시).
+  - `announceForAccessibility()`는 쓰지 않는다. 포커스 규칙은 CLAUDE.local 3-2 시연 모드 예외 범위다.
+- **고치지 않은 것:** 후보 2·3은 로그를 본 뒤 판단한다. 이벤트가 왔는데 안 들리는 경우(후보 3)는 우리가 관찰할 수 없다. TTS로 한 번 더 말하는 방법은 소리가 겹쳐서(F11) 넣지 않았다.
+- **F52 관계:** announce는 여전히 카드를 붙인 시점까지이고, 이 기다림은 그 뒤에 일어나므로 `TIMING`에 들어가지 않는다.
+- **바뀐 파일:**
+  - 새 파일 `simpleclose/CardFocusTrace.kt`
+  - `TalkBackResultBanner`
+  - `SimpleCloseAccessibilityService`(콜백, 우리 이벤트를 버리기 전 전달)
+  - 새 시험 `F54Test`
+
+### 8-48. F55 — `RECORD_AUDIO`를 공통 매니페스트로 (재호 승인, 빌드·매니페스트 확인만, 실기기 미검증)
+
+- **바꾼 것:** `app/src/debug/AndroidManifest.xml`에서 `app/src/main/AndroidManifest.xml`로 옮겼다. 낡은 "C TODO" 주석을 지금 상태로 고쳤다. debug 매니페스트에는 시험 provider·미리보기·시험 서비스가 남아 있어 파일은 그대로 둔다.
+- **이 문서의 앞선 기록:** 위쪽 표들의 "release에는 없음"은 그 회차 당시 기록이다. 지금은 이 절이 맞다.
+- **코드로 확인한 것:**
+  - **마이크를 쓰는 때:** `SpeechRecognizer.startListening`은 두 곳뿐이고(`OnDeviceVoiceCommandInput`, `OnDeviceDictation`), 시작 경로는 [말하기](`PromptControls.onSpeak`)와 [말로 찾기](`VoiceSearch.onPress`) 버튼뿐이다. 항상 켜 두는 듣기는 없다.
+  - **권한 요청 시점:** `RequestPermission`은 설정의 [마이크 허용], 도와줄 앱의 [마이크 허용], debug 미리보기 버튼의 클릭에서만 호출된다. 화면을 열 때 자동으로 요청하는 코드는 없다. 처음 설정(온보딩)에는 마이크 요청이 없다.
+  - **거부했을 때:** [말하기]·[말로 찾기]를 숨기고(`SpeakButtonState.PERMISSION_NEEDED`), 선택 창은 한 줄 안내, 도와줄 앱은 키보드 안내, 설정은 "휴대폰 설정의 앱 권한에서 바꿀 수 있어요"를 보여 준다. 탭·TalkBack 선택지는 그대로 동작한다. 선택 창이 뜬 뒤 권한이 사라져도 시작 전에 다시 확인하고(`OnDeviceRecognition.availability`), 인식기 권한 오류는 `Unavailable`로 끝난다.
+  - **기기 안 인식만:** API 31+이고 기기 안 인식기가 있을 때만 쓴다. 서버로 넘어가지 않는다. 없는 기기(LG 벨벳)에서는 버튼을 숨긴다.
+- **정리한 것:** `SpeakButtonState.NOT_IN_THIS_VERSION`, `MicrophoneAccess.declared()`, 문장 `ui_settings_mic_not_in_version`("아직 이 앱 버전에서는…")을 지웠다. 이제 어떤 빌드에서도 나올 수 없는 상태다. 빌드 타입 분기는 원래 없었고 이것이 전부다. 시험 1개가 함께 빠졌다(`notDeclaredMeansNotInThisVersion`).
+- **합쳐진 매니페스트(`aapt dump permissions`):**
+  - debug: `android.permission.RECORD_AUDIO`, `kr.closeforyou.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION`(선언·사용), `kr.closeforyou.permission.SYNTHETIC_CAPTURE_TEST`(선언, debug 전용)
+  - release: `android.permission.RECORD_AUDIO`, `kr.closeforyou.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION`(선언·사용)
+  - `INTERNET`·`ACCESS_NETWORK_STATE`는 둘 다 없다. 새로 생긴 다른 권한도 없다.
+- **release 서명:** `signingConfig`가 없어 `app-release-unsigned.apk`이고 `apksigner verify`는 `DOES NOT VERIFY`다. 기기에 바로 설치할 수 없다. 시연은 계속 debug APK로 한다.
+- **남은 문제:**
+  - release 음성 명령은 실기기에서 한 번도 돌려 보지 않았다(서명 안 됨).
+  - 앱이 앞에 없을 때 접근성 오버레이에서 마이크가 실제로 들어오는지는 코드만으로 알 수 없다. debug와 조건이 같다. 실기기 확인이 필요하다.
+  - `RECORD_AUDIO`는 `android.hardware.microphone`을 필수 기능으로 암시한다. 스토어 배포 때는 `uses-feature required=false`를 검토해야 한다(지금은 배포 안 함, 넣지 않음).
+  - `docs/DEVELOPMENT_STATUS.md` 79줄은 아직 "`RECORD_AUDIO` 미요청"이라고 적혀 있다. 팀 공용 문서라 고치지 않았다.
+
+### 8-49. F56 — "전부 자동 닫기" 동의 문구를 강력 모드에 맞춤 (문구만, 동작 코드 변경 없음)
+
+- **문제:** `ui_preset_decision_fixed_close_all`과 `ui_preset_consent_unknown_all`이 "닫는 버튼이 하나뿐"이라고 했다. 그것은 F7 규칙이다. F16 강력 모드(`STRONG_CLOSE_ALL` 켜짐)부터는 이름 있는 닫기가 여럿이어도 닫는다. 사용자는 이 문장을 보고 동의한다.
+- **코드로 확인한 강력 모드 조건(`SimpleCloseDecider.decide`, 순서대로):**
+  1. 사기 의심 → 경고만(`DenySuspicious`). 결정(`USER_DECISION`) → 설명만(`DenyDecision`).
+  2. 위험 버튼(`riskCount`)이 있으면 묻는다. 광고·쿠폰으로 분류된 팝업은 홍보형 구매·로그인 링크를 빼고 센다. **판단 불가 팝업에는 이 예외가 없다.**
+  3. "전부 자동 닫기" + 자동 닫기 스위치 + `DemoUnknownAutoClose.ENABLED` + `STRONG_CLOSE_ALL`일 때: 역할이 `CLOSE`인 후보 중 가장 분명한 것(`SimpleLabelRules.clarity`, 같으면 읽는 순서 첫 번째). 없으면 묻는다. 분류(광고·쿠폰·공지·판단 불가)는 상관없다.
+  - `forbiddenCount`는 강력 모드에서 보지 않는다. "앱에서 열기"·"설치"·"쿠폰 받기" 같은 이동 버튼은 누르지 않지만 그 때문에 묻지도 않는다.
+  - 이름 없는 X는 후보가 아니므로 누르지 않는다(6-3).
+  - 결정 뒤에 서비스가 묻기로 돌리는 경우: 전에 실패한 팝업, 앱을 벗어났던 앱, 설치 광고에 닫기 버튼만 있을 때(`InstallAdLoneClose`), 너무 깊은 트리, 연속 닫기 제한(`ChainGuard`). 누르기 직전 재확인·겹침 확인(F53)도 그대로다. 문장의 "안전 확인을 통과한 팝업만"이 이 부분이다.
+- **고친 문구:**
+  - `ui_preset_decision_fixed_close_all`: 결제·동의 같은 중요한 팝업은 어떤 방식이든 항상 직접 확인해요. 무엇인지 알 수 없는 팝업은 위험한 버튼이 없고 이름 있는 닫는 버튼이 있을 때만 닫고, 그 밖에는 물어봐요.
+  - `ui_preset_consent_unknown_all`: 무엇인지 알 수 없는 팝업도 위험한 버튼이 없고 이름 있는 닫는 버튼이 있으면 묻지 않고 닫을게요.
+  - 기본 수정안의 "닫기 버튼" 대신 "닫는 버튼"으로 썼다. 동의 대화상자 문장에는 음성 명령어("닫기" 등)를 넣지 않는다는 이 파일의 규칙 때문이다(`ui_voice_strings.xml` 자동 닫기 동의 주석).
+- **고치지 않은 것:**
+  - 다른 프리셋 문장(`ui_preset_decision_fixed`, "알 수 없는 팝업도 물어봐요")은 코드와 맞다.
+  - `DemoUnknownAutoClose` 주석의 "exactly one verified button"은 강력 모드를 껐을 때의 규칙이라 맞고, 준영이 고치기로 한 부분이라 두었다.
+  - `decision/AUTO_CLOSE.md`·`decision/README.md`의 "정확히 하나"는 B의 `DecisionAutoClose` 경로 설명이다. 강력 모드와 다른 경로라서 고치지 않았다.
+  - 위 F7 항목과 `docs/c-notes/simple-close-engine.md`의 조건은 그 회차 기록이다. 지금 규칙은 이 절과 F16 항목이다.
+
+### 8-50. F57 — 겹침 안내의 [버튼으로 이동]: 다시 묻지 않기, 앞 팝업으로만 이동 (JVM 시험만, 실기기·에뮬레이터 미검증)
+
+- **증상**(우진 SM-F966N, TalkBack 켬, 4d9a134, 크롬 canvas.suwon.ac.kr): F53 차단은 동작했다(`STACK_LOOK block=COVER_LATER others=0`, `CLICKED` 없음). 그런데 `USER_CHOSE_MOVE` → `MOVED_TO_BUTTON` 약 0.5초 뒤 `STACK_BLOCKED_COVER_LATER` → `STACK_ASKED`로 같은 창이 다시 떴다.
+- **원인(코드로 확정):**
+  - 이동이 일으킨 TalkBack 초점 이벤트(`SimpleInspectionEvent.TALKBACK_FOCUS`)가 다시 읽기를 시작한다.
+  - 재질문 억제는 10초 쿨다운(`seenAt`)뿐인데, 선택 창이 떠 있는 동안에는 `inspect`가 일찍 끝나 쿨다운이 갱신되지 않는다. 로그에서 창이 뜬 지 약 10초 뒤(18:18:24 → 18:18:34) 골랐으므로 이미 끝나 있었다.
+  - STACK_ASKED 경로에도 일반 묻기와 같은 쿨다운만 적용됐다. 결정·사기 팝업만 `denyOnce`로 다시 묻지 않는다.
+  - 다시 뜬 창이 초점을 가져간다. 이것이 두 번 탭을 끊었을 가능성이 높다(순서는 로그와 맞지만 사용자 동작은 전체 로그·사진 전이라 추측).
+- **F53 이동이 간 곳(코드로 확정):** 멈춘 팝업 자신의 버튼(`scan.candidates`, X, 위험 버튼)이었다. 즉 막은 버튼으로 초점을 보냈다. 이번 사례에서 그 버튼이 실제로 가려져 있었는지는 **트리만으로 모른다.**
+- **고침:**
+  - **이동 대상(`PopupStack.hit`, `frontTarget`):** 앞에 있다고 보는 덮개 안의 이름 있는 닫기 중 가장 분명한 것 → 없으면 첫 글자 노드 → 없으면 위험 단어 없는 첫 클릭 노드 → 없으면 덮개 자신(이름 있을 때). 멈춘 팝업의 버튼으로는 보내지 않는다.
+  - **앞을 모를 때:** 앞쪽 DOM의 다른 팝업(`POPUP_OVERLAP`이고 걸음 순서가 앞), 위쪽 창(`WINDOW_ABOVE`, 그 창의 트리는 여기서 읽지 않음), 갈 노드가 없는 덮개. 이때는 이동을 빼고 "…어느 쪽이 앞인지 알 수 없어서 대신 누르지 않아요. 화면을 직접 살펴봐 주세요." + [그대로 두기]만 보여 준다(`POPUPS_OVERLAP_NO_MOVE`).
+  - **선택지:** 앞을 알 때는 [앞에 있는 팝업으로 이동], [내용 다시 읽기], [그대로 두기]. 이름을 넣지 않은 고정 문구다.
+  - **재등장 막기(`OverlapMoveRules`):** 이동을 고르면 그 팝업과 덮개에 대해 묻기·누르기·초점 가져오기를 하지 않는다.
+    - 시간: 마지막 터치 뒤 **30초**, 처음부터 최대 **120초**. 이유: 10초 쿨다운이 실측에서 부족했고, 낭독을 들으며 스와이프로 찾고 두 번 탭하려면 더 걸린다. 터치가 있으면 그만큼 늘어난다. 숫자는 실측이 아니라 판단값이다.
+    - 일찍 끝남: 덮개가 사라지거나 경계가 바뀜(`END_COVER_GONE`), 다른 팝업(`END_OTHER_POPUP`), 멈춘 팝업이 사라짐(`END_POPUP_GONE`). 시간 끝은 `END_TIMEOUT`이고 아직 있으면 다시 묻는다.
+    - 덮개 자신이 팝업으로 읽혀도 같은 둘로 본다.
+  - **앞 팝업을 직접 닫은 뒤:** `END_COVER_GONE`이면 쿨다운을 지우고, 겹침 때문에만 자동 실패로 적어 둔 표시(`stackStopped`)를 지워서 뒤 팝업을 처음처럼 판단한다.
+  - 터치 표시는 기존 `lastTouchAt`을 쓴다.
+- **로그(경계와 코드만):** `OVERLAP_MOVE target=CLOSE|FIRST cover= to= moved=`, `OVERLAP_MOVED_TO_FRONT_CLOSE`/`FIRST`, `OVERLAP_MOVE_FAILED`, `OVERLAP_HOLD_QUIET`, `OVERLAP_HOLD_END reason= afterMs=`, `STACK_NO_FRONT`.
+- **일반(겹침 아닌) [버튼으로 이동]:** 바꾸지 않았다. **같은 재등장 문제가 코드상 있다.** 일반 묻기(`DECIDED_ASK`)도 창이 뜬 지 10초 넘게 지나 이동을 고르면 초점 이벤트로 다시 읽어 다시 묻는다. 결정·사기 팝업은 `denied`로 다시 묻지 않는다.
+- **한계(된다고 적지 않는다):**
+  - **"앞"은 추측이다.** 웹 트리에는 z-index가 없어서 DOM에서 뒤에 있으면 앞이라고 본다. z-index로 반대일 수 있고, 그러면 초점이 뒤 팝업으로 간다. 그 경우에도 누르는 것은 사용자의 두 번 탭이고 우리는 누르지 않는다.
+  - 덮개 경계가 스크롤로 바뀌면 "사라짐"으로 보고 다시 판단한다. 그때 다시 물을 수 있다.
+  - [그대로 두기]를 고르면 F20대로 그 팝업은 있는 동안 다시 묻지 않는다. 그 뒤 앞 팝업을 닫아도 뒤 팝업은 묻지 않는다.
+  - 위쪽 창이 있는 경우 이동을 주지 않는다. 그 창이 팝업이면 다음 읽기에서 따로 잡힐 수 있지만, 선택 창이 떠 있는 동안에는 읽지 않는다.
+- **바뀐 파일:**
+  - `simpleclose/PopupStack.kt`(`StackHit`, `FrontTarget`, `OverlapMoveRules`)
+  - `SimplePromptOptions.overlapped`
+  - `SimpleCloseAccessibilityService`(`moveToFront`, 억제, `stackStopped`)
+  - `PromptOption.labelRes`, `PromptSummary.POPUPS_OVERLAP_NO_MOVE`, `ChoicePromptContent`
+  - 문장 4개(`ui_voice_strings.xml`, 1개 수정 3개 추가), `SimpleTrace`
+  - `F53Test`(이동 시험 수정), 새 시험 `F57Test`
+
+### 8-51. F58 — 일반 [버튼으로 이동]도 뒤에 다시 묻지 않기 (JVM 시험만, 실기기·에뮬레이터 미검증)
+
+- **원인(코드로 확정, F57과 같은 경로):** `moveToButton`의 초점 이동이 `TALKBACK_FOCUS` 이벤트로 다시 읽기를 시작한다. 억제는 10초 쿨다운(`seenAt`)뿐이고, 선택 창이 떠 있는 동안 `inspect`가 먼저 끝나서 갱신되지 않는다. 창이 뜬 지 10초 안에 고르면 쿨다운에 걸리고(`SAME_POPUP_COOLDOWN`), 넘으면 다시 묻는다. 우진 실측(이동 4회 중 재등장 2회, 쿨다운 2회)과 맞는다.
+- **다른 선택지(코드로 확인, 고치지 않음):**
+  - [그대로 두기]: `kept`에 들어가 있는 동안 다시 안 묻는다. 문제 없다.
+  - [내용 다시 읽기]: 창이 그대로 떠 있으므로 해당 없다.
+  - [닫기]·[건너뛰기]: 누르고 닫힘 확인으로 간다. 안 닫히면 바로 다시 묻는 것은 의도한 동작이다(F21). 재확인으로 못 누른 경우는 실패 문장만 말하고, 쿨다운이 끝났으면 다음 이벤트에 다시 물을 수 있다. 팝업이 아직 있고 누르지 못했으니 틀리지 않아서 두었다.
+  - 결정·사기 팝업의 이동: `denied`로 원래 다시 안 묻는다.
+- **고침(F57 코드를 일반화):** `OverlapMoveHold`·`OverlapMoveRules`를 `MoveHold`·`MoveHoldRules`로 옮겨 이름을 바꿨다(`MoveHold.kt`, 덮개는 선택). 일반 이동도 같은 보류를 쓴다. 숫자는 F57과 같다: 마지막 터치 뒤 30초, 최대 120초.
+  - 끝나는 경우: 팝업 사라짐(`END_POPUP_GONE`), 다른 팝업(`END_OTHER_POPUP`), 시간 끝(`END_TIMEOUT`), 덮개 사라짐(`END_COVER_GONE`, 겹침만).
+  - 보류를 시작할 때 우리 되찾기 감시도 끝낸다(초점을 가져오지 않게).
+- **시간이 끝난 뒤(수정한 부분):** 이전 코드는 일반 묻기에서 온 팝업이면 시간 뒤 프리셋 판단으로 자동으로 누를 수 있었다. 이제 이동을 고르는 순간 그 팝업은 자동 누르기에서 뺀다(`AutoPressHolds`, `autoFailed` 재사용). 시간 뒤에 그대로면 **묻기로만 간다**(`AUTO_CLOSE_SKIPPED_AFTER_FAIL` → `DECIDED_ASK`).
+  - 팝업이나 덮개가 사라지면 이 표시를 지운다. 같은 팝업이 나중에 새로 뜨면 프리셋대로 처리한다.
+  - 실제로 실패한 팝업은 지우지 않는다(6-6).
+  - 다른 팝업이 나타나 끝난 경우에도 지우지 않는다. 그 팝업은 아직 있을 수 있다.
+- **사용자가 직접 눌러 닫았을 때:** 앱이 누른 것이 아니므로 `CLICKED`도 결과 카드도 없고, **"닫았어요"를 말하지 않는다.** 들리는 것은 TalkBack이 그 뒤 초점 노드를 읽는 소리뿐이다. 다음 읽기에서 팝업이 없으면 `MOVE_HOLD_END reason=END_POPUP_GONE`으로 끝나고 정상 흐름으로 돌아간다. 닫기 동작이 일어난 것을 직접 알 수 없어서 안내를 넣지 않았다. 필요하면 결정이 필요하다.
+- **안전:** 이동은 초점만 옮긴다. 결제·구매·구독·삭제·권한 버튼도 이동까지만이고 우리가 누르지 않는다. 사용자가 그 버튼을 직접 두 번 탭하는 것은 막지 않는다. 좌표 탭·다시 누르기 없음.
+- **로그(글자 없음):** `BUTTON_MOVE role= to=`, `MOVE_HOLD_QUIET`, `MOVE_HOLD_END reason= afterMs=`. F57의 `OVERLAP_HOLD_QUIET`·`OVERLAP_HOLD_END`는 이 이름으로 바뀌었다(`OVERLAP_MOVE`는 그대로).
+- **남은 문제:** 팝업 글자가 그대로인데 내용이 다른 경우(같은 지문)는 같은 팝업으로 본다. 다음 읽기가 일어나지 않으면 끝난 보류가 남아 있지만, 묻기 전에 항상 판단하므로 영향이 없다.
+- **바뀐 파일:**
+  - 새 파일 `simpleclose/MoveHold.kt`
+  - `PopupStack.kt`(규칙을 옮김, `buttonMoveLine`)
+  - `SimpleCloseAccessibilityService`, `SimpleTrace`
+  - `F57Test`(이름), 새 시험 `F58Test`
 
 - 잔여 노드 쪽 이벤트 무시: TalkBack이 무엇을 읽을지는 앱이 막을 수 없다. 대신 포커스를 잔여 노드 밖으로 옮기는 것(F9)이 할 수 있는 전부. 웹 페이지가 닫힌 팝업을 DOM에 `aria-hidden` 없이 남기는 한, 사용자가 스와이프로 다시 만날 수 있다(한계로 기록).
 - 선택 창 PROMPT도 TalkBack 큐로? 가능은 하다: 선택 창 자체(이미 접근성 오버레이)에 paneTitle이 있고 TalkBack이 창을 읽으므로, "안내 맡기기" ON이면 우리 TTS PROMPT를 끄고 paneTitle/첫 버튼 포커스 낭독에 맡기는 방식. 단, 지금 PROMPT는 TalkBack이 팝업을 읽는 도중 끊고 들어가야 시연이 빠르므로 polite로 바꾸면 늦어질 수 있다. F11 배너가 LG에서 잘 읽히면 같은 방식으로 옮길지 정하자(의견, 미구현).

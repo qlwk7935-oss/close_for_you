@@ -48,8 +48,7 @@ class VoiceSearchTest {
 
     // --- button shown or hidden (same policy as the prompt's [말하기]) ---
 
-    private class Mic(val declared: Boolean = true, val granted: Boolean = true, val onDevice: Boolean = true) : MicrophoneAccess {
-        override fun declared() = declared
+    private class Mic(val granted: Boolean = true, val onDevice: Boolean = true) : MicrophoneAccess {
         override fun granted() = granted
         override fun onDeviceRecognizerAvailable() = onDevice
     }
@@ -61,7 +60,6 @@ class VoiceSearchTest {
         assertTrue(shown(Mic()))
         assertFalse("LG: no on-device recognizer", shown(Mic(onDevice = false)))
         assertFalse("no microphone permission", shown(Mic(granted = false)))
-        assertFalse("release: RECORD_AUDIO not declared", shown(Mic(declared = false)))
         assertFalse("voice commands off in settings", shown(Mic(), setting = false))
     }
 

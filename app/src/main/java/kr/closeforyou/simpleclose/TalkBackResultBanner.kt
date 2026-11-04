@@ -60,6 +60,8 @@ class TalkBackResultBanner(
     private val trace: (SimpleTrace) -> Unit = {},
     /** F42: the card's first timeout in ms (debug line `RESULT_CARD_TIMEOUT_MS`). */
     private val timeoutMillis: (Long) -> Unit = {},
+    /** F54: one debug line of codes and numbers ([CardFocusTrace]). */
+    private val line: (String) -> Unit = {},
 ) {
     private val windowManager = service.getSystemService(WindowManager::class.java)
     private val handler = Handler(Looper.getMainLooper())
@@ -75,6 +77,10 @@ class TalkBackResultBanner(
     private var cardTimeout = 0L
     /** F44: RESULT_CARD_WINDOW_UNKNOWN once per card. */
     private var windowUnknownLogged = false
+    /** F54: what the shown card's focus did; when it was asked; the card's window id (compared in memory, never logged). */
+    private var focusTrace: CardFocusTrace? = null
+    private var focusAskedAt = 0L
+    private var cardWindowId: Int? = null
 
     /** TalkBack (touch exploration) is on: results should go through it. */
     fun talkBackOn(): Boolean = service.getSystemService(AccessibilityManager::class.java)?.isTouchExplorationEnabled == true
@@ -149,15 +155,21 @@ class TalkBackResultBanner(
                     onShown(onScreen, false)
                     return@post
                 }
-                val focused = onScreen && view.performAccessibilityAction(AccessibilityNodeInfo.ACTION_ACCESSIBILITY_FOCUS, null)
-                if (!focused) {
-                    // Not taken: say it through the live region instead (a text change after attach).
-                    focusMode = false
-                    view.accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_POLITE
-                    view.text = ""
-                    view.text = sentence
+                // F54: a focus event from a window not listed yet reaches no service, TalkBack included: first wait for the list.
+                whenCardListed(root, SystemClock.uptimeMillis()) { listed, waited ->
+                    val focused = onScreen && view.performAccessibilityAction(AccessibilityNodeInfo.ACTION_ACCESSIBILITY_FOCUS, null)
+                    line(CardFocusTrace.startLine(listed, waited, focused))
+                    if (!focused) {
+                        // Not taken: say it through the live region instead (a text change after attach).
+                        focusMode = false
+                        view.accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_POLITE
+                        view.text = ""
+                        view.text = sentence
+                    } else {
+                        traceFocus(root)
+                    }
+                    onShown(onScreen, focused)
                 }
-                onShown(onScreen, focused)
             }
             if (button == null) {
                 handler.postDelayed({ if (shown === root) dismiss() }, ResultCardClock.baseMillis(takeFocus))
@@ -177,6 +189,52 @@ class TalkBackResultBanner(
             buttonView = null
             false
         }
+    }
+
+    /** F54: [then] once the card's window is listed, at most [CardFocusTrace.LISTED_MAX_MILLIS] after [since]; not at all when the card went. */
+    private fun whenCardListed(root: View, since: Long, then: (listed: Boolean, waited: Long) -> Unit) {
+        if (shown !== root) return
+        val id = withCardWindow { it.id }
+        val waited = SystemClock.uptimeMillis() - since
+        if (id != null || waited >= CardFocusTrace.LISTED_MAX_MILLIS) {
+            cardWindowId = id
+            then(id != null, waited)
+            return
+        }
+        handler.postDelayed({ whenCardListed(root, since, then) }, CardFocusTrace.LISTED_CHECK_MILLIS)
+    }
+
+    /**
+     * F54: the card's focus was asked: where it is a moment later (debug only); and when no focus event from its window came
+     * (TalkBack would not have got one either), it is asked once more through the service ([refocus]'s way). A focus move only.
+     */
+    private fun traceFocus(root: View) {
+        val trace = CardFocusTrace()
+        focusTrace = trace
+        focusAskedAt = SystemClock.uptimeMillis()
+        handler.postDelayed({
+            if (shown !== root || focusTrace !== trace || !trace.retry()) return@postDelayed
+            val view = sentenceView ?: return@postDelayed
+            val outcome = withCardWindow(::refocusNode) ?: if (refocusView(view)) CardRefocus.BY_VIEW else CardRefocus.REFUSED
+            line(CardFocusTrace.retryLine(outcome))
+        }, CardFocusTrace.RETRY_AFTER_MILLIS)
+        for (at in CardFocusTrace.PLACE_CHECKS_MILLIS) {
+            handler.postDelayed({
+                if (shown === root && focusTrace === trace) line(CardFocusTrace.placeLine(at, focusPlace(), trace))
+            }, at)
+        }
+    }
+
+    /**
+     * F54: a focus event while a card holds the focus ([windowId] the event's window): counted and one debug line; no ids.
+     * Called for every package's focus events, ours too.
+     */
+    fun onFocusEvent(windowId: Int) {
+        val trace = focusTrace ?: return
+        if (shown == null) return
+        val fromCard = cardWindowId != null && windowId == cardWindowId
+        trace.event(fromCard)
+        line(CardFocusTrace.eventLine(SystemClock.uptimeMillis() - focusAskedAt, fromCard))
     }
 
     /** F42: checks the card every [ResultCardClock.CHECK_MILLIS] until its clock says it goes (or it is replaced). */
@@ -332,6 +390,8 @@ class TalkBackResultBanner(
         sentenceView = null
         buttonView = null
         clock = null
+        focusTrace = null
+        cardWindowId = null
         if (holdsFocus) {
             try { beforeFocusedDismiss() } catch (_: RuntimeException) {}
         }

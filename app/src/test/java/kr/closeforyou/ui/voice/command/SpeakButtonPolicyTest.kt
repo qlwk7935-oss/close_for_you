@@ -4,8 +4,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Test
 
 class SpeakButtonPolicyTest {
-    private class Mic(val declared: Boolean = true, val granted: Boolean = true, val onDevice: Boolean = true) : MicrophoneAccess {
-        override fun declared() = declared
+    private class Mic(val granted: Boolean = true, val onDevice: Boolean = true) : MicrophoneAccess {
         override fun granted() = granted
         override fun onDeviceRecognizerAvailable() = onDevice
     }
@@ -17,16 +16,12 @@ class SpeakButtonPolicyTest {
 
     @Test fun flagOrSettingOffHidesFirst() {
         assertEquals(SpeakButtonState.TURNED_OFF, state(Mic(), feature = false))
-        assertEquals(SpeakButtonState.TURNED_OFF, state(Mic(declared = false), setting = false))
+        assertEquals(SpeakButtonState.TURNED_OFF, state(Mic(), setting = false))
     }
-
-    /** Release builds have no RECORD_AUDIO until A adds it to the main manifest. */
-    @Test fun notDeclaredMeansNotInThisVersion() =
-        assertEquals(SpeakButtonState.NOT_IN_THIS_VERSION, state(Mic(declared = false, granted = false)))
 
     /** Asking for the microphone would not help on a device without on-device recognition (LG). */
     @Test fun deviceWithoutOnDeviceRecognizer() =
         assertEquals(SpeakButtonState.DEVICE_UNSUPPORTED, state(Mic(granted = false, onDevice = false)))
 
-    @Test fun declaredButNotAllowed() = assertEquals(SpeakButtonState.PERMISSION_NEEDED, state(Mic(granted = false)))
+    @Test fun notAllowed() = assertEquals(SpeakButtonState.PERMISSION_NEEDED, state(Mic(granted = false)))
 }

@@ -129,7 +129,11 @@ class PresetStorageAndTextTest {
         assertEquals(R.string.ui_preset_decision_fixed, PresetText.decisionLineRes(HandlingPreset.CLOSE_ADS_ONLY, unknownAutoClose = true))
         assertEquals(R.string.ui_preset_decision_fixed, PresetText.decisionLineRes(null, unknownAutoClose = true))
         val line = text("ui_preset_decision_fixed_close_all")
-        assertTrue(line.contains("결제") && line.contains("동의") && line.contains("항상") && line.contains("버튼이 하나뿐"))
+        assertTrue(line.contains("결제") && line.contains("동의") && line.contains("항상") && line.contains("이름 있는 닫는 버튼"))
+        // F56: 강력 모드는 닫는 버튼이 여럿이어도 닫는다. 동의 문장이 그보다 좁게 말하면 안 된다.
+        val consent = text("ui_preset_consent_unknown_all")
+        assertTrue(consent.contains("위험한 버튼이 없고") && consent.contains("이름 있는 닫는 버튼"))
+        assertFalse(line.contains("하나뿐") || consent.contains("하나뿐"))
         assertTrue(R.string.ui_preset_consent_unknown_all in ConsentText.bodyRes(HandlingPreset.CLOSE_ALL, live = true, unknownAutoClose = true))
         assertFalse(R.string.ui_preset_consent_unknown_all in ConsentText.bodyRes(HandlingPreset.CLOSE_ADS_AND_COUPONS, live = true, unknownAutoClose = true))
     }

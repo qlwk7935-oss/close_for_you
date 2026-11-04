@@ -5,7 +5,8 @@
     <uses-permission android:name="android.permission.INTERNET" tools:node="remove" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" tools:node="remove" />
     <!-- BIND_ACCESSIBILITY_SERVICE belongs on the service, not uses-permission. -->
-    <!-- C TODO: request RECORD_AUDIO only with the future push-to-talk UI. -->
+    <!-- C(ui/voice) F13: the microphone is used only while [말하기] listens (on-device recognizer, API 31+); requested only from [마이크 허용]. -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <queries>
         <intent>
             <action android:name="android.intent.action.TTS_SERVICE" />

@@ -573,6 +573,33 @@ class SimpleTreeCollector(private val service: AccessibilityService) {
         return node
     }
 
+    /**
+     * F53: what else is on screen around [root], with its own caps ([PopupStack.LOOK_MAX_NODES], [PopupStack.LOOK_MAX_MILLIS]):
+     * the windows, and (a popup inside the page's window) the tree from its end, the popup's own subtree skipped. Null when
+     * there is no tree. Nothing kept past the caller.
+     */
+    fun readStack(root: PopupRoot): StackLook? {
+        val start = SystemClock.uptimeMillis()
+        val active = service.rootInActiveWindow ?: return null
+        val windows = mutableListOf<AccessibilityWindowInfo>()
+        try {
+            val screen = screenBounds()
+            windows += service.windows.orEmpty()
+            val packageName = active.packageName?.toString().orEmpty()
+            val shapes = windows.map { shapeOf(it, packageName) }
+            val base = root.windowId ?: active.windowId
+            if (root.windowId != null) return StackLook(emptyList(), screen, shapes, base, false, 0, SystemClock.uptimeMillis() - start)
+            val deadline = start + PopupStack.LOOK_MAX_MILLIS
+            val walked = TailRead.walk(active, liveTail(screen, skip = root.path), PopupStack.LOOK_MAX_NODES, SimpleCloseEngineFeature.MAX_DEPTH) { SystemClock.uptimeMillis() > deadline }
+            return StackLook(walked.nodes, screen, shapes, base, walked.aborted, walked.visited, SystemClock.uptimeMillis() - start)
+        } catch (e: RuntimeException) {
+            return null
+        } finally {
+            windows.forEach(::release)
+            release(active)
+        }
+    }
+
     /** F50: the window [windowId] is still in the window list; null when the list could not be read. */
     fun windowListed(windowId: Int): Boolean? {
         val windows = try { service.windows.orEmpty() } catch (e: RuntimeException) { return null }
@@ -670,8 +697,9 @@ class SimpleTreeCollector(private val service: AccessibilityService) {
     }
 
     /** F51: live nodes for [TailRead]: the same snapshot and walk rule as [walk] (visible nodes kept, off-screen subtrees skipped). */
-    private fun liveTail(screen: ScreenBounds) = object : TailTree<AccessibilityNodeInfo> {
+    private fun liveTail(screen: ScreenBounds, skip: String? = null) = object : TailTree<AccessibilityNodeInfo> {
         override fun look(node: AccessibilityNodeInfo, path: String): TailLook {
+            if (path == skip) return TailLook(null, descend = false, zeroSize = false)
             val visible = node.isVisibleToUser
             val box = boundsOf(node)
             val zero = box.width <= 0 || box.height <= 0
