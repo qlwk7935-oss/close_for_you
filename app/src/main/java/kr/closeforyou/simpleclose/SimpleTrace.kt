@@ -291,6 +291,12 @@ enum class SimpleTrace {
     STACK_BLOCKED_POPUP_OVERLAP,
     STACK_ASKED,
     STACK_UNREAD,
+    /** F57: no popup in front could be told: no move offered; the move went to its close or first node; asked nothing for now; that time ended. */
+    STACK_NO_FRONT,
+    OVERLAP_MOVED_TO_FRONT_CLOSE,
+    OVERLAP_MOVED_TO_FRONT_FIRST,
+    OVERLAP_MOVE_FAILED,
+    OVERLAP_HOLD_QUIET,
     CLOSE_OTHER_POPUP_LEFT,
     /** F27 (self review): the same popup came back within a few seconds of a confirmed close: a failure after all. */
     CLOSE_REAPPEARED_LATE,

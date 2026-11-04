@@ -155,10 +155,10 @@ class F53Test {
         val popup = SimplePopupAnalysis.build(nodes, PopupRoot("0/0/1", card, PopupRootKind.FRONT_LAYER), "p", 7, SCREEN, 1L, 0L)
         val planned = ChoicePromptPlanner.plan(popup.analysis, PopupClassification.UNKNOWN, labelPolicy = SimpleLabelPolicy, rememberChoicesEnabled = false, preset = HandlingPreset.entries.first())
         assertNotNull(planned.options.firstOrNull { it.kind == PromptOptionKind.PRESS_CANDIDATE })
-        val shown = SimplePromptOptions.overlapped(planned, popup.scan.candidates)
+        val shown = SimplePromptOptions.overlapped(planned, frontKnown = true)
         assertEquals(PromptSummary.POPUPS_OVERLAP, shown.summary)
         assertTrue(shown.options.none { it.kind == PromptOptionKind.PRESS_CANDIDATE || it.kind == PromptOptionKind.REMEMBER_ALWAYS })
-        assertEquals(listOf("닫기"), shown.options.filter { it.kind == PromptOptionKind.MOVE_TO_BUTTON }.map { it.buttonLabel })
+        assertEquals(listOf(SimplePromptOptions.FRONT_ID), shown.options.filter { it.kind == PromptOptionKind.MOVE_TO_BUTTON }.map { it.candidateId })
         assertFalse(shown.briefQuestion)
     }
 

@@ -13,6 +13,15 @@ enum class StackBlock {
     POPUP_OVERLAP,
 }
 
+/** F57: where a move goes in the popup taken to be in front: a named close, or its first readable node. */
+enum class FrontKind { CLOSE, FIRST }
+
+/** F57: the node a move goes to (memory only): [cover] the popup or card taken to be in front. */
+class FrontTarget(val cover: PopupRoot, val path: String, val bounds: ScreenBounds, val kind: FrontKind)
+
+/** F57: what stopped a button, and where a move may go ([front] null = no front known: no move is offered). */
+class StackHit(val block: StackBlock, val front: FrontTarget?)
+
 /** F53: a look at what else is on screen ([nodes] outside the popup's own subtree; [partial] = a cap stopped the walk). */
 class StackLook(val nodes: List<NodeSnapshot>, val screen: ScreenBounds, val windows: List<WindowShape>, val baseWindowId: Int,
     val partial: Boolean, val visited: Int, val millis: Long)
@@ -56,11 +65,41 @@ object PopupStack {
     }
 
     /** What lies over [button], most certain first; null = nothing that was read. */
-    fun block(button: ScreenBounds, root: PopupRoot, look: StackLook): StackBlock? {
-        if (windowAbove(button, look.windows, look.baseWindowId)) return StackBlock.WINDOW_ABOVE
+    fun block(button: ScreenBounds, root: PopupRoot, look: StackLook): StackBlock? = hit(button, root, look)?.block
+
+    /**
+     * [block] with where [버튼으로 이동] may go (F57). A card later in the page, or another popup later in the page, is taken to be
+     * in front: that is a guess from the DOM order, not something the tree says. Another popup earlier in the page, or a window
+     * above (its tree is not read here): no front known, no move.
+     */
+    fun hit(button: ScreenBounds, root: PopupRoot, look: StackLook): StackHit? {
+        if (windowAbove(button, look.windows, look.baseWindowId)) return StackHit(StackBlock.WINDOW_ABOVE, null)
         if (root.windowId != null) return null
-        if (coverLater(button, root, look.nodes, look.screen)) return StackBlock.COVER_LATER
-        return if (others(look.nodes, root, look.screen).any { holds(it.bounds, button) }) StackBlock.POPUP_OVERLAP else null
+        coverNode(button, root, look.nodes, look.screen)?.let { cover ->
+            return StackHit(StackBlock.COVER_LATER, frontTarget(PopupRoot(cover.path, cover.bounds, PopupRootKind.FRONT_LAYER), look.nodes, look.screen))
+        }
+        val over = others(look.nodes, root, look.screen).filter { holds(it.bounds, button) }
+        if (over.isEmpty()) return null
+        val later = over.filter { TailRead.WALK_ORDER.compare(rootMark(it), rootMark(root)) > 0 }.maxWithOrNull { a, b -> TailRead.WALK_ORDER.compare(rootMark(a), rootMark(b)) }
+        return StackHit(StackBlock.POPUP_OVERLAP, later?.let { frontTarget(it, look.nodes, look.screen) })
+    }
+
+    /**
+     * Where a move goes inside [cover]: its plainest named close; else its first named text; else its first clickable with no
+     * risky word; else the cover itself when it has a name. Null = nothing to go to. Never the blocked popup's own button.
+     */
+    fun frontTarget(cover: PopupRoot, nodes: List<NodeSnapshot>, screen: ScreenBounds): FrontTarget? {
+        val inside = nodes.filter { cover.contains(it) && PopupRootFinder.isVisible(it, screen) }.sortedWith(TailRead.WALK_ORDER)
+        StrongCloseRules.pick(CloseButtonFinder.scan(inside, cover).candidates)?.let { close ->
+            val path = close.nodePath
+            if (path != null) return FrontTarget(cover, path, close.bounds, FrontKind.CLOSE)
+        }
+        val below = inside.filter { it.path != cover.path }
+        val first = below.firstOrNull { named(it) && !it.clickable }
+            ?: below.firstOrNull { it.clickable && it.enabled && !SimpleLabelRules.isRisky(CloseButtonFinder.nameOf(it, inside)) }
+            ?: inside.firstOrNull { it.path == cover.path && named(it) }
+            ?: return null
+        return FrontTarget(cover, first.path, first.bounds, FrontKind.FIRST)
     }
 
     /** An application window with a higher layer holds the button's middle (a card in a whole-screen window: its root view's box). */
@@ -81,17 +120,20 @@ object PopupStack {
      * own cards sit deeper), not touching the side edges and not page-sized, with something in it. A modal early in the DOM has
      * the whole page later than it: the page's full-width sections and inner cards do not count.
      */
-    fun coverLater(button: ScreenBounds, root: PopupRoot, nodes: List<NodeSnapshot>, screen: ScreenBounds): Boolean {
+    fun coverLater(button: ScreenBounds, root: PopupRoot, nodes: List<NodeSnapshot>, screen: ScreenBounds): Boolean =
+        coverNode(button, root, nodes, screen) != null
+
+    private fun coverNode(button: ScreenBounds, root: PopupRoot, nodes: List<NodeSnapshot>, screen: ScreenBounds): NodeSnapshot? {
         val screenArea = screen.width.toLong() * screen.height
         val margin = screen.width * COVER_SIDE_MARGIN
-        return nodes.any { node ->
+        return nodes.filter { node ->
             val parent = node.path.substringBeforeLast('/', missingDelimiterValue = "")
             val area = node.bounds.width.toLong() * node.bounds.height
             !root.contains(node) && parent.isNotEmpty() && root.path.startsWith("$parent/") &&
                 TailRead.WALK_ORDER.compare(node, rootMark(root)) > 0 && holds(node.bounds, button) &&
                 node.bounds.left > screen.left + margin && node.bounds.right < screen.right - margin &&
                 area >= screenArea * COVER_MIN_AREA_RATIO && area <= screenArea * COVER_MAX_AREA_RATIO && hasContent(node, nodes)
-        }
+        }.maxWithOrNull(TailRead.WALK_ORDER)
     }
 
     private fun rootMark(root: PopupRoot) = NodeSnapshot(root.path, null, null, null, null, false, false, root.bounds)
@@ -118,8 +160,52 @@ object PopupStack {
     fun pressLine(by: String, root: PopupRoot, button: ScreenBounds): String =
         "PRESS_TARGET by=$by kind=${root.kind.name} root=${box(root.bounds)} button=${box(button)}"
 
+    /** F57: where a move went (bounds and codes only). */
+    fun moveLine(front: FrontTarget, moved: Boolean): String =
+        "OVERLAP_MOVE target=${front.kind.name} cover=${box(front.cover.bounds)} to=${box(front.bounds)} moved=$moved"
+
     /** Which popup was picked this read. */
     fun pickLine(root: PopupRoot, mode: TreeReadMode): String = "ROOT_PICK kind=${root.kind.name} root=${box(root.bounds)} mode=${mode.name}"
 
     private fun box(b: ScreenBounds) = "${b.left},${b.top},${b.right},${b.bottom}"
+}
+
+/** F57: why the quiet time after a move ended, or that it goes on. */
+enum class HoldStep { KEEP, END_TIMEOUT, END_COVER_GONE, END_OTHER_POPUP, END_POPUP_GONE }
+
+/** F57: the person chose to go to the popup in front: [words] (the stopped popup), [root], [cover] are left alone for a while. */
+class OverlapMoveHold(val words: String, val root: PopupRoot, val cover: PopupRoot, val startedAt: Long)
+
+/**
+ * F57 (우진 SM-F966N 4d9a134 canvas.suwon: USER_CHOSE_MOVE, MOVED_TO_BUTTON, 0.5 s later STACK_BLOCKED_COVER_LATER, the same prompt
+ * again, the focus taken before a double tap). The move's own focus event starts a read; the 10 s cooldown had run out while the
+ * prompt was up (it is not refreshed then), so the popup was asked about again. After a move nothing is asked, pressed or focused
+ * for this popup for [QUIET_MILLIS] after the person's last touch (finding a button by swiping, hearing it, a double tap: the
+ * 10 s cooldown was too short on the device; each touch gives more time), at most [MAX_MILLIS]. It ends sooner when the screen really
+ * changes: the cover gone (the person closed it: the popup behind is judged again), another popup, or the popup gone. Pure; JVM tested.
+ */
+object OverlapMoveRules {
+    const val QUIET_MILLIS = 30_000L
+    const val MAX_MILLIS = 120_000L
+
+    fun timedOut(hold: OverlapMoveHold, now: Long, lastTouchAt: Long): Boolean =
+        now - maxOf(hold.startedAt, lastTouchAt) >= QUIET_MILLIS || now - hold.startedAt >= MAX_MILLIS
+
+    /** A read found [root] with [words]. The cover itself picked as the popup is still the same two popups. [coverPresent] null = unknown. */
+    fun step(hold: OverlapMoveHold, now: Long, lastTouchAt: Long, words: String, root: PopupRoot, coverPresent: Boolean?): HoldStep = when {
+        timedOut(hold, now, lastTouchAt) -> HoldStep.END_TIMEOUT
+        root.path == hold.cover.path || root.bounds == hold.cover.bounds -> HoldStep.KEEP
+        words != hold.words -> HoldStep.END_OTHER_POPUP
+        coverPresent == false -> HoldStep.END_COVER_GONE
+        else -> HoldStep.KEEP
+    }
+
+    /** A read found no popup: only the popup's own node going away ends it ([rootPresent] null = unknown). */
+    fun stepNoRoot(hold: OverlapMoveHold, now: Long, lastTouchAt: Long, rootPresent: Boolean?): HoldStep = when {
+        timedOut(hold, now, lastTouchAt) -> HoldStep.END_TIMEOUT
+        rootPresent == false -> HoldStep.END_POPUP_GONE
+        else -> HoldStep.KEEP
+    }
+
+    fun line(step: HoldStep, afterMillis: Long): String = "OVERLAP_HOLD_END reason=${step.name} afterMs=$afterMillis"
 }

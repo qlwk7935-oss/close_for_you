@@ -107,6 +107,12 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
 
     /** F53: the last confirmed close left another popup on screen. */
     private var otherPopupLeft = false
+
+    /** F57: the person went to the popup in front: quiet about this popup for a while ([OverlapMoveRules]). */
+    private var overlapHold: OverlapMoveHold? = null
+
+    /** F57: popups [autoFailed] holds only because something lay over the button (nothing failed): judged afresh once it went. */
+    private val stackStopped = LinkedHashSet<String>()
     /** F10: the last read that found no popup (0 = none yet); the popup appeared after it. */
     private var lastNoRootAt = 0L
     /** F13: reads in the current search (debug numbers only): all, and those the collection guard refused. */
@@ -516,6 +522,12 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
         if (root == null) {
             log.trace(if (videoAdWaiting) SimpleTrace.VIDEO_SKIP_WAITING else SimpleTrace.NO_POPUP_ROOT)
             lastNoRootAt = SystemClock.uptimeMillis()
+            // F57: the stopped popup itself went away: the quiet time after a move ends.
+            overlapHold?.let { hold ->
+                val present = withContext(Dispatchers.Default) { collector.rootStillPresent(hold.root) }
+                val step = OverlapMoveRules.stepNoRoot(hold, SystemClock.uptimeMillis(), lastTouchAt, present)
+                if (step != HoldStep.KEEP) endOverlapHold(hold, step)
+            }
             // F50: why, as codes and counts (only when it changed).
             if (!videoAdWaiting) {
                 val off = sinceAborted?.let { WholeReadCap.ABORTED_RETRY_MILLIS - it }?.takeIf { it > 0 }
@@ -559,6 +571,23 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
             .copy(foundByProbe = read.mode == TreeReadMode.POPUP_SUBTREE, depthCut = read.depthCut.any { it == root.path || it.startsWith("${root.path}/") })
         val key = popup.coarseKey
         val now = SystemClock.uptimeMillis()
+        // F57: the person is on the way to the popup in front: not asked, not pressed, the focus left alone, unless the screen changed.
+        overlapHold?.let { hold ->
+            val popupWords = "${read.windowId}:${popup.analysis.token.contentDigest}"
+            val present = withContext(Dispatchers.Default) { collector.rootStillPresent(hold.cover) }
+            val step = OverlapMoveRules.step(hold, now, lastTouchAt, popupWords, root, present)
+            if (step == HoldStep.KEEP) {
+                log.trace(SimpleTrace.OVERLAP_HOLD_QUIET)
+                endSearch()
+                return true
+            }
+            endOverlapHold(hold, step)
+            if (step == HoldStep.END_COVER_GONE) {
+                // The popup behind is judged again, as new: nothing ever failed on it.
+                seenAt.remove(key)
+                if (stackStopped.remove(popupWords)) autoFailed.remove(popupWords)
+            }
+        }
         // Seen within the cooldown (it stayed on screen, or was just handled): once is enough, quietly.
         val last = seenAt[key]
         seenAt[key] = now
@@ -819,12 +848,12 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
                     resultBanner?.dismissForNextPopup()
                     var recheckMiss: RecheckMiss? = null
                     var recheckLive: ScreenBounds? = null
-                    var stackBlock: StackBlock? = null
+                    var stackHit: StackHit? = null
                     val result = try {
                         pressAndConfirm(classified, decision.candidate, preClickMove, watchFocus = moveFocus, prePress = prePress,
                             onRecheckMiss = { miss, live -> recheckMiss = miss; recheckLive = live },
                             onClicked = { timing.clicked = SystemClock.uptimeMillis() },
-                            pressedBy = "AUTO", stackNodes = read.nodes, onStackBlock = { stackBlock = it })
+                            pressedBy = "AUTO", stackNodes = read.nodes, onStackBlock = { stackHit = it })
                     } finally {
                         if (pressing == words) pressing = null
                     }
@@ -852,12 +881,14 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
                         if (prompted == null && stop.fresh != null) {
                             if (stop.suspicious) askSuspicious(stop.fresh) else ask(stop.fresh, stop.kind, talkBackReadIt = false)
                         }
-                    } else if (stackBlock != null) {
-                        // F53: nothing pressed: something may lie over the button. Asked, moves only; never pressed by itself again.
+                    } else if (stackHit != null) {
+                        // F53: nothing pressed: something may lie over the button. Asked, no press; not pressed by itself while it lies there.
                         tts?.stop()
                         rememberAutoFailed(classified)
+                        stackStopped += words
+                        if (stackStopped.size > 32) stackStopped.remove(stackStopped.first())
                         log.trace(SimpleTrace.STACK_ASKED)
-                        if (prompted == null) ask(classified, classification, talkBackReadIt = false, overlapped = true)
+                        if (prompted == null) ask(classified, classification, talkBackReadIt = false, overlap = stackHit)
                     } else if (PressSuccess.isConfirmed(result)) {
                         noteClosed(words, decision.candidate)
                         // F24: the page settles after a close; no fast re-reads of it.
@@ -985,14 +1016,14 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
                 // F53: its buttons may lie under something: then they are not offered as a press at all.
                 val buttons = popup.scan.candidates.map { it.bounds } + listOfNotNull(popup.scan.xButton?.bounds)
                 val covered = try {
-                    buttons.isNotEmpty() && stackBlockOf(classified, buttons, read.nodes) != null
+                    if (buttons.isEmpty()) null else stackHitOf(classified, buttons, read.nodes)
                 } catch (e: CancellationException) {
                     // The next event replaced this inspection during the look: its read must not end quietly in the cooldown.
                     seenAt.remove(key)
                     throw e
                 }
-                if (covered) log.trace(SimpleTrace.STACK_ASKED)
-                ask(classified, classification, talkBackReadIt = inside == true && !lateFailure, failedNow = lateFailure, overlapped = covered)
+                if (covered != null) log.trace(SimpleTrace.STACK_ASKED)
+                ask(classified, classification, talkBackReadIt = inside == true && !lateFailure, failedNow = lateFailure, overlap = covered)
             }
         }
         return true
@@ -1173,7 +1204,7 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
      * 못했어요."). F21: buttons that failed on this popup are never offered again (AGENTS 6-6), the next one is.
      * The popup's risky buttons (결제·동의·권한…) are offered as [버튼으로 이동] only, never as a press.
      */
-    private fun ask(popup: SimplePopup, classification: PopupClassification, talkBackReadIt: Boolean, failedNow: Boolean = false, overlapped: Boolean = false) {
+    private fun ask(popup: SimplePopup, classification: PopupClassification, talkBackReadIt: Boolean, failedNow: Boolean = false, overlap: StackHit? = null) {
         val presenter = overlay ?: return
         val planned = ChoicePromptPlanner.plan(
             popup.analysis, classification, labelPolicy = SimpleLabelPolicy,
@@ -1210,9 +1241,9 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
         // (a decision, or a risky button beside it), it is still a place to go: [X 모양 닫기 버튼으로 이동], never pressed by us.
         val xMove = popup.scan.xButton?.takeIf { x == null }?.copy(label = getString(R.string.ui_simple_x_button))
         if (xMove != null) log.trace(SimpleTrace.X_BUTTON_MOVE_OFFERED)
-        val xName = popup.scan.xButton?.copy(label = getString(R.string.ui_simple_x_button))
-        val shown = if (overlapped) {
-            SimplePromptOptions.overlapped(prompt, popup.scan.candidates + listOfNotNull(xName) + popup.scan.riskButtons)
+        if (overlap != null && overlap.front == null) log.trace(SimpleTrace.STACK_NO_FRONT)
+        val shown = if (overlap != null) {
+            SimplePromptOptions.overlapped(prompt, frontKnown = overlap.front != null)
         } else {
             SimplePromptOptions.adjust(withRemember, listOfNotNull(xMove) + popup.scan.riskButtons, failedButtons[keyOf(popup)].orEmpty(), failedNow)
         }
@@ -1222,7 +1253,7 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
         lastClosed.forget()
         // F42: and its card (held while focused) goes now.
         resultBanner?.dismissForNextPopup()
-        val result = presenter.present(shown) { answer -> onAnswer(popup, answer) }
+        val result = presenter.present(shown) { answer -> onAnswer(popup, answer, overlap?.front) }
         if (result != PromptShowResult.SHOWN) {
             prompted = null
             log.trace(SimpleTrace.PROMPT_NOT_SHOWN)
@@ -1231,10 +1262,11 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
         log.trace(SimpleTrace.ASKED)
     }
 
-    private fun onAnswer(popup: SimplePopup, answer: PromptAnswer) {
+    private fun onAnswer(popup: SimplePopup, answer: PromptAnswer, front: FrontTarget? = null) {
         if (answer is PromptAnswer.Move) {
             prompted = null
-            moveToButton(popup, answer.request.candidateId)
+            if (front != null && answer.request.candidateId == SimplePromptOptions.FRONT_ID) moveToFront(popup, front)
+            else moveToButton(popup, answer.request.candidateId)
             return
         }
         if (answer !is PromptAnswer.Picked) return
@@ -1258,16 +1290,16 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
                 focusedBeforeClose = false
                 jobs.runAction {
                     // Our window goes away under TalkBack's focus: it must land on the page, not the popup's leftovers.
-                    var stackBlock: StackBlock? = null
-                    val result = pressAndConfirm(popup, candidate, moveFocus = !focusedAlready, watchFocus = true, onStackBlock = { stackBlock = it })
+                    var stackHit: StackHit? = null
+                    val result = pressAndConfirm(popup, candidate, moveFocus = !focusedAlready, watchFocus = true, onStackBlock = { stackHit = it })
                     // F31 (B_DEMO_RULES.md 6-2): the person's press may open the next popup too; not counted as automatic.
                     if (result.attempted) chainGuard.pressed(popup.snapshot.token.packageName, keyOf(popup), SystemClock.uptimeMillis(), automatic = false)
                     when {
-                        // F53: not pressed, something may lie over the button: asked again, moves only (AGENTS 6-5, 6-6).
-                        stackBlock != null -> {
+                        // F53: not pressed, something may lie over the button: asked again, no press (AGENTS 6-5, 6-6).
+                        stackHit != null -> {
                             tts?.stop()
                             log.trace(SimpleTrace.STACK_ASKED)
-                            if (prompted == null) ask(popup, popup.analysis.classification, talkBackReadIt = false, overlapped = true)
+                            if (prompted == null) ask(popup, popup.analysis.classification, talkBackReadIt = false, overlap = stackHit)
                         }
                         PressSuccess.isConfirmed(result) -> {
                             noteClosed(keyOf(popup), candidate)
@@ -1340,6 +1372,49 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
         val sentence = getString(R.string.ui_move_button_position, candidate.label?.trim().orEmpty(), place)
         log.trace(SimpleTrace.MOVE_POSITION_SPOKEN)
         scope.launch { announcer.announce(AnnouncementRequest(null, AnnouncementKind.POPUP_FOUND, sentence)) }
+    }
+
+    /**
+     * F57: the move of an overlap prompt: to the popup taken to be in front, never to the stopped popup's own button (a double tap
+     * there would be the press just refused). Only a focus move; the node must still be where it was read. Then quiet about
+     * this popup for a while ([OverlapMoveRules]). TalkBack off or refused: our TTS says where it is. Bounds and codes in the log.
+     */
+    private fun moveToFront(popup: SimplePopup, front: FrontTarget) {
+        log.trace(SimpleTrace.USER_CHOSE_MOVE)
+        overlapHold = OverlapMoveHold(keyOf(popup), popup.root, front.cover, SystemClock.uptimeMillis())
+        val moved = resultBanner?.talkBackOn() == true && run {
+            lastOwnFocusAt = SystemClock.uptimeMillis()
+            val node = collector.nodeAt(front.path)
+            try {
+                val at = android.graphics.Rect().also { node?.getBoundsInScreen(it) }
+                node != null && node.isVisibleToUser && ScreenBounds(at.left, at.top, at.right, at.bottom) == front.bounds &&
+                    node.performAction(AccessibilityNodeInfo.ACTION_ACCESSIBILITY_FOCUS)
+            } catch (e: RuntimeException) {
+                false
+            } finally {
+                @Suppress("DEPRECATION") node?.recycle()
+            }
+        }
+        log.line(PopupStack.moveLine(front, moved))
+        if (moved) {
+            log.trace(if (front.kind == FrontKind.CLOSE) SimpleTrace.OVERLAP_MOVED_TO_FRONT_CLOSE else SimpleTrace.OVERLAP_MOVED_TO_FRONT_FIRST)
+            return
+        }
+        log.trace(SimpleTrace.OVERLAP_MOVE_FAILED)
+        val announcer = tts ?: return
+        val place = getString(when (SimplePromptOptions.place(front.bounds, popup.snapshot.screenBounds)) {
+            ScreenPlace.TOP -> R.string.ui_position_top
+            ScreenPlace.MIDDLE -> R.string.ui_position_middle
+            ScreenPlace.BOTTOM -> R.string.ui_position_bottom
+        })
+        log.trace(SimpleTrace.MOVE_POSITION_SPOKEN)
+        scope.launch { announcer.announce(AnnouncementRequest(null, AnnouncementKind.POPUP_FOUND, getString(R.string.ui_move_front_position, place))) }
+    }
+
+    /** F57: the quiet time after a move is over, and why (a code and a number). */
+    private fun endOverlapHold(hold: OverlapMoveHold, step: HoldStep) {
+        if (overlapHold === hold) overlapHold = null
+        log.line(OverlapMoveRules.line(step, SystemClock.uptimeMillis() - hold.startedAt))
     }
 
     /**
@@ -1631,7 +1706,7 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
         /** F53: who pressed, for the `PRESS_TARGET` line; the read's nodes when just read (an automatic press); stopped by what lies over it. */
         pressedBy: String = "USER",
         stackNodes: List<NodeSnapshot> = emptyList(),
-        onStackBlock: ((StackBlock) -> Unit)? = null,
+        onStackBlock: ((StackHit) -> Unit)? = null,
     ): ActionResult {
         val token = popup.analysis.token
         var target = preClickTarget
@@ -1639,9 +1714,9 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
         otherPopupLeft = false
         run {
             // F53: before the focus moves and the re-check, so nothing sits between the re-check and the click.
-            stackBlockOf(popup, listOf(candidate.bounds), stackNodes)?.let { block ->
+            stackHitOf(popup, listOf(candidate.bounds), stackNodes)?.let { hit ->
                 endReclaim(null)
-                onStackBlock?.invoke(block)
+                onStackBlock?.invoke(hit)
                 return ActionResult(token, ActionStatus.BLOCKED, SafetyReason.STALE_SCREEN, attempted = false)
             }
             if (SimpleCloseEngineFeature.FOCUS_PAGE_BEFORE_CLICK && moveFocus) {
@@ -1923,7 +1998,7 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
      * F53: what may lie over any of [buttons] ([PopupStack]; [known]: nodes just read, added to the look). Null = nothing
      * that was read, the look could not be made, or this popup's press is not about one in front. The line has codes and bounds only.
      */
-    private suspend fun stackBlockOf(popup: SimplePopup, buttons: List<ScreenBounds>, known: List<NodeSnapshot>): StackBlock? {
+    private suspend fun stackHitOf(popup: SimplePopup, buttons: List<ScreenBounds>, known: List<NodeSnapshot>): StackHit? {
         if (!SimpleCloseEngineFeature.STACK_CHECK_BEFORE_PRESS || !PopupStack.applies(popup.root)) return null
         val read = withContext(Dispatchers.Default) { collector.readStack(popup.root) }
         if (read == null) {
@@ -1932,11 +2007,11 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
         }
         val look = StackLook(TailRead.merge(read.nodes, known), read.screen, read.windows, read.baseWindowId, read.partial, read.visited, read.millis)
         for (button in buttons) {
-            val block = PopupStack.block(button, popup.root, look)
-            if (block != null || button === buttons.last()) log.line(PopupStack.line(block, button, popup.root, look))
-            if (block != null) {
-                log.trace(SimpleTrace.valueOf("STACK_BLOCKED_${block.name}"))
-                return block
+            val hit = PopupStack.hit(button, popup.root, look)
+            if (hit != null || button === buttons.last()) log.line(PopupStack.line(hit?.block, button, popup.root, look))
+            if (hit != null) {
+                log.trace(SimpleTrace.valueOf("STACK_BLOCKED_${hit.block.name}"))
+                return hit
             }
         }
         return null
@@ -2042,6 +2117,8 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
         autoFailed.clear()
         shiftReread = null
         shiftRereadDone.clear()
+        overlapHold = null
+        stackStopped.clear()
         settle = null
         settleReread?.cancel()
         lastNoRootLine = null

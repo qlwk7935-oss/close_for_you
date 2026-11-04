@@ -1203,6 +1203,40 @@ F26 자동 확인: 옥션 웹 감지 1.3초·재확인 308ms·`READ_DUTY_PCT` 7.
   - `decision/AUTO_CLOSE.md`·`decision/README.md`의 "정확히 하나"는 B의 `DecisionAutoClose` 경로 설명이다. 강력 모드와 다른 경로라서 고치지 않았다.
   - 위 F7 항목과 `docs/c-notes/simple-close-engine.md`의 조건은 그 회차 기록이다. 지금 규칙은 이 절과 F16 항목이다.
 
+### 8-50. F57 — 겹침 안내의 [버튼으로 이동]: 다시 묻지 않기, 앞 팝업으로만 이동 (JVM 시험만, 실기기·에뮬레이터 미검증)
+
+- **증상**(우진 SM-F966N, TalkBack 켬, 4d9a134, 크롬 canvas.suwon.ac.kr): F53 차단은 동작했다(`STACK_LOOK block=COVER_LATER others=0`, `CLICKED` 없음). 그런데 `USER_CHOSE_MOVE` → `MOVED_TO_BUTTON` 약 0.5초 뒤 `STACK_BLOCKED_COVER_LATER` → `STACK_ASKED`로 같은 창이 다시 떴다.
+- **원인(코드로 확정):**
+  - 이동이 일으킨 TalkBack 초점 이벤트(`SimpleInspectionEvent.TALKBACK_FOCUS`)가 다시 읽기를 시작한다.
+  - 재질문 억제는 10초 쿨다운(`seenAt`)뿐인데, 선택 창이 떠 있는 동안에는 `inspect`가 일찍 끝나 쿨다운이 갱신되지 않는다. 로그에서 창이 뜬 지 약 10초 뒤(18:18:24 → 18:18:34) 골랐으므로 이미 끝나 있었다.
+  - STACK_ASKED 경로에도 일반 묻기와 같은 쿨다운만 적용됐다. 결정·사기 팝업만 `denyOnce`로 다시 묻지 않는다.
+  - 다시 뜬 창이 초점을 가져간다. 이것이 두 번 탭을 끊었을 가능성이 높다(순서는 로그와 맞지만 사용자 동작은 전체 로그·사진 전이라 추측).
+- **F53 이동이 간 곳(코드로 확정):** 멈춘 팝업 자신의 버튼(`scan.candidates`, X, 위험 버튼)이었다. 즉 막은 버튼으로 초점을 보냈다. 이번 사례에서 그 버튼이 실제로 가려져 있었는지는 **트리만으로 모른다.**
+- **고침:**
+  - **이동 대상(`PopupStack.hit`, `frontTarget`):** 앞에 있다고 보는 덮개 안의 이름 있는 닫기 중 가장 분명한 것 → 없으면 첫 글자 노드 → 없으면 위험 단어 없는 첫 클릭 노드 → 없으면 덮개 자신(이름 있을 때). 멈춘 팝업의 버튼으로는 보내지 않는다.
+  - **앞을 모를 때:** 앞쪽 DOM의 다른 팝업(`POPUP_OVERLAP`이고 걸음 순서가 앞), 위쪽 창(`WINDOW_ABOVE`, 그 창의 트리는 여기서 읽지 않음), 갈 노드가 없는 덮개. 이때는 이동을 빼고 "…어느 쪽이 앞인지 알 수 없어서 대신 누르지 않아요. 화면을 직접 살펴봐 주세요." + [그대로 두기]만 보여 준다(`POPUPS_OVERLAP_NO_MOVE`).
+  - **선택지:** 앞을 알 때는 [앞에 있는 팝업으로 이동], [내용 다시 읽기], [그대로 두기]. 이름을 넣지 않은 고정 문구다.
+  - **재등장 막기(`OverlapMoveRules`):** 이동을 고르면 그 팝업과 덮개에 대해 묻기·누르기·초점 가져오기를 하지 않는다.
+    - 시간: 마지막 터치 뒤 **30초**, 처음부터 최대 **120초**. 이유: 10초 쿨다운이 실측에서 부족했고, 낭독을 들으며 스와이프로 찾고 두 번 탭하려면 더 걸린다. 터치가 있으면 그만큼 늘어난다. 숫자는 실측이 아니라 판단값이다.
+    - 일찍 끝남: 덮개가 사라지거나 경계가 바뀜(`END_COVER_GONE`), 다른 팝업(`END_OTHER_POPUP`), 멈춘 팝업이 사라짐(`END_POPUP_GONE`). 시간 끝은 `END_TIMEOUT`이고 아직 있으면 다시 묻는다.
+    - 덮개 자신이 팝업으로 읽혀도 같은 둘로 본다.
+  - **앞 팝업을 직접 닫은 뒤:** `END_COVER_GONE`이면 쿨다운을 지우고, 겹침 때문에만 자동 실패로 적어 둔 표시(`stackStopped`)를 지워서 뒤 팝업을 처음처럼 판단한다.
+  - 터치 표시는 기존 `lastTouchAt`을 쓴다.
+- **로그(경계와 코드만):** `OVERLAP_MOVE target=CLOSE|FIRST cover= to= moved=`, `OVERLAP_MOVED_TO_FRONT_CLOSE`/`FIRST`, `OVERLAP_MOVE_FAILED`, `OVERLAP_HOLD_QUIET`, `OVERLAP_HOLD_END reason= afterMs=`, `STACK_NO_FRONT`.
+- **일반(겹침 아닌) [버튼으로 이동]:** 바꾸지 않았다. **같은 재등장 문제가 코드상 있다.** 일반 묻기(`DECIDED_ASK`)도 창이 뜬 지 10초 넘게 지나 이동을 고르면 초점 이벤트로 다시 읽어 다시 묻는다. 결정·사기 팝업은 `denied`로 다시 묻지 않는다.
+- **한계(된다고 적지 않는다):**
+  - **"앞"은 추측이다.** 웹 트리에는 z-index가 없어서 DOM에서 뒤에 있으면 앞이라고 본다. z-index로 반대일 수 있고, 그러면 초점이 뒤 팝업으로 간다. 그 경우에도 누르는 것은 사용자의 두 번 탭이고 우리는 누르지 않는다.
+  - 덮개 경계가 스크롤로 바뀌면 "사라짐"으로 보고 다시 판단한다. 그때 다시 물을 수 있다.
+  - [그대로 두기]를 고르면 F20대로 그 팝업은 있는 동안 다시 묻지 않는다. 그 뒤 앞 팝업을 닫아도 뒤 팝업은 묻지 않는다.
+  - 위쪽 창이 있는 경우 이동을 주지 않는다. 그 창이 팝업이면 다음 읽기에서 따로 잡힐 수 있지만, 선택 창이 떠 있는 동안에는 읽지 않는다.
+- **바뀐 파일:**
+  - `simpleclose/PopupStack.kt`(`StackHit`, `FrontTarget`, `OverlapMoveRules`)
+  - `SimplePromptOptions.overlapped`
+  - `SimpleCloseAccessibilityService`(`moveToFront`, 억제, `stackStopped`)
+  - `PromptOption.labelRes`, `PromptSummary.POPUPS_OVERLAP_NO_MOVE`, `ChoicePromptContent`
+  - 문장 4개(`ui_voice_strings.xml`, 1개 수정 3개 추가), `SimpleTrace`
+  - `F53Test`(이동 시험 수정), 새 시험 `F57Test`
+
 - 잔여 노드 쪽 이벤트 무시: TalkBack이 무엇을 읽을지는 앱이 막을 수 없다. 대신 포커스를 잔여 노드 밖으로 옮기는 것(F9)이 할 수 있는 전부. 웹 페이지가 닫힌 팝업을 DOM에 `aria-hidden` 없이 남기는 한, 사용자가 스와이프로 다시 만날 수 있다(한계로 기록).
 - 선택 창 PROMPT도 TalkBack 큐로? 가능은 하다: 선택 창 자체(이미 접근성 오버레이)에 paneTitle이 있고 TalkBack이 창을 읽으므로, "안내 맡기기" ON이면 우리 TTS PROMPT를 끄고 paneTitle/첫 버튼 포커스 낭독에 맡기는 방식. 단, 지금 PROMPT는 TalkBack이 팝업을 읽는 도중 끊고 들어가야 시연이 빠르므로 polite로 바꾸면 늦어질 수 있다. F11 배너가 LG에서 잘 읽히면 같은 방식으로 옮길지 정하자(의견, 미구현).
 - 검증(F1~F11 한 빌드): 5개 Gradle 작업 통과, 단위 시험 debug 1028개·release 1013개 실패 0, lintDebug 오류 0(경고 12), 병합 매니페스트 INTERNET 0·새 권한 없음.
