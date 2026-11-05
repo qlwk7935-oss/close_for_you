@@ -109,6 +109,8 @@ class AnswerKeyPipelineTest {
         "P33" -> listOf(res("ad_coupon_title"), res("ad_coupon_body"), res("ad_open"), res("close"))
         "P34" -> listOf(res("close"), res("ad_series_1_title"), res("ad_series_1_body"), res("ad_open"))
         "P35" -> listOf(res("open_app_title"), res("open_app_body"), res("open_app"), res("stay_web"))
+        // 11/5 추가. P36은 P20 두 번째 광고 문구에 '오늘 하루 보지 않기'만 있다.
+        "P36" -> listOf(res("ad_series_2_title"), res("ad_series_2_body"), res("ad_open"), res("hide_today"))
         else -> listOf(res("notice_title"), catalogText(NOTICES[id] ?: error("시험 fixture 없음: $id")), res("close"))
     }
 
