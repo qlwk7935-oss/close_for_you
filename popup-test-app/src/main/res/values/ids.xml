@@ -21,4 +21,5 @@
     <item name="btn_scan_now" type="id" />
     <item name="btn_open_app" type="id" />
     <item name="btn_stay_web" type="id" />
+    <item name="btn_hide_today" type="id" />
 </resources>
