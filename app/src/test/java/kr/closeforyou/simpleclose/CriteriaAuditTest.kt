@@ -48,6 +48,7 @@ class CriteriaAuditTest {
             listOf("휴대폰 보안 위협 3건 발견. 지금 검사하세요"), listOf("축하합니다! 신세계 상품권 50만원이 지급됩니다"),
             listOf("고객님이 사은품 대상자로 선정되었습니다"), listOf("스마트폰 속도가 느려졌습니다. 지금 최적화"),
             listOf("갤럭시 S25 무료로 드려요"), listOf("Your device is at risk. Scan now"),
+            listOf("해킹 시도가 감지되었습니다"), listOf("바이러스가 있습니다"),
         ).forEach { assertEquals(it.toString(), DecisionKind.SUSPICIOUS, kind(*it.toTypedArray())) }
     }
 
@@ -113,5 +114,14 @@ class CriteriaAuditTest {
         listOf("010-****-1234", "900101-1******").forEach {
             assertNotNull(it, BrowserSensitivity.check(page + node("0/0", text = it, bounds = ScreenBounds(0, 300, 1080, 400)), SCREEN))
         }
+    }
+
+    @Test fun aHomeDiscountBannerIsNotAPaymentPage() {
+        val page = listOf(node("0", "android.widget.FrameLayout", bounds = SCREEN))
+        fun screen(vararg words: String) = page + words.mapIndexed { i, t -> node("0/$i", text = t, bounds = ScreenBounds(0, 300 + i * 100, 1080, 390 + i * 100)) }
+        assertNull(BrowserSensitivity.check(screen("신용카드 즉시 할인", "간편결제 5% 추가 할인"), SCREEN))
+        assertNull(BrowserSensitivity.check(screen("신용카드 무이자 할부"), SCREEN))
+        assertEquals(BrowserSensitiveReason.PAYMENT_PAGE, BrowserSensitivity.check(screen("신용카드", "결제하기"), SCREEN))
+        assertEquals(BrowserSensitiveReason.PAYMENT_PAGE, BrowserSensitivity.check(screen("간편결제", "최종 결제 금액 12,000원"), SCREEN))
     }
 }

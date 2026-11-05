@@ -46,10 +46,17 @@ object BrowserSensitivity {
     // ASCII boundaries, not `\b` (it differs next to Hangul on Android, PR #37).
     private val CREDENTIAL_LABEL = Regex("비밀번호|패스워드|password|passcode|(?<![a-z0-9_])(pin|otp)(?![a-z0-9_])|인증\\s?번호|보안\\s?(문자|카드|코드)", RegexOption.IGNORE_CASE)
 
-    private val CHECKOUT_SIGNALS = listOf(
-        Regex("결제\\s?수단"), Regex("카드\\s?번호"), Regex("신용\\s?카드"), Regex("간편\\s?결제"), Regex("총\\s?상품\\s?금액"), Regex("유효\\s?기간"), Regex("cvc|cvv", RegexOption.IGNORE_CASE), Regex("할부"),
-        Regex("(최종|총)\\s?결제\\s?금액"), Regex("결제\\s?하기"), Regex("배송지\\s?(정보|입력|변경)"), Regex("주문자\\s?정보"), Regex("무통장|계좌\\s?이체"),
+    /** Words of a checkout under way. */
+    private val CHECKOUT_FLOW = listOf(
+        Regex("결제\\s?수단"), Regex("카드\\s?번호"), Regex("총\\s?상품\\s?금액"), Regex("(최종|총)\\s?결제\\s?금액"), Regex("결제\\s?하기"),
+        Regex("배송지\\s?(정보|입력|변경)"), Regex("주문자\\s?정보"),
     )
+    private val CHECKOUT_SIGNALS = CHECKOUT_FLOW + listOf(
+        Regex("유효\\s?기간"), Regex("cvc|cvv", RegexOption.IGNORE_CASE), Regex("할부"), Regex("무통장|계좌\\s?이체"),
+    )
+
+    /** 재호 #81 리뷰: a shopping home's discount banners have these too, so they count only beside a word of a checkout under way. */
+    private val PAY_METHODS = listOf(Regex("신용\\s?카드"), Regex("간편\\s?결제"))
 
     private val CARD_NUMBER = Regex("(?<!\\d)\\d{4}[- ]\\d{4}[- ]\\d{4}[- ]\\d{4}(?!\\d)")
     // B_DEMO_RULES.md 12절: sites usually show these masked ("010-****-1234", "900101-1******").
@@ -65,7 +72,8 @@ object BrowserSensitivity {
         val words = page.flatMap { listOfNotNull(it.text, it.contentDescription) }
         val hasInput = page.any { it.className?.contains("EditText", ignoreCase = true) == true }
         if (hasInput && words.any(CREDENTIAL_LABEL::containsMatchIn)) return BrowserSensitiveReason.CREDENTIAL_FORM
-        if (CHECKOUT_SIGNALS.count { signal -> words.any(signal::containsMatchIn) } >= 2) return BrowserSensitiveReason.PAYMENT_PAGE
+        val shown = { signal: Regex -> words.any(signal::containsMatchIn) }
+        if (CHECKOUT_SIGNALS.count(shown) >= 2 || (PAY_METHODS.any(shown) && CHECKOUT_FLOW.any(shown))) return BrowserSensitiveReason.PAYMENT_PAGE
         if (words.any { CARD_NUMBER.containsMatchIn(it) || RESIDENT_NUMBER.containsMatchIn(it) || PHONE_NUMBER.containsMatchIn(it) || EMAIL.containsMatchIn(it) }) {
             return BrowserSensitiveReason.PERSONAL_DATA
         }
