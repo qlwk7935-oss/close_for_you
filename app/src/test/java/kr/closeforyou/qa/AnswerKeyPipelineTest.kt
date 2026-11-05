@@ -202,6 +202,8 @@ class AnswerKeyPipelineTest {
         val target = row["app_allowed_target"].orEmpty()
         // #46: 자동 건너뛰기는 꺼져 있어 건너뛰기만 있으면 묻는다.
         val closable = target.isNotEmpty() && target != "btn_skip"
+        // F40: '오늘 하루 보지 않기'만 있으면 광고만 닫기에서는 묻는다(HIDE_TODAY_ASKED_SAFE_PRESET).
+        if (target == "btn_hide_today" && preset == HandlingPreset.CLOSE_ADS_ONLY) return "ASK"
         return if (preference == PopupHandlingPreference.CLOSE && !closable) "ASK" else preference.name
     }
 
