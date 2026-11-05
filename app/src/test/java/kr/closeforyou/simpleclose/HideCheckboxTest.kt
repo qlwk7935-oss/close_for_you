@@ -37,6 +37,12 @@ class HideCheckboxTest {
         assertEquals(listOf("닫기"), labels(popup(box, label, close = true)))
     }
 
+    @Test fun aCloseInTheSameRowAsTheCheckboxIsStillFound() {
+        val hide = node("0/0/2", "android.widget.TextView", text = "오늘 하루 보지 않기", clickable = true, bounds = ScreenBounds(180, 555, 600, 615))
+        val close = node("0/0/3", "android.widget.Button", text = "닫기", clickable = true, bounds = ScreenBounds(760, 555, 930, 615))
+        assertEquals(listOf("닫기"), labels(popup(box, hide, close)))
+    }
+
     @Test fun aPlainHideButtonStillCounts() {
         val button = node("0/0/2", "android.widget.Button", text = "오늘 하루 보지 않기", clickable = true, bounds = ScreenBounds(150, 1700, 930, 1850))
         assertEquals(listOf("오늘 하루 보지 않기"), labels(popup(button)))
