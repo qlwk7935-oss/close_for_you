@@ -399,6 +399,9 @@ object ScenarioCatalog {
     /** 정답지의 건너뛰기 버튼 ID. */
     const val SKIP_TARGET_ID = "btn_skip"
 
+    /** P36 '오늘 하루 보지 않기' 버튼 ID. F40: 이 버튼만 있으면 광고만 닫기에서는 누르지 않고 묻는다(HIDE_TODAY_ASKED_SAFE_PRESET). */
+    const val HIDE_TODAY_TARGET_ID = "btn_hide_today"
+
     /** #46: 자동 건너뛰기는 F9 지원·실측 전까지 꺼져 있다. 켜면 P16 목표가 바뀐다. */
     val autoSkipEnabled: Boolean = false
 
@@ -418,6 +421,7 @@ object ScenarioCatalog {
         }
         val target = scenario.appAllowedTargetId
         val closable = target != null && (target != SKIP_TARGET_ID || autoSkipEnabled)
+        if (preference == PresetGoal.CLOSE && target == HIDE_TODAY_TARGET_ID && preset == TestPreset.CLOSE_ADS_ONLY) return PresetGoal.ASK
         return if (preference == PresetGoal.CLOSE && !closable) PresetGoal.ASK else preference
     }
 
