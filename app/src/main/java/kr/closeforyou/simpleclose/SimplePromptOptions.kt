@@ -52,24 +52,29 @@ object SimplePromptOptions {
      * taken to be in front. Not known: the sentence says so and only [그대로 두기] stays.
      * F59: [pressLabel], the name of the front popup's close that passed [OverlapPressRules]: offered first, as one press, never "always",
      * by tap only ("in front" is a guess from the DOM order).
-     * [failedNow]: that press has just not closed it. [frontScam]: the front popup was read and looks like a scam: said first, no press;
-     * the move and [그대로 두기] stay.
+     * [failedNow]: that press has just not closed it. [frontScam]: the front popup was read and looks like a scam: said first, no press,
+     * no excerpt (the stopped popup's words would pass for the scam's), its own words behind the read. The move stays only for a named
+     * close ([frontKind] CLOSE): a first readable node may be the bait. [그대로 두기] stays.
      */
-    fun overlapped(prompt: ChoicePrompt, frontKnown: Boolean, pressLabel: String? = null, failedNow: Boolean = false, frontScam: Boolean = false): ChoicePrompt {
+    fun overlapped(prompt: ChoicePrompt, frontKnown: Boolean, pressLabel: String? = null, failedNow: Boolean = false, frontScam: Boolean = false, frontKind: FrontKind? = null): ChoicePrompt {
         val rest = prompt.options.filterNot {
             it.kind == PromptOptionKind.PRESS_CANDIDATE || it.kind == PromptOptionKind.REMEMBER_ALWAYS || it.kind == PromptOptionKind.MOVE_TO_BUTTON
         }
         val press = pressLabel?.takeIf { frontKnown && !frontScam && it.isNotBlank() }
+        val scam = frontScam && frontKnown
+        val scamNoMove = scam && frontKind != FrontKind.CLOSE
+        val readsFront = press != null || scam
         val options = if (frontKnown) {
             listOfNotNull(press?.let { PromptOption(PromptOptionKind.PRESS_CANDIDATE, candidateId = FRONT_PRESS_ID, candidateRole = ButtonRole.CLOSE, buttonLabel = it.trim(), labelRes = R.string.ui_choice_press_front, tapOnly = true) }) +
-                PromptOption(PromptOptionKind.MOVE_TO_BUTTON, candidateId = FRONT_ID, labelRes = R.string.ui_choice_move_to_front) +
-                rest.map { if (press != null && it.kind == PromptOptionKind.READ_CONTENT) it.copy(labelRes = R.string.ui_choice_read_front_content) else it }
+                listOfNotNull(PromptOption(PromptOptionKind.MOVE_TO_BUTTON, candidateId = FRONT_ID, labelRes = R.string.ui_choice_move_to_front).takeUnless { scamNoMove }) +
+                rest.map { if (readsFront && it.kind == PromptOptionKind.READ_CONTENT) it.copy(labelRes = R.string.ui_choice_read_front_content) else it }
         } else {
             rest.filter { it.kind == PromptOptionKind.KEEP_OPEN }
         }
         return prompt.copy(
             summary = when {
-                frontScam && frontKnown -> PromptSummary.POPUPS_OVERLAP_FRONT_SCAM
+                scamNoMove -> PromptSummary.POPUPS_OVERLAP_FRONT_SCAM_NO_MOVE
+                scam -> PromptSummary.POPUPS_OVERLAP_FRONT_SCAM
                 failedNow -> PromptSummary.AUTO_CLOSE_FAILED
                 press != null -> PromptSummary.POPUPS_OVERLAP_PRESS
                 frontKnown -> PromptSummary.POPUPS_OVERLAP
@@ -77,6 +82,7 @@ object SimplePromptOptions {
             },
             cannotPressForUser = false,
             briefQuestion = false,
+            shownExcerpt = prompt.shownExcerpt.takeUnless { scam },
             options = options.toImmutableList(),
         )
     }

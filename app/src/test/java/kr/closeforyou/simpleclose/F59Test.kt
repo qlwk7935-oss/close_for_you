@@ -219,7 +219,7 @@ class F59Test {
     @Test fun aScamInFrontWarnsAndOffersNoPress() {
         val popup = SimplePopupAnalysis.build(page() + back(), root, "p", 7, SCREEN, 1L, 0L)
         val planned = ChoicePromptPlanner.plan(popup.analysis, PopupClassification.NOTICE, labelPolicy = SimpleLabelPolicy, rememberChoicesEnabled = false, preset = HandlingPreset.entries.first())
-        val shown = SimplePromptOptions.overlapped(planned, frontKnown = true, pressLabel = "닫기", frontScam = true)
+        val shown = SimplePromptOptions.overlapped(planned, frontKnown = true, pressLabel = "닫기", frontScam = true, frontKind = FrontKind.CLOSE)
         assertEquals(PromptSummary.POPUPS_OVERLAP_FRONT_SCAM, shown.summary)
         assertEquals(R.string.ui_choice_summary_overlap_front_scam, shown.summary.textRes())
         assertTrue(shown.options.none { it.kind == PromptOptionKind.PRESS_CANDIDATE || it.kind == PromptOptionKind.REMEMBER_ALWAYS })
@@ -243,7 +243,7 @@ class F59Test {
         val plain = ChoicePromptPlanner.plan(backPopup.analysis, PopupClassification.NOTICE, labelPolicy = SimpleLabelPolicy, rememberChoicesEnabled = false, preset = HandlingPreset.entries.first())
         assertNull(read(plain).labelRes)
         assertNull(read(SimplePromptOptions.overlapped(plain, frontKnown = true)).labelRes)
-        assertNull(read(SimplePromptOptions.overlapped(plain, frontKnown = true, frontScam = true)).labelRes)
+        assertEquals(R.string.ui_choice_read_front_content, read(SimplePromptOptions.overlapped(plain, frontKnown = true, frontScam = true, frontKind = FrontKind.CLOSE)).labelRes)
     }
 
     @Test fun aPressPromptShowsTheFrontNoticesWordsNeverTheStoppedPopups() {
@@ -272,6 +272,50 @@ class F59Test {
         val scam = seen(front(), suspicious = true)
         assertEquals(FrontPressMiss.SCAM, OverlapPressRules.miss(target(), scam))
         assertEquals("다른 안내", OverlapPressRules.excerptSource("다른 안내", PopupClassification.NOTICE, false, press = null))
+    }
+
+    private fun plannedBack(): kr.closeforyou.ui.voice.choice.ChoicePrompt {
+        val popup = SimplePopupAnalysis.build(page() + back(), root, "p", 7, SCREEN, 1L, 0L)
+        return ChoicePromptPlanner.plan(popup.analysis, PopupClassification.NOTICE, labelPolicy = SimpleLabelPolicy, rememberChoicesEnabled = false, preset = HandlingPreset.entries.first())
+    }
+
+    // No named close in a scam: the first clickable item may be the bait, so no way there either.
+    @Test fun aScamWithNoNamedCloseOffersNoMove() {
+        val shown = SimplePromptOptions.overlapped(plannedBack(), frontKnown = true, frontScam = true, frontKind = FrontKind.FIRST)
+        assertEquals(PromptSummary.POPUPS_OVERLAP_FRONT_SCAM_NO_MOVE, shown.summary)
+        assertEquals(R.string.ui_choice_summary_overlap_front_scam_no_move, shown.summary.textRes())
+        assertTrue(shown.options.none { it.kind == PromptOptionKind.MOVE_TO_BUTTON || it.kind == PromptOptionKind.PRESS_CANDIDATE })
+        assertNotNull(shown.options.singleOrNull { it.kind == PromptOptionKind.KEEP_OPEN })
+        // Not said which kind: the safer one.
+        assertEquals(PromptSummary.POPUPS_OVERLAP_FRONT_SCAM_NO_MOVE, SimplePromptOptions.overlapped(plannedBack(), frontKnown = true, frontScam = true).summary)
+        // The move's own window is as before, whatever the kind.
+        val ordinary = SimplePromptOptions.overlapped(plannedBack(), frontKnown = true, frontKind = FrontKind.FIRST)
+        assertEquals(PromptSummary.POPUPS_OVERLAP, ordinary.summary)
+        assertNotNull(ordinary.options.singleOrNull { it.kind == PromptOptionKind.MOVE_TO_BUTTON })
+    }
+
+    // The stopped popup's words under the warning would pass for the scam's.
+    @Test fun aScamWarningShowsNoExcerptOthersKeepIt() {
+        val withWords = plannedBack().copy(shownExcerpt = "다른 안내")
+        assertNull(SimplePromptOptions.overlapped(withWords, frontKnown = true, frontScam = true, frontKind = FrontKind.CLOSE).shownExcerpt)
+        assertNull(SimplePromptOptions.overlapped(withWords, frontKnown = true, frontScam = true, frontKind = FrontKind.FIRST).shownExcerpt)
+        assertEquals("다른 안내", SimplePromptOptions.overlapped(withWords, frontKnown = true).shownExcerpt)
+        assertEquals("다른 안내", SimplePromptOptions.overlapped(withWords, frontKnown = false).shownExcerpt)
+        assertEquals("다른 안내", SimplePromptOptions.overlapped(withWords, frontKnown = true, pressLabel = "닫기").shownExcerpt)
+    }
+
+    // A scam's read is the scam's, never the stopped popup's in its place.
+    @Test fun aScamWarningReadsTheFrontPopup() {
+        val backPopup = SimplePopupAnalysis.build(page() + back(), root, "p", 7, SCREEN, 1L, 0L)
+        val scam = seen(front(), suspicious = true).popup
+        assertTrue(OverlapPressRules.readTarget(backPopup, null, scam) === scam)
+        assertTrue(OverlapPressRules.readTarget(backPopup, null, null) === backPopup)
+    }
+
+    @Test fun thePressPromptKeepsItsOwnWords() {
+        val shown = SimplePromptOptions.overlapped(plannedBack(), frontKnown = true, pressLabel = "닫기")
+        assertEquals(R.string.ui_choice_summary_overlap_press, shown.summary.textRes())
+        assertEquals(R.string.ui_choice_press_front, shown.options.first().labelRes)
     }
 
     @Test fun theRootLineHoldsACodeOnly() {

@@ -32,8 +32,8 @@ class FrontPress(val front: FrontTarget, val popup: SimplePopup, val candidate: 
     }
 }
 
-/** F59: what the overlap prompt may say about the front popup: the one press, or (read whole, B's scam check) a warning instead. */
-class FrontOffer(val press: FrontPress?, val scam: Boolean)
+/** F59: what the overlap prompt may say about the front popup: the one press, or (read whole, B's scam check) a warning, with [scam] the popup it is about. */
+class FrontOffer(val press: FrontPress?, val scam: SimplePopup?)
 
 /**
  * F59 (우진 SM-F966N, TalkBack 켬, Chrome LMS 겹침 공지: a move was moved=true, the person's double tap closed it 0 of 3 with our app on,
@@ -87,8 +87,11 @@ object OverlapPressRules {
             else -> structural(front) ?: lookMiss ?: check(seen)
         }
 
-    /** [내용 다시 읽기] goes with what the prompt can press: the front popup's words when its close is offered, otherwise the stopped popup's. */
-    fun readTarget(back: SimplePopup, press: FrontPress?): SimplePopup = press?.popup ?: back
+    /**
+     * [내용 다시 읽기] goes with what the prompt is about: the front popup's words when its close is offered or it is warned of ([scam], read whole
+     * by then), otherwise the stopped popup's. With nothing to read in the front popup that says so ([PromptSpeech.content]), never the stopped popup's.
+     */
+    fun readTarget(back: SimplePopup, press: FrontPress?, scam: SimplePopup? = null): SimplePopup = press?.popup ?: scam ?: back
 
     /**
      * The words the prompt's first item shows ([TalkBackTakeoverPlan.excerpt] cuts them). As [readTarget]: with the front's close offered,

@@ -200,6 +200,7 @@ internal fun PromptSummary.textRes(): Int = when (this) {
     PromptSummary.POPUPS_OVERLAP_NO_MOVE -> R.string.ui_choice_summary_overlap_no_move
     PromptSummary.POPUPS_OVERLAP_PRESS -> R.string.ui_choice_summary_overlap_press
     PromptSummary.POPUPS_OVERLAP_FRONT_SCAM -> R.string.ui_choice_summary_overlap_front_scam
+    PromptSummary.POPUPS_OVERLAP_FRONT_SCAM_NO_MOVE -> R.string.ui_choice_summary_overlap_front_scam_no_move
 }
 
 @Composable

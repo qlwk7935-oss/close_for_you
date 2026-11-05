@@ -25,7 +25,8 @@ import kr.closeforyou.ui.voice.settings.PerAppAutoCloseGateFeature
 /** [POPUPS_OVERLAP_NO_MOVE] (F57): the same, and no popup in front could be told: nothing to go to either. */
 /** [POPUPS_OVERLAP_PRESS] (F59): the same, and the close of the popup in front can be pressed for the person, once. */
 /** [POPUPS_OVERLAP_FRONT_SCAM] (F59): the same, and the popup in front looks like a scam: nothing is pressed, a warning. */
-enum class PromptSummary { LIKELY_AD, LIKELY_VIDEO_AD, LIKELY_NOTICE, LIKELY_COUPON, NEEDS_REVIEW, UNKNOWN, AUTO_CLOSE_FAILED, SUSPICIOUS, POPUPS_OVERLAP, POPUPS_OVERLAP_NO_MOVE, POPUPS_OVERLAP_PRESS, POPUPS_OVERLAP_FRONT_SCAM }
+/** [POPUPS_OVERLAP_FRONT_SCAM_NO_MOVE] (F59): the same, and it has no named close: no move either (the first clickable item may be the bait). */
+enum class PromptSummary { LIKELY_AD, LIKELY_VIDEO_AD, LIKELY_NOTICE, LIKELY_COUPON, NEEDS_REVIEW, UNKNOWN, AUTO_CLOSE_FAILED, SUSPICIOUS, POPUPS_OVERLAP, POPUPS_OVERLAP_NO_MOVE, POPUPS_OVERLAP_PRESS, POPUPS_OVERLAP_FRONT_SCAM, POPUPS_OVERLAP_FRONT_SCAM_NO_MOVE }
 
 /**
  * MOVE_TO_BUTTON appears only while [MoveToButtonFeature.enabled]; it never presses anything.
