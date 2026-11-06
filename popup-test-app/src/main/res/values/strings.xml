@@ -95,4 +95,6 @@
     <string name="open_app_body">앱에서 더 빠르게 볼 수 있어요. 시험용 광고입니다.</string>
     <string name="open_app">앱에서 열기</string>
     <string name="stay_web">모바일 웹으로 볼게요</string>
+    <!-- 11/5 추가(P36 오늘 하루 보지 않기만 있는 팝업). 본문은 ad_series_2를 쓴다. -->
+    <string name="hide_today">오늘 하루 보지 않기</string>
 </resources>

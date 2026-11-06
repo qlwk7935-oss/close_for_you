@@ -66,8 +66,8 @@ class DecisionWebOverlayTest {
     }
 
     @Test fun hiddenFooterNoLongerMakesTheSheetAScamOrADecision() {
-        // Before WEB_OVERLAY.md 3-1 the footer's "당첨" and "로그인" decided the sheet's kind.
-        assertEquals(DecisionKind.SUSPICIOUS, DecisionKinds.of(PopupAnalysis(token, texts = texts(nodes).toPersistentList())))
+        // Before WEB_OVERLAY.md 3-1 the footer's "로그인" decided the sheet's kind. Its "[당첨자공지]" is no scam any more (B_DEMO_RULES.md 12절).
+        assertEquals(DecisionKind.USER_DECISION, DecisionKinds.of(PopupAnalysis(token, texts = texts(nodes).toPersistentList())))
         assertEquals(DecisionKind.ADVERTISEMENT, scopedKind())
     }
 

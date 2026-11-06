@@ -181,6 +181,8 @@ class ScenarioCatalogTest {
         assertEquals(listOf(PresetGoal.CLOSE, PresetGoal.CLOSE, PresetGoal.ANNOUNCE), goals("P33")) // 쿠폰 시트
         assertEquals(List(3) { PresetGoal.CLOSE }, goals("P34")) // 광고 레이어
         assertEquals(List(3) { PresetGoal.CLOSE }, goals("P35")) // 앱에서 열기 시트(닫는 버튼은 모바일 웹으로 보기)
+        // F40: '오늘 하루 보지 않기'만 있으면 광고만 닫기에서는 묻는다(HIDE_TODAY_ASKED_SAFE_PRESET, 준영 11/5).
+        assertEquals(listOf(PresetGoal.CLOSE, PresetGoal.CLOSE, PresetGoal.ASK), goals("P36"))
     }
 
     @Test

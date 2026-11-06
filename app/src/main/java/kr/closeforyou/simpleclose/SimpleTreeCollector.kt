@@ -299,20 +299,25 @@ class SimpleTreeCollector(private val service: AccessibilityService) {
     /**
      * F31 (B_DEMO_RULES.md 6-1): the visible nodes of [root]'s own subtree now (its window when it has one), and the
      * screen. Null when the popup is gone, the walk hit [capMillis], or a part was too deep: the caller does not press.
+     * B_DEMO_RULES.md 6-3: a flat banner is read at all its [PopupRoot.rereadPaths], not only its close button.
      */
     fun readPopupAgain(root: PopupRoot, capMillis: Long): Pair<List<NodeSnapshot>, ScreenBounds>? {
-        val node = nodeAt(root.path, root.windowId) ?: return null
         try {
             val screen = screenBounds()
             val nodes = ArrayList<NodeSnapshot>(64)
             val count = WalkCount(maxVisited = WholeReadCap.MAX_NODES, deadline = SystemClock.uptimeMillis() + capMillis)
-            walk(node, root.path, root.path.count { it == '/' }, nodes, screen, count)
+            for (path in root.rereadPaths()) {
+                val node = nodeAt(path, root.windowId) ?: return null
+                try {
+                    walk(node, path, path.count { it == '/' }, nodes, screen, count)
+                } finally {
+                    release(node)
+                }
+            }
             if (count.aborted || count.depthCut.isNotEmpty() || nodes.isEmpty()) return null
-            return nodes to screen
+            return nodes.distinctBy { it.path } to screen
         } catch (e: RuntimeException) {
             return null
-        } finally {
-            release(node)
         }
     }
 
@@ -772,7 +777,8 @@ class SimpleTreeCollector(private val service: AccessibilityService) {
         return NodeSnapshot(
             path = path,
             viewId = node.viewIdResourceName,
-            className = node.className?.toString(),
+            // B 갤럭시 11/3 쿠팡: "7일간 보지 않기" was a checkbox. Any checkable node reads as one, whatever view draws it.
+            className = if (node.isCheckable) CloseButtonFinder.CHECKABLE_CLASS else node.className?.toString(),
             // F28: a password field's text is never copied (the screen is skipped on its flag anyway).
             text = if (node.isPassword) null else node.text?.toString(),
             contentDescription = node.contentDescription?.toString(),

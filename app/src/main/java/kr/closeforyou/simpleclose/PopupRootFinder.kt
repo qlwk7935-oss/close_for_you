@@ -58,6 +58,9 @@ data class PopupRoot(
 ) {
     fun contains(node: NodeSnapshot): Boolean = members?.let { node.path in it } ?: (node.path == path || node.path.startsWith("$path/"))
 
+    /** B_DEMO_RULES.md 6-3: where the popup's words are when it is read again right before a press. */
+    fun rereadPaths(): Set<String> = members ?: setOf(path)
+
     /** "The same popup" while it is on screen, whatever its content repaints (carousel, countdown). */
     val key: String get() = "$kind:$path:${bounds.left},${bounds.top},${bounds.right},${bounds.bottom}"
 }
@@ -317,9 +320,14 @@ object PopupRootFinder {
                 return PopupRoot(dim.path, dim.bounds, PopupRootKind.DIM_OVERLAY)
             }
             if (children.isNotEmpty()) continue
-            val parentPath = dim.path.substringBeforeLast('/', missingDelimiterValue = "")
+            var parentPath = dim.path.substringBeforeLast('/', missingDelimiterValue = "")
+            var siblings = nodes.filter { it.path != dim.path && it.path.startsWith("$parentPath/") }
+            // B 갤럭시 11/3 예스24: the dim sits alone in an empty box beside the sheet (NO_POPUP_ROOT): one level up.
+            if (siblings.isEmpty()) {
+                parentPath = parentPath.substringBeforeLast('/', missingDelimiterValue = "")
+                siblings = nodes.filter { it.path != dim.path && it.path.startsWith("$parentPath/") }
+            }
             val parent = byPath[parentPath] ?: continue
-            val siblings = nodes.filter { it.path != dim.path && it.path.startsWith("$parentPath/") }
             val card = siblings.firstOrNull { isCard(it, screenArea) } ?: continue
             if (siblings.any { card.contains(it) && isCloseButton(it) }) return PopupRoot(parent.path, parent.bounds, PopupRootKind.DIM_OVERLAY)
         }

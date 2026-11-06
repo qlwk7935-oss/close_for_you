@@ -20,6 +20,12 @@ object DecisionDemoRules {
     // "구매 동의" or "1개 구매" are not calls to action from a promotion.
     private val promoPurchaseLabel = Regex("""^(지금|바로|오늘|특가로?)?\s?(구매|주문)\s?(하기|하러\s?가기)?$|^(buy|shop|order) now$""")
 
+    // B_DEMO_RULES.md 1-8 (재호 LG 11/2 옥션: "삼성 BIG 혜택 구매하러가기" 광고 이미지): a link to a promotion's page,
+    // named by the promotion itself. Only "~하러 가기" (it moves, nothing is bought by that press), and the words before
+    // it must promote and hold no decision word. "상품 구매하러 가기", "구독 혜택 구매하러 가기" stay decisions.
+    private val promoLinkLabel = Regex("""^(.{1,24}?)\s?(구매|주문)\s?하러\s?가기\s?[>›»]?$""")
+    private val promoLinkWord = Regex("혜택|특가|할인|쿠폰|세일|이벤트|적립|사은품|최저가|프로모션|기획전")
+
     // Anything that belongs to a real checkout or contract, in any wide form (B reads warnings widely):
     // paying, card or account, a password, terms or consent, recurring money, quantity or address, a
     // total, an order record, or a question asking to buy.
@@ -50,7 +56,13 @@ object DecisionDemoRules {
     fun isPromoLogin(texts: List<ExtractedText>): Boolean = isPromoCallToAction(texts, ::isPromoLoginLabel)
 
     fun isPromoPurchaseLabel(text: String): Boolean =
-        DecisionKeywords.guardForms(text).any { promoPurchaseLabel.matches(it.trim()) }
+        DecisionKeywords.guardForms(text).any { promoPurchaseLabel.matches(it.trim()) } || isPromoPurchaseLink(text)
+
+    /** B_DEMO_RULES.md 1-8: "○○ 혜택 구매하러 가기". Its own words are the promotion, so nothing else has to say so. */
+    fun isPromoPurchaseLink(text: String): Boolean = DecisionKeywords.guardForms(text).any { form ->
+        val prefix = promoLinkLabel.matchEntire(form.trim())?.groupValues?.get(1) ?: return@any false
+        promoLinkWord.containsMatchIn(prefix) && !DecisionKeywords.isUserDecision(prefix) && !DecisionKeywords.isDecisionWide(prefix)
+    }
 
     /**
      * True when [texts] are a promotion with a purchase button and nothing of a checkout: at least one
@@ -63,7 +75,8 @@ object DecisionDemoRules {
         val tree = texts.filter { it.source == TextSource.ACCESSIBILITY_TREE && it.text.isNotBlank() }
         val (cta, rest) = tree.partition { isCallToAction(it.text) }
         if (cta.isEmpty()) return false
-        if (rest.none { DecisionKeywords.isPromotion(it.text) || DecisionKeywords.isCoupon(it.text) }) return false
+        if (rest.none { DecisionKeywords.isPromotion(it.text) || DecisionKeywords.isCoupon(it.text) } &&
+            cta.none { isPromoPurchaseLink(it.text) }) return false
         // The popup's own words may not urge the decision either, not even as a benefit condition ("지금 구매하면
         // 쿠폰 증정", over-warning study de-08, recorded as a decision): only the button may carry it.
         if (rest.any { t -> DecisionKeywords.guardForms(DecisionKeywords.withoutPaymentBenefits(t.text)).any(DecisionKeywords::isUserDecision) }) return false

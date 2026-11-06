@@ -673,7 +673,8 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
         val suspicious = RememberChoiceRules.suspiciousByB(popup.analysis)
         // Demo hint: an image-only dialog with a close button that B cannot judge from words (옥션).
         val miss = if (SimpleCloseEngineFeature.IMAGE_DIALOG_AD_HINT) ImageDialogAdHint.check(popup, byB, suspicious) else AdHintMiss.NOT_UNKNOWN
-        val hinted = SimpleCloseEngineFeature.IMAGE_DIALOG_AD_HINT && miss == null
+        val hinted = SimpleCloseEngineFeature.IMAGE_DIALOG_AD_HINT && miss == null &&
+            ImageDialogAdHint.presetAllows(preferences.current().autoCloseKinds(live = true))
         if (hinted) log.trace(SimpleTrace.AD_HINT_IMAGE_DIALOG)
         // F6: why not, when B could not judge (a classified popup needs no hint, so it is not logged).
         else if (miss != null && miss != AdHintMiss.NOT_UNKNOWN) log.trace(SimpleTrace.adHintMiss(miss))
@@ -1359,7 +1360,7 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
             SimplePopupAnalysis.build(nodes, front.cover, back.snapshot.token.packageName, back.snapshot.token.windowId, screen, screenVersion, SystemClock.uptimeMillis())
         }
         val suspicious = RememberChoiceRules.suspiciousByB(built.analysis)
-        return FrontSeen(built, OverlapPressRules.kindOf(built, classifier.classify(built.analysis), suspicious), suspicious)
+        return FrontSeen(built, OverlapPressRules.kindOf(built, classifier.classify(built.analysis), suspicious, preferences.current().autoCloseKinds(live = true)), suspicious)
     }
 
     /** F59: nothing read over the front popup's button, and it still passes every check. Null = fine. Not read = not fine. A scam says so first. */

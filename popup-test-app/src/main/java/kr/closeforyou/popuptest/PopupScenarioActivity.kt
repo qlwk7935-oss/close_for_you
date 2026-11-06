@@ -16,6 +16,7 @@ import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
+import android.view.WindowInsets
 import android.webkit.WebView
 import android.widget.Button
 import android.widget.EditText
@@ -38,6 +39,13 @@ class PopupScenarioActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // targetSdk 35 기기는 화면을 상태 표시줄 밑까지 그린다(edge-to-edge 강제). 안 막으면 같은 창 레이어(P34 등)의
+        // 위쪽 닫기 버튼이 상태 표시줄 밑에 숨어 사람도 엔진도 못 본다(11/2 에뮬레이터 API 37에서 확인). 시스템 막대만큼 띄운다.
+        findViewById<View>(android.R.id.content).setOnApplyWindowInsetsListener { content, insets ->
+            val bars = insets.getInsets(WindowInsets.Type.systemBars() or WindowInsets.Type.displayCutout())
+            content.setPadding(bars.left, bars.top, bars.right, bars.bottom)
+            WindowInsets.CONSUMED
+        }
         scenarioId = intent.getStringExtra(EXTRA_SCENARIO) ?: "UNKNOWN"
         val scenario = ScenarioCatalog.find(scenarioId)
         // 제목에는 ID만 둔다. 시나리오 이름("광고"·"공지"·"동의" 등)이 같은 창 글자로 잡혀 분류에 섞이지 않게(10/25).
@@ -72,6 +80,7 @@ class PopupScenarioActivity : Activity() {
             "P33" -> bottomSheetDialog()
             "P34" -> fullScreenLayer()
             "P35" -> openInAppSheet()
+            "P36" -> hideTodayOnlyDialog()
             ScenarioCatalog.BUTTON_MOVED_NOTICE_ID -> textNotice(scenario.note, closeOnTop = true)
             else -> if (scenario.kind == PopupKind.NOTICE) textNotice(scenario.note)
         }
@@ -521,7 +530,7 @@ class PopupScenarioActivity : Activity() {
             text(getString(body)),
             button(R.id.btn_close, getString(R.string.close)) {
                 dismiss()
-                if (index + 1 < adSeries.size) handler.postDelayed({ adSeriesDialog(index + 1) }, 1_000)
+                if (index + 1 < adSeries.size) handler.postDelayed({ adSeriesDialog(index + 1) }, 2_000)
             },
         ))
     }
@@ -546,6 +555,16 @@ class PopupScenarioActivity : Activity() {
         handler.postDelayed({
             content.addView(button(R.id.btn_close, getString(R.string.close)) { dismiss() })
         }, ScenarioCatalog.DELAYED_CLOSE_SECONDS * 1_000L)
+    }
+
+    /** P36: 이름 있는 '닫기' 없이 '오늘 하루 보지 않기'만 닫는 버튼인 광고(F40). '자세히 보기'는 광고 페이지를 연다. */
+    private fun hideTodayOnlyDialog() {
+        showDialog(column(
+            text(getString(R.string.ad_series_2_title), 20f),
+            text(getString(R.string.ad_series_2_body)),
+            button(R.id.btn_ad_open, getString(R.string.ad_open)) { openAdLanding() },
+            button(R.id.btn_hide_today, getString(R.string.hide_today)) { dismiss() },
+        ))
     }
 
     /** P33: 아래에서 올라오는 시트. Dialog 창을 화면 아래에 붙이고 가로를 꽉 채운다(BottomSheetDialog 모양). */

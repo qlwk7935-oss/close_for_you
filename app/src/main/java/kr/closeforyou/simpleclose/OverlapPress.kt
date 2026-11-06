@@ -43,9 +43,10 @@ class FrontOffer(val press: FrontPress?, val scam: SimplePopup?)
  * never a target. "In front" is still a guess from the DOM order (F57). Pure; JVM tested.
  */
 object OverlapPressRules {
-    /** The kind as the engine reads an ordinary popup: B's, or the image-dialog and word hints. */
-    fun kindOf(popup: SimplePopup, byB: PopupClassification, suspicious: Boolean): PopupClassification {
-        if (SimpleCloseEngineFeature.IMAGE_DIALOG_AD_HINT && ImageDialogAdHint.check(popup, byB, suspicious) == null) return PopupClassification.ADVERTISEMENT
+    /** The kind as the engine reads an ordinary popup: B's, or the image-dialog (only where [ImageDialogAdHint.presetAllows]) and word hints. */
+    fun kindOf(popup: SimplePopup, byB: PopupClassification, suspicious: Boolean, autoCloseKinds: Set<PopupClassification>): PopupClassification {
+        if (SimpleCloseEngineFeature.IMAGE_DIALOG_AD_HINT && ImageDialogAdHint.check(popup, byB, suspicious) == null &&
+            ImageDialogAdHint.presetAllows(autoCloseKinds)) return PopupClassification.ADVERTISEMENT
         if (!SimpleCloseEngineFeature.WORD_KIND_HINT) return byB
         return WordKindHint.of(byB, suspicious, popup.analysis.texts.map { it.text }, popup.scan.riskCount).kind ?: byB
     }

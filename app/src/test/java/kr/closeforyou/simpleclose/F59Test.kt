@@ -416,9 +416,25 @@ class F59Test {
     // The words of the LMS notice are not known yet: this fixture only shows the kind check does not refuse a plain notice.
     @Test fun aPlainNoticeHasAKnownKind() = runBlocking {
         val popup = seen(front()).popup
-        val kind = OverlapPressRules.kindOf(popup, DecisionPopupClassifier().classify(popup.analysis), suspicious = false)
+        val kind = OverlapPressRules.kindOf(popup, DecisionPopupClassifier().classify(popup.analysis), suspicious = false, HandlingPreset.CLOSE_ADS_ONLY.autoCloseKinds())
         assertNotEquals(PopupClassification.UNKNOWN, kind)
         assertNotEquals(PopupClassification.USER_DECISION, kind)
+    }
+
+    // B_DEMO_RULES.md 4-2: as an ordinary popup, the image hint names the front popup an ad only under "전부 자동 닫기".
+    @Test fun theImageHintFollowsThePresetInFrontToo() {
+        val box = ScreenBounds(90, 600, 990, 1700)
+        val popup = SimplePopupAnalysis.build(listOf(
+            node("0", "android.widget.FrameLayout", bounds = SCREEN),
+            node("0/0", "android.webkit.WebView", bounds = ScreenBounds(0, 200, 1080, 2340)),
+            node("0/0/2", bounds = box),
+            node("0/0/2/0", "android.widget.Image", desc = "그림", clickable = true, bounds = ScreenBounds(90, 600, 990, 1550)),
+            node("0/0/2/1", "android.widget.Button", text = "닫기", clickable = true, bounds = ScreenBounds(90, 1550, 990, 1700)),
+        ), PopupRoot("0/0/2", box, PopupRootKind.FRONT_LAYER), "p", 7, SCREEN, 1L, 0L)
+        fun kind(preset: HandlingPreset) = OverlapPressRules.kindOf(popup, PopupClassification.UNKNOWN, suspicious = false, preset.autoCloseKinds())
+        assertEquals(PopupClassification.ADVERTISEMENT, kind(HandlingPreset.CLOSE_ALL))
+        assertEquals(PopupClassification.UNKNOWN, kind(HandlingPreset.CLOSE_ADS_AND_COUPONS))
+        assertEquals(PopupClassification.UNKNOWN, kind(HandlingPreset.CLOSE_ADS_ONLY))
     }
 
     @Test fun theLinesHoldCodesAndBoundsOnly() {

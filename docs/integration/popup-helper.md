@@ -1344,6 +1344,12 @@ F26 자동 확인: 옥션 웹 감지 1.3초·재확인 308ms·`READ_DUTY_PCT` 7.
   - **읽기(코드 확인):** 이 창의 읽기는 뒤 팝업을 읽고 있었다(`frontPress`가 없으면 `back`). 이제 사기 판정에 쓴 앞 팝업을 읽고 이름도 `ui_choice_read_front_content`다. 앞 팝업에 글이 없으면 `ui_content_none` 또는 버튼 이름만 읽고, 뒤 글로 대체하지 않는다. 경고는 앞 팝업을 읽은 뒤에만 나오므로 "읽지 못함"인 사기 창은 없다.
 - **바꾸지 않은 것:** "앞" 판단(DOM 순서 추측), 뒤 팝업 새 판단·재질문·`AutoPressHolds`, 음성 정책, 로그.
 - **시험:** `F59Test`에 4개. **JVM으로 못 본 것:** 서비스의 `frontPressOf`·`ask`·`onAnswer` 연결, `otherPopupLeft` 안내, 화면 표시.
+### 8-57. 준영·동준 PR 7개 합침 (JVM 시험만, 실기기 미검증)
+
+- **번호:** F59(8-52~8-56)가 아직 임시 브랜치에만 있어 F59가 없는 합침 커밋에서는 번호를 건너뛴다.
+- **F59와 합칠 때:** 이미지 힌트가 "전부 자동 닫기"에서만 쓰이게 됐으므로(`feature/b-image-hint-preset`) `OverlapPressRules.kindOf`도 같은 조건을 받는다(`autoCloseKinds`, `ImageDialogAdHint.presetAllows`). 다른 프리셋에서 그림뿐인 앞 팝업은 광고가 되지 않고, B의 판단과 단어 힌트 그대로 판단 불가면 `UNKNOWN_KIND`로 눌러 주기가 나오지 않는다. 충돌은 이 문서 한 곳(두 쪽이 같은 자리에 항목 추가, 둘 다 살림)이다.
+- **합친 것(`1613cb7` 위, 이 순서, 충돌 없음):** `feature/b-promo-link` `ed5ef07`, `feature/b-image-hint-preset` `448a8c6`, `feature/b-banner-recheck` `7f301f0`, `feature/b-safety-map` `a523100`, `feature/b-close-candidates` `45cfe4e`, `feature/b-criteria-fixes` `5d73c6c`, `feature/d-p36-hide-today` `d0e8b3e`. 내용은 고치지 않았다. CI 통과는 준영 보고 기준이다.
+- **시험:** debug 1462개·release 1447개 실패 0, 건너뜀 1개(기존), popup-test-app 27개, lint 오류 0·경고 15, 병합 권한 `RECORD_AUDIO`·`DYNAMIC_RECEIVER`만.
 
 - 잔여 노드 쪽 이벤트 무시: TalkBack이 무엇을 읽을지는 앱이 막을 수 없다. 대신 포커스를 잔여 노드 밖으로 옮기는 것(F9)이 할 수 있는 전부. 웹 페이지가 닫힌 팝업을 DOM에 `aria-hidden` 없이 남기는 한, 사용자가 스와이프로 다시 만날 수 있다(한계로 기록).
 - 선택 창 PROMPT도 TalkBack 큐로? 가능은 하다: 선택 창 자체(이미 접근성 오버레이)에 paneTitle이 있고 TalkBack이 창을 읽으므로, "안내 맡기기" ON이면 우리 TTS PROMPT를 끄고 paneTitle/첫 버튼 포커스 낭독에 맡기는 방식. 단, 지금 PROMPT는 TalkBack이 팝업을 읽는 도중 끊고 들어가야 시연이 빠르므로 polite로 바꾸면 늦어질 수 있다. F11 배너가 LG에서 잘 읽히면 같은 방식으로 옮길지 정하자(의견, 미구현).
