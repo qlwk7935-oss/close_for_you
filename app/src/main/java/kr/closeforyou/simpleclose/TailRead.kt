@@ -32,6 +32,9 @@ class TailReadInfo(val outcome: TailOutcome, val nodes: Int, val visited: Int, v
  * siblings, off-screen subtrees skipped, as the probe. It keeps what it reads (the probe keeps nothing), so
  * [PopupRootFinder] judges it with all its rules. Its own caps, apart from the whole walk's: [MAX_NODES] live nodes,
  * [MAX_MILLIS]; the popup it finds is read again whole ([SUBTREE_MAX_MILLIS]), or not used.
+ * F60 (예스24 #welcomeTodayPop, a zero-size root holding the popup): only a zero-size node with no children waits for its
+ * siblings. One with children is read in its place: portal wrappers hold popups. The caps are the same, so a big zero-size
+ * wrapper can use them up before a popup earlier in the page (F60Test).
  * Worst case for one read on such a page: [WholeReadCap.MAX_MILLIS] + [MAX_MILLIS] + [SUBTREE_MAX_MILLIS] = 1.1 s,
  * at most once every [WholeReadCap.ABORTED_RETRY_MILLIS] on the page (F25 was 6.1 s on every read). Pure; JVM tested.
  */
@@ -62,7 +65,7 @@ object TailRead {
                 visited += 1
             }
             val seen = tree.look(node, path)
-            if (seen.zeroSize && deferZero) return true
+            if (seen.zeroSize && deferZero && tree.childCount(node) == 0) return true
             if (!seen.descend) return false
             seen.snapshot?.let { out += it }
             if (seen.password) password = true

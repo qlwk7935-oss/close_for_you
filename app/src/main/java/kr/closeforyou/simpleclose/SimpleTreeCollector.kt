@@ -321,6 +321,24 @@ class SimpleTreeCollector(private val service: AccessibilityService) {
         }
     }
 
+    /**
+     * F60: [prev]'s nodes with [root]'s own subtree read again ([TailSettle]). The same app guard as [read], the same window, the address
+     * looked up again. Null when the app or window changed, or the popup is gone or was cut ([TailRead.SUBTREE_MAX_MILLIS]).
+     * [TreeRead.wholeAborted] is false: no whole walk was tried, so the wait for the next one is not moved.
+     */
+    fun readTailPopupAgain(prev: TreeRead, root: PopupRoot, expectedPackage: String, packageAllowed: (String) -> Boolean): TreeRead? =
+        SimpleCollectionGuard.read(expectedPackage, { service.rootInActiveWindow }, { it.packageName?.toString() }, packageAllowed, collect = collect@{ active, packageName ->
+            if (active.windowId != prev.windowId) return@collect null
+            val screen = screenBounds()
+            val count = WalkCount(maxVisited = WholeReadCap.MAX_NODES, deadline = SystemClock.uptimeMillis() + TailRead.SUBTREE_MAX_MILLIS)
+            val nodes = TailSettle.merged(prev.nodes, root.rereadPaths()) { path -> subtree(active, path, screen, count) } ?: return@collect null
+            if (count.aborted || count.depthCut.isNotEmpty()) return@collect null
+            TreeRead(packageName, active.windowId, nodes, screen, prev.activeWindowBounded, count.visited, count.skipped, prev.mode, 0,
+                probeOutcome = prev.probeOutcome, appWindowIgnored = prev.appWindowIgnored, depthCut = prev.depthCut,
+                passwordSeen = prev.passwordSeen || count.password, address = addressOf(active, packageName, nodes, true),
+                boundsFromRoot = prev.boundsFromRoot, windowsLine = prev.windowsLine, bottomSheet = prev.bottomSheet)
+        }, release = ::release)
+
     /** The package of the active window right now, or null when there is none. */
     fun foregroundPackage(): String? {
         val root = service.rootInActiveWindow ?: return null

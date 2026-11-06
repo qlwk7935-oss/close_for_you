@@ -188,6 +188,8 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
     /** F50: the last read of the popup root being waited for to stand still, and the re-read scheduled for it. */
     private var settle: SettleState? = null
     private var settleReread: Job? = null
+    /** F60: a popup only the tail read found, waiting for its read again ([TailSettle]). */
+    private var tailSettle: TailSettle.Pending? = null
     /** F50: the last `NO_ROOT` line (logged only when it changes). */
     private var lastNoRootLine: String? = null
     private val shiftRereadDone = LinkedHashSet<String>()
@@ -389,9 +391,21 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
         val videoWeb = expectedPackage == videoWebPackage && readStart < videoWebUntil
         val slowPage = expectedPackage == slowPackage && readStart < slowUntil
         val sinceAborted = (readStart - abortedAt).takeIf { expectedPackage == abortedPackage }
-        val whole = ReadBudget.wholeRead(trigger, searchReads, slowPage, videoWeb, sinceAborted)
-        val read = withContext(Dispatchers.Default) {
-            collector.read(expectedPackage, ::allowsApp, probe = expectedPackage != VideoAdSkip.YOUTUBE_APP && !videoWeb, wholeIfProbeMisses = whole)
+        val wholeAsked = ReadBudget.wholeRead(trigger, searchReads, slowPage, videoWeb, sinceAborted)
+        // F60: a popup the tail read found is read again from its own subtree: no whole walk may find it again for a while.
+        val tailPending = tailSettle?.takeIf { TailSettle.usable(it.read.packageName, it.at, expectedPackage, readStart) }
+        tailSettle = null
+        val tailAgain = tailPending?.let { pending ->
+            withContext(Dispatchers.Default) { collector.readTailPopupAgain(pending.read, pending.root, expectedPackage, ::allowsApp) }
+        }
+        if (tailPending != null) {
+            log.trace(if (tailAgain != null) SimpleTrace.TAIL_SETTLE_READ else SimpleTrace.TAIL_SETTLE_FAILED)
+            // Not read: not stillness. Nothing judged from it, and a later sighting starts its wait again; the ordinary read goes on below.
+            if (tailAgain == null) settle = null
+        }
+        val whole = wholeAsked && tailAgain == null
+        val read = tailAgain ?: withContext(Dispatchers.Default) {
+            collector.read(expectedPackage, ::allowsApp, probe = expectedPackage != VideoAdSkip.YOUTUBE_APP && !videoWeb, wholeIfProbeMisses = wholeAsked)
         }
         val readMillis = SystemClock.uptimeMillis() - readStart
         searchReads += 1
@@ -551,6 +565,7 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
             when (verdict) {
                 SettleVerdict.WAIT -> {
                     log.trace(SimpleTrace.SETTLE_WAIT)
+                    if (tailAgain != null || read.tail?.outcome == TailOutcome.FOUND) tailSettle = TailSettle.Pending(read, root, now)
                     val pkg = read.packageName
                     settleReread?.cancel()
                     settleReread = scope.launch {
@@ -2249,6 +2264,7 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
         moveHold = null
         autoHolds.clear()
         settle = null
+        tailSettle = null
         settleReread?.cancel()
         lastNoRootLine = null
         failedButtons.clear()

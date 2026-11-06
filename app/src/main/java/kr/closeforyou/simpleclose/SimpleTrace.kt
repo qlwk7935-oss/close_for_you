@@ -59,6 +59,9 @@ enum class SimpleTrace {
     SETTLE_WAIT,
     SETTLE_STABLE,
     SETTLE_LIMIT,
+    /** F60: a popup the tail read found: its own subtree read again for [SettleRules] / not read whole or gone: not judged from it. */
+    TAIL_SETTLE_READ,
+    TAIL_SETTLE_FAILED,
     CLICK_TARGET_NOT_CLICKABLE,
     CLICKED,
     CLICK_REJECTED,
