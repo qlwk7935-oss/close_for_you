@@ -777,7 +777,8 @@ class SimpleTreeCollector(private val service: AccessibilityService) {
         return NodeSnapshot(
             path = path,
             viewId = node.viewIdResourceName,
-            className = node.className?.toString(),
+            // B 갤럭시 11/3 쿠팡: "7일간 보지 않기" was a checkbox. Any checkable node reads as one, whatever view draws it.
+            className = if (node.isCheckable) CloseButtonFinder.CHECKABLE_CLASS else node.className?.toString(),
             // F28: a password field's text is never copied (the screen is skipped on its flag anyway).
             text = if (node.isPassword) null else node.text?.toString(),
             contentDescription = node.contentDescription?.toString(),

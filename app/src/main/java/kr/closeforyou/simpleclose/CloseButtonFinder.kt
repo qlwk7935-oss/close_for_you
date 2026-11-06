@@ -3,6 +3,7 @@ package kr.closeforyou.simpleclose
 import kotlinx.collections.immutable.ImmutableList
 import kotlinx.collections.immutable.persistentListOf
 import kotlinx.collections.immutable.toPersistentList
+import kr.closeforyou.core.model.ButtonLabelRules
 import kr.closeforyou.core.model.ButtonRole
 import kr.closeforyou.core.model.CloseCandidate
 import kr.closeforyou.core.model.EvidenceLevel
@@ -49,6 +50,23 @@ data class ButtonScan(
  * Candidate ids follow B's form ("node:<path>") so C's prompt and the engine's re-check agree.
  */
 object CloseButtonFinder {
+    /** The class a checkable node is read as ([SimpleTreeCollector]). */
+    const val CHECKABLE_CLASS = "android.widget.CheckBox"
+    private val TOGGLE_CLASS = Regex("CheckBox|Switch|RadioButton|ToggleButton")
+
+    /**
+     * B 갤럭시 11/3 쿠팡: a toggle does not close anything. Pressed as "7일간 보지 않기" it only changed the setting and the
+     * popup stayed. The toggle itself, and a hide label in the same row as a toggle, are never close buttons. A plainly named
+     * close in that row stays one ("☐ 오늘 하루 보지 않기 | 닫기", 재호 #78 리뷰).
+     */
+    private fun isToggle(node: NodeSnapshot): Boolean = node.className?.let(TOGGLE_CLASS::containsMatchIn) == true
+
+    private fun labelsAToggle(node: NodeSnapshot, label: String?, inside: List<NodeSnapshot>): Boolean =
+        ButtonLabelRules.roleOf(label) != ButtonRole.CLOSE && inside.any { other ->
+            other !== node && isToggle(other) && node.bounds.top < (other.bounds.top + other.bounds.bottom) / 2 &&
+                (other.bounds.top + other.bounds.bottom) / 2 < node.bounds.bottom
+        }
+
     fun scan(nodes: List<NodeSnapshot>, root: PopupRoot, askWhenPurchase: Boolean = SimpleCloseEngineFeature.ASK_WHEN_PURCHASE_BUTTON): ButtonScan {
         val inside = nodes.filter(root::contains)
         val candidates = mutableListOf<CloseCandidate>()
@@ -65,6 +83,10 @@ object CloseButtonFinder {
             // F34 (시험 앱 P02/P16: the clickable dim or cover is the root and holds the card's buttons): a container, not a
             // button; named by the card's words ("가입…") it counted as a risky button and kept the popup asked.
             if (root.members == null && node.path == root.path && inside.any { it !== node && it.clickable }) continue
+            if (isToggle(node)) {
+                other++
+                continue
+            }
             val label = nameOf(node, inside)
             if (SimpleLabelRules.isRisky(label, askWhenPurchase)) {
                 risk++
@@ -81,6 +103,7 @@ object CloseButtonFinder {
             // B review 11/1: a box named by the words inside it is a close only by a complete close phrase.
             val namedByChildren = node.text.isNullOrBlank() && node.contentDescription.isNullOrBlank()
             val role = verdict.role?.takeIf { !namedByChildren || SimpleLabelRules.roleOfExactPhrase(label) == it }
+                ?.takeUnless { labelsAToggle(node, label, inside) }
             if (role != null) {
                 candidates += CloseCandidate(
                     id = "node:${node.path}",
