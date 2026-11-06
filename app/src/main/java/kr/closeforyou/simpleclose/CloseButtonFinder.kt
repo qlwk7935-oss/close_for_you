@@ -88,6 +88,12 @@ object CloseButtonFinder {
                 continue
             }
             val label = nameOf(node, inside)
+            // B_DEMO_RULES.md 12절: text "닫기" with a description "자세히 보기": the name read is not the only thing it says.
+            val description = node.contentDescription?.takeIf { !node.text.isNullOrBlank() && it.isNotBlank() }
+            if (description != null && SimpleLabelRules.judge(description).reject == SimpleLabelReject.FORBIDDEN) {
+                forbidden++
+                continue
+            }
             if (SimpleLabelRules.isRisky(label, askWhenPurchase)) {
                 risk++
                 // B_DEMO_RULES.md 1절: counted apart so a checked promotion's "지금 구매하기" alone can stop asking.
