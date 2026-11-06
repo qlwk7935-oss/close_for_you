@@ -1351,6 +1351,10 @@ F26 자동 확인: 옥션 웹 감지 1.3초·재확인 308ms·`READ_DUTY_PCT` 7.
 - **합친 것(`1613cb7` 위, 이 순서, 충돌 없음):** `feature/b-promo-link` `ed5ef07`, `feature/b-image-hint-preset` `448a8c6`, `feature/b-banner-recheck` `7f301f0`, `feature/b-safety-map` `a523100`, `feature/b-close-candidates` `45cfe4e`, `feature/b-criteria-fixes` `5d73c6c`, `feature/d-p36-hide-today` `d0e8b3e`. 내용은 고치지 않았다. CI 통과는 준영 보고 기준이다.
 - **시험:** debug 1462개·release 1447개 실패 0, 건너뜀 1개(기존), popup-test-app 27개, lint 오류 0·경고 15, 병합 권한 `RECORD_AUDIO`·`DYNAMIC_RECEIVER`만.
 
+### 8-58. F57 이동 문구에서도 "앞" 단정 빼기 (JVM 시험만, 실기기 미검증)
+
+- 준영 지적: 같은 DOM 순서 추측인데 이 문구만 단정이었다. `ui_choice_move_to_front` "앞으로 보이는 팝업으로 이동", `ui_move_front_position` "앞으로 보이는 팝업은 화면 %1$s에 있어요." 이동 동작은 그대로다.
+
 - 잔여 노드 쪽 이벤트 무시: TalkBack이 무엇을 읽을지는 앱이 막을 수 없다. 대신 포커스를 잔여 노드 밖으로 옮기는 것(F9)이 할 수 있는 전부. 웹 페이지가 닫힌 팝업을 DOM에 `aria-hidden` 없이 남기는 한, 사용자가 스와이프로 다시 만날 수 있다(한계로 기록).
 - 선택 창 PROMPT도 TalkBack 큐로? 가능은 하다: 선택 창 자체(이미 접근성 오버레이)에 paneTitle이 있고 TalkBack이 창을 읽으므로, "안내 맡기기" ON이면 우리 TTS PROMPT를 끄고 paneTitle/첫 버튼 포커스 낭독에 맡기는 방식. 단, 지금 PROMPT는 TalkBack이 팝업을 읽는 도중 끊고 들어가야 시연이 빠르므로 polite로 바꾸면 늦어질 수 있다. F11 배너가 LG에서 잘 읽히면 같은 방식으로 옮길지 정하자(의견, 미구현).
 - 검증(F1~F11 한 빌드): 5개 Gradle 작업 통과, 단위 시험 debug 1028개·release 1013개 실패 0, lintDebug 오류 0(경고 12), 병합 매니페스트 INTERNET 0·새 권한 없음.
