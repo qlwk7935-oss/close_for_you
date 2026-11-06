@@ -27,6 +27,12 @@ object ImageDialogAdHint {
     // F34 (LG 11/2: AD_HINT_MISS_NOT_DIALOG_ROOT on 11번가 앱·올리브영): every popup root kind but a video cover.
     private val ROOT_KINDS = PopupRootKind.entries.toSet() - PopupRootKind.VIDEO_COVER
 
+    /**
+     * B_DEMO_RULES.md 4-2 (재호 11/4): only under "전부 자동 닫기". In the other presets a picture of a notice would be closed
+     * as an ad, against what the person chose (AGENTS 6-2), so B's "판단 불가" stands and the popup is asked.
+     */
+    fun presetAllows(autoCloseKinds: Set<PopupClassification>): Boolean = DemoUnknownAutoClose.presetAllows(autoCloseKinds)
+
     fun applies(popup: SimplePopup, classification: PopupClassification, suspicious: Boolean): Boolean =
         check(popup, classification, suspicious) == null
 
