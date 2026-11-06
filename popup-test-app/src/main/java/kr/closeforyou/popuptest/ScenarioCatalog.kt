@@ -286,7 +286,7 @@ object ScenarioCatalog {
             correctTargetId = "btn_close", appAllowedTargetId = "btn_close", forbiddenTargetIds = emptySet(),
             keyFacts = listOf("광고 4개가 이어서 나옴"), rememberable = false, memoryReusableFrom = null,
             experiments = setOf("C08"),
-            note = "S17. 광고를 '닫기'로 닫으면 1초 뒤 다른 광고가 나온다(모두 4개). 프리셋 자동 닫기는 1분에 3개까지, 4번째는 묻기(RATE_LIMIT).",
+            note = "S17. 광고를 '닫기'로 닫으면 2초 뒤 다른 광고가 나온다(모두 4개, B ChainGuard 1.5초보다 길게 11/5). 프리셋 자동 닫기는 1분에 3개까지, 4번째는 묻기(RATE_LIMIT).",
         ),
         PopupScenario(
             id = "P21", title = "사기 의심 - 1등 당첨", surface = PopupSurface.DIALOG,
@@ -352,6 +352,15 @@ object ScenarioCatalog {
             experiments = setOf("C01"),
             note = "11/2 추가(A 요청). 모바일 웹에서 흔한 '앱에서 열기 / 모바일 웹으로 볼게요' 시트를 Dialog 없이 같은 창 아래에 그린다. 닫는 버튼은 '모바일 웹으로 볼게요'이고 '앱에서 열기'는 광고 페이지를 연다(앱이 누르면 실패).",
         ),
+        PopupScenario(
+            id = "P36", title = "오늘 하루 보지 않기만 있는 팝업", surface = PopupSurface.DIALOG,
+            kind = PopupKind.AD, expected = ExpectedHandling.USER_CHOICE,
+            closeEvidence = CloseEvidence.E2_LABELED_CLICK,
+            correctTargetId = "btn_hide_today", appAllowedTargetId = "btn_hide_today", forbiddenTargetIds = setOf("btn_ad_open"),
+            keyFacts = listOf("닫기 없이 '오늘 하루 보지 않기'만 있는 광고"), rememberable = false, memoryReusableFrom = null,
+            experiments = setOf("C01"),
+            note = "11/5 추가(B 준영 요청, F40 확인용). 이름 있는 '닫기'가 없고 '오늘 하루 보지 않기'만 닫는 버튼이다. '자세히 보기'는 광고 페이지를 연다(앱이 누르면 실패). 문구는 P20 두 번째 광고와 같다.",
+        ),
     ) + noticeVariants()
 
     private fun notice(id: String, title: String, body: String, reuse: String?, fact: String) =
@@ -390,6 +399,9 @@ object ScenarioCatalog {
     /** 정답지의 건너뛰기 버튼 ID. */
     const val SKIP_TARGET_ID = "btn_skip"
 
+    /** P36 '오늘 하루 보지 않기' 버튼 ID. F40: 이 버튼만 있으면 광고만 닫기에서는 누르지 않고 묻는다(HIDE_TODAY_ASKED_SAFE_PRESET). */
+    const val HIDE_TODAY_TARGET_ID = "btn_hide_today"
+
     /** #46: 자동 건너뛰기는 F9 지원·실측 전까지 꺼져 있다. 켜면 P16 목표가 바뀐다. */
     val autoSkipEnabled: Boolean = false
 
@@ -409,6 +421,7 @@ object ScenarioCatalog {
         }
         val target = scenario.appAllowedTargetId
         val closable = target != null && (target != SKIP_TARGET_ID || autoSkipEnabled)
+        if (preference == PresetGoal.CLOSE && target == HIDE_TODAY_TARGET_ID && preset == TestPreset.CLOSE_ADS_ONLY) return PresetGoal.ASK
         return if (preference == PresetGoal.CLOSE && !closable) PresetGoal.ASK else preference
     }
 
@@ -446,6 +459,7 @@ object ScenarioCatalog {
         "P33" to Int1Expectation(Int1Kind.COUPON, Int1Path.TREE),
         "P34" to Int1Expectation(Int1Kind.ADVERTISEMENT, Int1Path.TREE),
         "P35" to Int1Expectation(Int1Kind.ADVERTISEMENT, Int1Path.TREE),
+        "P36" to Int1Expectation(Int1Kind.ADVERTISEMENT, Int1Path.TREE),
     ) + noticeVariants().associate { it.id to Int1Expectation(Int1Kind.NOTICE, Int1Path.TREE) }
 
     fun find(id: String): PopupScenario? = all.firstOrNull { it.id == id }

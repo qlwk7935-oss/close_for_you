@@ -18,9 +18,11 @@
             </intent-filter>
         </activity>
         <!-- adb로 직접 열기: am start -n kr.closeforyou.popuptest/.PopupScenarioActivity 에 문자열 extra scenario=P04 -->
+        <!-- 액션바 없음: targetSdk 35 화면 꽉 채우기에서 액션바가 같은 창 레이어 위쪽(닫기 버튼)을 덮는다(11/2). -->
         <activity
             android:name=".PopupScenarioActivity"
-            android:exported="true" />
+            android:exported="true"
+            android:theme="@android:style/Theme.Material.Light.NoActionBar" />
         <activity
             android:name=".AdLandingActivity"
             android:exported="false" />
