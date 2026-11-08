@@ -1388,6 +1388,21 @@ F26 자동 확인: 옥션 웹 감지 1.3초·재확인 308ms·`READ_DUTY_PCT` 7.
   - 판정, 누르기 직전 재확인, 기억(`RememberedPopup`), `failedNames` 비교, 음성 "…버튼으로 가" 이름 맞추기는 읽은 label 그대로 쓴다. 표시용으로만 정리한다.
 - **시험:** `F61Test` 7개(스위치 꺼짐, OFFERED 없음, 사기 경고 유지, 켜면 F59, 겹침 창에 누르기 없음·요약, 아이콘 글자 떼기, 판정 label 유지). 기존 `F59Test`는 `pressOn = true`로 켠 상태를 시험한다. 실제 서비스 연결과 화면 낭독은 JVM 시험이 없다. **실기기 미검증.**
 
+### 8-62. F62 — 선택창 팝업 발췌·낭독에서 아이콘 글자(사설 문자) 떼기 (`84a935f` 위, JVM 시험만, 실기기 미검증)
+
+- **무엇을:** `SpeakableText`의 장식 판정에 사설 문자(U+E000–U+F8FF, U+F0000–U+FFFFD, U+100000–U+10FFFD)를 더했다. 다른 장식 문자처럼 공백으로 바꾸고 `tidy`가 공백을 정리한다. 범위 정의는 `ui/voice/PrivateUse` 하나로 두고, `SpeakableText`와 F61 `ButtonNameDisplay.shown`이 같이 쓴다.
+- **왜:** 준영이 LMS처럼 겹친 공지에 "닫기"를 넣어 띄웠더니 선택창 위쪽 발췌 끝이 "…깁니다. ?닫기"처럼 보였다. 발췌는 `SpeakableText`를 거치는데, 사설 문자 범위가 장식 판정에 없어서 남았다. F61은 버튼 이름만 정리했다.
+- **영향 범위: 표시·낭독만.** `SpeakableText`를 부르는 곳은 모두 화면 표시나 TTS다.
+  - 선택창 발췌(`TalkBackTakeoverPlan.excerpt` → `shownExcerpt` → 화면 글자)
+  - 선택창 낭독(`TalkBackTakeoverPlan.speech`)
+  - "자세히"의 버튼 목록, [내용 다시 읽기](`PromptSpeech`)
+  - 자동 처리 안내 본문과 결과 제목(`SpeechHandlingListener`)
+  - 판정·누르기 직전 재확인·기억(`RememberedPopup`)·실패 기록·`ButtonLabelRules`·`SimpleLabelRules`·로그에는 `SpeakableText` 결과가 들어가지 않는다. 그쪽은 읽은 글자를 그대로 쓴다.
+- **시험:** `F62Test` 5개. "…깁니다. (U+EA02)닫기"는 "…깁니다. 닫기"가 되고, 사설 문자만 있으면 빈 문자열(발췌는 null)이다. 15·16 평면도 지운다. 일반 한글·숫자·기존 장식 처리는 그대로이고, 바로 옆 문자(U+F900, U+E0000)는 남긴다. 두 곳이 같은 범위를 쓰는지도 본다. 기존 `SpeakableTextTest`는 모두 통과한다. **실기기 미검증.**
+- **한계(된다고 적지 않는다):**
+  - 체크박스와 같은 줄에 있어도 이름이 일반 닫기로 읽히면 닫기 후보로 둔다. 그래서 '일주일간 닫기'처럼 숫자 없는 기간+닫기도 후보가 될 수 있다(체크박스 자체는 누르지 않는다). (출처: 준영 `1e241a7`)
+  - 실제 LMS(갤럭시, `84a935f`)에서는 `SKIPPED_SCOPE_SENSITIVE_WEB_PERSONAL_DATA`로 분석 전에 멈췄다. 개인정보 모양의 글자가 화면에 보여서 안전 규칙대로 멈춘 것이다. 후보 인식은 `1e241a7`에서 실기기로 확인했고, 선택창 음성은 실기기 미검증이다.
+
 - 잔여 노드 쪽 이벤트 무시: TalkBack이 무엇을 읽을지는 앱이 막을 수 없다. 대신 포커스를 잔여 노드 밖으로 옮기는 것(F9)이 할 수 있는 전부. 웹 페이지가 닫힌 팝업을 DOM에 `aria-hidden` 없이 남기는 한, 사용자가 스와이프로 다시 만날 수 있다(한계로 기록).
 - 선택 창 PROMPT도 TalkBack 큐로? 가능은 하다: 선택 창 자체(이미 접근성 오버레이)에 paneTitle이 있고 TalkBack이 창을 읽으므로, "안내 맡기기" ON이면 우리 TTS PROMPT를 끄고 paneTitle/첫 버튼 포커스 낭독에 맡기는 방식. 단, 지금 PROMPT는 TalkBack이 팝업을 읽는 도중 끊고 들어가야 시연이 빠르므로 polite로 바꾸면 늦어질 수 있다. F11 배너가 LG에서 잘 읽히면 같은 방식으로 옮길지 정하자(의견, 미구현).
 - 검증(F1~F11 한 빌드): 5개 Gradle 작업 통과, 단위 시험 debug 1028개·release 1013개 실패 0, lintDebug 오류 0(경고 12), 병합 매니페스트 INTERNET 0·새 권한 없음.

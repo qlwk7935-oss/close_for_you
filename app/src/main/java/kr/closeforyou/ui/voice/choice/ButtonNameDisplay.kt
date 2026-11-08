@@ -4,6 +4,7 @@ import kr.closeforyou.R
 import kr.closeforyou.core.model.ButtonLabelRules
 import kr.closeforyou.core.model.ButtonRole
 import kr.closeforyou.core.model.PopupAnalysis
+import kr.closeforyou.ui.voice.PrivateUse
 
 /**
  * C: the button name shown in "'닫기' 버튼 눌러 주기" and "'닫기' 버튼, 앞으로 항상 눌러 주기".
@@ -41,7 +42,8 @@ object ButtonNameDisplay {
         return out.toString().replace(SPACES, " ").trim().ifEmpty { null }
     }
 
-    fun isPrivateUse(cp: Int): Boolean = cp in 0xE000..0xF8FF || cp in 0xF0000..0xFFFFD || cp in 0x100000..0x10FFFD
+    /** The one range definition C shares with [kr.closeforyou.ui.voice.SpeakableText] ([PrivateUse]). */
+    fun isPrivateUse(cp: Int): Boolean = PrivateUse.isPrivateUse(cp)
 
     private val SPACES = Regex("""\s+""")
 

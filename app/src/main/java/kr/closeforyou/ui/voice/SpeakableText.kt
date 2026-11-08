@@ -16,7 +16,7 @@ package kr.closeforyou.ui.voice
  * 5. "70%" → "70퍼센트", "1+1" → "원 플러스 원", "2×3" → "2 곱하기 3", "2x" → "2배"
  * 6. "&" → "그리고" ("앤" between Latin letters: "H&M"), "#태그 #태그" → ", 태그, 태그"
  * 7. "/" and "·" between words → ", "; "기간:" → "기간, "
- * 8. decorative marks and emoji (★ ▶ ※ ♥ 【】 …) and a stray "~" or "×" are dropped
+ * 8. decorative marks and emoji (★ ▶ ※ ♥ 【】 …), a stray "~" or "×", and private-use icon glyphs ([PrivateUse], F62) are dropped
  * 9. spaces collapsed; every line but the last ends with a pause (".")
  *
  * Clock times need evidence: a two-digit hour ("02:00", "14:30"), 오전/오후/AM/PM, a range, or a
@@ -196,7 +196,7 @@ object SpeakableText {
     }
 
     private fun isDecoration(cp: Int): Boolean =
-        cp in DECORATION_POINTS || DECORATION_RANGES.any { cp in it }
+        cp in DECORATION_POINTS || DECORATION_RANGES.any { cp in it } || PrivateUse.isPrivateUse(cp)
 
     private fun tidy(s: String): String = s
         .replace(SPACES, " ")
