@@ -338,6 +338,8 @@ enum class SimpleTrace {
     PRE_PRESS_STOPPED_KIND_CHANGED,
     /** F31: the popup could not be read again in time (gone, or past the cap): not pressed. */
     PRE_PRESS_STOPPED_UNREAD,
+    /** 11/7 G마켓 ([BannerBounds]): a container banner's close no longer drawn inside it: not pressed, nothing asked. */
+    PRE_PRESS_STOPPED_OUTSIDE_BANNER,
     PRE_PRESS_RECHECK_PASSED,
     /** F31 (B_DEMO_RULES.md 6-2): an automatic close asked instead, too many in this app within a minute. */
     CHAIN_GUARD_ASKED_RATE,

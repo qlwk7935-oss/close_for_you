@@ -57,12 +57,18 @@ object CloseButtonFinder {
     /**
      * B 갤럭시 11/3 쿠팡: a toggle does not close anything. Pressed as "7일간 보지 않기" it only changed the setting and the
      * popup stayed. The toggle itself, and a hide label in the same row as a toggle, are never close buttons. A plainly named
-     * close in that row stays one ("☐ 오늘 하루 보지 않기 | 닫기", 재호 #78 리뷰).
+     * close in that row stays one ("☐ 오늘 하루 보지 않기 | 닫기", 재호 #78 리뷰), also with an icon glyph in front of it
+     * (우진 SM-F966N 11/7 LMS: "닫기", a private-use × glyph, was not in the shared list and the close was dropped).
      */
     private fun isToggle(node: NodeSnapshot): Boolean = node.className?.let(TOGGLE_CLASS::containsMatchIn) == true
 
+    /** A plain close by name: the shared list, or the engine's rules when they read it as an ordinary close (never "오늘 하루"). */
+    private fun plainClose(label: String?): Boolean =
+        ButtonLabelRules.roleOf(label) == ButtonRole.CLOSE ||
+            SimpleLabelRules.pressKind(label, SimpleLabelRules.roleOf(label), visualOnly = false) == PressKind.LABELED_CLOSE
+
     private fun labelsAToggle(node: NodeSnapshot, label: String?, inside: List<NodeSnapshot>): Boolean =
-        ButtonLabelRules.roleOf(label) != ButtonRole.CLOSE && inside.any { other ->
+        !plainClose(label) && inside.any { other ->
             other !== node && isToggle(other) && node.bounds.top < (other.bounds.top + other.bounds.bottom) / 2 &&
                 (other.bounds.top + other.bounds.bottom) / 2 < node.bounds.bottom
         }
@@ -110,6 +116,8 @@ object CloseButtonFinder {
             val namedByChildren = node.text.isNullOrBlank() && node.contentDescription.isNullOrBlank()
             val role = verdict.role?.takeIf { !namedByChildren || SimpleLabelRules.roleOfExactPhrase(label) == it }
                 ?.takeUnless { labelsAToggle(node, label, inside) }
+                // 11/7 G마켓: a container banner's close counts only when drawn inside the banner ([BannerBounds]).
+                ?.takeUnless { BannerBounds.applies(root) && !BannerBounds.holds(root.bounds, node.bounds) }
             if (role != null) {
                 candidates += CloseCandidate(
                     id = "node:${node.path}",

@@ -394,7 +394,11 @@ object PopupRootFinder {
             if (!overPage) continue
             val inside = nodes.filter { it.path.startsWith("${layer.path}/") }
             if (looksLikeMenu(layer, inside, screen) || mentionsCookies(layer) || inside.any(::mentionsCookies)) continue
-            if (inside.none { it.clickable && SimpleLabelRules.roleOf(CloseButtonFinder.nameOf(it, inside)) == ButtonRole.CLOSE }) continue
+            val closes = inside.filter { it.clickable && SimpleLabelRules.roleOf(CloseButtonFinder.nameOf(it, inside)) == ButtonRole.CLOSE }
+            if (closes.isEmpty()) continue
+            // 11/7 G마켓 (준영 SM-M446K): the tab bar was taken for a banner by a coupon bubble's × floating above it (in its
+            // subtree, outside its box). A banner counts only by a close drawn inside it ([BannerBounds]).
+            if (banner && closes.none { BannerBounds.holds(layer.bounds, it.bounds) }) continue
             // F34: a strip that small is a banner only when it says so (a snackbar or a toolbar with "닫기" is not).
             if (banner && !mentionsPromotion(layer) && inside.none(::mentionsPromotion)) continue
             // F37 (G마켓 웹 "매일 출첵하고 혜택 받아요! ×", ~45% wide over the tab bar): a full-width box whose own content is

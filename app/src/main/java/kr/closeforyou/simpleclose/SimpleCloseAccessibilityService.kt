@@ -855,7 +855,7 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
                         else -> preferences.current().autoCloseKinds(live = true)
                     }
                     val prePress: (suspend () -> Boolean)? = if (SimpleCloseEngineFeature.PRE_PRESS_RECHECK) {
-                        { prePressStop(classified, byB, closable).also { stopped = it } != null }
+                        { prePressStop(classified, byB, closable, decision.candidate).also { stopped = it } != null }
                     } else {
                         null
                     }
@@ -2181,7 +2181,7 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
      * F31 (B_DEMO_RULES.md 6-1): the popup's own subtree read again right before an automatic press and judged by B
      * again ([PrePressRecheck]). Null = press. The read's cost is logged (`PRE_PRESS_RECHECK_MS`), never its words.
      */
-    private suspend fun prePressStop(popup: SimplePopup, decidedByB: PopupClassification, closable: Set<PopupClassification>): PrePressStop? {
+    private suspend fun prePressStop(popup: SimplePopup, decidedByB: PopupClassification, closable: Set<PopupClassification>, button: CloseCandidate? = null): PrePressStop? {
         val start = SystemClock.uptimeMillis()
         val again = withContext(Dispatchers.Default) { collector.readPopupAgain(popup.root, SimpleCloseEngineFeature.PRE_PRESS_READ_CAP_MILLIS) }
         log.latency("PRE_PRESS_RECHECK_MS", SystemClock.uptimeMillis() - start)
@@ -2199,6 +2199,12 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
         val promoBuy = PromoPurchaseGate.allowed(DecisionDemoRules.PROMO_PURCHASE, kind, false, built.analysis.texts, built.scan.promoBuyCount) +
             PromoLoginGate.allowed(DecisionDemoRules.PROMO_LOGIN, kind, false, built.analysis.texts, built.scan.promoLoginCount)
         val fresh = built.copy(scan = built.scan.copy(promoBuyCount = promoBuy))
+        // 11/7 G마켓: a container banner's close that is no longer drawn inside it is not pressed, and nothing is asked.
+        if (button != null && BannerBounds.movedOut(popup.root, button, fresh.scan.candidates)) {
+            log.trace(SimpleTrace.PRE_PRESS_RECHECK_STOPPED)
+            log.trace(SimpleTrace.PRE_PRESS_STOPPED_OUTSIDE_BANNER)
+            return PrePressStop(null, kind, suspicious = false)
+        }
         val block = PrePressRecheck.check(decidedByB, fresh, closable) ?: run {
             log.trace(SimpleTrace.PRE_PRESS_RECHECK_PASSED)
             return null
