@@ -55,12 +55,16 @@ object SimplePromptOptions {
      * [failedNow]: that press has just not closed it. [frontScam]: the front popup was read and looks like a scam: said first, no press,
      * no excerpt (the stopped popup's words would pass for the scam's), its own words behind the read. The move stays only for a named
      * close ([frontKind] CLOSE): a first readable node may be the bait. [그대로 두기] stays.
+     * F61: [pressOn] false ([SimpleCloseEngineFeature.OVERLAP_FRONT_PRESS] off): [pressLabel] is ignored, the prompt is F57's.
      */
-    fun overlapped(prompt: ChoicePrompt, frontKnown: Boolean, pressLabel: String? = null, failedNow: Boolean = false, frontScam: Boolean = false, frontKind: FrontKind? = null): ChoicePrompt {
+    fun overlapped(
+        prompt: ChoicePrompt, frontKnown: Boolean, pressLabel: String? = null, failedNow: Boolean = false, frontScam: Boolean = false, frontKind: FrontKind? = null,
+        pressOn: Boolean = SimpleCloseEngineFeature.OVERLAP_FRONT_PRESS,
+    ): ChoicePrompt {
         val rest = prompt.options.filterNot {
             it.kind == PromptOptionKind.PRESS_CANDIDATE || it.kind == PromptOptionKind.REMEMBER_ALWAYS || it.kind == PromptOptionKind.MOVE_TO_BUTTON
         }
-        val press = pressLabel?.takeIf { frontKnown && !frontScam && it.isNotBlank() }
+        val press = pressLabel?.takeIf { pressOn && frontKnown && !frontScam && it.isNotBlank() }
         val scam = frontScam && frontKnown
         val scamNoMove = scam && frontKind != FrontKind.CLOSE
         val readsFront = press != null || scam

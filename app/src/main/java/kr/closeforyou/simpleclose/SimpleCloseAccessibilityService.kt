@@ -54,6 +54,7 @@ import kr.closeforyou.ui.voice.PressSuccess
 import kr.closeforyou.ui.voice.SpeechHandlingListener
 import kr.closeforyou.ui.voice.TtsPopupAnnouncer
 import kr.closeforyou.ui.voice.UiFormat
+import kr.closeforyou.ui.voice.choice.ButtonNameDisplay
 import kr.closeforyou.ui.voice.choice.ChoicePromptPlanner
 import kr.closeforyou.ui.voice.choice.PromptOption
 import kr.closeforyou.ui.voice.choice.PromptOptionKind
@@ -1301,7 +1302,7 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
                 val remember = choice.kind == ChoiceKind.REMEMBER_EXACT_POPUP && choice.buttonMeaningConfirmed && choice.repeatAutomationExplicitlyAllowed
                 prompted = null
                 if (choice.candidateId == SimplePromptOptions.FRONT_PRESS_ID) {
-                    if (frontPress != null && overlap != null) pressFront(popup, overlap, frontPress)
+                    if (frontPress != null && overlap != null && SimpleCloseEngineFeature.OVERLAP_FRONT_PRESS) pressFront(popup, overlap, frontPress)
                     return
                 }
                 val candidate = (popup.scan.candidates + listOfNotNull(popup.scan.xButton)).firstOrNull { it.id == choice.candidateId } ?: return
@@ -1397,9 +1398,10 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
         val miss = frontPressMiss(back, front, front.bounds, onRead = { seen = it }) { read ->
             OverlapPressRules.miss(front, read, read?.let { failedButtons[keyOf(it.popup)] }.orEmpty())
         }
-        val press = seen?.takeIf { miss == null }?.let { OverlapPressRules.offer(front, it) }
-        log.line(if (press != null) OverlapPressRules.offeredLine(press) else OverlapPressRules.notOfferedLine(miss ?: FrontPressMiss.TARGET_CHANGED))
-        return FrontOffer(press, scam = seen?.popup?.takeIf { miss == FrontPressMiss.SCAM })
+        // F61: switched off ([SimpleCloseEngineFeature.OVERLAP_FRONT_PRESS]), never a press; the read still finds a scam.
+        val offer = OverlapPressRules.offerOf(front, seen, miss)
+        log.line(OverlapPressRules.offerLine(offer, miss))
+        return offer
     }
 
     /**
@@ -1488,7 +1490,7 @@ class SimpleCloseAccessibilityService : AccessibilityService() {
             ScreenPlace.MIDDLE -> R.string.ui_position_middle
             ScreenPlace.BOTTOM -> R.string.ui_position_bottom
         })
-        val sentence = getString(R.string.ui_move_button_position, candidate.label?.trim().orEmpty(), place)
+        val sentence = getString(R.string.ui_move_button_position, ButtonNameDisplay.shown(candidate.label) ?: getString(R.string.ui_simple_x_button), place)
         log.trace(SimpleTrace.MOVE_POSITION_SPOKEN)
         scope.launch { announcer.announce(AnnouncementRequest(null, AnnouncementKind.POPUP_FOUND, sentence)) }
     }

@@ -132,6 +132,15 @@ object SimpleCloseEngineFeature {
      */
     const val STACK_CHECK_BEFORE_PRESS: Boolean = true
 
+    /**
+     * F59 (겹침 창의 "앞쪽에 보이는 팝업의 '…' 버튼 눌러 주기"). F61 동결 빌드: off. 우진 SM-F966N LMS (1e241a7): `OVERLAP_PRESS_NOT_OFFERED
+     * reason=DECISION`, and in the photo the notice in front was nearer the root, so the DOM order may run against the screen ("in front"
+     * is a guess from it, F57). Off: the press is never offered ([OverlapPressRules.offerOf], [SimplePromptOptions.overlapped]) and
+     * `OVERLAP_PRESS_OFFERED` never comes; the front popup is still read (the scam warning, [내용 다시 읽기]), the move and F53/F57 stay.
+     * True = F59. The code stays.
+     */
+    const val OVERLAP_FRONT_PRESS: Boolean = false
+
     /** F53: after a close with another popup left, the screen is read again this long later (the result sentence goes first). */
     const val NEXT_POPUP_READ_MILLIS: Long = 1_500L
 

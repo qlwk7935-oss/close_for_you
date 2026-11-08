@@ -207,17 +207,18 @@ internal fun PromptSummary.textRes(): Int = when (this) {
 private fun PromptOption.label(pressButtonCount: Int): String = when (kind) {
     PromptOptionKind.PRESS_CANDIDATE -> stringResource(labelRes ?: R.string.ui_choice_press_candidate, shownName(pressButtonCount))
     PromptOptionKind.REMEMBER_ALWAYS -> stringResource(R.string.ui_choice_remember_always, shownName(pressButtonCount))
-    PromptOptionKind.MOVE_TO_BUTTON -> labelRes?.let { stringResource(it) } ?: stringResource(R.string.ui_choice_move_to_button, buttonLabel.orEmpty())
+    PromptOptionKind.MOVE_TO_BUTTON -> labelRes?.let { stringResource(it) } ?: stringResource(R.string.ui_choice_move_to_button, ButtonNameDisplay.shown(buttonLabel) ?: stringResource(R.string.ui_simple_x_button))
     PromptOptionKind.READ_CONTENT -> stringResource(labelRes ?: R.string.ui_choice_read_content)
     PromptOptionKind.KEEP_OPEN -> stringResource(R.string.ui_choice_keep_open)
     PromptOptionKind.STOP_ASKING -> stringResource(R.string.ui_choice_stop_asking)
 }
 
-/** A lone long or indirect close/skip label is shown by its role ([ButtonNameDisplay]). */
+/** A lone long or indirect close/skip label is shown by its role ([ButtonNameDisplay]). F61: icon glyphs dropped ([ButtonNameDisplay.shown]). */
 @Composable
-private fun PromptOption.shownName(pressButtonCount: Int): String =
-    ButtonNameDisplay.roleNameRes(buttonLabel, candidateRole, pressButtonCount)?.let { stringResource(it) }
-        ?: buttonLabel.orEmpty()
+private fun PromptOption.shownName(pressButtonCount: Int): String {
+    val name = ButtonNameDisplay.shown(buttonLabel) ?: return stringResource(R.string.ui_simple_x_button)
+    return ButtonNameDisplay.roleNameRes(name, candidateRole, pressButtonCount)?.let { stringResource(it) } ?: name
+}
 
 /** Previews use the fixture's expected answer as a stand-in for B's classifier. */
 @Composable

@@ -214,7 +214,7 @@ object PromptSpeech {
 
     /** Real button names (not shortened) joined in on-screen order; null when there are none of that kind. */
     private fun ChoicePrompt.labelsOf(kind: PromptOptionKind): String? =
-        options.filter { it.kind == kind }.mapNotNull { it.buttonLabel?.let(SpeakableText::of)?.takeIf(String::isNotBlank) }
+        options.filter { it.kind == kind }.mapNotNull { it.buttonLabel?.let(ButtonNameDisplay::shown)?.let(SpeakableText::of)?.takeIf(String::isNotBlank) }
             .joinToString(LABEL_SEPARATOR) { "'$it'" }.ifEmpty { null }
 
     private fun ChoicePrompt.hasMoveOption() = options.any { it.kind == PromptOptionKind.MOVE_TO_BUTTON }
@@ -231,8 +231,9 @@ object PromptSpeech {
 
     internal fun content(analysis: PopupAnalysis, text: (Int, List<Any>) -> String): String {
         val body = contentOrNull(analysis)?.let(SpeakableText::of)?.takeIf(String::isNotBlank)
-        val names = ButtonNameDisplay.realNames(analysis).map {
-            text(R.string.ui_content_button_real_name, listOf(text(it.roleRes, emptyList()), SpeakableText.of(it.label)))
+        val names = ButtonNameDisplay.realNames(analysis).mapNotNull {
+            val name = ButtonNameDisplay.shown(it.label)?.let(SpeakableText::of)?.takeIf(String::isNotBlank) ?: return@mapNotNull null
+            text(R.string.ui_content_button_real_name, listOf(text(it.roleRes, emptyList()), name))
         }
         if (body == null && names.isEmpty()) return text(R.string.ui_content_none, emptyList())
         return (listOfNotNull(body?.let { if (names.isEmpty()) it else SpeakableText.withPause(it) }) + names).joinToString("\n")

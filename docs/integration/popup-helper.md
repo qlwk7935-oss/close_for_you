@@ -1370,6 +1370,24 @@ F26 자동 확인: 옥션 웹 감지 1.3초·재확인 308ms·`READ_DUTY_PCT` 7.
 - **바뀐 문자열 5개:** `ui_choice_press_front` "앞쪽에 보이는 팝업의 '%1$s' 버튼 눌러 주기", `ui_choice_move_to_front` "앞쪽에 보이는 팝업으로 이동", `ui_choice_read_front_content` "앞쪽에 보이는 팝업 내용 읽기", `ui_voice_press_front_on_screen` "앞쪽에 보이는 팝업의 버튼은 화면에서 직접 눌러 주세요.", `ui_move_front_position` "앞쪽에 보이는 팝업은 화면 %1$s에 있어요."
 - 요약·사기 경고의 "앞에 있는 것으로 보이는"은 그대로다. 동작은 바뀌지 않았다.
 
+### 8-61. 동결 빌드 F61 — 준영 `1e241a7` 수용, F59 앞 팝업 누르기 끄기, 버튼 이름 표시 정리 (JVM 시험만, 실기기 미검증)
+
+- **받은 것 (준영 `1e241a7`, `69fe45e` 위, 총괄 코드 리뷰 완료, 그대로 받음):** 하단 배너 경계 검사 `BannerBounds`. 배너는 상자 안에 닫기가 있어야 뿌리로 보고, 상자 밖 닫기는 후보에서 빼며, 누르기 직전에 벗어나면 누르지 않는다(`PRE_PRESS_STOPPED_OUTSIDE_BANNER`). 근거는 G마켓 쿠폰 말풍선 ×(준영 SM-M446K, `69fe45e`, 5회 중 4회 상자 밖 ×가 눌림). 또 LMS의 아이콘 글자가 붙은 "닫기"(U+EA02 + 닫기)를 체크박스 줄 라벨로 보지 않고 일반 닫기 후보로 둔다. 체크박스와 "오늘 하루 보지 않기" 제외는 그대로. `BannerBoundsTest` 6개.
+- **F59 끄기:** 우진 SM-F966N LMS 실측(`1e241a7`): `CANDIDATE_FOUND`, `STACK_BLOCKED_COVER_LATER`, `OVERLAP_PRESS_NOT_OFFERED reason=DECISION`. 사진에서는 앞에 보이는 공지가 root 쪽이라 DOM 순서가 화면과 반대였을 수 있다. "앞"은 DOM 순서로 짐작한 것(F57)이라 동결 빌드에서는 끈다.
+  - `SimpleCloseEngineFeature.OVERLAP_FRONT_PRESS = false`. 코드는 그대로 두고 스위치로만 끈다.
+  - 꺼져 있으면 `OverlapPressRules.offerOf`가 누르기를 만들지 않는다. `SimplePromptOptions.overlapped`도 이름을 받아도 "앞쪽에 보이는 팝업의 '…' 버튼 눌러 주기"(`FRONT_PRESS_ID`)를 만들지 않는다. 선택 처리도 스위치를 다시 본다. 그래서 `OVERLAP_PRESS_OFFERED`는 나오지 않는다.
+  - 로그: 다른 사유가 있으면 그 코드(`reason=DECISION` 등), 모든 검사를 통과했는데 꺼져서 안 내면 `OVERLAP_PRESS_NOT_OFFERED reason=SWITCHED_OFF`. 코드만 남고 글자는 없다.
+  - 그대로인 것: 앞 팝업 읽기, 사기 경고 창(`POPUPS_OVERLAP_FRONT_SCAM`, `..._NO_MOVE`), "앞쪽에 보이는 팝업으로 이동"(F57), 덮인 버튼을 누르지 않는 F53, 발췌(누르기가 없으면 평소 창처럼 공지 글).
+  - 요약 문장은 `POPUPS_OVERLAP`("팝업이 겹쳐 있어요. 가려졌을 수 있는 버튼은 대신 누르지 않아요.")라서 누르기를 전제하지 않는다.
+- **버튼 이름 표시 정리 (C):** `ButtonNameDisplay.shown`이 사설 영역 문자(U+E000–U+F8FF, 보조 사설 영역 U+F0000–U+FFFFD, U+100000–U+10FFFD)를 떼고 공백을 정리한다. 다 지워져 비면 이름 없는 X처럼 "X 모양 닫기"로 보인다. 쓰는 곳은 네 군데다.
+  - 선택창 버튼("'%1$s' 버튼 눌러 주기", "앞으로 항상 눌러 주기", "'%1$s' 버튼으로 이동"). TalkBack은 이 글자를 읽는다.
+  - "자세히" 안내의 버튼 목록
+  - [내용 다시 읽기]의 원래 이름
+  - TalkBack이 꺼져 있을 때의 위치 안내("'%1$s' 버튼은 화면 …에 있어요.")
+  - 음성 명령은 버튼 이름을 따로 말하지 않는다. 확정은 선택창 버튼으로 하고, 결과 문장에는 버튼 이름이 없다.
+  - 판정, 누르기 직전 재확인, 기억(`RememberedPopup`), `failedNames` 비교, 음성 "…버튼으로 가" 이름 맞추기는 읽은 label 그대로 쓴다. 표시용으로만 정리한다.
+- **시험:** `F61Test` 7개(스위치 꺼짐, OFFERED 없음, 사기 경고 유지, 켜면 F59, 겹침 창에 누르기 없음·요약, 아이콘 글자 떼기, 판정 label 유지). 기존 `F59Test`는 `pressOn = true`로 켠 상태를 시험한다. 실제 서비스 연결과 화면 낭독은 JVM 시험이 없다. **실기기 미검증.**
+
 - 잔여 노드 쪽 이벤트 무시: TalkBack이 무엇을 읽을지는 앱이 막을 수 없다. 대신 포커스를 잔여 노드 밖으로 옮기는 것(F9)이 할 수 있는 전부. 웹 페이지가 닫힌 팝업을 DOM에 `aria-hidden` 없이 남기는 한, 사용자가 스와이프로 다시 만날 수 있다(한계로 기록).
 - 선택 창 PROMPT도 TalkBack 큐로? 가능은 하다: 선택 창 자체(이미 접근성 오버레이)에 paneTitle이 있고 TalkBack이 창을 읽으므로, "안내 맡기기" ON이면 우리 TTS PROMPT를 끄고 paneTitle/첫 버튼 포커스 낭독에 맡기는 방식. 단, 지금 PROMPT는 TalkBack이 팝업을 읽는 도중 끊고 들어가야 시연이 빠르므로 polite로 바꾸면 늦어질 수 있다. F11 배너가 LG에서 잘 읽히면 같은 방식으로 옮길지 정하자(의견, 미구현).
 - 검증(F1~F11 한 빌드): 5개 Gradle 작업 통과, 단위 시험 debug 1028개·release 1013개 실패 0, lintDebug 오류 0(경고 12), 병합 매니페스트 INTERNET 0·새 권한 없음.

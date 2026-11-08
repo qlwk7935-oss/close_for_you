@@ -24,6 +24,28 @@ object ButtonNameDisplay {
     const val MAX_KEPT_LENGTH = 8
 
     /**
+     * F61: a button name as shown on screen, said by the TTS and read by TalkBack: private-use characters (an icon font's glyph, as in
+     * LMS "\uEA02닫기"; U+E000–U+F8FF and planes 15–16) dropped, spaces collapsed. Null = nothing left: the caller shows
+     * [R.string.ui_simple_x_button], as for an unnamed X. Display only: judging, the re-check before a click, remembered popups and
+     * failed names keep the label as read. Screen text: never log.
+     */
+    fun shown(label: String?): String? {
+        if (label == null) return null
+        val out = StringBuilder(label.length)
+        var i = 0
+        while (i < label.length) {
+            val cp = label.codePointAt(i)
+            i += Character.charCount(cp)
+            if (!isPrivateUse(cp)) out.appendCodePoint(cp)
+        }
+        return out.toString().replace(SPACES, " ").trim().ifEmpty { null }
+    }
+
+    fun isPrivateUse(cp: Int): Boolean = cp in 0xE000..0xF8FF || cp in 0xF0000..0xFFFFD || cp in 0x100000..0x10FFFD
+
+    private val SPACES = Regex("""\s+""")
+
+    /**
      * [roleNameRes] for one button among [pressButtonCount] the prompt offers. Only a lone button is
      * shortened: with two or more, each keeps its own name so they stay apart (LG 10/31, 11번가:
      * "앱설치 안내 레이어 닫기" and "모바일 웹으로 볼래요" both read "'닫기' 버튼 눌러 주기").

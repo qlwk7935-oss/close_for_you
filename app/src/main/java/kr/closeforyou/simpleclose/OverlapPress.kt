@@ -122,6 +122,29 @@ object OverlapPressRules {
     fun offer(front: FrontTarget, seen: FrontSeen): FrontPress? =
         StrongCloseRules.pick(seen.popup.scan.candidates)?.let { FrontPress(front, seen.popup, it, seen.kind) }
 
+    /**
+     * F61: what the overlap prompt gets, after the checks ([miss] null = they passed). [pressOn] false
+     * ([SimpleCloseEngineFeature.OVERLAP_FRONT_PRESS] off): never a press, whatever the checks said; a scam in front is still warned of.
+     */
+    fun offerOf(front: FrontTarget, seen: FrontSeen?, miss: FrontPressMiss?, pressOn: Boolean = SimpleCloseEngineFeature.OVERLAP_FRONT_PRESS): FrontOffer {
+        val press = if (pressOn) seen?.takeIf { miss == null }?.let { offer(front, it) } else null
+        return FrontOffer(press, scam = seen?.popup?.takeIf { miss == FrontPressMiss.SCAM })
+    }
+
+    /** F61: the log line for [offerOf]'s [offer]: OFFERED only with a press. Switched off with every check passed: [SWITCHED_OFF_LINE]. */
+    fun offerLine(offer: FrontOffer, miss: FrontPressMiss?, pressOn: Boolean = SimpleCloseEngineFeature.OVERLAP_FRONT_PRESS): String {
+        val press = offer.press
+        return when {
+            press != null -> offeredLine(press)
+            miss != null -> notOfferedLine(miss)
+            !pressOn -> SWITCHED_OFF_LINE
+            else -> notOfferedLine(FrontPressMiss.TARGET_CHANGED)
+        }
+    }
+
+    /** F61: a code only. */
+    const val SWITCHED_OFF_LINE = "OVERLAP_PRESS_NOT_OFFERED reason=SWITCHED_OFF"
+
     /** Right before the click (AGENTS 6-5, 6-7): the same checks on a new read, and the same name as the prompt said. */
     fun recheck(press: FrontPress, seen: FrontSeen?): FrontPressMiss? {
         miss(press.front, seen)?.let { return it }

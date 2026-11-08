@@ -29,7 +29,7 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/** F59: the overlap prompt may press the named close of the popup taken to be in front, once, when nothing about it is doubtful. */
+/** F59 (F61: switched off in the frozen build; these tests turn it on with `pressOn = true`): the overlap prompt may press the named close of the popup taken to be in front, once, when nothing about it is doubtful. */
 class F59Test {
     private val card = ScreenBounds(90, 600, 990, 1800)
     private val closeBack = ScreenBounds(540, 1500, 990, 1700)
@@ -219,7 +219,7 @@ class F59Test {
     @Test fun aScamInFrontWarnsAndOffersNoPress() {
         val popup = SimplePopupAnalysis.build(page() + back(), root, "p", 7, SCREEN, 1L, 0L)
         val planned = ChoicePromptPlanner.plan(popup.analysis, PopupClassification.NOTICE, labelPolicy = SimpleLabelPolicy, rememberChoicesEnabled = false, preset = HandlingPreset.entries.first())
-        val shown = SimplePromptOptions.overlapped(planned, frontKnown = true, pressLabel = "닫기", frontScam = true, frontKind = FrontKind.CLOSE)
+        val shown = SimplePromptOptions.overlapped(planned, frontKnown = true, pressLabel = "닫기", pressOn = true, frontScam = true, frontKind = FrontKind.CLOSE)
         assertEquals(PromptSummary.POPUPS_OVERLAP_FRONT_SCAM, shown.summary)
         assertEquals(R.string.ui_choice_summary_overlap_front_scam, shown.summary.textRes())
         assertTrue(shown.options.none { it.kind == PromptOptionKind.PRESS_CANDIDATE || it.kind == PromptOptionKind.REMEMBER_ALWAYS })
@@ -301,7 +301,7 @@ class F59Test {
         assertNull(SimplePromptOptions.overlapped(withWords, frontKnown = true, frontScam = true, frontKind = FrontKind.FIRST).shownExcerpt)
         assertEquals("다른 안내", SimplePromptOptions.overlapped(withWords, frontKnown = true).shownExcerpt)
         assertEquals("다른 안내", SimplePromptOptions.overlapped(withWords, frontKnown = false).shownExcerpt)
-        assertEquals("다른 안내", SimplePromptOptions.overlapped(withWords, frontKnown = true, pressLabel = "닫기").shownExcerpt)
+        assertEquals("다른 안내", SimplePromptOptions.overlapped(withWords, frontKnown = true, pressLabel = "닫기", pressOn = true).shownExcerpt)
     }
 
     // A scam's read is the scam's, never the stopped popup's in its place.
@@ -313,7 +313,7 @@ class F59Test {
     }
 
     @Test fun thePressPromptKeepsItsOwnWords() {
-        val shown = SimplePromptOptions.overlapped(plannedBack(), frontKnown = true, pressLabel = "닫기")
+        val shown = SimplePromptOptions.overlapped(plannedBack(), frontKnown = true, pressLabel = "닫기", pressOn = true)
         assertEquals(R.string.ui_choice_summary_overlap_press, shown.summary.textRes())
         assertEquals(R.string.ui_choice_press_front, shown.options.first().labelRes)
     }
@@ -327,7 +327,7 @@ class F59Test {
     private fun promptWithPress(): kr.closeforyou.ui.voice.choice.ChoicePrompt {
         val popup = SimplePopupAnalysis.build(page() + back(), root, "p", 7, SCREEN, 1L, 0L)
         val planned = ChoicePromptPlanner.plan(popup.analysis, PopupClassification.NOTICE, labelPolicy = SimpleLabelPolicy, rememberChoicesEnabled = false, preset = HandlingPreset.entries.first())
-        return SimplePromptOptions.overlapped(planned, frontKnown = true, pressLabel = "닫기")
+        return SimplePromptOptions.overlapped(planned, frontKnown = true, pressLabel = "닫기", pressOn = true)
     }
 
     // The press is refused before anything can use it up: a tap still gets it, once.
@@ -381,7 +381,7 @@ class F59Test {
     @Test fun thePromptOffersThePressFirstNeverAlwaysAndNameInIt() {
         val popup = SimplePopupAnalysis.build(page() + back(), root, "p", 7, SCREEN, 1L, 0L)
         val planned = ChoicePromptPlanner.plan(popup.analysis, PopupClassification.NOTICE, labelPolicy = SimpleLabelPolicy, rememberChoicesEnabled = false, preset = HandlingPreset.entries.first())
-        val shown = SimplePromptOptions.overlapped(planned, frontKnown = true, pressLabel = "닫기")
+        val shown = SimplePromptOptions.overlapped(planned, frontKnown = true, pressLabel = "닫기", pressOn = true)
         assertEquals(PromptSummary.POPUPS_OVERLAP_PRESS, shown.summary)
         val first = shown.options.first()
         assertEquals(PromptOptionKind.PRESS_CANDIDATE, first.kind)
@@ -404,7 +404,7 @@ class F59Test {
         val move = SimplePromptOptions.overlapped(planned, frontKnown = true)
         assertEquals(PromptSummary.POPUPS_OVERLAP, move.summary)
         assertTrue(move.options.none { it.kind == PromptOptionKind.PRESS_CANDIDATE })
-        val none = SimplePromptOptions.overlapped(planned, frontKnown = false, pressLabel = "닫기")
+        val none = SimplePromptOptions.overlapped(planned, frontKnown = false, pressLabel = "닫기", pressOn = true)
         assertEquals(PromptSummary.POPUPS_OVERLAP_NO_MOVE, none.summary)
         assertEquals(listOf(PromptOptionKind.KEEP_OPEN), none.options.map { it.kind })
         // After a failed press: said so, no press.
