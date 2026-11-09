@@ -45,6 +45,10 @@ import androidx.lifecycle.compose.LifecycleResumeEffect
 import kr.closeforyou.R
 import kr.closeforyou.app.CorePreferences
 import kr.closeforyou.ui.voice.UiVoiceTheme
+import kr.closeforyou.ui.voice.theme.InkButton
+import kr.closeforyou.ui.voice.theme.InkCard
+import kr.closeforyou.ui.voice.theme.InkGrade
+import androidx.compose.foundation.layout.PaddingValues
 import kr.closeforyou.ui.voice.overlay.TalkBackTakeoverFeature
 
 /** Which screen the app's first screen shows. Pure, so the gate is tested on the JVM. */
@@ -184,13 +188,15 @@ fun UiVoiceOnboardingScreen(
 
     if (step == OnboardingStep.HELP_APPS) {
         // The editor scrolls by itself and its lists replace the whole screen.
+        // F63: the editor sits in the same white card as the other steps.
+        InkCard(modifier.fillMaxSize().padding(12.dp), padding = PaddingValues(0.dp)) {
         HelpAppsEditor(
             catalog = catalog,
             draft = helpApps,
             onDraftChange = { helpApps = it },
             page = helpPage,
             onPageChange = { helpPage = it },
-            modifier = modifier.semantics { paneTitle = paneName },
+            modifier = Modifier.fillMaxSize().semantics { paneTitle = paneName },
             top = {
                 StepHeader(step)
                 StepTitle(paneName)
@@ -198,15 +204,18 @@ fun UiVoiceOnboardingScreen(
             bottom = {
                 Spacer(Modifier.height(4.dp))
                 BrandButton(stringResource(R.string.ui_onboarding_next), next, enabled = blockReason == null, disabledReason = blockReason)
-                SecondaryButton(stringResource(R.string.ui_onboarding_back), back)
-                SecondaryButton(stringResource(R.string.ui_setup_help_apps_later)) { apply(OnboardingFlow.skipHelpApps(draft)) }
+                SecondaryButton(stringResource(R.string.ui_onboarding_back), back, InkGrade.LINK)
+                SecondaryButton(stringResource(R.string.ui_setup_help_apps_later), { apply(OnboardingFlow.skipHelpApps(draft)) }, InkGrade.LINK)
                 HelpText(stringResource(R.string.ui_onboarding_skip_help))
             },
         )
+        }
         return
     }
 
-    Column(modifier.fillMaxSize().semantics { paneTitle = paneName }) {
+    // F63: one white card on the screen color: head, step bar, content, main button.
+    InkCard(modifier.fillMaxSize().padding(12.dp), padding = PaddingValues(0.dp)) {
+    Column(Modifier.fillMaxSize().semantics { paneTitle = paneName }) {
         Column(
             Modifier
                 .weight(1f)
@@ -240,9 +249,9 @@ fun UiVoiceOnboardingScreen(
                         // Where TalkBack's focus goes whenever 2/5 shows with the service on ([rememberServiceTurnOn]).
                         BrandButton(stringResource(R.string.ui_onboarding_next), next, modifier = Modifier.testTag(SERVICE_NEXT_TAG))
                     } else {
-                        SecondaryButton(stringResource(R.string.ui_setup_service_later), next)
+                        SecondaryButton(stringResource(R.string.ui_setup_service_later), next, InkGrade.LINE)
                     }
-                    SecondaryButton(stringResource(R.string.ui_onboarding_back), back)
+                    SecondaryButton(stringResource(R.string.ui_onboarding_back), back, InkGrade.LINK)
                 }
                 OnboardingStep.DONE -> {
                     BrandButton(
@@ -251,24 +260,22 @@ fun UiVoiceOnboardingScreen(
                         enabled = blockReason == null,
                         disabledReason = blockReason,
                     )
-                    SecondaryButton(stringResource(R.string.ui_onboarding_back), back)
+                    SecondaryButton(stringResource(R.string.ui_onboarding_back), back, InkGrade.LINK)
                 }
                 else -> {
                     BrandButton(stringResource(R.string.ui_onboarding_next), next, enabled = blockReason == null, disabledReason = blockReason)
-                    SecondaryButton(stringResource(R.string.ui_onboarding_back), back)
+                    SecondaryButton(stringResource(R.string.ui_onboarding_back), back, InkGrade.LINK)
                 }
             }
         }
     }
+    }
 }
 
+/** F63: [이전 단계]·[나중에 고르기] are small links; [나중에 켜기] an outlined button. Same Material button role and click. */
 @Composable
-private fun SecondaryButton(label: String, onClick: () -> Unit) {
-    OutlinedButton(
-        onClick = onClick,
-        modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp),
-        shape = RoundedCornerShape(16.dp),
-    ) { Text(label, fontSize = 17.sp) }
+private fun SecondaryButton(label: String, onClick: () -> Unit, grade: InkGrade) {
+    InkButton(label, onClick, grade, modifier = Modifier.fillMaxWidth(), minHeight = 56.dp, fontSize = 17.sp)
 }
 
 private fun OnboardingStep.titleRes() = when (this) {

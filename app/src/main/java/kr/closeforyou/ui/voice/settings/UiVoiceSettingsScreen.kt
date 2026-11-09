@@ -1,6 +1,21 @@
 package kr.closeforyou.ui.voice.settings
 
 import kr.closeforyou.ui.voice.UiVoiceTheme
+import kr.closeforyou.ui.voice.theme.InkButton
+import kr.closeforyou.ui.voice.theme.InkCard
+import kr.closeforyou.ui.voice.theme.InkGrade
+import kr.closeforyou.ui.voice.theme.InkIcon
+import kr.closeforyou.ui.voice.theme.InkThumbRing
+import kr.closeforyou.ui.voice.theme.UiVoiceDims
+import kr.closeforyou.ui.voice.theme.inkRow
+import kr.closeforyou.ui.voice.theme.inkSwitchColors
+import kr.closeforyou.ui.voice.theme.uiVoicePalette
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.size
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.sp
 import android.Manifest
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -20,8 +35,6 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -266,12 +279,15 @@ fun UiVoiceSettingsScreen(
     onClearEngineRemembered: () -> Unit = {},
 ) {
     var confirmDeleteAll by rememberSaveable { mutableStateOf(false) }
+    // F63: one white card on the screen color; everything inside keeps the old order.
     Column(
         modifier = modifier
+            .background(uiVoicePalette().screen)
             .verticalScroll(rememberScrollState())
-            .padding(horizontal = 20.dp, vertical = 16.dp),
-        verticalArrangement = Arrangement.spacedBy(14.dp),
+            .padding(horizontal = 12.dp, vertical = 12.dp),
     ) {
+    InkCard(Modifier.fillMaxWidth(), padding = PaddingValues(horizontal = 16.dp, vertical = 18.dp)) {
+    Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
         StepTitle(stringResource(R.string.ui_settings_title))
 
         if (serviceOn != null) {
@@ -403,10 +419,7 @@ fun UiVoiceSettingsScreen(
             rules.forEach { rule -> RuleRow(rule, appName(rule.key.packageName), nowEpochMillis, zone, onRevoke) }
         }
         // Always shown (D's request): rows D could not read are not listed but still need erasing.
-        OutlinedButton(
-            onClick = { confirmDeleteAll = true },
-            modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
-        ) { Text(stringResource(R.string.ui_settings_rules_delete_all)) }
+        InkButton(stringResource(R.string.ui_settings_rules_delete_all), { confirmDeleteAll = true }, InkGrade.LINE, Modifier.fillMaxWidth())
         if (deleteAllFailed) {
             // Polite live region: TalkBack reads it once, focus stays where the person is.
             Text(
@@ -422,9 +435,7 @@ fun UiVoiceSettingsScreen(
                 modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
             )
             if (engineRememberedCount > 0) {
-                OutlinedButton(onClick = onClearEngineRemembered, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) {
-                    Text(stringResource(R.string.ui_settings_engine_remembered_clear))
-                }
+                InkButton(stringResource(R.string.ui_settings_engine_remembered_clear), onClearEngineRemembered, InkGrade.LINE, Modifier.fillMaxWidth())
             }
         }
 
@@ -432,9 +443,7 @@ fun UiVoiceSettingsScreen(
             HorizontalDivider()
             Heading(R.string.ui_settings_section_setup)
             HelpText(stringResource(R.string.ui_settings_restart_setup_help))
-            OutlinedButton(onClick = onRestartSetup, modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp)) {
-                Text(stringResource(R.string.ui_settings_restart_setup), fontSize = UiType.body)
-            }
+            InkButton(stringResource(R.string.ui_settings_restart_setup), onRestartSetup, InkGrade.LINE, Modifier.fillMaxWidth(), minHeight = 56.dp, fontSize = UiType.body)
         }
 
         // Last on the page: A's own screen (its engine's consent, start/pause, OCR), kept for development.
@@ -442,10 +451,10 @@ fun UiVoiceSettingsScreen(
             HorizontalDivider()
             Heading(R.string.ui_settings_section_developer)
             HelpText(stringResource(R.string.ui_settings_open_core_help))
-            OutlinedButton(onClick = onOpenCoreSettings, modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp)) {
-                Text(stringResource(R.string.ui_settings_open_core), fontSize = UiType.body)
-            }
+            InkButton(stringResource(R.string.ui_settings_open_core), onOpenCoreSettings, InkGrade.LINE, Modifier.fillMaxWidth(), minHeight = 56.dp, fontSize = UiType.body)
         }
+    }
+    }
     }
 
     if (confirmDeleteAll) {
@@ -490,10 +499,7 @@ private fun VoiceSection(
     }
     Text(stringResource(line))
     if (microphoneState == SpeakButtonState.PERMISSION_NEEDED) {
-        OutlinedButton(
-            onClick = onAllowMicrophone,
-            modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
-        ) { Text(stringResource(R.string.ui_settings_mic_allow)) }
+        InkButton(stringResource(R.string.ui_settings_mic_allow), onAllowMicrophone, InkGrade.SUB, Modifier.fillMaxWidth())
     }
 }
 
@@ -511,32 +517,54 @@ private fun RuleRow(rule: PopupRule, appName: String, nowEpochMillis: Long, zone
         },
         text = { res, args -> resources.getString(res, *args) },
     )
-    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+    // F63: the line sits in a 4dp-bottom box; [해제] is a pill. Same nodes and order as before.
+    Column(Modifier.fillMaxWidth().inkRow(uiVoicePalette()).padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             AppIcon(rule.key.packageName)
             Text(summary, fontSize = UiType.body, modifier = Modifier.padding(start = 12.dp))
         }
         if (RuleStatusPolicy.canRevoke(RuleStatusPolicy.statusOf(rule, nowEpochMillis))) {
             val revokeDescription = stringResource(R.string.ui_settings_rule_revoke_description, summary)
-            OutlinedButton(
-                onClick = { onRevoke(rule.id) },
-                modifier = Modifier
+            InkButton(
+                stringResource(R.string.ui_settings_rule_revoke),
+                { onRevoke(rule.id) },
+                InkGrade.SUB,
+                Modifier
                     .fillMaxWidth()
-                    .heightIn(min = 48.dp)
                     .semantics { contentDescription = revokeDescription },
-            ) { Text(stringResource(R.string.ui_settings_rule_revoke)) }
+                minHeight = 48.dp,
+                radius = UiVoiceDims.pillRadius,
+            )
         }
     }
 }
 
+/** Section head: an orange icon (decorative, not a node) + the bold title read as a heading, as before. */
 @Composable
 private fun Heading(textRes: Int) {
-    Text(
-        stringResource(textRes),
-        fontSize = UiType.subtitle,
-        fontWeight = FontWeight.Bold,
-        modifier = Modifier.padding(top = 4.dp).semantics { heading() },
-    )
+    Row(Modifier.padding(top = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+        InkIcon(sectionIcon(textRes), 24.dp)
+        Text(
+            stringResource(textRes),
+            fontSize = UiType.subtitle,
+            fontWeight = FontWeight.Bold,
+            color = uiVoicePalette().ink,
+            modifier = Modifier.padding(start = 8.dp).semantics { heading() },
+        )
+    }
+}
+
+private fun sectionIcon(textRes: Int): Int = when (textRes) {
+    R.string.ui_settings_section_service -> R.drawable.ui_ic_shield
+    R.string.ui_preset_section -> R.drawable.ui_ic_sliders
+    R.string.ui_help_apps_section -> R.drawable.ui_ic_apps
+    R.string.ui_settings_section_status -> R.drawable.ui_ic_pulse
+    R.string.ui_settings_section_announce -> R.drawable.ui_ic_speaker
+    R.string.ui_settings_section_voice -> R.drawable.ui_ic_mic
+    R.string.ui_settings_section_rules -> R.drawable.ui_ic_bookmark
+    R.string.ui_settings_section_setup -> R.drawable.ui_ic_refresh
+    R.string.ui_settings_section_developer -> R.drawable.ui_ic_code
+    else -> R.drawable.ui_ic_sliders
 }
 
 /** [description] sits inside the toggleable row, so TalkBack reads it with the label and state. */
@@ -552,13 +580,15 @@ private fun SwitchRow(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .heightIn(min = 56.dp)
-            .toggleable(value = checked, role = Role.Switch, onValueChange = onCheckedChange),
+            .inkRow(uiVoicePalette())
+            .toggleable(value = checked, role = Role.Switch, onValueChange = onCheckedChange)
+            .padding(horizontal = 12.dp, vertical = 6.dp)
+            .heightIn(min = 56.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         if (iconPackage != null) AppIcon(iconPackage)
         LabelWithDescription(label, description, Modifier.weight(1f).padding(horizontal = 8.dp))
-        Switch(checked = checked, onCheckedChange = null)
+        Switch(checked = checked, onCheckedChange = null, colors = inkSwitchColors(), thumbContent = { InkThumbRing() })
     }
 }
 
@@ -566,16 +596,31 @@ private fun SwitchRow(
 @Composable
 private fun RadioRow(label: String, description: String?, selected: Boolean, onClick: () -> Unit) {
     val state = stringResource(if (selected) R.string.ui_setup_selected else R.string.ui_setup_not_selected)
+    val p = uiVoicePalette()
+    // F63: a pill (a rounded box when it has a help line): chosen = selected orange + check at the left end, words centred.
+    val radius = if (description == null) UiVoiceDims.pillRadius else UiVoiceDims.cardRadius
+    val text = if (selected) p.onSelected else p.ink
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .heightIn(min = 56.dp)
+            .padding(vertical = 3.dp)
+            .inkRow(p, fill = if (selected) p.selected else p.card, radius = radius)
             .selectable(selected = selected, onClick = onClick, role = Role.RadioButton)
-            .semantics { stateDescription = state },
+            .semantics { stateDescription = state }
+            .padding(horizontal = 16.dp, vertical = 6.dp)
+            .heightIn(min = 48.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        RadioButton(selected = selected, onClick = null)
-        LabelWithDescription(label, description, Modifier.padding(start = 8.dp))
+        Box(Modifier.size(24.dp), contentAlignment = Alignment.Center) {
+            if (selected) InkIcon(R.drawable.ui_ic_circle_check, 24.dp, tint = p.onSelected)
+        }
+        Column(Modifier.weight(1f).padding(horizontal = 8.dp, vertical = 4.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+            Text(label, fontSize = UiType.body, fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal, color = text, textAlign = TextAlign.Center)
+            if (description != null) {
+                Text(description, fontSize = UiType.help, lineHeight = 22.sp, color = if (selected) p.onSelected else p.muted, textAlign = TextAlign.Center)
+            }
+        }
+        Spacer(Modifier.size(24.dp))
     }
 }
 

@@ -1,5 +1,15 @@
 package kr.closeforyou.ui.voice.settings
 
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.background
+import kr.closeforyou.ui.voice.theme.InkButton
+import kr.closeforyou.ui.voice.theme.InkCard
+import kr.closeforyou.ui.voice.theme.InkGrade
+import kr.closeforyou.ui.voice.theme.PopkokHeader
+import kr.closeforyou.ui.voice.theme.inkRow
+import kr.closeforyou.ui.voice.theme.uiVoicePalette
 import android.Manifest
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -26,7 +36,6 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -199,24 +208,15 @@ private fun HelpAppsModeSection(
         catalog.isEmpty() -> Text(stringResource(R.string.ui_help_apps_list_failed))
         draft.mode == HelpAppsMode.ALL -> {
             Text(allSummaryLine(draft, catalog))
-            OutlinedButton(
-                onClick = { onPageChange(HelpAppsPage.EXCLUDE_MORE) },
-                modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
-            ) { Text(stringResource(R.string.ui_help_apps_exclude_more)) }
+            InkButton(stringResource(R.string.ui_help_apps_exclude_more), { onPageChange(HelpAppsPage.EXCLUDE_MORE) }, InkGrade.LINE, Modifier.fillMaxWidth())
             if (catalog.excluded.isNotEmpty()) {
-                OutlinedButton(
-                    onClick = { onPageChange(HelpAppsPage.ALWAYS_EXCLUDED) },
-                    modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
-                ) { Text(stringResource(R.string.ui_help_apps_show_excluded)) }
+                InkButton(stringResource(R.string.ui_help_apps_show_excluded), { onPageChange(HelpAppsPage.ALWAYS_EXCLUDED) }, InkGrade.LINE, Modifier.fillMaxWidth())
             }
             Text(stringResource(R.string.ui_help_apps_new_apps), style = MaterialTheme.typography.bodySmall)
         }
         draft.mode == HelpAppsMode.CHOSEN -> {
             Text(chosenCountLine(draft, catalog))
-            OutlinedButton(
-                onClick = { onPageChange(HelpAppsPage.PICK) },
-                modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
-            ) { Text(stringResource(R.string.ui_help_apps_pick)) }
+            InkButton(stringResource(R.string.ui_help_apps_pick), { onPageChange(HelpAppsPage.PICK) }, InkGrade.SUB, Modifier.fillMaxWidth())
         }
         else -> Unit
     }
@@ -236,14 +236,15 @@ fun HelpAppsSaveButton(
     reason: String = stringResource(R.string.ui_help_apps_choose_first),
 ) {
     if (!enabled) Text(reason)
-    Button(
-        onClick = onClick,
-        enabled = enabled,
-        modifier = Modifier
+    InkButton(
+        label,
+        onClick,
+        InkGrade.MAIN,
+        Modifier
             .fillMaxWidth()
-            .heightIn(min = 48.dp)
             .semantics { if (!enabled) stateDescription = reason },
-    ) { Text(label) }
+        enabled = enabled,
+    )
 }
 
 @Composable
@@ -313,12 +314,10 @@ private fun AppPickList(
     ) {
         item {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text(title, style = MaterialTheme.typography.titleLarge, modifier = Modifier.semantics { heading() })
+                PopkokHeader { Text(title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, modifier = Modifier.semantics { heading() }) }
                 if (help != null) Text(help)
                 Text(countLine)
-                Button(onClick = onDone, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) {
-                    Text(stringResource(R.string.ui_help_apps_done))
-                }
+                InkButton(stringResource(R.string.ui_help_apps_done), onDone, InkGrade.MAIN, Modifier.fillMaxWidth())
                 Row(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalAlignment = Alignment.CenterVertically,
@@ -365,14 +364,13 @@ private fun GroupHeading(textRes: Int) {
 @Composable
 private fun VoiceSearchButton(listening: Boolean, onPress: () -> Unit) {
     val listeningState = stringResource(R.string.ui_voice_listening_state)
-    OutlinedButton(
-        onClick = onPress,
-        modifier = Modifier
-            .heightIn(min = 56.dp)
-            .semantics { if (listening) stateDescription = listeningState },
-    ) {
-        Text(stringResource(if (listening) R.string.ui_voice_stop_listening else R.string.ui_help_apps_voice_search))
-    }
+    InkButton(
+        stringResource(if (listening) R.string.ui_voice_stop_listening else R.string.ui_help_apps_voice_search),
+        onPress,
+        InkGrade.LINE,
+        Modifier.semantics { if (listening) stateDescription = listeningState },
+        minHeight = 56.dp,
+    )
 }
 
 /** Without the button: one keyboard hint (and [마이크 허용] when only the permission is missing). Then the status line. */
@@ -382,10 +380,7 @@ private fun VoiceSearchLines(voice: VoiceSearchState, microphoneDenied: Boolean,
         Text(stringResource(R.string.ui_help_apps_voice_search_keyboard), style = MaterialTheme.typography.bodySmall)
         if (voice.button == SpeakButtonState.PERMISSION_NEEDED) {
             if (microphoneDenied) Text(stringResource(R.string.ui_settings_mic_denied), style = MaterialTheme.typography.bodySmall)
-            OutlinedButton(
-                onClick = onAllowMicrophone,
-                modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
-            ) { Text(stringResource(R.string.ui_settings_mic_allow)) }
+            InkButton(stringResource(R.string.ui_settings_mic_allow), onAllowMicrophone, InkGrade.SUB, Modifier.fillMaxWidth())
         }
     }
     val message = voice.messageRes
@@ -401,8 +396,10 @@ private fun AppCheckRow(app: InstalledApp, checked: Boolean, onToggle: (String, 
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .heightIn(min = 56.dp)
-            .toggleable(value = checked, role = Role.Checkbox) { onToggle(app.packageName, it) },
+            .inkRow(uiVoicePalette())
+            .toggleable(value = checked, role = Role.Checkbox) { onToggle(app.packageName, it) }
+            .padding(horizontal = 10.dp, vertical = 4.dp)
+            .heightIn(min = 56.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         AppIcon(app.packageName)
@@ -415,7 +412,12 @@ private fun AppCheckRow(app: InstalledApp, checked: Boolean, onToggle: (String, 
 @Composable
 private fun AppInfoRow(app: InstalledApp) {
     Row(
-        modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).semantics(mergeDescendants = true) {},
+        modifier = Modifier
+            .fillMaxWidth()
+            .inkRow(uiVoicePalette())
+            .semantics(mergeDescendants = true) {}
+            .padding(horizontal = 10.dp, vertical = 4.dp)
+            .heightIn(min = 48.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         AppIcon(app.packageName)
@@ -455,13 +457,9 @@ fun HelpAppsStatus(line: HelpAppsStatusLine, onChange: () -> Unit, onExclude: ()
     )
     if (line.waiting) HelpText(stringResource(R.string.ui_help_apps_status_waiting))
     if (line.mode == HelpAppsMode.ALL) {
-        OutlinedButton(onClick = onExclude, modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp)) {
-            Text(stringResource(R.string.ui_help_apps_exclude_button), fontSize = UiType.body)
-        }
+        InkButton(stringResource(R.string.ui_help_apps_exclude_button), onExclude, InkGrade.LINE, Modifier.fillMaxWidth(), minHeight = 56.dp, fontSize = UiType.body)
     }
-    OutlinedButton(onClick = onChange, modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp)) {
-        Text(stringResource(R.string.ui_help_apps_change), fontSize = UiType.body)
-    }
+    InkButton(stringResource(R.string.ui_help_apps_change), onChange, InkGrade.SUB, Modifier.fillMaxWidth(), minHeight = 56.dp, fontSize = UiType.body)
 }
 
 /**
@@ -485,19 +483,25 @@ fun HelpAppsEditScreen(onClose: () -> Unit, modifier: Modifier = Modifier, initi
     }
     var page by rememberSaveable { mutableStateOf(initialPage) }
     if (page == HelpAppsPage.MODE) BackHandler(onBack = onClose)
+    // F63: the same white card on the screen color as the settings page.
+    Box(modifier.fillMaxSize().background(uiVoicePalette().screen)) {
+    InkCard(Modifier.fillMaxSize().padding(12.dp), padding = PaddingValues(0.dp)) {
     HelpAppsEditor(
         catalog = catalog,
         draft = draft,
         onDraftChange = { draft = it },
         page = page,
         onPageChange = { page = it },
-        modifier = modifier,
+        modifier = Modifier.fillMaxSize(),
         top = {
-            Text(
-                stringResource(R.string.ui_help_apps_section),
-                style = MaterialTheme.typography.titleLarge,
-                modifier = Modifier.semantics { heading() },
-            )
+            PopkokHeader {
+                Text(
+                    stringResource(R.string.ui_help_apps_section),
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.semantics { heading() },
+                )
+            }
         },
         bottom = {
             HelpAppsSaveButton(
@@ -508,11 +512,11 @@ fun HelpAppsEditScreen(onClose: () -> Unit, modifier: Modifier = Modifier, initi
                     onClose()
                 },
             )
-            OutlinedButton(onClick = onClose, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) {
-                Text(stringResource(R.string.ui_help_apps_cancel))
-            }
+            InkButton(stringResource(R.string.ui_help_apps_cancel), onClose, InkGrade.LINE, Modifier.fillMaxWidth())
         },
     )
+    }
+    }
 }
 
 /** After A's collection consent (or on opening a C screen), adds what was saved before it. */

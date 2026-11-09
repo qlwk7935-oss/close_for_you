@@ -8,10 +8,27 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.Button
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.sp
+import kr.closeforyou.ui.voice.theme.GuideBox
+import kr.closeforyou.ui.voice.theme.InkButton
+import kr.closeforyou.ui.voice.theme.InkGrade
+import kr.closeforyou.ui.voice.theme.InkIcon
+import kr.closeforyou.ui.voice.theme.PopkokHeader
+import kr.closeforyou.ui.voice.theme.UiVoiceDims
+import kr.closeforyou.ui.voice.theme.UiVoiceType
+import kr.closeforyou.ui.voice.theme.inkShadow
+import kr.closeforyou.ui.voice.theme.uiVoicePalette
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
@@ -64,26 +81,33 @@ fun ChoicePromptContent(
 ) {
     val paneTitle = stringResource(R.string.ui_choice_pane_title)
     val buttonIndex = if (takeover) TalkBackTakeoverPlan.buttonIndex(prompt) else null
+    val palette = uiVoicePalette()
+    // F63: a white card with a 2dp ink line and a 6dp bottom edge. Same Surface and semantics as before.
     Surface(
         modifier = modifier
             .fillMaxWidth()
             .semantics {
                 if (takeover) testTagsAsResourceId = true else this.paneTitle = paneTitle
-            },
-        shape = RoundedCornerShape(20.dp),
-        tonalElevation = 6.dp,
-        shadowElevation = 12.dp,
+            }
+            .inkShadow(palette.ink, UiVoiceDims.cardRadius, UiVoiceDims.cardBottom - UiVoiceDims.line),
+        shape = RoundedCornerShape(UiVoiceDims.cardRadius),
+        color = palette.card,
+        contentColor = palette.ink,
+        border = BorderStroke(UiVoiceDims.line, palette.ink),
     ) {
         Column(
-            modifier = Modifier.padding(20.dp),
+            modifier = Modifier.padding(18.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             if (revalidating) {
-                Text(
-                    text = stringResource(R.string.ui_revalidate_checking),
-                    style = MaterialTheme.typography.titleMedium,
-                    modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
-                )
+                PopkokHeader(UiVoiceDims.promptHeaderIcon) {
+                    Text(
+                        text = stringResource(R.string.ui_revalidate_checking),
+                        fontSize = SUMMARY_SIZE,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
+                    )
+                }
             } else {
                 // F13 (one voice): with the takeover and no popup text for our TTS, the first item is the
                 // summary, a notice's first words and the question, merged into one node TalkBack reads.
@@ -94,26 +118,41 @@ fun ChoicePromptContent(
                     } else {
                         Modifier
                     },
-                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
-                    Text(
-                        text = stringResource(prompt.summary.textRes()),
-                        style = MaterialTheme.typography.titleMedium,
-                        modifier = if (takeover && !oneVoice) Modifier.testTag(TakeoverFocusTarget.FIRST_ITEM.tag) else Modifier,
-                    )
-                    prompt.shownExcerpt?.let { Text(text = it) }
-                    if (oneVoice) {
-                        Text(text = stringResource(if (prompt.briefQuestion) R.string.ui_choice_takeover_question_short else R.string.ui_choice_takeover_question))
+                    // Head: 팝콕이 and "팝업처리도우미" are hidden from TalkBack; the summary reads as before.
+                    PopkokHeader(UiVoiceDims.promptHeaderIcon) {
+                        Text(
+                            text = stringResource(prompt.summary.textRes()),
+                            fontSize = SUMMARY_SIZE,
+                            fontWeight = FontWeight.Bold,
+                            lineHeight = 26.sp,
+                            modifier = if (takeover && !oneVoice) Modifier.testTag(TakeoverFocusTarget.FIRST_ITEM.tag) else Modifier,
+                        )
+                    }
+                    val excerpt = prompt.shownExcerpt
+                    if (excerpt != null || oneVoice) {
+                        GuideBox {
+                            excerpt?.let { Text(text = it) }
+                            if (oneVoice) {
+                                Text(text = stringResource(if (prompt.briefQuestion) R.string.ui_choice_takeover_question_short else R.string.ui_choice_takeover_question))
+                            }
+                        }
                     }
                 }
                 val countdown = prompt.countdownSeconds
-                if (countdown != null) {
-                    Text(text = stringResource(R.string.ui_choice_video_ad_wait, countdown))
-                } else if (prompt.cannotPressForUser) {
-                    Text(text = stringResource(R.string.ui_choice_cannot_press))
+                val extraLine = when {
+                    countdown != null -> stringResource(R.string.ui_choice_video_ad_wait, countdown)
+                    prompt.cannotPressForUser -> stringResource(R.string.ui_choice_cannot_press)
+                    else -> null
                 }
-                prompt.pressFailure?.let { failure ->
-                    Text(text = stringResource(PressResultSpeech.reasonRes(failure)))
+                val failureLine = prompt.pressFailure?.let { stringResource(PressResultSpeech.reasonRes(it)) }
+                if (extraLine != null || failureLine != null) {
+                    // Each line stays its own node, in the old order (the box has no semantics).
+                    GuideBox {
+                        extraLine?.let { Text(text = it) }
+                        failureLine?.let { Text(text = it) }
+                    }
                 }
             }
             val enabled = !revalidating
@@ -122,15 +161,21 @@ fun ChoicePromptContent(
             // sounded like the button that had just failed): the failure prompt always says each button's own name.
             val pressButtonCount = prompt.options.count { it.kind == PromptOptionKind.PRESS_CANDIDATE }
                 .let { if (prompt.summary == PromptSummary.AUTO_CLOSE_FAILED) maxOf(it, 2) else it }
-            prompt.options.forEachIndexed { index, option ->
-                val label = option.label(pressButtonCount)
-                val buttonModifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).then(
+            @Composable
+            fun OptionButton(index: Int, option: PromptOption, rowModifier: Modifier) {
+                val buttonModifier = rowModifier.then(
                     if (index == buttonIndex) Modifier.testTag(TakeoverFocusTarget.CHOICE_BUTTON.tag) else Modifier,
                 )
-                if (option.kind == PromptOptionKind.PRESS_CANDIDATE) {
-                    Button(onClick = { onOption(option) }, modifier = buttonModifier, enabled = enabled) { Text(label) }
+                InkButton(option.label(pressButtonCount), { onOption(option) }, ChoicePromptLayout.gradeOf(option.kind), buttonModifier, enabled = enabled)
+            }
+            // F63: [내용 다시 읽기] right before [그대로 두기] share one line (left, then right: TalkBack and focus order unchanged).
+            ChoicePromptLayout.rows(prompt.options).forEach { row ->
+                if (row.size == 1) {
+                    OptionButton(row[0], prompt.options[row[0]], Modifier.fillMaxWidth())
                 } else {
-                    OutlinedButton(onClick = { onOption(option) }, modifier = buttonModifier, enabled = enabled) { Text(label) }
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.Top) {
+                        row.forEach { i -> OptionButton(i, prompt.options[i], Modifier.weight(1f)) }
+                    }
                 }
             }
             PromptControls(if (revalidating) controls.copy(enabled = false, messageRes = null) else controls, onSpeak, onRepeat, onStopSpeaking)
@@ -150,27 +195,47 @@ private fun PromptControls(
     onRepeat: () -> Unit,
     onStopSpeaking: () -> Unit,
 ) {
-    val buttonModifier = Modifier.heightIn(min = 48.dp)
+    val palette = uiVoicePalette()
     if (controls.speakVisible) {
         val listeningState = stringResource(R.string.ui_voice_listening_state)
-        OutlinedButton(
-            onClick = onSpeak,
-            enabled = controls.enabled,
-            modifier = buttonModifier.fillMaxWidth().semantics {
+        val label = stringResource(if (controls.listening) R.string.ui_voice_stop_listening else R.string.ui_voice_speak)
+        // F63: an orange round mic, the words, and while listening a "듣고 있어요" pill. The mic and the pill are drawn only
+        // (no node): TalkBack still reads the label and "듣는 중" as before.
+        InkButton(
+            label,
+            onSpeak,
+            InkGrade.LINE,
+            Modifier.fillMaxWidth().semantics {
                 if (controls.listening) stateDescription = listeningState
             },
+            enabled = controls.enabled,
         ) {
-            Text(stringResource(if (controls.listening) R.string.ui_voice_stop_listening else R.string.ui_voice_speak))
+            Box(
+                Modifier.size(32.dp).clip(CircleShape).background(if (controls.enabled) palette.main else palette.disabledLine),
+                contentAlignment = Alignment.Center,
+            ) { InkIcon(R.drawable.ui_ic_mic, 18.dp, tint = palette.onMain) }
+            Text(label, fontSize = UiVoiceType.button, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(start = 10.dp))
+            if (controls.listening) {
+                Text(
+                    stringResource(R.string.ui_voice_listening).trimEnd('.'),
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = palette.onSub,
+                    modifier = Modifier
+                        .padding(start = 10.dp)
+                        .clearAndSetSemantics {}
+                        .clip(RoundedCornerShape(UiVoiceDims.pillRadius))
+                        .background(palette.sub)
+                        .padding(horizontal = 10.dp, vertical = 3.dp),
+                )
+            }
         }
     }
     if (controls.speechButtons) {
+        // F63: small text links, side by side (left, then right: same order as before).
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            OutlinedButton(onClick = onRepeat, modifier = buttonModifier.weight(1f), enabled = controls.enabled) {
-                Text(stringResource(R.string.ui_choice_repeat))
-            }
-            OutlinedButton(onClick = onStopSpeaking, modifier = buttonModifier.weight(1f), enabled = controls.enabled) {
-                Text(stringResource(R.string.ui_choice_stop_speaking))
-            }
+            InkButton(stringResource(R.string.ui_choice_repeat), onRepeat, InkGrade.LINK, Modifier.weight(1f), enabled = controls.enabled)
+            InkButton(stringResource(R.string.ui_choice_stop_speaking), onStopSpeaking, InkGrade.LINK, Modifier.weight(1f), enabled = controls.enabled)
         }
     }
     // Status line and hint exist only while they have words: an empty Text would still be a node
@@ -183,9 +248,40 @@ private fun PromptControls(
         )
     }
     controls.hintRes?.let {
-        Text(text = stringResource(it), style = MaterialTheme.typography.bodySmall)
+        Text(text = stringResource(it), style = MaterialTheme.typography.bodySmall, color = palette.muted)
     }
 }
+
+/** F63: how the prompt's options are drawn. Layout only: the options keep their order, labels and clicks. */
+internal object ChoicePromptLayout {
+    /** Main = the press; secondary = remembering it or moving to a button; outlined = the rest. */
+    fun gradeOf(kind: PromptOptionKind): InkGrade = when (kind) {
+        PromptOptionKind.PRESS_CANDIDATE -> InkGrade.MAIN
+        PromptOptionKind.REMEMBER_ALWAYS, PromptOptionKind.MOVE_TO_BUTTON -> InkGrade.SUB
+        PromptOptionKind.READ_CONTENT, PromptOptionKind.KEEP_OPEN, PromptOptionKind.STOP_ASKING -> InkGrade.LINE
+    }
+
+    /**
+     * Option indexes grouped into lines, in order: [READ_CONTENT] directly followed by [KEEP_OPEN] share a line,
+     * every other option has its own. Flattened, the result is always 0..lastIndex (reading and focus order unchanged).
+     */
+    fun rows(options: List<PromptOption>): List<List<Int>> {
+        val out = mutableListOf<List<Int>>()
+        var i = 0
+        while (i < options.size) {
+            if (options[i].kind == PromptOptionKind.READ_CONTENT && options.getOrNull(i + 1)?.kind == PromptOptionKind.KEEP_OPEN) {
+                out += listOf(i, i + 1)
+                i += 2
+            } else {
+                out += listOf(i)
+                i += 1
+            }
+        }
+        return out
+    }
+}
+
+private val SUMMARY_SIZE = 19.sp
 
 internal fun PromptSummary.textRes(): Int = when (this) {
     PromptSummary.LIKELY_AD -> R.string.ui_choice_summary_ad
