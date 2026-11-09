@@ -122,6 +122,15 @@ class RealSiteMetricsTest(unittest.TestCase):
         asked_notice = run([trial("T3", "L04", "USER_CONFIRMED", human="NOTICE")])
         self.assertNotIn("WRONG_KIND_CLOSE", asked_notice.stdout)  # 물어본 뒤 사용자가 닫은 것은 괜찮음
 
+    def test_close_all_also_closes_notices(self):
+        """11/8 팀 확인: "전부 자동 닫기" = 공지도 닫기(앱 설정 화면·재현앱 정답지와 같음)."""
+        notice_all = run([trial("T1", "L01", "CLOSED_BY_APP", human="NOTICE", kind="NOTICE",
+                                popup_type="NOTICE_POPUP")])
+        self.assertNotIn("WRONG_KIND_CLOSE", notice_all.stdout)
+        notice_ads = run([trial("T2", "L01", "CLOSED_BY_APP", human="NOTICE", kind="NOTICE",
+                                preset="CLOSE_ADS_AND_COUPONS", popup_type="NOTICE_POPUP")])
+        self.assertIn("WRONG_KIND_CLOSE", notice_ads.stdout)
+
     def test_unknown_auto_closes_are_counted(self):
         result = run([trial("T1", "L01", "CLOSED_BY_APP", kind="UNKNOWN", human="OTHER")])
         self.assertIn("판단 불가(UNKNOWN)인데 자동으로 닫음(F7) | 1건", result.stdout)
