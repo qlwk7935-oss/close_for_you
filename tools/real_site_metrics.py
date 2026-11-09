@@ -24,7 +24,8 @@
   - CLOSE_OR_ASK: 홍보 문구·구독 버튼 여부처럼 화면에 따라 닫기도 묻기도 맞는 행(L01 로그인 홍보, L12 언론사 등).
   - 건너뛰기(SKIP)는 닫기 성공으로 세고 분류 정확도에서는 뺀다(L19 유튜브).
   - 잘못 닫음(WRONG_KIND_CLOSE, 11/2 준영): 앱이 묻지 않고 닫았는데 사람이 본 종류(human_kind)가 그 처리 방식에서
-    닫는 대상이 아님(공지·결정·사기 의심, "광고만 닫기"의 쿠폰 등). 내용을 놓친 경우라 실패로 세고 따로 보고한다.
+    닫는 대상이 아님(결정·사기 의심, "전부 닫기"가 아닐 때의 공지, "광고만 닫기"의 쿠폰 등), 또는 공지를 다른 종류로
+    보고 닫음. 내용을 놓친 경우라 실패로 세고 따로 보고한다.
     금지 버튼과 달리 종료 코드에는 넣지 않는다.
 
 개인정보: 기록에는 사이트 ID·코드·Y/N·숫자만 적는다. notes와 clicked_target에 한글·화면 원문을 쓰면 입력 문제로 본다.
@@ -56,9 +57,10 @@ APP_PRESSED = {"CLOSED_BY_APP", "USER_CONFIRMED"}
 ASKING = {"ASKED_ONLY", "USER_CONFIRMED"}
 ALWAYS_FORBIDDEN = {"BUY", "ORDER", "PAY", "SUBSCRIBE", "AGREE", "ALLOW_PERMISSION", "DELETE", "LOGIN", "PRIZE_CLAIM"}
 HUMAN_KINDS = {"", "AD", "COUPON", "NOTICE", "DECISION", "SUSPICIOUS", "OTHER"}
-# 처리 방식별로 앱이 묻지 않고 닫아도 되는 사람 기준 종류. "전부 자동 닫기"도 공지는 묻는다(11/2 시연 설정).
+# 처리 방식별로 앱이 묻지 않고 닫아도 되는 사람 기준 종류. 앱 설정 화면·재현앱 정답지와 같다:
+# "전부 자동 닫기"는 공지도 닫는다(11/8 준영 확인, 11/2 "공지는 묻기"는 그 뒤에 바뀜).
 AUTO_CLOSABLE = {
-    "CLOSE_ALL": {"AD", "COUPON"},
+    "CLOSE_ALL": {"AD", "COUPON", "NOTICE"},
     "CLOSE_ADS_AND_COUPONS": {"AD", "COUPON"},
     "CLOSE_ADS_ONLY": {"AD"},
 }
@@ -145,7 +147,11 @@ def wrong_kind_close(row: dict) -> bool:
         return False
     if SKIP in targets(row.get("clicked_target")):
         return False
-    return human not in AUTO_CLOSABLE.get(row.get("preset", ""), set())
+    if human not in AUTO_CLOSABLE.get(row.get("preset", ""), set()):
+        return True
+    # 공지를 닫아도 되는 방식이어도, 공지를 다른 종류(광고 등)로 보고 닫았으면 결과 안내가 틀려 내용을 놓친다.
+    observed = row.get("observed_kind", "")
+    return human == "NOTICE" and observed not in ("", "NOTICE")
 
 
 def judge(row: dict, key_row: dict) -> tuple[str, str]:
