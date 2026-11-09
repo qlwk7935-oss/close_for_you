@@ -82,6 +82,8 @@
     <!-- 선택 창이 새로 뜰 때 자체 음성으로 한 번 읽는 끝맺음. 포커스는 옮기지 않으므로 위치만 알려 준다. -->
     <!-- F13: last line of the prompt's first item when TalkBack alone reads it. No command words. -->
     <string name="ui_choice_takeover_question">어떻게 할까요? 다음 항목에서 고를 수 있어요.</string>
+    <!-- F63: the same, when the press offered is a close button with no name (the X shape). Shown and read by TalkBack. -->
+    <string name="ui_choice_takeover_question_unnamed_x">닫기 버튼에 이름이 없어서 눌러도 될지 여쭤볼게요. 다음 항목에서 고를 수 있어요.</string>
     <!-- F14: the same, when TalkBack has just read the popup itself (no excerpt then). -->
     <string name="ui_choice_takeover_question_short">닫을까요?</string>
     <string name="ui_choice_where">화면 아래 선택 창에서 고를 수 있어요.</string>

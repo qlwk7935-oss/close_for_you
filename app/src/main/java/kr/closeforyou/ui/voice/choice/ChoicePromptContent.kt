@@ -135,7 +135,7 @@ fun ChoicePromptContent(
                         GuideBox {
                             excerpt?.let { Text(text = it) }
                             if (oneVoice) {
-                                Text(text = stringResource(if (prompt.briefQuestion) R.string.ui_choice_takeover_question_short else R.string.ui_choice_takeover_question))
+                                Text(text = stringResource(ChoicePromptText.questionRes(prompt, stringResource(R.string.ui_simple_x_button))))
                             }
                         }
                     }
@@ -282,6 +282,20 @@ internal object ChoicePromptLayout {
 }
 
 private val SUMMARY_SIZE = 19.sp
+
+/** F63: the question at the end of the prompt's first item (TalkBack reads it there; no TTS speaks it). */
+internal object ChoicePromptText {
+    /**
+     * "닫을까요?" for the brief prompt; when the press offered is a close button with no name ([xLabel], the engine's
+     * "X 모양 닫기", or a label of icon glyphs only), "닫기 버튼에 이름이 없어서 …"; otherwise the usual "어떻게 할까요? …".
+     */
+    fun questionRes(prompt: ChoicePrompt, xLabel: String): Int = when {
+        prompt.briefQuestion -> R.string.ui_choice_takeover_question_short
+        prompt.options.any { it.kind == PromptOptionKind.PRESS_CANDIDATE && (it.buttonLabel == xLabel || ButtonNameDisplay.shown(it.buttonLabel) == null) } ->
+            R.string.ui_choice_takeover_question_unnamed_x
+        else -> R.string.ui_choice_takeover_question
+    }
+}
 
 internal fun PromptSummary.textRes(): Int = when (this) {
     PromptSummary.LIKELY_AD -> R.string.ui_choice_summary_ad
